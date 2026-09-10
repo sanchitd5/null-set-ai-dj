@@ -1,0 +1,19 @@
+myenv
+.env
+.cache
+__pycache__
+data/songs/
+downloader/downloads/
+extra/
+data/output/
+research/notes/
+data/cache/
+.pytest_tmp/
+.pytest_cache/
+node_modules/
+test-results/
+playwright-report/
+# mix.mp3
+# analyzed_setlist.json
+# mixing_plan.json
+AI DJ Brief.pdf

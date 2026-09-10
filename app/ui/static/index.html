@@ -1,0 +1,694 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Music Brain — DJ Console</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/style.css" />
+  <script src="https://unpkg.com/wavesurfer.js@7/dist/wavesurfer.min.js"></script>
+  <script src="https://unpkg.com/wavesurfer.js@7/dist/plugins/regions.min.js"></script>
+</head>
+<body>
+
+<!-- ========================================================================= -->
+<!-- TOP HEADER BAR                                                            -->
+<!-- ========================================================================= -->
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-dot"></span>
+    <span class="brand-name">PULSE</span>
+    <span class="chip">AI MUSIC BRAIN</span>
+  </div>
+
+  <div class="divider-v"></div>
+
+  <!-- REC indicator: lit only while MediaRecorder is genuinely running -->
+  <div class="hud" id="rec-hud">
+    <span class="hud-label">REC</span>
+    <span class="rec-lamp" id="rec-lamp"></span>
+    <span class="num" id="rec-clock">00:00</span>
+  </div>
+
+  <!-- Live clock: deck A's real effective BPM (pitch fader included) -->
+  <div class="hud">
+    <div class="hud-col">
+      <span class="hud-label">CLOCK · DECK A</span>
+      <span class="num num-md" id="master-bpm">--.--</span>
+    </div>
+    <div class="hud-col">
+      <span class="hud-label">DECK B</span>
+      <span class="num num-md num-b" id="master-bpm-b">--.--</span>
+    </div>
+  </div>
+
+  <!-- Honest 🧱 flag: no phase-vocoder time-stretch exists, so keylock is
+       rendered visibly disabled rather than faked. -->
+  <button class="hw-btn is-unavailable" disabled
+          title="Keylock is not available in this build: raw Web Audio playbackRate always shifts pitch with tempo. True keylock needs a phase-vocoder / granular time-stretch (e.g. SoundTouchJS).">
+    KEYLOCK <span class="na">N/A</span>
+  </button>
+
+  <div class="spacer"></div>
+
+  <div class="hud">
+    <div class="hud-col">
+      <span class="hud-label">MASTER OUT</span>
+      <div class="vu-h" id="master-vu"></div>
+    </div>
+  </div>
+
+  <div class="hud hud-status">
+    <span class="hud-label">STATUS</span>
+    <span id="status">Ready — load a track on each deck.</span>
+  </div>
+
+  <button class="hw-btn help-btn" id="help-toggle" aria-expanded="false" aria-controls="shortcut-overlay"
+          title="Show / hide the keyboard shortcut map (` or ?)">?</button>
+</header>
+
+<!-- Keyboard shortcut help overlay (toggled by the header ? button, ` or ?) -->
+<div class="overlay" id="shortcut-overlay" hidden>
+  <div class="overlay-card" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts">
+    <div class="panel-head">
+      <div class="panel-title"><span class="lamp lamp-ok"></span><span>KEYBOARD SHORTCUTS</span></div>
+      <button class="hw-btn" id="help-close">CLOSE</button>
+    </div>
+    <div class="legend" id="shortcut-legend"></div>
+  </div>
+</div>
+
+<!-- ========================================================================= -->
+<!-- FX ENGINE TOP BAR — two units, one per deck (real Web Audio wiring)       -->
+<!-- ========================================================================= -->
+<section class="fx-bar">
+  <div class="fx-unit deck-a" data-deck="a">
+    <div class="fx-unit-head">
+      <span class="fx-badge">FX 1</span>
+      <span class="fx-unit-name">DECK A INSERT</span>
+    </div>
+    <div class="fx-types" data-deck="a">
+      <button class="fx-type-btn is-on" data-deck="a" data-type="none">OFF</button>
+      <button class="fx-type-btn" data-deck="a" data-type="filter">FILTER</button>
+      <button class="fx-type-btn" data-deck="a" data-type="echo">ECHO</button>
+      <button class="fx-type-btn" data-deck="a" data-type="reverb">REVERB</button>
+      <button class="fx-type-btn" data-deck="a" data-type="flanger">FLANGER</button>
+      <button class="fx-type-btn" data-deck="a" data-type="phaser">PHASER</button>
+      <button class="fx-type-btn" data-deck="a" data-type="bitcrusher">CRUSHER</button>
+      <button class="fx-type-btn" data-deck="a" data-type="pingpong">P-PONG</button>
+    </div>
+    <div class="fx-pot">
+      <span class="hud-label" id="fx-wet-label-a">D/W 60%</span>
+      <div class="knob-wrap pot" data-deck="a">
+        <div class="knob-pointer"></div>
+        <input type="range" class="knob-input fx-wet" data-deck="a" min="0" max="1" value="0.6" step="0.01" aria-label="Deck A FX wet/dry" />
+      </div>
+    </div>
+    <div class="fx-route">
+      <span class="hud-label">ROUTING</span>
+      <span class="route-chip">INSERT · CH A</span>
+    </div>
+  </div>
+
+  <div class="fx-unit deck-b" data-deck="b">
+    <div class="fx-route">
+      <span class="hud-label">ROUTING</span>
+      <span class="route-chip">INSERT · CH B</span>
+    </div>
+    <div class="fx-pot">
+      <span class="hud-label" id="fx-wet-label-b">D/W 60%</span>
+      <div class="knob-wrap pot" data-deck="b">
+        <div class="knob-pointer"></div>
+        <input type="range" class="knob-input fx-wet" data-deck="b" min="0" max="1" value="0.6" step="0.01" aria-label="Deck B FX wet/dry" />
+      </div>
+    </div>
+    <div class="fx-types" data-deck="b">
+      <button class="fx-type-btn is-on" data-deck="b" data-type="none">OFF</button>
+      <button class="fx-type-btn" data-deck="b" data-type="filter">FILTER</button>
+      <button class="fx-type-btn" data-deck="b" data-type="echo">ECHO</button>
+      <button class="fx-type-btn" data-deck="b" data-type="reverb">REVERB</button>
+      <button class="fx-type-btn" data-deck="b" data-type="flanger">FLANGER</button>
+      <button class="fx-type-btn" data-deck="b" data-type="phaser">PHASER</button>
+      <button class="fx-type-btn" data-deck="b" data-type="bitcrusher">CRUSHER</button>
+      <button class="fx-type-btn" data-deck="b" data-type="pingpong">P-PONG</button>
+    </div>
+    <div class="fx-unit-head">
+      <span class="fx-unit-name">DECK B INSERT</span>
+      <span class="fx-badge">FX 2</span>
+    </div>
+  </div>
+</section>
+
+<!-- ========================================================================= -->
+<!-- DUAL-STACKED WAVEFORM DISPLAY                                             -->
+<!-- ========================================================================= -->
+<section class="wave-stage">
+  <div class="telemetry">
+    <div class="tele-side">
+      <span class="lamp lamp-a"></span>
+      <span class="hud-label hud-a">DECK A</span>
+      <span class="num" id="time-a">0:00 / 0:00</span>
+      <span class="onair-lamp" id="onair-a"><i></i>ON AIR</span>
+    </div>
+
+    <div class="tele-mid">
+      <span class="hud-label">TEMPO MATCH</span>
+      <div class="phase-meter" id="phase-meter">
+        <span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+      </div>
+      <span class="num" id="tempo-delta">--</span>
+      <span class="hud-label" id="harmonic-readout">KEY --</span>
+    </div>
+
+    <div class="tele-side tele-right">
+      <span class="onair-lamp" id="onair-b"><i></i>ON AIR</span>
+      <span class="num num-b" id="time-b">0:00 / 0:00</span>
+      <span class="hud-label hud-b">DECK B</span>
+      <span class="lamp lamp-b"></span>
+      <button class="hw-btn" id="zoom-out" title="Zoom the waveforms out">ZOOM −</button>
+      <button class="hw-btn" id="zoom-in" title="Zoom the waveforms in (playhead auto-centres)">ZOOM +</button>
+    </div>
+  </div>
+
+  <div class="wave-viewport">
+    <div class="wave-lane deck-a">
+      <span class="lane-tag">A</span>
+      <div class="waveform" id="waveform-a">
+        <div class="beatgrid" id="beatgrid-a"></div>
+        <div class="cue-markers" id="cues-a"></div>
+      </div>
+    </div>
+
+    <div class="wave-split">
+      <span class="split-line"></span>
+      <span class="split-chip" id="split-chip">CLICK A WAVEFORM TO SET A TRANSITION POINT · DRAG THE REGION EDGES TO TRIM</span>
+      <span class="split-line split-line-b"></span>
+    </div>
+
+    <div class="wave-lane deck-b">
+      <span class="lane-tag">B</span>
+      <div class="waveform" id="waveform-b">
+        <div class="beatgrid" id="beatgrid-b"></div>
+        <div class="cue-markers" id="cues-b"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="overviews">
+    <div class="overview deck-a" id="overview-a" data-deck="a" title="Click to seek Deck A">
+      <div class="ov-played"></div>
+      <div class="ov-head"></div>
+      <div class="ov-cues"></div>
+    </div>
+    <div class="overview deck-b" id="overview-b" data-deck="b" title="Click to seek Deck B">
+      <div class="ov-played"></div>
+      <div class="ov-head"></div>
+      <div class="ov-cues"></div>
+    </div>
+  </div>
+
+  <div class="point-bar">
+    <span class="point-readout" id="point-a">Exit point: <em>not set — AI will pick one</em></span>
+    <span class="point-readout" id="trim-a">Trim A: <em>full track</em></span>
+    <span class="point-readout" id="trim-b">Trim B: <em>full track</em></span>
+    <span class="point-readout" id="point-b">Entry point: <em>not set — AI will pick one</em></span>
+  </div>
+</section>
+
+<!-- ========================================================================= -->
+<!-- AI TRANSITION BRAIN — sits right above the mixer/crossfader, where the   -->
+<!-- suggestions are actually used, instead of buried below the console.      -->
+<!-- ========================================================================= -->
+<section class="panel ai-panel" id="ai-panel">
+  <div class="panel-head">
+    <div class="panel-title"><span class="lamp lamp-a"></span><span>AI TRANSITION BRAIN</span></div>
+    <span class="hud-label" id="ai-hint">Load both decks — suggestions appear automatically</span>
+  </div>
+  <div class="ai-controls">
+    <label class="manual-picker">
+      <span class="hud-label">EFFECT</span>
+      <select id="recipe-select" disabled><option value="">AI picks for you</option></select>
+    </label>
+    <button class="hw-btn" id="manual-preview-btn" disabled>PREVIEW AT MY POINTS</button>
+    <button class="hw-btn" id="clear-points-btn" disabled>CLEAR POINTS</button>
+    <span class="ai-controls-spacer"></span>
+    <button class="hw-btn" id="stems-a-btn" disabled title="Separate Deck A into stems (needed for stem-based recipes)">STEMS A</button>
+    <button class="hw-btn" id="stems-b-btn" disabled title="Separate Deck B into stems (needed for stem-based recipes)">STEMS B</button>
+    <button class="hw-btn accent-btn" id="render-btn" disabled>RENDER FULL MIX ▾</button>
+  </div>
+  <div class="live-transition-controls" aria-live="polite">
+    <span class="hud-label" id="live-transition-status">LIVE MAKER: select a suggestion, then arm it</span>
+    <button class="hw-btn accent-btn" id="live-transition-arm" disabled>ARM ON CONSOLE</button>
+    <button class="hw-btn" id="live-transition-cancel" disabled>CANCEL LIVE RUN</button>
+  </div>
+  <div id="candidates"></div>
+  <div id="preview-player" hidden>
+    <span class="hud-label">PREVIEW</span>
+    <audio id="preview-audio" controls></audio>
+    <p id="preview-explanation"></p>
+  </div>
+  <div id="render-result" hidden>
+    <span class="hud-label">FULL MIX RENDERED</span>
+    <audio id="render-audio" controls></audio>
+    <p id="render-explanation"></p>
+    <a id="render-download" class="rec-download" download="ai-transition-mix.mp3">↓ Download full mix</a>
+  </div>
+</section>
+
+<!-- ========================================================================= -->
+<!-- MAIN WORKSPACE: DECK A | MIXER | DECK B                                   -->
+<!-- ========================================================================= -->
+<main class="workspace">
+
+  <!-- ============================ DECK A ================================== -->
+  <section class="deck-panel deck-a" id="deck-a" data-deck="a">
+    <div class="deck-head">
+      <div class="deck-id">A</div>
+      <div class="deck-title-col">
+        <input type="file" id="file-a" accept="audio/*" class="file-input" />
+        <label for="file-a" class="track-title" id="title-a">Load Track A&hellip;</label>
+        <span class="track-sub">Click to load a file, or use the browser below</span>
+      </div>
+      <div class="readout">
+        <span class="hud-label">KEY</span>
+        <span class="num num-md" id="key-a">--</span>
+      </div>
+      <div class="readout">
+        <span class="hud-label">TEMPO</span>
+        <span class="num num-lg" id="bpm-a">--.-</span>
+      </div>
+      <button class="hw-btn tap-btn" data-deck="a"
+              title="Tap 4+ times in time with the track to override the analyzer's BPM for this deck (drives loop lengths, beatjump, tempo-synced FX and the jog spin).">TAP</button>
+    </div>
+
+    <div class="deck-arena">
+      <div class="platter-col">
+        <div class="platter-row">
+          <div class="jog-wheel" data-deck="a">
+            <div class="jog-grooves"></div>
+            <div class="jog-indicator"></div>
+            <div class="jog-label-ring">
+              <span class="jog-label">A</span>
+              <span class="jog-mode">VINYL</span>
+              <span class="jog-pos" id="jogpos-a">0:00</span>
+            </div>
+            <div class="spindle"></div>
+          </div>
+          <div class="tonearm" data-deck="a">
+            <div class="tonearm-arm"></div>
+            <div class="tonearm-head"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="pitch-col">
+        <div class="pitch-head">
+          <span class="hud-label">RANGE</span>
+          <span class="num">±8%</span>
+        </div>
+        <div class="fader-trough pitch-trough">
+          <input type="range" class="pitch-fader v-fader" data-deck="a" min="-8" max="8" value="0" step="0.1" aria-label="Deck A pitch" />
+        </div>
+        <span class="num pitch-readout" id="pitch-readout-a">0.0%</span>
+        <div class="bend-pair">
+          <button class="hw-btn bend-btn" data-deck="a" data-bend="-2" title="Hold to nudge tempo down 2%">−</button>
+          <button class="hw-btn bend-btn" data-deck="a" data-bend="2" title="Hold to nudge tempo up 2%">+</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="rail">
+      <span class="hud-label">LOOP</span>
+      <button class="hw-btn stepper-btn" data-deck="a" data-step="-1" aria-label="Halve loop length">1/2</button>
+      <span class="num stepper-value" id="loop-value-a">4</span>
+      <button class="hw-btn stepper-btn" data-deck="a" data-step="1" aria-label="Double loop length">2X</button>
+      <button class="hw-btn accent-btn deck-btn" data-deck="a" data-action="loop-toggle">OFF</button>
+      <span class="rail-sep"></span>
+      <span class="hud-label">JUMP</span>
+      <button class="hw-btn jump-btn" data-deck="a" data-beats="-16">«16</button>
+      <button class="hw-btn jump-btn" data-deck="a" data-beats="-8">«8</button>
+      <button class="hw-btn jump-btn" data-deck="a" data-beats="-4">«4</button>
+      <button class="hw-btn jump-btn" data-deck="a" data-beats="-1">«1</button>
+      <button class="hw-btn jump-btn" data-deck="a" data-beats="1">1»</button>
+      <button class="hw-btn jump-btn" data-deck="a" data-beats="4">4»</button>
+      <button class="hw-btn jump-btn" data-deck="a" data-beats="8">8»</button>
+      <button class="hw-btn jump-btn" data-deck="a" data-beats="16">16»</button>
+    </div>
+
+    <div class="deck-bottom">
+      <div class="transport-col">
+        <div class="transport-top">
+          <button class="hw-btn deck-btn sync-btn" data-deck="a" data-action="sync" title="Match Deck A's tempo to Deck B">SYNC</button>
+          <button class="hw-btn deck-btn" data-deck="a" data-action="reverse" title="Reverse playback">REV</button>
+          <button class="hw-btn deck-btn" data-deck="a" data-action="brake" title="Turntable brake — ramp to a stop">BRAKE</button>
+        </div>
+        <button class="big-btn cue-big deck-btn" data-deck="a" data-action="cue">
+          <span class="big-lamp"></span><span>CUE</span>
+        </button>
+        <button class="big-btn play-big deck-btn play-btn" data-deck="a" data-action="play" aria-label="Play/Pause Deck A">
+          <span class="big-lamp"></span>
+          <svg class="icon icon-play" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>
+          <svg class="icon icon-pause" viewBox="0 0 24 24" fill="currentColor" hidden><rect x="6" y="5" width="4" height="14" /><rect x="14" y="5" width="4" height="14" /></svg>
+          <span>PLAY / PAUSE</span>
+        </button>
+      </div>
+
+      <div class="pad-module" data-deck="a">
+        <div class="pad-tabs">
+          <button class="pad-tab is-active" data-deck="a" data-mode="cue">HOT CUE</button>
+          <button class="pad-tab" data-deck="a" data-mode="roll">ROLL</button>
+          <button class="pad-tab is-unavailable" data-deck="a" data-mode="slicer" disabled
+                  title="No slicer engine in this build — there is no beat-slicing DSP unit to drive these pads.">SLICER</button>
+          <button class="pad-tab" data-deck="a" data-mode="sampler">SAMPLER</button>
+        </div>
+        <div class="pad-bank" data-deck="a" data-mode="cue">
+          <button class="pad hot-cue-btn" data-deck="a" data-cue="1"><span class="pad-num">1</span><span class="pad-sub">EMPTY</span></button>
+          <button class="pad hot-cue-btn" data-deck="a" data-cue="2"><span class="pad-num">2</span><span class="pad-sub">EMPTY</span></button>
+          <button class="pad hot-cue-btn" data-deck="a" data-cue="3"><span class="pad-num">3</span><span class="pad-sub">EMPTY</span></button>
+          <button class="pad hot-cue-btn" data-deck="a" data-cue="4"><span class="pad-num">4</span><span class="pad-sub">EMPTY</span></button>
+          <button class="pad pad-clear cue-clear-btn" data-deck="a" data-cue="1"><span class="pad-num">CLR</span><span class="pad-sub">1</span></button>
+          <button class="pad pad-clear cue-clear-btn" data-deck="a" data-cue="2"><span class="pad-num">CLR</span><span class="pad-sub">2</span></button>
+          <button class="pad pad-clear cue-clear-btn" data-deck="a" data-cue="3"><span class="pad-num">CLR</span><span class="pad-sub">3</span></button>
+          <button class="pad pad-clear cue-clear-btn" data-deck="a" data-cue="4"><span class="pad-num">CLR</span><span class="pad-sub">4</span></button>
+        </div>
+        <div class="pad-bank" data-deck="a" data-mode="roll" hidden></div>
+        <div class="pad-bank" data-deck="a" data-mode="sampler" hidden></div>
+      </div>
+
+      <div class="fx-power-col">
+        <span class="hud-label">FX POWER</span>
+        <button class="pad fx-power-pad fx-pad" data-deck="a"
+                title="Engage / bypass this deck's FX unit (keyboard: F)">FX OFF</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================ MIXER =================================== -->
+  <section class="mixer">
+    <div class="mixer-head">
+      <span class="hud-label hud-a">CH A</span>
+      <span class="mixer-name">2-CH MIXER</span>
+      <span class="hud-label hud-b">CH B</span>
+    </div>
+
+    <div class="pot-row">
+      <div class="pot-cell deck-a">
+        <span class="hud-label">TRIM</span>
+        <div class="knob-wrap pot" data-deck="a">
+          <div class="knob-pointer"></div>
+          <input type="range" class="knob-input gain-knob" data-deck="a" min="0" max="2" value="1" step="0.01" aria-label="Deck A gain" />
+        </div>
+      </div>
+      <div class="pot-cell deck-b">
+        <span class="hud-label">TRIM</span>
+        <div class="knob-wrap pot" data-deck="b">
+          <div class="knob-pointer"></div>
+          <input type="range" class="knob-input gain-knob" data-deck="b" min="0" max="2" value="1" step="0.01" aria-label="Deck B gain" />
+        </div>
+      </div>
+    </div>
+
+    <div class="eq-block">
+      <div class="pot-row">
+        <div class="pot-cell deck-a">
+          <span class="hud-label">HI</span>
+          <div class="knob-wrap" data-deck="a" data-band="high">
+            <div class="knob-pointer"></div>
+            <input type="range" class="eq-knob knob-input" data-deck="a" data-band="high" min="-26" max="6" value="0" step="0.5" aria-label="Deck A high EQ" />
+          </div>
+        </div>
+        <div class="pot-cell deck-b">
+          <span class="hud-label">HI</span>
+          <div class="knob-wrap" data-deck="b" data-band="high">
+            <div class="knob-pointer"></div>
+            <input type="range" class="eq-knob knob-input" data-deck="b" data-band="high" min="-26" max="6" value="0" step="0.5" aria-label="Deck B high EQ" />
+          </div>
+        </div>
+      </div>
+      <div class="pot-row">
+        <div class="pot-cell deck-a">
+          <span class="hud-label">MID</span>
+          <div class="knob-wrap" data-deck="a" data-band="mid">
+            <div class="knob-pointer"></div>
+            <input type="range" class="eq-knob knob-input" data-deck="a" data-band="mid" min="-26" max="6" value="0" step="0.5" aria-label="Deck A mid EQ" />
+          </div>
+        </div>
+        <div class="pot-cell deck-b">
+          <span class="hud-label">MID</span>
+          <div class="knob-wrap" data-deck="b" data-band="mid">
+            <div class="knob-pointer"></div>
+            <input type="range" class="eq-knob knob-input" data-deck="b" data-band="mid" min="-26" max="6" value="0" step="0.5" aria-label="Deck B mid EQ" />
+          </div>
+        </div>
+      </div>
+      <div class="pot-row">
+        <div class="pot-cell deck-a">
+          <span class="hud-label accent-label">LOW</span>
+          <div class="knob-wrap" data-deck="a" data-band="low">
+            <div class="knob-pointer"></div>
+            <input type="range" class="eq-knob knob-input" data-deck="a" data-band="low" min="-26" max="6" value="0" step="0.5" aria-label="Deck A low EQ" />
+          </div>
+        </div>
+        <div class="pot-cell deck-b">
+          <span class="hud-label accent-label">LOW</span>
+          <div class="knob-wrap" data-deck="b" data-band="low">
+            <div class="knob-pointer"></div>
+            <input type="range" class="eq-knob knob-input" data-deck="b" data-band="low" min="-26" max="6" value="0" step="0.5" aria-label="Deck B low EQ" />
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="fader-block">
+      <div class="chan-strip deck-a">
+        <div class="vu-ladder" id="vu-a"></div>
+        <div class="fader-trough">
+          <input type="range" class="volume-fader v-fader" data-deck="a" min="0" max="1.2" value="1" step="0.01" aria-label="Deck A volume" />
+        </div>
+      </div>
+      <div class="chan-strip deck-b chan-mirror">
+        <div class="fader-trough">
+          <input type="range" class="volume-fader v-fader" data-deck="b" min="0" max="1.2" value="1" step="0.01" aria-label="Deck B volume" />
+        </div>
+        <div class="vu-ladder" id="vu-b"></div>
+      </div>
+    </div>
+
+    <div class="xf-block">
+      <div class="xf-head">
+        <span class="hud-label hud-a">A ←</span>
+        <span class="hud-label">CROSSFADER · EQUAL POWER</span>
+        <span class="hud-label hud-b">→ B</span>
+      </div>
+      <input type="range" id="crossfader" min="-1" max="1" value="-1" step="0.01" aria-label="Crossfader" />
+    </div>
+
+    <div class="xf-block">
+      <div class="xf-head"><span class="hud-label">MASTER VOLUME</span></div>
+      <input type="range" id="master-fader" min="0" max="1.2" value="0.9" step="0.01" aria-label="Master volume" />
+    </div>
+
+    <div class="master-actions">
+      <button id="rec-btn" class="hw-btn rec-btn">● REC MIX</button>
+      <span id="rec-status" class="rec-status">Not recording</span>
+      <a id="rec-download" class="rec-download" hidden download="dj-mix.webm">↓ Download last recording</a>
+      <a id="rec-log-download" class="rec-download" hidden download="dj-set.djset.json">↓ Download set log</a>
+    </div>
+  </section>
+
+  <!-- ============================ DECK B ================================== -->
+  <section class="deck-panel deck-b" id="deck-b" data-deck="b">
+    <div class="deck-head deck-head-mirror">
+      <button class="hw-btn tap-btn" data-deck="b"
+              title="Tap 4+ times in time with the track to override the analyzer's BPM for this deck (drives loop lengths, beatjump, tempo-synced FX and the jog spin).">TAP</button>
+      <div class="readout">
+        <span class="hud-label">TEMPO</span>
+        <span class="num num-lg" id="bpm-b">--.-</span>
+      </div>
+      <div class="readout">
+        <span class="hud-label">KEY</span>
+        <span class="num num-md" id="key-b">--</span>
+      </div>
+      <div class="deck-title-col deck-title-right">
+        <input type="file" id="file-b" accept="audio/*" class="file-input" />
+        <label for="file-b" class="track-title" id="title-b">Load Track B&hellip;</label>
+        <span class="track-sub">Click to load a file, or use the browser below</span>
+      </div>
+      <div class="deck-id">B</div>
+    </div>
+
+    <div class="deck-arena deck-arena-mirror">
+      <div class="pitch-col">
+        <div class="pitch-head">
+          <span class="hud-label">RANGE</span>
+          <span class="num">±8%</span>
+        </div>
+        <div class="fader-trough pitch-trough">
+          <input type="range" class="pitch-fader v-fader" data-deck="b" min="-8" max="8" value="0" step="0.1" aria-label="Deck B pitch" />
+        </div>
+        <span class="num pitch-readout" id="pitch-readout-b">0.0%</span>
+        <div class="bend-pair">
+          <button class="hw-btn bend-btn" data-deck="b" data-bend="-2" title="Hold to nudge tempo down 2%">−</button>
+          <button class="hw-btn bend-btn" data-deck="b" data-bend="2" title="Hold to nudge tempo up 2%">+</button>
+        </div>
+      </div>
+
+      <div class="platter-col">
+        <div class="platter-row">
+          <div class="tonearm tonearm-mirrored" data-deck="b">
+            <div class="tonearm-arm"></div>
+            <div class="tonearm-head"></div>
+          </div>
+          <div class="jog-wheel" data-deck="b">
+            <div class="jog-grooves"></div>
+            <div class="jog-indicator"></div>
+            <div class="jog-label-ring">
+              <span class="jog-label">B</span>
+              <span class="jog-mode">VINYL</span>
+              <span class="jog-pos" id="jogpos-b">0:00</span>
+            </div>
+            <div class="spindle"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="rail">
+      <span class="hud-label">JUMP</span>
+      <button class="hw-btn jump-btn" data-deck="b" data-beats="-16">«16</button>
+      <button class="hw-btn jump-btn" data-deck="b" data-beats="-8">«8</button>
+      <button class="hw-btn jump-btn" data-deck="b" data-beats="-4">«4</button>
+      <button class="hw-btn jump-btn" data-deck="b" data-beats="-1">«1</button>
+      <button class="hw-btn jump-btn" data-deck="b" data-beats="1">1»</button>
+      <button class="hw-btn jump-btn" data-deck="b" data-beats="4">4»</button>
+      <button class="hw-btn jump-btn" data-deck="b" data-beats="8">8»</button>
+      <button class="hw-btn jump-btn" data-deck="b" data-beats="16">16»</button>
+      <span class="rail-sep"></span>
+      <button class="hw-btn accent-btn deck-btn" data-deck="b" data-action="loop-toggle">OFF</button>
+      <button class="hw-btn stepper-btn" data-deck="b" data-step="-1" aria-label="Halve loop length">1/2</button>
+      <span class="num stepper-value" id="loop-value-b">4</span>
+      <button class="hw-btn stepper-btn" data-deck="b" data-step="1" aria-label="Double loop length">2X</button>
+      <span class="hud-label">LOOP</span>
+    </div>
+
+    <div class="deck-bottom deck-bottom-mirror">
+      <div class="pad-module" data-deck="b">
+        <div class="pad-tabs">
+          <button class="pad-tab is-active" data-deck="b" data-mode="cue">HOT CUE</button>
+          <button class="pad-tab" data-deck="b" data-mode="roll">ROLL</button>
+          <button class="pad-tab is-unavailable" data-deck="b" data-mode="slicer" disabled
+                  title="No slicer engine in this build — there is no beat-slicing DSP unit to drive these pads.">SLICER</button>
+          <button class="pad-tab" data-deck="b" data-mode="sampler">SAMPLER</button>
+        </div>
+        <div class="pad-bank" data-deck="b" data-mode="cue">
+          <button class="pad hot-cue-btn" data-deck="b" data-cue="1"><span class="pad-num">1</span><span class="pad-sub">EMPTY</span></button>
+          <button class="pad hot-cue-btn" data-deck="b" data-cue="2"><span class="pad-num">2</span><span class="pad-sub">EMPTY</span></button>
+          <button class="pad hot-cue-btn" data-deck="b" data-cue="3"><span class="pad-num">3</span><span class="pad-sub">EMPTY</span></button>
+          <button class="pad hot-cue-btn" data-deck="b" data-cue="4"><span class="pad-num">4</span><span class="pad-sub">EMPTY</span></button>
+          <button class="pad pad-clear cue-clear-btn" data-deck="b" data-cue="1"><span class="pad-num">CLR</span><span class="pad-sub">1</span></button>
+          <button class="pad pad-clear cue-clear-btn" data-deck="b" data-cue="2"><span class="pad-num">CLR</span><span class="pad-sub">2</span></button>
+          <button class="pad pad-clear cue-clear-btn" data-deck="b" data-cue="3"><span class="pad-num">CLR</span><span class="pad-sub">3</span></button>
+          <button class="pad pad-clear cue-clear-btn" data-deck="b" data-cue="4"><span class="pad-num">CLR</span><span class="pad-sub">4</span></button>
+        </div>
+        <div class="pad-bank" data-deck="b" data-mode="roll" hidden></div>
+        <div class="pad-bank" data-deck="b" data-mode="sampler" hidden></div>
+      </div>
+
+      <div class="fx-power-col">
+        <span class="hud-label">FX POWER</span>
+        <button class="pad fx-power-pad fx-pad" data-deck="b"
+                title="Engage / bypass this deck's FX unit (keyboard: J)">FX OFF</button>
+      </div>
+
+      <div class="transport-col">
+        <div class="transport-top">
+          <button class="hw-btn deck-btn sync-btn" data-deck="b" data-action="sync" title="Match Deck B's tempo to Deck A">SYNC</button>
+          <button class="hw-btn deck-btn" data-deck="b" data-action="reverse" title="Reverse playback">REV</button>
+          <button class="hw-btn deck-btn" data-deck="b" data-action="brake" title="Turntable brake — ramp to a stop">BRAKE</button>
+        </div>
+        <button class="big-btn cue-big deck-btn" data-deck="b" data-action="cue">
+          <span class="big-lamp"></span><span>CUE</span>
+        </button>
+        <button class="big-btn play-big deck-btn play-btn" data-deck="b" data-action="play" aria-label="Play/Pause Deck B">
+          <span class="big-lamp"></span>
+          <svg class="icon icon-play" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>
+          <svg class="icon icon-pause" viewBox="0 0 24 24" fill="currentColor" hidden><rect x="6" y="5" width="4" height="14" /><rect x="14" y="5" width="4" height="14" /></svg>
+          <span>PLAY / PAUSE</span>
+        </button>
+      </div>
+    </div>
+  </section>
+</main>
+
+<!-- ========================================================================= -->
+<!-- SAMPLER BANK                                                              -->
+<!-- ========================================================================= -->
+<section class="panel sampler-bank">
+  <div class="panel-head">
+    <div class="panel-title">
+      <span class="lamp lamp-ok"></span>
+      <span>8-SLOT SAMPLER BANK</span>
+      <span class="chip">SYNTHESIZED ONE-SHOTS</span>
+    </div>
+    <span class="hud-label">KEYS T Y U G / H V B N · pads route through the master fader, so they are captured by REC</span>
+  </div>
+  <div class="pad-grid" id="pad-grid"></div>
+</section>
+
+<!-- ========================================================================= -->
+<!-- TRACK BROWSER                                                             -->
+<!-- ========================================================================= -->
+<section class="panel browser">
+  <div class="browser-ribbon">
+    <div class="search-box">
+      <span class="search-icon">⌕</span>
+      <input type="text" id="browser-search" placeholder="Search uploaded tracks by name, BPM or key (e.g. 8A, 126)…" />
+    </div>
+    <div class="sort-group">
+      <span class="hud-label">SORT</span>
+      <button class="hw-btn sort-btn is-on" data-sort="name">NAME</button>
+      <button class="hw-btn sort-btn" data-sort="bpm">BPM</button>
+      <button class="hw-btn sort-btn" data-sort="key">KEY</button>
+      <button class="hw-btn sort-btn" data-sort="energy">ENERGY</button>
+      <button class="hw-btn" id="browser-library-scan" title="Scan the server-configured DJ_LIBRARY_DIRS folders">SCAN LIBRARY</button>
+      <button class="hw-btn" id="browser-refresh">REFRESH</button>
+    </div>
+  </div>
+
+  <div class="browser-table">
+    <div class="browser-head">
+      <span>LOAD</span>
+      <span>TRACK</span>
+      <span>BPM</span>
+      <span>KEY</span>
+      <span>TIME</span>
+      <span title="Mean of the analyzer's normalized RMS energy curve, 0–1, relative to each track's own peak. Not a cross-track loudness score.">AVG NRG</span>
+      <span class="right">STATUS</span>
+    </div>
+    <div class="browser-rows" id="browser-rows">
+      <div class="browser-empty">Loading uploaded tracks…</div>
+    </div>
+  </div>
+  <p class="panel-note">
+    Every row is a track you have actually uploaded (<code>GET /api/tracks</code>). BPM, key, duration and
+    energy come from the real analyzer (<code>GET /api/tracks/{id}/analysis</code>), cached per track in the
+    browser. Crates, playlists, ratings and automix are not implemented and are deliberately not shown.
+  </p>
+</section>
+
+<footer class="footbar">
+  <span>WEB AUDIO ENGINE · <span id="foot-rate">--</span> · BUFFER: browser-managed</span>
+  <span id="foot-decks">DECK A: -- · DECK B: --</span>
+  <span>AI MUSIC BRAIN — personal / educational use</span>
+</footer>
+
+<script src="/app.js"></script>
+<script src="/deck-controller.js"></script>
+<script src="/fx-rack.js"></script>
+<script src="/automation.js"></script>
+<script src="/performance.js"></script>
+<script src="/browser.js"></script>
+</body>
+</html>

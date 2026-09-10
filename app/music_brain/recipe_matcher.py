@@ -1,0 +1,364 @@
+"""Evaluates a pair of analyzed tracks against the 28 transition recipes,
+ranks the best-fitting ones, and explains the choice in plain English.
+
+Implements the "DJ Brain" heuristics from spec 3.4 / CLAUDE.md section 4:
+  1. Camelot key distance scoring (12-hour wheel).
+  2. BPM difference classification (seamless / ramp / cut-required).
+  3. Phrase-boundary alignment: candidate exit points on Track A (outgoing)
+     land on an 8-bar phrase boundary inside a breakdown/outro/high-energy
+     section; candidate entry points on Track B (incoming) land on a phrase
+     boundary inside an intro/early-verse section.
+  4. Vocal-collision penalty: overlapping active vocals on both tracks during
+     the transition window is penalized unless the chosen recipe mutes one
+     side via stems (`requires_stems`).
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+from typing import List, Optional, Tuple
+
+from app.music_brain.analyzer import TrackAnalysis
+from app.music_brain.config import BARS_PER_PHRASE, BEATS_PER_BAR
+from app.music_brain.knowledge_parser import KnowledgeParser, TransitionRecipe
+
+_CAMELOT_RE = re.compile(r"^(\d{1,2})([AB])$", re.IGNORECASE)
+
+# Sections on the outgoing track (A) that are good places to leave from.
+_EXIT_SECTIONS = {"breakdown", "outro", "drop", "build"}
+# Sections on the incoming track (B) that are unconditionally good entry points.
+_ENTRY_SECTIONS = {"intro", "breakdown"}
+
+
+@dataclass
+class TransitionCandidate:
+    recipe: TransitionRecipe
+    score: float  # 0-100
+    a_time: float  # exit point on Track A, seconds
+    b_time: float  # entry point on Track B, seconds
+    camelot_score: float
+    bpm_score: float
+    phrase_score: float
+    vocal_penalty: float
+    explanation: str
+
+    def to_dict(self) -> dict:
+        return {
+            "recipe": self.recipe.name,
+            "score": round(self.score, 1),
+            "a_time": round(self.a_time, 2),
+            "b_time": round(self.b_time, 2),
+            "camelot_score": round(self.camelot_score, 2),
+            "bpm_score": round(self.bpm_score, 2),
+            "phrase_score": round(self.phrase_score, 2),
+            "vocal_penalty": round(self.vocal_penalty, 2),
+            "explanation": self.explanation,
+        }
+
+
+def _parse_camelot(camelot: str) -> Tuple[int, str]:
+    match = _CAMELOT_RE.match(camelot.strip())
+    if not match:
+        raise ValueError(f"Invalid Camelot notation: {camelot!r}")
+    return int(match.group(1)), match.group(2).upper()
+
+
+def camelot_distance_score(camelot_a: str, camelot_b: str) -> Tuple[float, str]:
+    """Score (0-1) and reason for the harmonic compatibility of two Camelot keys."""
+    hour_a, letter_a = _parse_camelot(camelot_a)
+    hour_b, letter_b = _parse_camelot(camelot_b)
+
+    if hour_a == hour_b and letter_a == letter_b:
+        return 1.0, "identical keys"
+
+    hour_delta = min((hour_a - hour_b) % 12, (hour_b - hour_a) % 12)
+
+    if letter_a == letter_b and hour_delta == 1:
+        return 0.9, "adjacent keys on the Camelot wheel (+/-1 hour)"
+    if hour_a == hour_b and letter_a != letter_b:
+        return 0.85, "relative major/minor of the same key"
+    if letter_a == letter_b and hour_delta == 2:
+        return 0.8, "+2 energy-boost key change"
+    return 0.1, f"clashing keys ({hour_delta} hours apart on the Camelot wheel)"
+
+
+def bpm_compatibility(bpm_a: float, bpm_b: float) -> Tuple[float, str]:
+    """Score (0-1) and classification label for a BPM pairing."""
+    if bpm_a <= 0 or bpm_b <= 0:
+        return 0.0, "unknown"
+    pct_diff = abs(bpm_a - bpm_b) / max(bpm_a, bpm_b)
+    if pct_diff <= 0.03:
+        return 1.0, "seamless"
+    if pct_diff <= 0.06:
+        return 0.75, "ramp"
+    return 0.2, "cut_required"
+
+
+def _section_at(track: TrackAnalysis, time: float) -> Optional[str]:
+    for section in track.sections:
+        if section.start <= time < section.end:
+            return section.label
+    return track.sections[-1].label if track.sections else None
+
+
+def find_exit_candidates(track: TrackAnalysis) -> List[float]:
+    """Phrase boundaries on the outgoing track that sit in a good exit section."""
+    return [
+        t for t in track.phrase_boundaries_8bar
+        if _section_at(track, t) in _EXIT_SECTIONS
+    ]
+
+
+def find_entry_candidates(track: TrackAnalysis) -> List[float]:
+    """Phrase boundaries on the incoming track that make a good entry point:
+    anywhere in an intro/breakdown, or the boundary marking the *start* of a
+    verse (i.e. right where the intro ends) per spec 3.4.3 ("intro or verse
+    start") — not an arbitrary boundary buried in the middle of a verse.
+    """
+    verse_starts = {s.start for s in track.sections if s.label == "verse"}
+    candidates = []
+    for t in track.phrase_boundaries_8bar:
+        section = _section_at(track, t)
+        if section in _ENTRY_SECTIONS:
+            candidates.append(t)
+        elif section == "verse" and any(abs(t - vs) < 1e-6 for vs in verse_starts):
+            candidates.append(t)
+    return candidates
+
+
+def nearest_phrase_boundary(track: TrackAnalysis, time: float) -> float:
+    """Snaps a rough, manually-picked time to the nearest 8-bar phrase
+    boundary — per CLAUDE.md's "transition entry/exit timestamps must snap
+    to 8-bar (32-beat) phrase boundaries" rule. Falls back to the raw time
+    if the track has no detected phrase boundaries.
+    """
+    boundaries = track.phrase_boundaries_8bar
+    if not boundaries:
+        return time
+    return min(boundaries, key=lambda b: abs(b - time))
+
+
+def _phrase_transition_window(track: TrackAnalysis, bars: int = 16) -> float:
+    """Seconds spanned by `bars` bars at the track's BPM."""
+    if track.bpm <= 0:
+        return 30.0
+    seconds_per_beat = 60.0 / track.bpm
+    return bars * BEATS_PER_BAR * seconds_per_beat
+
+
+def vocal_overlap_penalty(
+    track_a: TrackAnalysis, a_time: float,
+    track_b: TrackAnalysis, b_time: float,
+) -> float:
+    """0.0 (no clash) to 1.0 (full overlap) vocal-collision penalty."""
+    window = min(
+        _phrase_transition_window(track_a, bars=2 * BARS_PER_PHRASE),
+        _phrase_transition_window(track_b, bars=2 * BARS_PER_PHRASE),
+    )
+    a_window = (a_time, a_time + window)
+    b_window = (b_time, b_time + window)
+
+    def _active_in(regions: List[Tuple[float, float]], window: Tuple[float, float]) -> float:
+        start, end = window
+        covered = 0.0
+        for r_start, r_end in regions:
+            overlap = min(end, r_end) - max(start, r_start)
+            if overlap > 0:
+                covered += overlap
+        span = end - start
+        return min(covered / span, 1.0) if span > 0 else 0.0
+
+    a_active = _active_in(track_a.vocal_active_regions, a_window)
+    b_active = _active_in(track_b.vocal_active_regions, b_window)
+    return a_active * b_active
+
+
+def _explain(
+    recipe: TransitionRecipe, camelot_reason: str, bpm_label: str,
+    a_time: float, b_time: float, vocal_penalty: float,
+) -> str:
+    parts = [
+        f"{recipe.name}: Track A exits at {a_time:.1f}s, Track B enters at {b_time:.1f}s.",
+        f"Keys are {camelot_reason}; BPM gap is {bpm_label}.",
+    ]
+    if vocal_penalty > 0.3:
+        if recipe.requires_stems:
+            parts.append("Both tracks have active vocals here, but this recipe uses stem isolation to avoid a clash.")
+        else:
+            parts.append("Caution: both tracks have active vocals here, risking a vocal collision.")
+    parts.append(recipe.problem_it_solves.split(".")[0].strip() + ".")
+    return " ".join(parts)
+
+
+class RecipeMatcher:
+    """Scores every (recipe x candidate transition point) combination for a
+    track pair and returns the top-ranked, explained transition blueprints."""
+
+    def __init__(self, knowledge: Optional[KnowledgeParser] = None):
+        self.knowledge = knowledge or KnowledgeParser()
+
+    def _score_one(
+        self,
+        recipe: TransitionRecipe,
+        track_a: TrackAnalysis,
+        a_time: float,
+        track_b: TrackAnalysis,
+        b_time: float,
+    ) -> TransitionCandidate:
+        camelot_score, camelot_reason = 1.0, "not evaluated (key-agnostic recipe)"
+        if recipe.camelot_compatible_only and track_a.key and track_b.key:
+            camelot_score, camelot_reason = camelot_distance_score(track_a.key.camelot, track_b.key.camelot)
+        elif track_a.key and track_b.key:
+            camelot_score, camelot_reason = camelot_distance_score(track_a.key.camelot, track_b.key.camelot)
+
+        bpm_score, bpm_label = bpm_compatibility(track_a.bpm, track_b.bpm)
+        already_compatible = bpm_score >= 0.9 and camelot_score >= 0.8
+        if recipe.max_bpm_delta is None:
+            # Bridge/cut/echo recipes are designed for large BPM/key gaps.
+            bpm_score = max(bpm_score, 0.8)
+
+        phrase_score = 1.0  # both times were drawn from phrase-boundary candidates by construction
+
+        penalty = vocal_overlap_penalty(track_a, a_time, track_b, b_time)
+        if recipe.requires_stems:
+            penalty *= 0.5  # stems let the recipe surgically mute the clashing vocal, but not perfectly
+
+        raw = (0.35 * camelot_score) + (0.30 * bpm_score) + (0.20 * phrase_score) + (0.15 * (1 - penalty))
+        # Hard gate: a camelot-only recipe should never rank well on a clashing pair.
+        if recipe.camelot_compatible_only and camelot_score <= 0.2:
+            raw *= 0.3
+        # Overkill penalty: per each bridge recipe's own "When NOT to use it"
+        # section, don't reach for a big-gap tool (Echo Out, Backspin, ...)
+        # when the pair already blends cleanly on key and BPM.
+        if recipe.max_bpm_delta is None and already_compatible:
+            raw *= 0.85
+
+        score = max(0.0, min(100.0, raw * 100.0))
+        explanation = _explain(recipe, camelot_reason, bpm_label, a_time, b_time, penalty)
+
+        return TransitionCandidate(
+            recipe=recipe, score=score, a_time=a_time, b_time=b_time,
+            camelot_score=camelot_score, bpm_score=bpm_score,
+            phrase_score=phrase_score, vocal_penalty=penalty,
+            explanation=explanation,
+        )
+
+    def match(
+        self,
+        track_a: TrackAnalysis,
+        track_b: TrackAnalysis,
+        top_n: int = 3,
+    ) -> List[TransitionCandidate]:
+        exit_points = find_exit_candidates(track_a) or (
+            [track_a.phrase_boundaries_8bar[-1]] if track_a.phrase_boundaries_8bar else [max(track_a.duration - 30, 0.0)]
+        )
+        entry_points = find_entry_candidates(track_b) or (
+            [track_b.phrase_boundaries_8bar[0]] if track_b.phrase_boundaries_8bar else [0.0]
+        )
+
+        # One representative (exit, entry) pair per recipe evaluation: the
+        # latest good exit on A paired with the earliest good entry on B,
+        # which is what a DJ would actually reach for first.
+        a_time = exit_points[-1]
+        b_time = entry_points[0]
+
+        best_per_recipe: dict[str, TransitionCandidate] = {}
+        for recipe in self.knowledge.get_all():
+            candidate = self._score_one(recipe, track_a, a_time, track_b, b_time)
+            existing = best_per_recipe.get(recipe.name)
+            if existing is None or candidate.score > existing.score:
+                best_per_recipe[recipe.name] = candidate
+
+        ranked = sorted(best_per_recipe.values(), key=lambda c: c.score, reverse=True)
+        return ranked[:top_n]
+
+    def score_pair(
+        self,
+        recipe_name: str,
+        track_a: TrackAnalysis,
+        a_time: float,
+        track_b: TrackAnalysis,
+        b_time: float,
+        snap_to_phrase: bool = True,
+    ) -> TransitionCandidate:
+        """Scores one specific recipe at explicit, user-chosen times — the
+        manual-override path (as opposed to `match`, which picks its own
+        points). Unlike `match`, this never substitutes the AI's own points;
+        it only snaps the *given* rough time to the nearest real phrase
+        boundary on each track (never mid-phrase), per CLAUDE.md.
+        """
+        recipe = self.knowledge.get(recipe_name)
+        if recipe is None:
+            raise ValueError(f"Unknown recipe: {recipe_name!r}")
+
+        if snap_to_phrase:
+            a_time = nearest_phrase_boundary(track_a, a_time)
+            b_time = nearest_phrase_boundary(track_b, b_time)
+
+        return self._score_one(recipe, track_a, a_time, track_b, b_time)
+
+    def resolve_candidate(
+        self,
+        track_a: TrackAnalysis,
+        track_b: TrackAnalysis,
+        recipe_name: Optional[str] = None,
+        a_time: Optional[float] = None,
+        b_time: Optional[float] = None,
+        top_n_for_default: int = 3,
+    ) -> TransitionCandidate:
+        """The single entry point both the CLI/agent bridge and the web API
+        use to decide what to actually render:
+
+        - No recipe_name and no times: the AI's own top suggestion (`match`).
+        - recipe_name given, times omitted: that recipe scored at the AI's
+          own best guess for its exit/entry points.
+        - Either time given (with or without recipe_name): a genuine manual
+          override — the given time(s) win, snapped to the nearest phrase
+          boundary; any omitted time falls back to the AI's best guess.
+
+        This is what fixes the bug where a manually-picked time was silently
+        discarded whenever the chosen recipe happened to already appear
+        among the AI's own scored candidates.
+        """
+        manual_override = a_time is not None or b_time is not None
+
+        if not manual_override and recipe_name is None:
+            candidates = self.match(track_a, track_b, top_n=1)
+            if not candidates:
+                raise ValueError("No transition candidates found for this track pair")
+            return candidates[0]
+
+        # Need the AI's own best-guess points as defaults for whichever of
+        # a_time/b_time (and whichever recipe) wasn't explicitly given.
+        default_candidates = self.match(track_a, track_b, top_n=top_n_for_default)
+        if recipe_name is None:
+            if not default_candidates:
+                raise ValueError("No transition candidates found for this track pair")
+            recipe_name = default_candidates[0].recipe.name
+
+        matched_default = next((c for c in default_candidates if c.recipe.name == recipe_name), None)
+        default_a = matched_default.a_time if matched_default else (default_candidates[0].a_time if default_candidates else 0.0)
+        default_b = matched_default.b_time if matched_default else (default_candidates[0].b_time if default_candidates else 0.0)
+
+        final_a = a_time if a_time is not None else default_a
+        final_b = b_time if b_time is not None else default_b
+
+        return self.score_pair(recipe_name, track_a, final_a, track_b, final_b, snap_to_phrase=manual_override)
+
+
+if __name__ == "__main__":
+    import json
+    import sys
+
+    from app.music_brain.analyzer import analyze
+
+    if len(sys.argv) < 3:
+        print("Usage: python -m music_brain.recipe_matcher <track_a> <track_b>")
+        raise SystemExit(1)
+
+    a = analyze(sys.argv[1])
+    b = analyze(sys.argv[2])
+    matcher = RecipeMatcher()
+    results = matcher.match(a, b)
+    print(json.dumps([c.to_dict() for c in results], indent=2))

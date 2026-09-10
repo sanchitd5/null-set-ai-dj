@@ -1,0 +1,49 @@
+# ============================================================
+# AI DJ Mixing System - Requirements
+# ============================================================
+# Core dependencies for professional DJ mixing pipeline
+# Install: pip install -r requirements.txt
+# ============================================================
+
+# === Audio Processing ===
+librosa==0.9.2                             # Audio analysis, beat detection, BPM estimation
+numpy==1.26.4                              # Array operations for audio data
+scipy==1.10.1                              # Signal processing for EQ filters
+pydub==0.25.1                              # Audio manipulation and mixing
+audioread==3.0.1                           # Audio file reading (backend for librosa)
+soundfile==0.13.1                          # Audio file I/O
+resampy==0.4.3                             # Audio resampling (librosa dependency)
+numba==0.62.1                              # JIT compiler for librosa performance
+joblib==1.5.2                              # Caching for librosa
+matplotlib>=3.7.0                          # Waveform visualization for DJ analysis
+
+# === OpenAI Integration ===
+openai>=1.0.0                              # OpenAI API (v1.0+ for chat completions and Whisper)
+python-dotenv==1.1.1                       # Environment variable management (.env file)
+
+# === Music Brain Package (music_brain/) ===
+pyyaml>=6.0                                # Frontmatter parsing in music_brain/knowledge_parser.py
+pytest>=8.0                                # Test suite for music_brain/
+demucs                                     # Phase 2: stem separation (music_brain/stem_service.py)
+torch                                      # Phase 2: Demucs backend. Install a CUDA build from
+                                            #   https://download.pytorch.org/whl/ for GPU acceleration,
+                                            #   or the default PyPI wheel for CPU-only.
+fastapi                                    # Phase 5: web workbench (ui/server.py)
+uvicorn                                    # Phase 5: ASGI server for ui/server.py
+python-multipart                           # Phase 5: file upload parsing for ui/server.py
+
+# NOTE: dsp_rack.py (Phase 3) was speced to use Spotify's `pedalboard`, but its
+# native audio-processing code was found to segfault unconditionally on this
+# machine (confirmed across two pedalboard versions and multiple numpy
+# versions, even for an empty no-op Pedalboard()). It was reimplemented in
+# pure scipy/numpy instead, so `pedalboard` is intentionally NOT listed here.
+
+# === Data Processing ===
+# All these are Python standard library, no external install needed:
+# - os, json, re, datetime, logging
+
+# ============================================================
+# Optional Dependencies (not required for core pipeline)
+# ============================================================
+# scikit-learn==1.7.2                      # For advanced ML features (optional)
+# tensorflow==2.20.0                       # For ML models (not used in current pipeline)
