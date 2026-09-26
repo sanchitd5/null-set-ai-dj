@@ -284,7 +284,12 @@ class Deck {
     }
     if (!this.playing) return this.startOffset;
     const travelled = (audioCtx.currentTime - this.startedAt) * this._playbackRate();
-    return this._clampPos(this.startOffset + (this.reversed ? -travelled : travelled));
+    const raw = this.startOffset + (this.reversed ? -travelled : travelled);
+    const span = this._loopSpan;
+    if (span && this.loopOn && raw >= span[1] && span[1] > span[0]) {
+      return span[0] + ((raw - span[0]) % (span[1] - span[0]));
+    }
+    return this._clampPos(raw);
   }
 
   // Changing playbackRate mid-playback invalidates the startedAt/startOffset
@@ -348,6 +353,9 @@ class Deck {
       src.loopStart = bufPos;
       src.loopEnd = Math.min(bufPos + this.loopBeats * secondsPerBeat, duration);
     }
+    // Forward loops report a wrapped position, so the clock (cursor, phrase
+    // grid, autopilot exit timing) stays inside the loop instead of running on.
+    this._loopSpan = this.loopOn && !this.reversed ? [pos, Math.min(pos + this.loopBeats * 60 / (this.bpm || 128), duration)] : null;
     src.connect(this.inputGain);
     src.start(0, Math.max(0, Math.min(bufPos, duration - 0.01)));
     this.source = src;
@@ -439,8 +447,9 @@ class Deck {
   }
 
   toggleLoop() {
+    const pos = this._currentPosition(); // read while the loop still wraps
     this.loopOn = !this.loopOn;
-    if (this.playing) this.play(this._currentPosition());
+    if (this.playing) this.play(pos);
     return this.loopOn;
   }
 
