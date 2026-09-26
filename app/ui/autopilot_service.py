@@ -66,9 +66,12 @@ OCCASION FIRST (overrides VIBE CONTINUITY, SAME-ARTIST and CREDITS when they con
   The occasion says who is on the floor and what music they came for. If it names a music
   culture or event with its own canon and the current song is outside it, STEER into that
   world as a quick journey of AT MOST 5-7 short bridge songs (each plays only 30-60 s):
-    every step shares something with the song before it (tempo, energy, a fusion / remix /
-    crossover collab, instrumentation) and is clearly closer to the target world than the
-    last; by step 5-7 you MUST be playing the occasion's own anthems. The occasion line
+    every step MUST sit inside the TEMPO WINDOW so the beats can be matched (the DJ blends
+    beat to beat; no echo-outs): pick the version that fits - a remix, edit, bhangra-house /
+    club mix, or a song that is natively at that tempo. If the target world lives at another
+    tempo, climb there in a TEMPO LADDER of <= 6% per step. Each step is also clearly closer
+    to the target world than the last; by step 5-7 you MUST be playing the occasion's own
+    anthems. The occasion line
     tells you which step you are on - at step N be about N/6 of the way there.
   Once inside that world, apply VIBE CONTINUITY within it. Examples of canons:
     "punjabi wedding" / "bhangra" -> Diljit Dosanjh, AP Dhillon, Karan Aujla, Sidhu Moose Wala,
@@ -154,8 +157,8 @@ _USER_TEMPLATE = (
     "Avg Energy: {energy:.2f}/1.0 | Set position: {set_pos_pct}% through set\n"
     "Occasion: {occasion}\n"
     "Set mode: {set_mode_line}\n"
-    "TEMPO WINDOW (preferred, so the next song can be beat-matched; a steering move toward the "
-    "occasion may leave it): {tempo_window}\n"
+    "TEMPO WINDOW (required, so the next song can be beat-matched - also while steering; "
+    "choose a remix / edit that fits rather than leaving it): {tempo_window}\n"
     "First fill current_genre and current_profile for THIS song, then pick songs whose own "
     "track_profile stays close to it. Stay in this genre neighbourhood unless the occasion demands a shift.\n"
     "Already played titles (avoid exact titles, same artist OK): {history}\n\n"

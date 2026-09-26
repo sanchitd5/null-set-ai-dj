@@ -587,6 +587,7 @@
   let allowTempoJump = false; // set on the last round so the set never stalls
   let steering = "stay";      // "move" while steering toward the occasion's music
   let steerStep = 0;          // bridge songs played so far on the current steer (cap 7)
+  const HIGH_ENERGY_OCCASION = /\b(wedding|shaadi|sangeet|baraat|mehndi|reception|party|club\s*night|peak|festival|rave|birthday|bachelor(ette)?|new\s*year)\b/i;
   const MAX_STEER_STEPS = 7;
   function occasionWithStep(opts = {}) {
     if (!occasion || steering !== "move") return occasion;
@@ -808,7 +809,7 @@
       // hunting for a tempo that may barely exist (a 96 BPM dembow seed has
       // almost no house / UK dance peers). Take the best song already waiting
       // (the AI's own first picks) with a tempo-jump transition instead.
-      if (round === 2 && ready.length) {
+      if (round === MAX_ROUNDS && ready.length) {
         allowTempoJump = true;
         const waiting = ready.splice(0, ready.length);
         for (let i = 0; i < waiting.length; i++) {
@@ -833,7 +834,6 @@
       try {
         suggestions = await getSuggestions(currentId, rejected);
         aiPicking = false;
-        if (steering === "move") allowTempoJump = true; // occasion needs a genre move
       } catch (e) {
         aiPicking = false;
         console.warn("Autopilot suggest failed:", e.message);
@@ -1121,6 +1121,12 @@
     const url = seedInput ? seedInput.value.trim() : "";
     if (!url) { apStatus("Paste a seed URL first."); return; }
     occasion = occasionInput ? occasionInput.value.trim() : "";
+    // High-energy occasions run in QUICK mode unless the user picked a mode.
+    const modeEl = document.getElementById("ap-mode");
+    if (modeEl && modeEl.value === "hybrid" && HIGH_ENERGY_OCCASION.test(occasion)) {
+      modeEl.value = "quick";
+      apStatus(`"${occasion}" is a high-energy occasion → QUICK mode`);
+    }
     history = [];
     steering = "stay";
     steerStep = 0;
