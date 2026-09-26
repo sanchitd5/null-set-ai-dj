@@ -720,6 +720,26 @@
     const rejected = [];
     for (let round = 1; round <= MAX_ROUNDS; round++) {
       allowTempoJump = round === MAX_ROUNDS;
+      // Nothing beat-matchable after a strict round: don't burn more AI rounds
+      // hunting for a tempo that may barely exist (a 96 BPM dembow seed has
+      // almost no house / UK dance peers). Take the best song already waiting
+      // (the AI's own first picks) with a tempo-jump transition instead.
+      if (round === 2 && ready.length) {
+        allowTempoJump = true;
+        const waiting = ready.splice(0, ready.length);
+        for (let i = 0; i < waiting.length; i++) {
+          if (!active) return;
+          const c = waiting[i];
+          apStatus(`No beat-matchable pick — tempo-jump to ${c.name} (Echo Out / breakdown)`);
+          c.keep = false;
+          if (await tryCandidate(currentId, c)) {
+            waiting.slice(i + 1).forEach(addReady);
+            return;
+          }
+          if (c.keep) addReady(c);
+        }
+        allowTempoJump = false;
+      }
       if (!active) return;
       apStatus(round > 1 ? `⏳ Retrying with new suggestions (${round}/${MAX_ROUNDS})…`
                          : "⏳ AI selecting next songs…");
