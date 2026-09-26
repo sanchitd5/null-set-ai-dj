@@ -23,6 +23,18 @@ _YT_MUSIC_RE = re.compile(r"https?://music\.youtube\.com/")
 _YT_RE = re.compile(r"https?://(www\.)?(youtube\.com|youtu\.be)/")
 _YTSEARCH_RE = re.compile(r"ytsearch\d*:")
 
+# Keywords that identify DJ mixes / live sets — reject these, only individual tracks allowed.
+_MIX_KEYWORDS = re.compile(
+    r"\b(mix|dj.?set|live.?set|liveset|radio.?show|podcast|essential.?mix|"
+    r"boiler.?room|fabric.?live|renaissance|compilation|megamix|mashup.?mix)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_mix(title: str) -> bool:
+    """Return True if the title looks like a DJ mix or set rather than a single track."""
+    return bool(_MIX_KEYWORDS.search(title))
+
 
 def detect_source(url: str) -> str:
     """Return 'spotify', 'youtube_music', 'youtube', 'ytsearch', or 'unknown'."""
@@ -77,7 +89,18 @@ def _ytdlp(url: str, output_dir: Path) -> list[Path]:
         ydl.download([url])
 
     after = set(output_dir.glob("*.mp3"))
-    return sorted(after - before)
+    new_files = sorted(after - before)
+    # Reject DJ mixes / live sets — only individual studio tracks allowed.
+    clean = []
+    for path in new_files:
+        if _is_mix(path.stem):
+            path.unlink(missing_ok=True)
+            raise RuntimeError(
+                f"Downloaded file looks like a DJ mix/set: \"{path.stem}\". "
+                "Try a more specific search query."
+            )
+        clean.append(path)
+    return clean
 
 
 def _spotdl(url: str, output_dir: Path) -> list[Path]:

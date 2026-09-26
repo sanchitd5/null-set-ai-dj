@@ -196,7 +196,11 @@ def suggest_next_tracks(
     for s in suggestions:
         artist_s = s.get("artist", "")
         title_s = s.get("title", "")
-        s["search_query"] = f"ytsearch1:{artist_s} {title_s} audio"
+        # Exclude mixes, DJ sets, and live recordings — only individual studio tracks.
+        s["search_query"] = (
+            f"ytsearch1:{artist_s} {title_s} audio -mix -\"DJ set\" -\"live set\""
+            f" -liveset -\"radio show\" -\"podcast\" -\"essential mix\""
+        )
         # Ensure all expected fields present with defaults
         s.setdefault("genre", "")
         s.setdefault("mix_moment", "")
