@@ -859,8 +859,61 @@ def _genre_key(title: str) -> str:
     return " ".join(clean_title(title).lower().split())
 
 
+# Identical suggest requests share ONE LLM call. A browser whose request timed
+# out retries, but the server cannot cancel a generation, so retries used to
+# queue behind the original and snowball (gate: in_flight=suggest, queued=
+# [suggest, ...]; each call ~50 s on gemma-3-27b).
+import threading as _threading
+
+_suggest_inflight: Dict[str, dict] = {}
+_suggest_lock = _threading.Lock()
+SUGGEST_REUSE_S = 30.0   # a result this fresh is handed to an identical retry
+
+
+def _suggest_key(req: "AutopilotSuggestRequest") -> str:
+    return json.dumps(req.dict(), sort_keys=True, default=str)
+
+
 @app.post("/api/autopilot/suggest")
 def autopilot_suggest(req: AutopilotSuggestRequest):
+    import time as _time
+
+    key = _suggest_key(req)
+    with _suggest_lock:
+        slot = _suggest_inflight.get(key)
+        fresh = slot and slot.get("done_at") and _time.time() - slot["done_at"] < SUGGEST_REUSE_S
+        if slot and (not slot.get("done_at") or fresh):
+            owner = False
+        else:
+            slot = {"event": _threading.Event(), "result": None, "error": None, "done_at": None}
+            _suggest_inflight[key] = slot
+            owner = True
+        # forget stale entries
+        for k in [k for k, v in _suggest_inflight.items()
+                  if v.get("done_at") and _time.time() - v["done_at"] > SUGGEST_REUSE_S]:
+            _suggest_inflight.pop(k, None)
+    if not owner:
+        slot["event"].wait(300)
+        if slot["error"] is not None:
+            raise slot["error"]
+        if slot["result"] is None:
+            raise HTTPException(status_code=504, detail="suggest still running")
+        return slot["result"]
+    try:
+        slot["result"] = _autopilot_suggest_impl(req)
+        return slot["result"]
+    except HTTPException as exc:
+        slot["error"] = exc
+        raise
+    except Exception as exc:
+        slot["error"] = HTTPException(status_code=500, detail=f"LLM suggest error: {exc}")
+        raise
+    finally:
+        slot["done_at"] = _time.time()
+        slot["event"].set()
+
+
+def _autopilot_suggest_impl(req: AutopilotSuggestRequest):
     """Use local LLM (Ollama gemma3:4b by default) to suggest next tracks."""
     import traceback
     import numpy as np

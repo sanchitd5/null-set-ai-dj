@@ -323,7 +323,8 @@ _USER_TEMPLATE = (
     "At least ONE of your suggestions must be a less obvious pick (a deep cut, a newer release "
     "or a lesser-played gem that still fits every rule), not the genre's most famous anthem.\n\n"
     "Suggest {n} tracks. Prioritise: vibe continuity → harmonic compatibility → energy arc for {arc_phase} → diversity.\n"
-    "Reply ONLY with the JSON object."
+    "Reply ONLY with the JSON object, compact (no line breaks or indentation). Keep every "
+    "reason under 20 words, vibe_link under 8 words, mix_moment under 6 words."
 )
 _KNOWLEDGE_TEMPLATE = "\n\nDJ KNOWLEDGE (from the ./DJ wiki):\n{brief}"
 

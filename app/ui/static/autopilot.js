@@ -18,7 +18,7 @@
     if (u.includes("/api/blend/plan") || u.includes("/api/mashup/plan")) return 180000;
     if (u.includes("/api/layer/plan")) return 60000;   // vocal maps already cached by the blend plan
     if (u.includes("/api/bridge/plan")) return 10000;
-    if (u.includes("/api/autopilot/suggest")) return 150000;
+    if (u.includes("/api/autopilot/suggest")) return 240000; // ~50 s per call, may queue behind a plan
     if (u.includes("/api/audio/")) return 120000;
     if (u.includes("/api/match") || u.includes("/analysis")) return 90000;
     if (u.includes("/api/tracks")) return 20000;
