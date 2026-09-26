@@ -663,6 +663,9 @@
       <label class="hud-label" title="Synced drum machine: sparse fills, build rolls and breakdown kicks on the playing deck's beatgrid">
         <input type="checkbox" id="ap-drums-toggle" checked /> LIVE DRUMS
       </label>
+      <label class="hud-label" title="Lay the next track's vocal over an instrumental phrase of the current one (A x B), when key and tempo fit">
+        <input type="checkbox" id="ap-mashup-toggle" checked /> MASHUPS
+      </label>
       <input type="range" id="ap-drums-level" min="0" max="1" step="0.01" value="0.25" aria-label="Live drums level" />
     </div>
   </div>
@@ -740,6 +743,7 @@
 <script src="/automation.js"></script>
 <script src="/performance.js"></script>
 <script src="/beat-layer.js"></script>
+<script src="/mashup-layer.js"></script>
 <script src="/browser.js"></script>
 <script src="/autopilot.js"></script>
 </body>

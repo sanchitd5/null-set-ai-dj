@@ -58,9 +58,14 @@ TRACK_NAMES_FILE = UPLOAD_DIR / "_names.json"
 _track_names: Dict[str, str] = {}
 
 
+_AUDIO_SUFFIXES = {".mp3", ".wav", ".flac", ".m4a", ".ogg", ".aiff", ".aif", ".opus"}
+
+
 def _load_registry_from_disk() -> None:
+    # Audio only: aborted yt-dlp runs used to leave .webp thumbnails and .part
+    # files here, which then showed up (and crashed analysis) as "tracks".
     for path in UPLOAD_DIR.glob("*"):
-        if path.is_file() and not path.name.startswith("_"):
+        if path.is_file() and not path.name.startswith("_") and path.suffix.lower() in _AUDIO_SUFFIXES:
             _tracks[path.stem] = path
     if TRACK_NAMES_FILE.exists():
         try:
@@ -186,24 +191,28 @@ async def download_from_url(req: DownloadRequest):
             detail="Unsupported URL. Paste a YouTube, YouTube Music, or Spotify link.",
         )
 
+    # Download into a private temp dir so thumbnails / .part files from a failed
+    # or filtered run never land in UPLOAD_DIR; only the final audio is moved over.
+    tmp_dir = UPLOAD_DIR / f"_dl_{uuid.uuid4().hex}"
     try:
-        paths = download_to_dir(req.url, UPLOAD_DIR)
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        try:
+            paths = download_to_dir(req.url, tmp_dir)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
 
-    results = []
-    for path in paths:
-        original_name = path.stem
-        data = path.read_bytes()
-        track_id = hashlib.sha256(data).hexdigest()[:16]
-        dest = UPLOAD_DIR / f"{track_id}{path.suffix}"
-        if not dest.exists():
-            path.rename(dest)
-        else:
-            path.unlink(missing_ok=True)
-        _tracks[track_id] = dest
-        _remember_track_name(track_id, original_name)
-        results.append({"track_id": track_id, "filename": dest.name, "display_name": original_name})
+        results = []
+        for path in paths:
+            original_name = path.stem
+            data = path.read_bytes()
+            track_id = hashlib.sha256(data).hexdigest()[:16]
+            dest = UPLOAD_DIR / f"{track_id}{path.suffix}"
+            if not dest.exists():
+                shutil.move(str(path), dest)
+            _tracks[track_id] = dest
+            _remember_track_name(track_id, original_name)
+            results.append({"track_id": track_id, "filename": dest.name, "display_name": original_name})
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
     return {"source": source, "tracks": results}
 
@@ -300,6 +309,74 @@ def post_match(req: MatchRequest):
     except Exception:
         vibe = None
     return {"candidates": [c.to_dict() for c in candidates], "vibe": vibe}
+
+
+class MashupRequest(BaseModel):
+    host_id: str
+    guest_id: str
+    bars: int = 8
+
+
+def _vocals_stem(track_id: str) -> str:
+    from app.music_brain.mashup import MASHUP_DEMUCS_MODEL
+
+    result = separate_stems(_track_path(track_id), two_stems="vocals", model=MASHUP_DEMUCS_MODEL)
+    path = result.stems.get("vocals")
+    if not path:
+        raise RuntimeError("vocal stem missing after separation")
+    return path
+
+
+@app.post("/api/mashup/plan")
+def post_mashup_plan(req: MashupRequest):
+    """Plan guest-vocal-over-host-beat ("A x B"). Separates vocals (cached) only
+    after the key/tempo checks pass, so incompatible pairs return quickly."""
+    from app.music_brain.mashup import ALLOWED_BARS, plan_mashup
+
+    if req.bars not in ALLOWED_BARS:
+        raise HTTPException(status_code=400, detail=f"bars must be one of {list(ALLOWED_BARS)}")
+    if req.host_id == req.guest_id:
+        raise HTTPException(status_code=400, detail="host and guest must differ")
+    host = analyze_track(_track_path(req.host_id))
+    guest = analyze_track(_track_path(req.guest_id))
+    try:
+        plan = plan_mashup(
+            host, guest,
+            host_vocals_path=lambda: _vocals_stem(req.host_id),
+            guest_vocals_path=lambda: _vocals_stem(req.guest_id),
+            bars=req.bars,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"mashup plan error: {exc}") from exc
+    if plan.get("ok"):
+        plan["guest_vocal_url"] = (
+            f"/api/audio/stems/{req.guest_id}/vocals"
+            f"?start={plan['guest_start']}&dur={plan['guest_duration']}"
+        )
+    return plan
+
+
+@app.get("/api/audio/stems/{track_id}/vocals")
+def get_vocal_clip(track_id: str, start: float = 0.0, dur: float = 30.0):
+    """A trimmed slice of a track's separated vocal stem (small WAV for the browser)."""
+    import soundfile as sf
+    from app.music_brain.config import PREVIEWS_CACHE_DIR
+
+    if not (0.0 <= start <= 3600.0) or not (0.5 <= dur <= 120.0):
+        raise HTTPException(status_code=400, detail="start must be 0-3600 s, dur 0.5-120 s")
+    _track_path(track_id)  # 404 on unknown id; id is a validated registry key from here on
+    PREVIEWS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    out = PREVIEWS_CACHE_DIR / f"{track_id}_vocals_{start:.3f}_{dur:.3f}.wav"
+    if not out.exists():
+        try:
+            stem = _vocals_stem(track_id)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"separation error: {exc}") from exc
+        info = sf.info(stem)
+        first = int(start * info.samplerate)
+        data, sr = sf.read(stem, start=first, frames=int(dur * info.samplerate), always_2d=True)
+        sf.write(out, data, sr)
+    return FileResponse(out, media_type="audio/wav")
 
 
 @app.post("/api/preview")

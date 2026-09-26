@@ -13,6 +13,7 @@
   let currentTrackId = null;
   let occasion = "";
   let history = [];           // display names of played tracks (last 5 kept)
+  let mashupTag = "";         // status suffix while a vocal layer is booked
 
   // ── UI refs ───────────────────────────────────────────────────────────────
   const seedInput      = document.getElementById("ap-seed-input");
@@ -470,7 +471,8 @@
         const blob = await audioRes.blob();
         await loadIntoDeck(stagingDeck(), nextId, nextName, blob);
 
-        scheduleTransition(currentId, nextId, nextName, candidate);
+        const fireAt = scheduleTransition(currentId, nextId, nextName, candidate);
+        tryMashup(currentId, nextId, nextName, fireAt); // fire-and-forget
         return;
       } catch (e) {
         console.warn("Autopilot suggestion failed:", s.title, e.message);
@@ -523,13 +525,15 @@
 
       if (left > 0) {
         const scoreTag = score >= 65 ? `⭐${score}` : `⚡${score} (early exit)`;
-        apStatus(`Next: ${nextName} | ${recipe} | ${scoreTag} | in ${left.toFixed(0)}s`);
+        apStatus(`Next: ${nextName} | ${recipe} | ${scoreTag} | in ${left.toFixed(0)}s${mashupTag}`);
         return;
       }
       if (executed) return;
       executed = true;
       clearInterval(tick);
 
+      if (window.mashup) window.mashup.cancel();
+      mashupTag = "";
       apStatus(`Crossfading → ${nextName} (${recipe})…`);
 
       // Start the staging deck at b_time
@@ -561,6 +565,54 @@
       });
     }, 500);
     runTimers.push(tick);
+    return fireAt;
+  }
+
+  // ── live mashup ("A x B") ─────────────────────────────────────────────────
+  // Before the transition, lay the NEXT track's vocal over one instrumental
+  // 8/16-bar phrase of the current track (the Fred again.. "x" move: tease the
+  // next record's voice over this beat, then bring the record itself in).
+  // Restraint: at most one layer per track; skipped unless key and tempo fit.
+  function mashupsOn() {
+    const t = document.getElementById("ap-mashup-toggle");
+    return !t || t.checked;
+  }
+
+  function fmtTime(s) {
+    const m = Math.floor(s / 60);
+    return `${m}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+  }
+
+  async function tryMashup(hostId, guestId, guestName, fireAt) {
+    if (!mashupsOn() || !window.mashup) return;
+    const hostDeck = activeDeck;
+    const d = window.decks && window.decks[hostDeck];
+    if (!d) return;
+    const bar = 240 / (d.bpm || 128);
+    const room = fireAt - 2 * bar - (deckPosition(hostDeck) + 10);
+    const bars = room >= 16 * bar ? 16 : room >= 8 * bar ? 8 : 0;
+    if (!bars) return;
+    try {
+      const res = await fetch("/api/mashup/plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ host_id: hostId, guest_id: guestId, bars }),
+      });
+      const plan = await res.json();
+      if (!active || activeDeck !== hostDeck || currentTrackId !== hostId) return;
+      if (!res.ok || !plan.ok) {
+        console.info("Mashup skipped:", guestName, plan.detail || (plan.reasons || []).join("; "));
+        return;
+      }
+      const pos = deckPosition(hostDeck);
+      const entry = plan.host_entries.find((e) => e >= pos + 3 && e + plan.host_duration <= fireAt - bar);
+      if (entry == null) return;
+      if (await window.mashup.play(hostDeck, plan, entry)) {
+        mashupTag = ` | ✕ ${guestName} vocal @${fmtTime(entry)} (${plan.bars} bars)`;
+      }
+    } catch (e) {
+      console.warn("Mashup failed:", e.message);
+    }
   }
 
   // ── start / stop ──────────────────────────────────────────────────────────
@@ -610,6 +662,8 @@
 
   function stop() {
     active = false;
+    if (window.mashup) window.mashup.cancel();
+    mashupTag = "";
     clearRun();
     if (window.beatLayer) window.beatLayer.stop();
     apStatus("Autopilot stopped.");
