@@ -299,16 +299,16 @@ async def upload_track(file: UploadFile):
 
 @app.get("/api/tracks")
 def list_tracks():
-    return {
-        "tracks": [
-            {
-                "track_id": tid,
-                "path": str(p),
-                "display_name": _track_names.get(tid, p.stem),
-            }
-            for tid, p in _tracks.items()
-        ]
-    }
+    from app.ui.download_service import _is_live, _is_mix
+
+    def _entry(tid, p):
+        name = _track_names.get(tid, p.stem)
+        # not_a_song: live/event recordings and mixes already in the library
+        # (downloaded before those filters existed); the autopilot skips them.
+        return {"track_id": tid, "path": str(p), "display_name": name,
+                "not_a_song": bool(_is_live(name) or _is_mix(name))}
+
+    return {"tracks": [_entry(tid, p) for tid, p in _tracks.items()]}
 
 
 def _register_library_tracks() -> list[dict[str, object]]:

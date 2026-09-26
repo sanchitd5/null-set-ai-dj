@@ -460,6 +460,7 @@
       const a = artist.toLowerCase();
       const t = title.toLowerCase();
       return tracks.find(tr => {
+        if (tr.not_a_song) return false; // live / event recording or mix in the library
         const dn = (tr.display_name || tr.filename || "").toLowerCase();
         return dn.includes(a) && dn.includes(t);
       }) || null;

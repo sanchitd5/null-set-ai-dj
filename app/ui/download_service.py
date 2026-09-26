@@ -49,8 +49,49 @@ def _duration_secs(path: Path) -> float | None:
         return None  # unreadable by soundfile (e.g. m4a): rely on the pre-download filter
 
 
+# Event / venue recordings whose title never says "live": "Skrillex at the
+# Question Mark sound camp at Burning Man 2015".
+_EVENT_RE = re.compile(
+    r"\b(sound\s*camp|burning\s+man|coachella|tomorrowland|edc|lollapalooza|glastonbury|"
+    r"creamfields|awakenings|printworks|warehouse\s+project|red\s+rocks|ultra\s+(music\s+)?festival|"
+    r"festival|main\s*stage|boiler\s+room|cercle|mixmag|dj\s*mag|resident\s+advisor|hör\s+berlin|"
+    r"lab\s+ldn|radio\s*1|bbc\s+radio)\b|\s@\s",
+    re.IGNORECASE,
+)
+
+
 def _is_live(title: str) -> bool:
-    return bool(_LIVE_RE.search(title))
+    return bool(_LIVE_RE.search(title) or _EVENT_RE.search(title))
+
+
+# Audio check: a clip cut out of a live recording / stream starts AND ends at
+# full level (no intro build, no fade). Measured on the set's files: the
+# Burning Man clip sat at -0.4 dB / +1.6 dB (first/last 2 s vs the median
+# level); every one of 39 studio tracks had at least one end >= 13 dB quieter.
+EXCERPT_HEAD_DB = -3.0
+EXCERPT_TAIL_DB = -6.0
+
+
+def _looks_like_excerpt(path: Path) -> bool:
+    try:
+        import numpy as np
+        import soundfile as sf
+
+        y, sr = sf.read(str(path), always_2d=True, dtype="float32")
+    except Exception:
+        return False
+    mono = y.mean(axis=1)
+    hop = max(1, int(sr * 0.05))
+    n = len(mono) // hop
+    if n < 200:
+        return False
+    rms = np.sqrt(np.mean(mono[: n * hop].reshape(n, hop) ** 2, axis=1)) + 1e-9
+    db = 20 * np.log10(rms)
+    med = float(np.median(db))
+    k = int(2 / 0.05)
+    head = float(np.mean(db[:k])) - med
+    tail = float(np.mean(db[-k:])) - med
+    return head > EXCERPT_HEAD_DB and tail > EXCERPT_TAIL_DB
 
 # Keywords that identify DJ mixes / live sets — reject these, only individual tracks allowed.
 _MIX_KEYWORDS = re.compile(
@@ -306,6 +347,11 @@ def _reject_non_tracks(new_files: list[Path], check_live: bool = True) -> list[P
             path.unlink(missing_ok=True)
             raise RuntimeError(
                 f"Downloaded file looks like a mix, set or live recording: \"{path.stem}\"."
+            )
+        if check_live and _looks_like_excerpt(path):
+            path.unlink(missing_ok=True)
+            raise RuntimeError(
+                f"Sounds like a live/stream excerpt (starts and ends at full level): \"{path.stem}\"."
             )
         # Length guard: >9 min is almost certainly a mix / set / compilation.
         secs = _duration_secs(path)
