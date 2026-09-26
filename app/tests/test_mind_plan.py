@@ -274,3 +274,25 @@ def test_drop_hit_from_energy_lets_peak_moves_through_sliver_labels():
     p = mp.validate_plan({"candidate": 0, "exit": 176.0,
                           "moves": [{"move": "fakeout", "at": 64.0}, {"move": "beat_boost", "at": 80.0}]}, f)
     assert [m["move"] for m in p["moves"]] == ["fakeout", "beat_boost"], p["dropped"]
+
+
+def test_layer_possible_needs_key_tempo_and_restraint():
+    assert _facts()["layer_possible"]                      # 8A -> 9A, 120 -> 122 BPM
+    assert not _facts(recent_moves=["ride", "layer"])["layer_possible"]
+    a = _analysis()
+    assert not mp.layer_possible(a, {"bpm": 122.0, "key": {"camelot": "3B"}}, {})
+    assert not mp.layer_possible(a, {"bpm": 140.0, "key": {"camelot": "8A"}}, {})
+    assert mp.layer_possible(a, {"bpm": 60.5, "key": {"camelot": "8A"}}, {})   # half time
+
+
+def test_layer_proposal_validated():
+    f = _facts()
+    p = mp.validate_plan({"candidate": 0, "exit": 176.0, "layer": True, "layer_reason": "grooves ride"}, f)
+    assert p["layer"] and p["layer_reason"] == "grooves ride"
+    assert not mp.validate_plan({"candidate": 0, "exit": 176.0, "layer": "yes"}, f)["layer"]
+    p = mp.validate_plan({"candidate": 1, "exit": 176.0, "layer": True}, f)   # instant recipe
+    assert not p["layer"] and any("instant" in d for d in p["dropped"])
+    f2 = _facts(recent_moves=["layer"])
+    p = mp.validate_plan({"candidate": 0, "exit": 176.0, "layer": True}, f2)
+    assert not p["layer"] and "Layer possible" not in mp.build_prompt(f2)
+    assert "Layer possible: yes" in mp.build_prompt(f)

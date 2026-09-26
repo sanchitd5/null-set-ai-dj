@@ -489,6 +489,139 @@ def post_mashup_plan(req: MashupRequest):
     return plan
 
 
+class LayerRequest(BaseModel):
+    a_id: str
+    b_id: str
+    window_lo: float
+    window_hi: float
+    a_bpm_effective: Optional[float] = None
+    a_entry: Optional[float] = None
+    max_hold_bars: int = 32
+    unwind_bars: int = 8
+    third_ids: List[str] = []      # next-next songs / earlier songs: vocal stem as a third layer
+
+
+def _vocals_cached(track_id: str) -> bool:
+    """True when the track's vocal stem is already separated (never runs Demucs)."""
+    if track_id in _vocal_regions:
+        return True
+    from app.music_brain.mashup import MASHUP_DEMUCS_MODEL
+    from app.music_brain.stem_service import _cache_dir_for, _load_from_cache, file_hash
+
+    try:
+        path = _track_path(track_id)
+        return _load_from_cache(_cache_dir_for(file_hash(Path(path)), MASHUP_DEMUCS_MODEL, "vocals")) is not None
+    except Exception:
+        return False
+
+
+def _layer_third(req: LayerRequest, a, b, layer: dict) -> Optional[dict]:
+    """Vocal stem of a third song over the layer: cached stems only, key and
+    tempo fit BOTH playing songs, on a B phrase with no vocal from A or B."""
+    from app.music_brain.blend import tempo_lock
+    from app.music_brain.layer import key_fits, pitch_fits, vocal_clash
+    from app.music_brain.mashup import MAX_RATE_DEVIATION, plan_mashup
+
+    a_eff = req.a_bpm_effective or a.bpm
+    a_key = a.key.camelot if a.key else ""
+    a_vocals = _vocal_regions.get(req.a_id) or []
+    lock = tempo_lock(a_eff, b.bpm)
+    if lock is None:
+        return None
+    b_bar = 240.0 / (b.bpm * lock[1])
+    a_per_b = (240.0 / a.bpm) / b_bar
+    bars = 16 if layer["hold_bars"] >= 32 else 8
+    seen = {req.a_id, req.b_id}
+    for gid in req.third_ids[:8]:
+        if gid in seen:
+            continue
+        seen.add(gid)
+        if not _vocals_cached(gid):
+            continue
+        try:
+            guest = analyze_track(_track_path(gid))
+        except Exception:
+            continue
+        g_key = guest.key.camelot if guest.key else ""
+        if not key_fits(a_key, g_key) or not pitch_fits(a_eff, guest.bpm, MAX_RATE_DEVIATION):
+            continue
+        try:
+            plan = plan_mashup(b, guest, host_vocals_path=lambda: _vocals_stem(req.b_id),
+                               guest_vocals_path=lambda gid=gid: _vocals_stem(gid), bars=bars)
+        except Exception as exc:
+            print(f"[layer] third layer {gid} skipped: {exc}", flush=True)
+            continue
+        if not plan.get("ok"):
+            continue
+        lo = layer["entry"] + 8 * b_bar                       # B settled as texture first
+        hi = layer["b_end"] - plan["host_duration"]
+        for h in plan["host_entries"]:
+            if not lo - 0.01 <= h <= hi + 0.01:
+                continue
+            # A's vocal (on A's clock) must not sit under the guest vocal
+            a_start = layer["start"] + (h - layer["entry"]) * a_per_b
+            if vocal_clash(a_vocals, [(h, h + plan["host_duration"])], a_start, h,
+                           plan["host_duration"] * a_per_b, a_per_b) > 0.0:
+                continue
+            plan["guest_vocal_url"] = (f"/api/audio/stems/{gid}/vocals"
+                                       f"?start={plan['guest_start']}&dur={plan['guest_duration']}")
+            return {"guest_id": gid, "host_entry": round(h, 3), "plan": plan}
+    return None
+
+
+@app.post("/api/layer/plan")
+def post_layer_plan(req: LayerRequest):
+    """LAYER transition: B under A as a texture for 16-64 bars, bass to B on a
+    phrase line, A unwound over 8-16 bars; optional third vocal-stem layer."""
+    from app.music_brain.layer import LAYER_HOLD_BARS, LAYER_UNWIND_BARS, plan_layer
+
+    if req.max_hold_bars not in LAYER_HOLD_BARS:
+        raise HTTPException(status_code=400, detail=f"max_hold_bars must be one of {list(LAYER_HOLD_BARS)}")
+    if req.unwind_bars not in LAYER_UNWIND_BARS:
+        raise HTTPException(status_code=400, detail=f"unwind_bars must be one of {list(LAYER_UNWIND_BARS)}")
+    if not (0 <= req.window_lo <= req.window_hi <= 3600):
+        raise HTTPException(status_code=400, detail="bad play window")
+    if req.a_id == req.b_id:
+        raise HTTPException(status_code=400, detail="a and b must differ")
+    a = analyze_track(_track_path(req.a_id))
+    b = analyze_track(_track_path(req.b_id))
+    layer = plan_layer(
+        a, b, req.window_lo, req.window_hi,
+        a_bpm_effective=req.a_bpm_effective,
+        a_vocals=_vocal_regions_for(req.a_id),
+        b_vocals=_vocal_regions_for(req.b_id),
+        max_hold_bars=req.max_hold_bars,
+        unwind_bars=req.unwind_bars,
+        a_entry=req.a_entry,
+    )
+    if layer.get("ok"):
+        layer["groove"] = True
+        try:
+            layer["third"] = _layer_third(req, a, b, layer)
+        except Exception as exc:  # the third layer is optional
+            print(f"[layer] third layer failed: {exc}", flush=True)
+            layer["third"] = None
+    return layer
+
+
+class BridgeRequest(BaseModel):
+    from_bpm: float
+    to_bpm: float
+    max_step_pct: float = 6.0
+    max_steps: int = 7
+
+
+@app.post("/api/bridge/plan")
+def post_bridge_plan(req: BridgeRequest):
+    """BRIDGE PATH: BPM ladder (<= max_step_pct per song, half/double links)."""
+    from app.music_brain.bridge import bridge_ladder
+
+    try:
+        return bridge_ladder(req.from_bpm, req.to_bpm, req.max_step_pct, req.max_steps)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.get("/api/audio/stems/{track_id}/vocals")
 def get_vocal_clip(track_id: str, start: float = 0.0, dur: float = 30.0):
     """A trimmed slice of a track's separated vocal stem (small WAV for the browser)."""

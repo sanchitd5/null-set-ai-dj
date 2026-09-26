@@ -40,6 +40,8 @@ SUBDROP_MAX_ENERGY = 0.75
 REMIX_MAX_PER_SONG = 4
 REMIX_GAP_PHRASES = 2        # remix phrases at least 2 apart: never two in a row
 BEAT_LAYER_MIN_SCORE = 65
+LAYER_MIN_KEY = 0.8          # LAYER transition (3-deck layering): key score floor
+LAYER_MAX_TEMPO = 0.08       # ... and tempo-locked within the blend pitch range
 
 TRANSITION_MOVES = ("hold", "preclear", "subdrop")
 REMIX_MOVES = ("loop_extend", "beat_jump", "stutter", "filter_build", "echo_freeze", "beat_layer", "peak_roll")
@@ -297,7 +299,26 @@ def build_facts(a: dict, b: dict, candidates: list[dict], ctx: dict) -> dict:
         "remix_used": [m for m in ctx.get("remix_used") or [] if m in REMIX_MOVES],
         "peak_moves": bool(ctx.get("peak_moves")),
         "big_moment_ok": bool(ctx.get("big_moment_ok")),
+        "layer_possible": layer_possible(a, b, ctx),
     }
+
+
+def layer_possible(a: dict, b: dict, ctx: dict) -> bool:
+    """May the LLM propose a LAYER transition? Key score >= 0.8, tempo-locked
+    (half/double time counts) and no layer among the recent moves (restraint).
+    The browser re-checks vocals, groove and the every-few-songs cap."""
+    from app.music_brain.recipe_matcher import camelot_distance_score
+
+    ka = (a.get("key") or {}).get("camelot") or ""
+    kb = (b.get("key") or {}).get("camelot") or ""
+    ba, bb = float(a.get("bpm") or 0.0), float(b.get("bpm") or 0.0)
+    if not (ka and kb and ba > 0 and bb > 0):
+        return False
+    if camelot_distance_score(ka, kb)[0] < LAYER_MIN_KEY:
+        return False
+    if not any(abs(ba / (bb * m) - 1) <= LAYER_MAX_TEMPO for m in (1.0, 2.0, 0.5)):
+        return False
+    return "layer" not in (ctx.get("recent_moves") or [])[-4:]
 
 
 def _nearest(values: list[float], t: float, tol: float) -> Optional[float]:
@@ -501,7 +522,17 @@ def validate_plan(raw: Any, facts: dict) -> dict:
     chosen = dict(cands[idx]) if cands else None
     if chosen is not None and exit_t is not None:
         chosen["a_time"] = exit_t
+    # LAYER transition: only a JSON true, and only when the facts allow it
+    layer = raw.get("layer") is True
+    if layer and not facts.get("layer_possible"):
+        dropped.append("layer: pair cannot layer (key / tempo / a recent layer)")
+        layer = False
+    if layer and style == "instant":
+        dropped.append("layer: instant-swap recipe")
+        layer = False
     return {
+        "layer": layer,
+        "layer_reason": str(raw.get("layer_reason") or "")[:200] if layer else "",
         "candidate_index": idx,
         "candidate": chosen,
         "exit": exit_t,
@@ -522,6 +553,14 @@ def build_prompt(facts: dict) -> str:
         f"Set mode {facts['set_mode']}, set position {round(facts['set_position'] * 100)}%. Now at {facts['now']}s.",
         f"Recent DJ moves: {', '.join(facts['recent_moves']) or 'none'}. Already used on this song: {', '.join(facts['remix_used']) or 'none'}.",
         f"Mashup possible: {'yes' if facts['mashup_possible'] else 'no'}.",
+    ]
+    if facts.get("layer_possible"):
+        lines.append(
+            'Layer possible: yes. You may add "layer": true (and "layer_reason") to hold both songs '
+            "16-64 bars: next song under this one with lows cut, bass handed over on a phrase line, "
+            "then this one unwound slowly. Use it only when both grooves can ride together; "
+            "a layer is the exception, not every song.")
+    lines += [
         "",
         "Match candidates (index: recipe, score, overlap):",
     ]
