@@ -50,6 +50,8 @@ _matcher = RecipeMatcher(_knowledge)
 # In-memory registry: track_id -> absolute file path. Rebuilt on restart
 # from UPLOAD_DIR's contents (see _load_registry_from_disk below).
 _tracks: Dict[str, Path] = {}
+# Display names for downloaded tracks (track_id -> original filename stem).
+_track_names: Dict[str, str] = {}
 
 
 def _load_registry_from_disk() -> None:
@@ -146,6 +148,44 @@ class RenderRequest(BaseModel):
     b_time: Optional[float] = None
 
 
+class DownloadRequest(BaseModel):
+    url: str
+
+
+@app.post("/api/download")
+async def download_from_url(req: DownloadRequest):
+    """Download a YouTube, YouTube Music, or Spotify URL and register as a track."""
+    from app.ui.download_service import detect_source, download_to_dir
+
+    source = detect_source(req.url)
+    if source == "unknown":
+        raise HTTPException(
+            status_code=400,
+            detail="Unsupported URL. Paste a YouTube, YouTube Music, or Spotify link.",
+        )
+
+    try:
+        paths = download_to_dir(req.url, UPLOAD_DIR)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    results = []
+    for path in paths:
+        original_name = path.stem
+        data = path.read_bytes()
+        track_id = hashlib.sha256(data).hexdigest()[:16]
+        dest = UPLOAD_DIR / f"{track_id}{path.suffix}"
+        if not dest.exists():
+            path.rename(dest)
+        else:
+            path.unlink(missing_ok=True)
+        _tracks[track_id] = dest
+        _track_names[track_id] = original_name
+        results.append({"track_id": track_id, "filename": dest.name, "display_name": original_name})
+
+    return {"source": source, "tracks": results}
+
+
 @app.post("/api/tracks")
 async def upload_track(file: UploadFile):
     """Uploads a track, returns its track_id for use in every other endpoint."""
@@ -160,7 +200,16 @@ async def upload_track(file: UploadFile):
 
 @app.get("/api/tracks")
 def list_tracks():
-    return {"tracks": [{"track_id": tid, "path": str(p)} for tid, p in _tracks.items()]}
+    return {
+        "tracks": [
+            {
+                "track_id": tid,
+                "path": str(p),
+                "display_name": _track_names.get(tid, p.stem),
+            }
+            for tid, p in _tracks.items()
+        ]
+    }
 
 
 def _register_library_tracks() -> list[dict[str, object]]:
@@ -305,6 +354,45 @@ def get_render_audio(filename: str):
     if not path.exists():
         raise HTTPException(status_code=404, detail="Render not found")
     return FileResponse(path, media_type="audio/mpeg")
+
+
+class AutopilotSuggestRequest(BaseModel):
+    track_id: str
+    occasion: Optional[str] = None
+    history: list[str] = []
+
+
+@app.post("/api/autopilot/suggest")
+def autopilot_suggest(req: AutopilotSuggestRequest):
+    """Use local LLM (Ollama gemma3:4b by default) to suggest next tracks."""
+    import numpy as np
+    from app.ui.autopilot_service import suggest_next_tracks
+
+    path = _track_path(req.track_id)
+    analysis = analyze_track(path)
+
+    curve = list(analysis.energy_curve) if analysis.energy_curve is not None else []
+    avg_energy = float(np.mean(curve)) if curve else 0.5
+    camelot = analysis.key.camelot if analysis.key else "unknown"
+
+    display = _track_names.get(req.track_id, path.stem)
+    # Best-effort split of "Artist - Title" or "Title" from display name.
+    if " - " in display:
+        artist_part, title_part = display.split(" - ", 1)
+    else:
+        artist_part, title_part = "Unknown", display
+
+    suggestions = suggest_next_tracks(
+        title=title_part,
+        artist=artist_part,
+        bpm=analysis.bpm or 128.0,
+        camelot=camelot,
+        duration=analysis.duration or 0.0,
+        avg_energy=avg_energy,
+        occasion=req.occasion or "",
+        history=req.history,
+    )
+    return {"suggestions": suggestions}
 
 
 @app.post("/api/samples")

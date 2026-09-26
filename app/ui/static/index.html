@@ -638,6 +638,44 @@
 </section>
 
 <!-- ========================================================================= -->
+<!-- AI DJ AUTOPILOT                                                           -->
+<!-- ========================================================================= -->
+<section class="panel autopilot-panel" id="autopilot-panel">
+  <div class="panel-head">
+    <div class="panel-title">
+      <span class="lamp lamp-ok" id="ap-lamp"></span>
+      <span>AI DJ AUTOPILOT</span>
+      <span class="chip">GEMMA3 · LOCAL</span>
+    </div>
+    <span class="hud-label" id="ap-status">Paste a seed URL and an occasion to start.</span>
+  </div>
+
+  <div class="ap-controls">
+    <input type="text" id="ap-seed-input"
+           placeholder="Seed URL — YouTube, YouTube Music or Spotify track…"
+           autocomplete="off" spellcheck="false" />
+    <input type="text" id="ap-occasion-input"
+           placeholder="Occasion (e.g. late night club, festival warm-up, chill sunset)…"
+           autocomplete="off" />
+    <div class="ap-btns">
+      <button class="hw-btn accent-btn" id="ap-start-btn">▶ START SET</button>
+      <button class="hw-btn" id="ap-stop-btn" disabled>■ STOP</button>
+    </div>
+  </div>
+
+  <div class="ap-queue" id="ap-queue">
+    <div class="ap-empty">Set not running — start above.</div>
+  </div>
+
+  <p class="panel-note">
+    Requires <strong>Ollama</strong> running locally with <code>gemma3:4b</code>
+    (<code>ollama pull gemma3:4b</code>). Override model/URL via
+    <code>AUTOPILOT_MODEL</code> / <code>OLLAMA_BASE_URL</code> in <code>.env</code>.
+    Tracks are downloaded from YouTube via yt-dlp.
+  </p>
+</section>
+
+<!-- ========================================================================= -->
 <!-- TRACK BROWSER                                                             -->
 <!-- ========================================================================= -->
 <section class="panel browser">
@@ -655,6 +693,14 @@
       <button class="hw-btn" id="browser-library-scan" title="Scan the server-configured DJ_LIBRARY_DIRS folders">SCAN LIBRARY</button>
       <button class="hw-btn" id="browser-refresh">REFRESH</button>
     </div>
+  </div>
+
+  <div class="url-import-row">
+    <input type="text" id="url-import-input"
+           placeholder="Paste YouTube, YouTube Music or Spotify URL and press IMPORT or Enter…"
+           autocomplete="off" spellcheck="false" />
+    <button class="hw-btn" id="url-import-btn">IMPORT</button>
+    <span id="url-import-status" class="hud-label"></span>
   </div>
 
   <div class="browser-table">
@@ -690,5 +736,6 @@
 <script src="/automation.js"></script>
 <script src="/performance.js"></script>
 <script src="/browser.js"></script>
+<script src="/autopilot.js"></script>
 </body>
 </html>

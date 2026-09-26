@@ -220,5 +220,38 @@
   // A freshly uploaded track becomes a browser row straight away.
   document.addEventListener("deck-track-loaded", () => { refresh(); });
 
+  // --- URL import (YouTube / YouTube Music / Spotify) ---
+  const urlInput = document.getElementById("url-import-input");
+  const urlBtn = document.getElementById("url-import-btn");
+  const urlStatusEl = document.getElementById("url-import-status");
+
+  async function importUrl() {
+    const url = urlInput ? urlInput.value.trim() : "";
+    if (!url) return;
+    if (urlBtn) { urlBtn.disabled = true; urlBtn.textContent = "IMPORTING…"; }
+    if (urlStatusEl) urlStatusEl.textContent = "Downloading…";
+    try {
+      const res = await fetch("/api/download", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || res.statusText);
+      const count = data.tracks ? data.tracks.length : 0;
+      if (urlStatusEl) urlStatusEl.textContent = `✓ ${count} track${count === 1 ? "" : "s"} imported from ${data.source}.`;
+      if (urlInput) urlInput.value = "";
+      await refresh();
+    } catch (e) {
+      if (urlStatusEl) urlStatusEl.textContent = `✗ ${e.message}`;
+      setStatus(`Import failed: ${e.message}`);
+    } finally {
+      if (urlBtn) { urlBtn.disabled = false; urlBtn.textContent = "IMPORT"; }
+    }
+  }
+
+  if (urlBtn) urlBtn.addEventListener("click", importUrl);
+  if (urlInput) urlInput.addEventListener("keydown", (e) => { if (e.key === "Enter") importUrl(); });
+
   refresh();
 })();
