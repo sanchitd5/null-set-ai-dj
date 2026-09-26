@@ -171,13 +171,27 @@
 
   function scheduleTransition(currentId, nextId, nextName, candidate) {
     if (!active) return;
-    const aTime = candidate.a_time;
     const bTime = candidate.b_time || 0;
     const recipe = candidate.recipe || "Blend";
+    const score  = candidate.score  || 50;
+
+    // Cap play time: good match (score ≥ 65) → max 120s; poor match → 60s.
+    // This keeps sets moving and bails early on weak transitions.
+    const MAX_PLAY_SECS = score >= 65 ? 120 : 60;
+    const nowPos  = deckPosition(activeDeck);
+    const hardCap = nowPos + MAX_PLAY_SECS;
+
+    // Use the recipe's suggested exit point, but never past the hard cap.
+    // Ensure at least 15s of play before any crossfade fires.
+    const aTime = Math.min(candidate.a_time, hardCap);
+    const MIN_PLAY_SECS = 15;
+    const effectiveATime = Math.max(aTime, nowPos + MIN_PLAY_SECS);
+
+    // Shorter crossfade for early-bail situations so it doesn't drag.
+    const xfDuration = aTime < hardCap ? 16 : 8;
 
     let executed = false;
-    const xfDuration = 16; // seconds — roughly 8 bars at 120 BPM
-    const fireAt = aTime - 1; // start crossfade 1s early
+    const fireAt = effectiveATime - 1; // start crossfade 1s early
 
     const tick = setInterval(() => {
       if (!active) { clearInterval(tick); return; }
@@ -185,7 +199,8 @@
       const left = fireAt - pos;
 
       if (left > 0) {
-        apStatus(`Next: ${nextName} | ${recipe} in ${left.toFixed(0)}s`);
+        const scoreTag = score >= 65 ? `⭐${score}` : `⚡${score} (early exit)`;
+        apStatus(`Next: ${nextName} | ${recipe} | ${scoreTag} | in ${left.toFixed(0)}s`);
         return;
       }
       if (executed) return;
