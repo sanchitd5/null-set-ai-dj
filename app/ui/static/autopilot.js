@@ -448,11 +448,17 @@
 
   function renderQueue(rows) {
     if (!queueEl) return;
+    // BRIDGE PATH banner: where the tempo ladder stands, e.g. "BRIDGE 3/5 → 110 BPM"
+    const bl = bridgeLabel();
+    const banner = bl
+      ? `<div class="ap-bridge" style="font-weight:700;color:#38bdf8;margin:2px 0 6px" title="${esc(bridge.why)}: ${esc(bridge.steps.map(Math.round).join(" → "))}">` +
+        `${esc(bl)} <span style="font-weight:400;opacity:.75">toward ${Math.round(bridge.toBpm)} BPM</span></div>`
+      : "";
     if (!rows.length) {
-      queueEl.innerHTML = `<div class='ap-empty'>${aiPicking ? "⏳ AI picking the next songs…" : "⏳ Finding next track…"}</div>`;
+      queueEl.innerHTML = `${banner}<div class='ap-empty'>${aiPicking ? "⏳ AI picking the next songs…" : "⏳ Finding next track…"}</div>`;
       return;
     }
-    queueEl.innerHTML = rows.map(({ s, tag }) => {
+    queueEl.innerHTML = banner + rows.map(({ s, tag }) => {
       const eClass = ENERGY_DELTA_CLASS[s.energy_delta] || "";
       const eLabel = ENERGY_DELTA_LABEL[s.energy_delta] || "";
       const genre   = s.genre ? `<span class="ap-genre">${esc(s.genre)}</span>` : "";
@@ -560,8 +566,10 @@
     const res = await fetch("/api/autopilot/suggest", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ track_id: trackId, occasion: occasionWithStep(opts), history: history.slice(-30).concat(avoid.slice(-6)), set_position: setPos, set_mode: setMode(), energy_note: energyNote, lookahead: !!opts.lookAhead,
-        variety_run: varietyRun().run, variety_genre: varietyRun().genre }),
+      body: JSON.stringify({ track_id: trackId, occasion: occasionWithBridge(opts), history: history.slice(-30).concat(avoid.slice(-6)), set_position: setPos, set_mode: setMode(), energy_note: energyNote, lookahead: !!opts.lookAhead,
+        variety_run: varietyRun().run, variety_genre: varietyRun().genre,
+        tempo_target: bridgeTarget(opts.lookAhead), tempo_note: bridgeNote(opts.lookAhead) || null,
+        elapsed_seconds: setStartedAt ? (Date.now() - setStartedAt) / 1000 : null }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || res.statusText);
@@ -572,6 +580,10 @@
       if (data.current_genre) currentGenre = data.current_genre;
       steering = data.steering === "move" && steerStep < MAX_STEER_STEPS ? "move" : "stay";
       if (steering === "stay") steerStep = 0;
+      // Steering into music at another tempo: ladder there (BRIDGE PATH).
+      const far = steering === "move" && !bridge && (data.suggestions || [])
+        .map((s) => parseFloat(s.expected_bpm)).find((b) => b > 0 && !locks(playingBpm(), b));
+      if (far) startBridge(far, "occasion steering"); // fire-and-forget
     }
     const e = data.current_profile && parseFloat(data.current_profile.energy);
     // Look-ahead describes the booked next song: keep it for when that song plays.
@@ -689,12 +701,126 @@
            (step >= MAX_STEER_STEPS - 1 ? " (FINAL: pick the occasion's own anthems now)" : "");
   }
 
+  // Occasion + the BRIDGE step as a hint suffix (only when the user set an
+  // occasion: an occasion-less set gets the step through tempo_target alone).
+  function occasionWithBridge(opts = {}) {
+    const base = occasionWithStep(opts);
+    const t = bridgeTarget(opts.lookAhead);
+    return base && t ? `${base} — TEMPO BRIDGE: songs natively near ${Math.round(t)} BPM (${bridgeNote(opts.lookAhead)})` : base;
+  }
+
+  // ── BRIDGE PATH (set study item 5, [[Genre Bridge Playbook]]) ─────────────
+  // A far tempo target (beyond the 8% lock, or the occasion steering into
+  // another genre) becomes a BPM ladder of beat-matched songs, <= ~6% per step
+  // or a half/double-time link (87 <-> 174), from POST /api/bridge/plan. Each
+  // step's BPM is the tempo target of the next suggestion round, and the
+  // tempo gate prefers candidates that move up the ladder. The tempo-jump
+  // budget (Echo Out) stays the fallback: an infeasible ladder, or the last
+  // search round.
+  let bridge = null;          // { toBpm, steps[], total, played, link, why }
+  let bridgePending = false;
+  let forceJump = false;      // last-round fallback: the set never stalls on a ladder
+  const BRIDGE_TOL = 0.015;   // a step counts as reached within 1.5%
+  function playingBpm() {
+    const d = window.decks && window.decks[activeDeck];
+    return d && d.bpm > 0 ? d.bpm * d._playbackRate() : 0;
+  }
+  function pulseNear(bpm, ref) {  // bpm, or its half/double, closest to ref
+    return [1, 2, 0.5].map((m) => bpm * m)
+      .reduce((b, x) => (Math.abs(Math.log(x / ref)) < Math.abs(Math.log(b / ref)) ? x : b));
+  }
+  function locks(a, b) { return a > 0 && b > 0 && Math.abs(pulseNear(b, a) / a - 1) <= 0.08; }
+  // Index of the ladder step still ahead of the playing tempo (-1: no bridge).
+  function bridgeStepIdx(ahead = 0) {
+    if (!bridge) return -1;
+    const last = bridge.steps.length - 1;
+    const cur = playingBpm();
+    if (!cur) return Math.min(last, bridge.played + ahead);
+    const dir = Math.sign(bridge.steps[last] - bridge.steps[0]) || 1;
+    const p = pulseNear(cur, bridge.steps[0]);
+    let i = bridge.steps.findIndex((s) => dir * Math.log(s / p) > BRIDGE_TOL);
+    if (i < 0) i = last;
+    return Math.min(last, i + ahead);
+  }
+  function bridgeTarget(lookAhead) {
+    const i = bridgeStepIdx(lookAhead ? 1 : 0);
+    return i < 0 ? null : bridge.steps[i];
+  }
+  function bridgeLabel() {
+    const i = bridgeStepIdx();
+    return i < 0 ? "" : `BRIDGE ${i + 1}/${bridge.total} → ${Math.round(bridge.steps[i])} BPM`;
+  }
+  function bridgeNote(lookAhead) {
+    const i = bridgeStepIdx(lookAhead ? 1 : 0);
+    return i < 0 ? "" : `bridge step ${i + 1}/${bridge.total} toward ${Math.round(bridge.toBpm)} BPM` +
+      (bridge.link !== "direct" ? ` (${bridge.link}-time link at the end)` : "");
+  }
+  async function startBridge(toBpm, why) {
+    const from = playingBpm();
+    if (bridge || bridgePending || !(toBpm > 0) || !from || locks(from, toBpm)) return;
+    bridgePending = true;
+    try {
+      // occasion steering keeps its 5-7 song cap; a plain tempo target gets 5
+      const maxSteps = steering === "move" ? Math.max(2, MAX_STEER_STEPS - steerStep) : 5;
+      const res = await fetch("/api/bridge/plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ from_bpm: from, to_bpm: toBpm, max_step_pct: 6, max_steps: maxSteps }),
+      });
+      const lad = await res.json();
+      if (!res.ok) throw new Error(lad.detail || res.statusText);
+      if (!lad.feasible || lad.step_count < 2) {
+        if (!lad.feasible) console.info("BRIDGE infeasible, tempo-jump budget stays:", (lad.reasons || []).join("; "));
+        return;
+      }
+      bridge = { toBpm, steps: lad.steps, total: lad.step_count, played: 0, link: lad.link, why };
+      apStatus(`BRIDGE PATH → ${Math.round(toBpm)} BPM (${why}): ${lad.steps.map(Math.round).join(" → ")}, ${lad.step_pct}%/step`);
+      showQueue();
+    } catch (e) {
+      console.warn("Bridge plan failed:", e.message);
+    } finally { bridgePending = false; }
+  }
+  // After a transition: count the step, end the bridge on arrival or at the cap.
+  function advanceBridge() {
+    if (!bridge) return;
+    bridge.played++;
+    const d = window.decks && window.decks[activeDeck];
+    const native = d && d.bpm > 0 ? d.bpm : 0;          // pitch eases home to the native tempo
+    if (locks(native, bridge.toBpm)) {
+      apStatus(`BRIDGE done: ${Math.round(native)} BPM locks to ${Math.round(bridge.toBpm)} BPM`);
+      bridge = null;
+    } else if (bridge.played >= bridge.total + 1) {
+      console.info("BRIDGE ran out of steps: tempo-jump budget takes over");
+      bridge = null;
+    }
+  }
+  // Tempo gate while bridging: never step back down the ladder (2% slack).
+  function bridgeFits(cand) {
+    if (!bridge || !cand.bpm) return true;
+    const cur = playingBpm();
+    if (!cur || locks(cur, bridge.toBpm)) return true;
+    const last = bridge.steps[bridge.steps.length - 1];
+    const dir = Math.sign(last - bridge.steps[0]) || 1;
+    const c = pulseNear(cand.bpm, cur);
+    return dir * Math.log(c / cur) >= -0.02;
+  }
+
   async function evaluateCandidate(currentId, cand, gen) {
     if (!active || !cand) return false;
     const nextId = cand.track_id;
     const nextName = cand.name;
-    if (!allowTempoJump && !tempoLockable(cand)) {
-      apStatus(`Not after this song: ${nextName} (${Math.round(cand.bpm)} BPM can't be beat-matched) — kept for later`);
+    if (!tempoLockable(cand)) {
+      // Far tempo: climb there on a BRIDGE PATH instead of one Echo Out; the
+      // jump (budget / last round) stays the fallback.
+      if (!bridge && !forceJump && !history.includes(nextName)) await startBridge(cand.bpm, `toward ${nextName}`);
+      if (!allowTempoJump || (bridge && !forceJump)) {
+        apStatus(`Not after this song: ${nextName} (${Math.round(cand.bpm)} BPM can't be beat-matched)` +
+                 `${bridge ? ` — ${bridgeLabel()}` : ""} — kept for later`);
+        cand.keep = true;
+        return false;
+      }
+    } else if (!forceJump && !bridgeFits(cand)) {
+      apStatus(`Not now: ${nextName} (${Math.round(cand.bpm)} BPM) steps back down the ${bridgeLabel()} — kept for later`);
       cand.keep = true;
       return false;
     }
@@ -943,7 +1069,12 @@
     // 1) Songs already pre-downloaded in an earlier round: no waiting.
     // Pairwise rejects go back to the END of the pool (tried once per song).
     allowTempoJump = false;
+    forceJump = false;
     const pool = ready.splice(0, ready.length);
+    // BRIDGE: songs nearest the ladder's next step first
+    const step = bridgeTarget(false);
+    if (step) pool.sort((x, y) => (x.bpm ? Math.abs(Math.log(pulseNear(x.bpm, step) / step)) : 9) -
+                                  (y.bpm ? Math.abs(Math.log(pulseNear(y.bpm, step) / step)) : 9));
     for (let i = 0; i < pool.length; i++) {
       if (!active || gen !== prepGen) return;
       const c = pool[i];
@@ -962,7 +1093,9 @@
     const MAX_ROUNDS = 3;
     const rejected = [];
     for (let round = 1; round <= MAX_ROUNDS; round++) {
-      allowTempoJump = round === MAX_ROUNDS || tempoJumpBudget();
+      // A running BRIDGE PATH holds the budget back; the last round always may jump.
+      forceJump = round === MAX_ROUNDS;
+      allowTempoJump = forceJump || (!bridge && tempoJumpBudget());
       // Nothing beat-matchable after a strict round: don't burn more AI rounds
       // hunting for a tempo that may barely exist (a 96 BPM dembow seed has
       // almost no house / UK dance peers). Take the best song already waiting
@@ -1211,6 +1344,7 @@
           window.djMind.setProfileEnergy(profileById[currentTrackId]);
         }
         easePitchHome(activeDeck);
+        advanceBridge();
 
         // Park crossfader fully on the new active deck side
         setRange(xfader, activeDeck === "a" ? -1 : 1);
@@ -1320,6 +1454,7 @@
     currentGenre = "";
     songsSinceJump = 0;
     jumpPending = false;
+    bridge = null;
     active = true;
     activeDeck = "a";
     updateButtons();
