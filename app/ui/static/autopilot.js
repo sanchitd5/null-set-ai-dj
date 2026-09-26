@@ -143,6 +143,67 @@
   function clearRun() {
     runTimers.forEach((id) => { clearTimeout(id); clearInterval(id); });
     runTimers.length = 0;
+    endAudioClock();
+  }
+
+  // ── audio-clock automation ────────────────────────────────────────────────
+  // Transitions schedule every EQ / crossfader move on the AudioContext clock,
+  // at exact bar offsets from the downbeat where B starts (xT0). JS timers only
+  // animate the knobs. Timer jitter used to move the bass swap off the beat
+  // (crossfade analysis, fix 6).
+  const XF_LOOKAHEAD_MS = 150;   // timers fire this early; audio lands exactly
+  const XF_CENTER_BOOST_DB = 1.5; // AI crossfader curve: fills the mid-blend dip (analysis fix 5)
+  let xT0 = null;                // audio time of the transition downbeat (null = timer mode)
+  let xOffsetMs = 0;             // bar offset of the automation step being scheduled
+
+  function endAudioClock() {
+    xT0 = null;
+    document.querySelectorAll("[data-ai-audio]").forEach((el) => { delete el.dataset.aiAudio; });
+  }
+
+  // Equal-power gains for crossfader value v (-1..1), +XF_CENTER_BOOST_DB at the centre.
+  function xfGains(v) {
+    const x = (v + 1) / 2;
+    const boost = Math.pow(10, (XF_CENTER_BOOST_DB * Math.sin(Math.PI * x)) / 20);
+    return [Math.cos(x * 0.5 * Math.PI) * boost, Math.cos((1 - x) * 0.5 * Math.PI) * boost];
+  }
+
+  function audioTargetOf(el) {
+    if (!el || !window.decks) return null;
+    if (el === xfader) return { kind: "xf" };
+    if (el.classList && el.classList.contains("eq-knob")) {
+      const d = window.decks[el.dataset.deck];
+      const f = d && ({ low: d.lowFilter, mid: d.midFilter, high: d.highFilter })[el.dataset.band];
+      return f ? { kind: "eq", param: f.gain } : null;
+    }
+    return null;
+  }
+
+  // Schedule from -> to over ms on the audio clock at xT0 + xOffsetMs.
+  function scheduleAudio(target, from, to, ms) {
+    const when = Math.max(audioCtx.currentTime, xT0 + xOffsetMs / 1000);
+    const dur = Math.max(0, ms) / 1000;
+    // hold whatever is sounding at `when`, drop later events, then ramp: never
+    // throws on back-to-back moves (setValueCurveAtTime does if curves touch)
+    const hold = (p) => (p.cancelAndHoldAtTime ? p.cancelAndHoldAtTime(when) : p.cancelScheduledValues(when));
+    if (target.kind === "eq") {
+      const p = target.param;
+      hold(p);
+      p.setValueAtTime(from, when);
+      if (dur > 0) p.linearRampToValueAtTime(to, when + dur);
+      return when;
+    }
+    // equal-power (+centre boost) curve as short linear segments
+    const n = dur > 0 ? Math.max(2, Math.ceil(dur * 30)) : 1;
+    for (const [idx, d] of [[0, "a"], [1, "b"]]) {
+      const p = window.decks[d].crossfaderGain.gain;
+      hold(p);
+      p.setValueAtTime(xfGains(n === 1 ? to : from)[idx], when);
+      for (let i = 1; i < n; i++) {
+        p.linearRampToValueAtTime(xfGains(from + (to - from) * (i / (n - 1)))[idx], when + dur * (i / (n - 1)));
+      }
+    }
+    return when;
   }
 
   function eqEl(deck, band) {
@@ -162,12 +223,31 @@
   }
 
   // Linear ramp of a range input over durationMs. fromVal null = current value.
+  // Inside a transition (xT0 set) the audio is scheduled on the audio clock and
+  // this only animates the control; otherwise it drives the control directly.
   function rampParam(getEl, fromVal, toVal, durationMs) {
     const steps = 20;
     const interval = Math.max(16, durationMs / steps);
     const first = getEl();
     if (!first) return;
     const from = fromVal == null ? parseFloat(first.value) : fromVal;
+    const target = xT0 != null ? audioTargetOf(first) : null;
+    if (target) {
+      first.dataset.aiAudio = "1";
+      const when = scheduleAudio(target, from, toVal, durationMs);
+      const waitMs = Math.max(0, (when - audioCtx.currentTime) * 1000);
+      if (durationMs <= 0) { later(waitMs, () => setRange(first, toVal)); return; }
+      later(waitMs, () => {
+        let k = 0;
+        const t = setInterval(() => {
+          if (k > steps) { clearInterval(t); return; }
+          setRange(first, from + (toVal - from) * (k / steps));
+          k++;
+        }, interval);
+        runTimers.push(t);
+      });
+      return;
+    }
     let step = 0;
     const t = setInterval(() => {
       const el = getEl();
@@ -245,8 +325,9 @@
    * so every bar count is halved to keep the set moving.
    * Returns total duration in ms; the outgoing deck may be stopped after that.
    */
-  function executeTransition(recipe, out, inn, xfDuration) {
+  function executeTransition(recipe, out, inn, xfDuration, t0Audio) {
     clearRun();
+    xT0 = Number.isFinite(t0Audio) ? t0Audio : audioCtx.currentTime;
     const kind = recipeKind(recipe);
     const scale = xfDuration >= 16 ? 1 : 0.5;
     const bar = barMs(out) * scale;
@@ -258,7 +339,12 @@
     const lowIn = () => eqEl(inn, "low");
     const midOut = () => eqEl(out, "mid");
     const highOut = () => eqEl(out, "high");
-    const at = (bars, fn) => later(bars * bar, fn);
+    // timers fire XF_LOOKAHEAD_MS early; the audio lands on the exact bar
+    const at = (bars, fn) => later(Math.max(0, bars * bar - XF_LOOKAHEAD_MS), () => {
+      xOffsetMs = bars * bar;
+      try { fn(); } finally { xOffsetMs = 0; }
+    });
+    const setAt = (getEl, v) => rampParam(getEl, v, v, 0); // instant, on the audio clock
     // One owner of the sub at every moment, and never nobody: A keeps its lows
     // until one beat before the swap line, B's lows open on the line
     // ([[Bass Swap]], [[EQ & Frequency Management]]).
@@ -288,10 +374,10 @@
       case "double": // both drops together for 8 bars, then cut A
         // [[Double Drop]]: one bass only - B's lows open, A's killed on the same
         // downbeat (no ramp: two subs must never overlap).
-        setRange(xfEl(), 0);
-        setRange(lowOut(), LOW_KILL);
-        setRange(lowIn(), 0);
-        at(8, () => setRange(xfEl(), toXf));
+        setAt(xfEl, 0);
+        setAt(lowOut, LOW_KILL);
+        setAt(lowIn, 0);
+        at(8, () => setAt(xfEl, toXf));
         total = 8.5;
         break;
 
@@ -318,9 +404,9 @@
         break;
 
       case "cut": // instant snap on the phrase boundary
-        setRange(lowOut(), LOW_KILL);
-        setRange(lowIn(), 0);
-        setRange(xfEl(), toXf);
+        setAt(lowOut, LOW_KILL);
+        setAt(lowIn, 0);
+        setAt(xfEl, toXf);
         total = 1;
         break;
 
@@ -375,6 +461,7 @@
    * Returns total duration in ms.
    */
   function executeLayer(out, inn, layer) {
+    xT0 = null; // LAYER keeps timer-driven automation
     clearRun();
     const oa = window.decks && window.decks[out];
     const bpm = oa && oa.bpm > 0 ? oa.bpm * oa._playbackRate() : 128;
@@ -1449,7 +1536,9 @@
       const incoming = stagingDeck();
       // LAYER: the beat layer (live drums on A) and the mind's phrase moves pause
       // while two records ride, so no third drum line doubles up.
-      later(leadS * 1000, () => {
+      // Non-layer transitions start XF_LOOKAHEAD_MS early and schedule their
+      // automation on the audio clock at exactly t0 (B's first downbeat).
+      later(layer ? leadS * 1000 : Math.max(0, leadS * 1000 - XF_LOOKAHEAD_MS), () => {
         let totalMs;
         if (layer) {
           if (window.beatLayer && window.beatLayer.isEnabled()) {
@@ -1462,13 +1551,14 @@
               why: `${layer.why} - ${layer.hold_bars} bars together, bass to B on the line, A unwinds ${layer.unwind_bars} bars` });
           }
         } else {
-          totalMs = executeTransition(recipe, outgoing, incoming, xfDuration);
+          totalMs = executeTransition(recipe, outgoing, incoming, xfDuration, t0) + XF_LOOKAHEAD_MS;
         }
         later(totalMs + 500, afterBlend);
       });
 
       // After the transition completes, update state and continue
       const afterBlend = () => {
+        endAudioClock(); // controls are the user's again
         if (!active) return;
 
         // Stop the outgoing deck and put it back to neutral for its next load
@@ -1693,6 +1783,10 @@
     if (startBtn) startBtn.disabled = active;
     if (stopBtn)  stopBtn.disabled  = !active;
   }
+
+  // Test hook: run one transition's automation on the empty decks (no audio,
+  // no set) to check the audio-clock scheduling from the console.
+  window.autopilotDebug = { executeTransition, xfGains };
 
   // Read-only view for helpers (beat-grid-ai.js).
   window.autopilotState = {

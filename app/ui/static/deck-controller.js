@@ -939,7 +939,9 @@ document.querySelectorAll(".volume-fader").forEach((input) => {
 
 // 3-band EQ knobs -> the deck's real BiquadFilter shelves/peak.
 document.querySelectorAll(".eq-knob").forEach((input) => {
-  const apply = () => decks[input.dataset.deck].setEQ(input.dataset.band, parseFloat(input.value));
+  // data-ai-audio: the autopilot has scheduled this EQ on the audio clock; the
+  // knob only animates (setting .value here would break the scheduled ramp).
+  const apply = () => { if (!input.dataset.aiAudio) decks[input.dataset.deck].setEQ(input.dataset.band, parseFloat(input.value)); };
   input.addEventListener("input", apply);
   apply();
 });
@@ -1003,7 +1005,9 @@ function applyCrossfader(v) {
   decks.a.setCrossfaderGain(gainA);
   decks.b.setCrossfaderGain(gainB);
 }
-crossfaderInput.addEventListener("input", () => applyCrossfader(parseFloat(crossfaderInput.value)));
+crossfaderInput.addEventListener("input", () => {
+  if (!crossfaderInput.dataset.aiAudio) applyCrossfader(parseFloat(crossfaderInput.value));
+});
 applyCrossfader(parseFloat(crossfaderInput.value));
 
 // --- VU meters + track time readout -------------------------------------------
