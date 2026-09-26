@@ -491,27 +491,29 @@
   // needs songs that can actually ride 3-6 min.
   function minSongSecs() { return setMode() === "long" ? 180 : 90; }
 
-  async function trackDuration(trackId) {
+  async function trackInfo(trackId) {
     try {
       const a = await fetch(`/api/tracks/${trackId}/analysis`).then((r) => r.json());
-      return a && a.duration ? a.duration : 0;
-    } catch { return 0; }
+      return { duration: (a && a.duration) || 0, bpm: (a && a.bpm) || 0 };
+    } catch { return { duration: 0, bpm: 0 }; }
   }
 
   async function downloadSuggestion(s) {
     const label = `${s.artist} — ${s.title}`;
     const cached = await findCached(s.artist, s.title);
     if (cached) {
+      const info = await trackInfo(cached.track_id);
       return { track_id: cached.track_id, name: cached.display_name || label,
-               duration: await trackDuration(cached.track_id), suggestion: s };
+               duration: info.duration, bpm: info.bpm, suggestion: s };
     }
     const tracks = window.dlJobs
       ? await window.dlJobs.run(s.search_query, label)
       : await importUrl(s.search_query);
     if (!tracks.length) throw new Error("nothing downloaded");
     const t = tracks[0];
+    const info = t.duration && t.bpm ? t : await trackInfo(t.track_id);
     return { track_id: t.track_id, name: t.display_name || label,
-             duration: t.duration || (await trackDuration(t.track_id)), suggestion: s };
+             duration: info.duration, bpm: info.bpm, suggestion: s };
   }
 
   function addReady(c) {
@@ -522,10 +524,24 @@
   }
 
   // Match + gates + load + schedule one downloaded candidate. True = scheduled.
+  // Can `cand` be pitch-locked to the playing deck (+/-8%, half/double time)?
+  function tempoLockable(cand) {
+    const d = window.decks && window.decks[activeDeck];
+    if (!d || !d.bpm || !cand.bpm) return true; // unknown: let the matcher decide
+    const aEff = d.bpm * d._playbackRate();
+    return [1, 2, 0.5].some((m) => Math.abs(aEff / (cand.bpm * m) - 1) <= 0.08);
+  }
+  let allowTempoJump = false; // set on the last round so the set never stalls
+
   async function evaluateCandidate(currentId, cand) {
     if (!active || !cand) return false;
     const nextId = cand.track_id;
     const nextName = cand.name;
+    if (!allowTempoJump && !tempoLockable(cand)) {
+      apStatus(`Not after this song: ${nextName} (${Math.round(cand.bpm)} BPM can't be beat-matched) — kept for later`);
+      cand.keep = true;
+      return false;
+    }
     if (nextId === currentId || history.includes(nextName)) return false;
     if (cand.duration && cand.duration < minSongSecs()) {
       apStatus(`Skipping ${nextName}: ${fmtTime(cand.duration)} is too short for a ${setMode().toUpperCase()} set`);
@@ -683,6 +699,7 @@
 
     // 1) Songs already pre-downloaded in an earlier round: no waiting.
     // Pairwise rejects go back to the END of the pool (tried once per song).
+    allowTempoJump = false;
     const pool = ready.splice(0, ready.length);
     for (let i = 0; i < pool.length; i++) {
       if (!active) return;
@@ -702,13 +719,18 @@
     const MAX_ROUNDS = 3;
     const rejected = [];
     for (let round = 1; round <= MAX_ROUNDS; round++) {
+      allowTempoJump = round === MAX_ROUNDS;
       if (!active) return;
       apStatus(round > 1 ? `⏳ Retrying with new suggestions (${round}/${MAX_ROUNDS})…`
                          : "⏳ AI selecting next songs…");
       let suggestions;
+      aiPicking = true;
+      showQueue();
       try {
         suggestions = await getSuggestions(currentId, rejected);
+        aiPicking = false;
       } catch (e) {
+        aiPicking = false;
         console.warn("Autopilot suggest failed:", e.message);
         apStatus(`Suggest error: ${e.message}`);
         continue;

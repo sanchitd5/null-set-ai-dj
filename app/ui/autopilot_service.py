@@ -106,12 +106,28 @@ OUTPUT FORMAT — return ONLY valid JSON, no markdown, no explanation:
 
 {_FEW_SHOT}"""
 
+TEMPO_LOCK_PCT = 0.06  # the autopilot pitch-locks the next song within +/-8%; aim inside 6%
+
+
+def tempo_window(bpm: float) -> str:
+    """Explicit BPM ranges the next song must sit in (small models get this
+    arithmetic wrong, so hand it over pre-computed). Half/double time counts:
+    the autopilot locks 87 BPM against 174 BPM."""
+    if not bpm or bpm <= 0:
+        return "unknown - pick songs close to the current tempo"
+    lo, hi = bpm * (1 - TEMPO_LOCK_PCT), bpm * (1 + TEMPO_LOCK_PCT)
+    parts = [f"{lo:.0f}-{hi:.0f} BPM"]
+    parts.append(f"or half-time {lo / 2:.0f}-{hi / 2:.0f}" if bpm >= 140 else f"or double-time {lo * 2:.0f}-{hi * 2:.0f}")
+    return " ".join(parts) + " (songs outside this cannot be blended beat to beat)"
+
+
 _USER_TEMPLATE = (
     'NOW PLAYING: "{title}" by {artist}\n'
     "BPM: {bpm:.1f} | Camelot Key: {camelot} | Duration: {duration:.0f}s | "
     "Avg Energy: {energy:.2f}/1.0 | Set position: {set_pos_pct}% through set\n"
     "Occasion: {occasion}\n"
     "Set mode: {set_mode_line}\n"
+    "TEMPO WINDOW (required, so the next song can be beat-matched): {tempo_window}\n"
     "First fill current_genre and current_profile for THIS song, then pick songs whose own "
     "track_profile stays close to it. Stay in this genre neighbourhood unless the occasion demands a shift.\n"
     "Already played titles (avoid exact titles, same artist OK): {history}\n\n"
@@ -285,6 +301,7 @@ def suggest_next_tracks(
     Compatible with both openai v0.x/3.x (ChatCompletion.create) and v1.x/v2.x (OpenAI client).
     """
     user_msg = _USER_TEMPLATE.format(
+        tempo_window=tempo_window(bpm),
         title=title,
         artist=artist,
         bpm=bpm,
