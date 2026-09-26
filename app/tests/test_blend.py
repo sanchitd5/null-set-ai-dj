@@ -143,3 +143,11 @@ def test_exit_waits_for_first_drop_and_entry_not_after_bs_drop():
     assert plan["ok"] and plan["min_exit"] == pytest.approx(64 + 16)   # drop + 8 bars
     assert plan["exit"] >= 80.0                                        # window stretched past the drop
     assert plan["entry"] <= 64.0                                       # B enters at or before its drop
+
+
+def test_reports_bars_until_bs_vocal():
+    a, b = _track(120), _track(120)              # bar 2 s
+    plan = plan_blend(a, b, 80.0, 170.0, a_vocals=[], b_vocals=[(20.0, 60.0)], bars=8)
+    assert plan["ok"] and plan["b_vocal_in_bars"] is not None
+    assert plan["b_vocal_in_bars"] == pytest.approx(max(0.0, (20.0 - plan["entry"]) / 2.0), abs=0.01) or plan["entry"] >= 60.0
+    assert plan_blend(a, b, 80.0, 170.0, bars=8)["b_vocal_in_bars"] is None      # vocals unknown

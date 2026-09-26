@@ -110,6 +110,17 @@ def drop_lines(phrases, times, curve, bar: float) -> List[Tuple[float, float, fl
     return out
 
 
+def _vocal_in_bars(regions: Optional[Regions], entry: float, bar: float) -> Optional[float]:
+    """Bars from `entry` until the first vocal region (0 if one is sounding at entry);
+    None when vocals are unknown or there is none after the entry."""
+    if regions is None or bar <= 0:
+        return None
+    starts = [max(a, entry) for a, b in regions if b > entry]
+    if not starts:
+        return None
+    return round((min(starts) - entry) / bar, 2)
+
+
 def tempo_lock(a_bpm: float, b_bpm: float) -> Optional[Tuple[float, float]]:
     """(playback_rate for B, B bpm multiplier) so B's beat matches A's, or None."""
     if a_bpm <= 0 or b_bpm <= 0:
@@ -265,6 +276,9 @@ def plan_blend(
         "semitones": round(12 * math.log2(rate), 3),
         "a_vocal_coverage": None if a_cov is None else round(a_cov, 3),
         "b_vocal_coverage": None if b_cov is None else round(b_cov, 3),
+        # bars (A-locked) from B's entry until B's vocal first sounds: the
+        # overlap must end before it or two vocals sing at once
+        "b_vocal_in_bars": _vocal_in_bars(b_vocals, entry_t, b_bar),
         "min_exit": None if min_exit is None else round(min_exit, 3),
         "exit_energy": None if a_energy is None else round(a_energy, 3),
         "entry_energy": None if b_energy is None else round(b_energy, 3),

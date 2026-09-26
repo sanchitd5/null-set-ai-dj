@@ -1298,6 +1298,7 @@
   function scheduleTransition(currentId, nextId, nextName, candidate, blend = null, minExit = null, layer = null) {
     if (!active) return;
     let bTime = candidate.b_time || 0;
+    let vocalShort = false, vocalCut = "";
     let recipe = candidate.recipe || "Blend";
     const od0bpm = (window.decks && window.decks[activeDeck] && window.decks[activeDeck].bpm) || 128;
     // Beat-to-beat: when the tempos lock, hand beat to beat. Echo-outs and cuts
@@ -1312,6 +1313,15 @@
       if (!bClean) recipe = "Bass Swap";
       else if (!["bass", "blend", "default"].includes(k)) recipe = "Long Blend";
       blend.clean = bClean;
+      // Two vocals must never sing together: the overlap has to END before B's
+      // vocal first comes in (user: "vocals are overlapping"). Pick the
+      // transition length by how many bars that is.
+      const vIn = blend.b_vocal_in_bars;
+      if (vIn != null) {
+        if (vIn < 4) { recipe = "Quick Cut"; vocalCut = "cut on the downbeat before B's vocal"; }
+        else if (vIn < 8) { recipe = "Bass Swap"; vocalShort = true; vocalCut = `4-bar swap: B sings in ${Math.round(vIn)} bars`; }
+        else if (vIn < 16) { recipe = "Bass Swap"; vocalCut = `8-bar swap: B sings in ${Math.round(vIn)} bars`; }
+      }
     } else if (!["echo", "filter"].includes(recipeKind(recipe))) {
       // No tempo lock possible: beats cannot be layered, so don't hard-swap
       // (instant swaps between unrelated tempos changed the whole vibe in the
@@ -1349,7 +1359,9 @@
     const phraseS = 32 * 60 / od0bpm;
     let effectiveATime = exitAt;
     while (effectiveATime < nowPos + 15) effectiveATime += phraseS;
-    const xfDuration = peakT ? Math.max(16, w.xf) : w.xf;   // full 8-bar double drop in any mode
+    // vocalShort: xfDuration < 16 halves every bar count in executeTransition
+    // (Bass Swap 8 -> 4 bars) so the overlap ends before B's vocal.
+    const xfDuration = vocalShort ? Math.min(8, w.xf) : peakT ? Math.max(16, w.xf) : w.xf;
     playPlanTag = ` | ${w.label} ${fmtTime(effectiveATime - entryPos)}`;
 
     let executed = false;
@@ -1363,7 +1375,9 @@
       window.djMind.setPlan({
         fireAt,
         // a vocal-free blend window is exact: the mind must not hold past it
-        maxFireAt: peakT || layer || (blend && blend.instrumental) ? fireAt : Math.max(fireAt, Math.min(trackEnd, hi + 16 * barS)),
+        // vocal-aware plans are exact: a DJ-mind hold would move the overlap into a vocal
+        maxFireAt: peakT || layer || (blend && (blend.instrumental || blend.vocals_known)) ? fireAt
+          : Math.max(fireAt, Math.min(trackEnd, hi + 16 * barS)),
         style: peakT ? "peak" : overlapStyle,
         peakKind: peakT ? peakT.kind : null, peakWhy: peakT ? peakT.why : null, brake: !!(peakT && peakT.brake),
         preClearBars: Number.isFinite(candidate.pre_clear_bars) ? candidate.pre_clear_bars : 8,
