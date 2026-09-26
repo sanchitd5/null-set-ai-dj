@@ -461,7 +461,7 @@
     }
 
     apStatus(`Matching transition → ${nextName}…`);
-    const candidate = await matchTracks(currentId, nextId);
+    let candidate = await matchTracks(currentId, nextId);
     if (!candidate) return false;
 
     // Measured vibe gate: reject candidates whose loudness / brightness /
@@ -482,6 +482,10 @@
       scoreEl.style.cssText = `display:inline;font-weight:700;color:${good ? "#4ade80" : "#f97316"};margin-left:6px`;
     }
 
+    // AI plan for this pair (candidate, exit phrase, DJ-mind moves), fetched
+    // while the next track loads. Rules-only if it fails or times out.
+    const aiPlan = requestMindPlan(currentId, nextId, candidate);
+
     // Preload next track into staging deck
     apStatus(`Loading ${nextName} into deck ${stagingDeck().toUpperCase()}…`);
     const audioRes = await fetch(`/api/audio/tracks/${nextId}`);
@@ -489,10 +493,39 @@
     const blob = await audioRes.blob();
     if (!active) return false;
     await loadIntoDeck(stagingDeck(), nextId, nextName, blob);
+    const plan = await aiPlan;
+    if (!active || currentTrackId !== currentId) return false;
+    if (plan && plan.candidate) {
+      // The AI picked a candidate + exit phrase: both already validated server-side.
+      candidate = Object.assign({}, candidate, plan.candidate, { vibe: candidate.vibe });
+      apStatus(`AI plan: ${plan.candidate.recipe}, exit ${fmtTime(plan.candidate.a_time)}`);
+    }
 
     const fireAt = scheduleTransition(currentId, nextId, nextName, candidate);
     tryMashup(currentId, nextId, nextName, fireAt); // fire-and-forget
     return true;
+  }
+
+  // Exit window (track seconds) for the current song, same maths as scheduleTransition.
+  function exitWindow(score) {
+    const w = playWindow(score);
+    const od = window.decks && window.decks[activeDeck];
+    const trackEnd = (od && od.buffer ? od.buffer.duration : Infinity) - w.xf - 2;
+    return { lo: Math.min(entryPos + w.min, trackEnd), hi: Math.min(entryPos + w.max, trackEnd) };
+  }
+
+  async function requestMindPlan(currentId, nextId, candidate) {
+    if (!window.djMind || !window.djMind.requestPlan) return null;
+    const win = exitWindow(candidate.score || 50);
+    if (!(win.hi > win.lo)) return null;
+    // Never wait past the point where the transition must be booked.
+    const pos = deckPosition(activeDeck);
+    apStatus("AI planning the next transition…");
+    return window.djMind.requestPlan(currentId, nextId, candidate, Object.assign(win, {
+      setPosition: Math.min(history.length / 10, 1.0),
+      mashupPossible: mashupsOn() && !!window.mashup,
+      deadlineS: Math.max(win.lo, win.hi - 30) - pos - 20,
+    }));
   }
 
   async function tryCandidate(currentId, cand) {

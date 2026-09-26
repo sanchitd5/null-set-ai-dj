@@ -671,6 +671,12 @@
       <label class="hud-label" title="Lay the next track's vocal over an instrumental phrase of the current one (A x B), when key and tempo fit">
         <input type="checkbox" id="ap-mashup-toggle" checked /> MASHUPS
       </label>
+      <label class="hud-label" title="Phrase-level DJ moves: pre-clear, sub drops, loops, beat jumps, rolls, filter builds, echo throws">
+        <input type="checkbox" id="ap-mind-toggle" checked /> FRED MIND
+      </label>
+      <label class="hud-label" title="One LLM plan per song pair (recipe, exit phrase, moves); the rules still veto anything unsafe">
+        <input type="checkbox" id="ap-ai-toggle" checked /> AI ASSIST
+      </label>
       <input type="range" id="ap-drums-level" min="0" max="1" step="0.01" value="0.25" aria-label="Live drums level" />
     </div>
   </div>
@@ -678,6 +684,7 @@
   <!-- DJ mind: the move the AI picked on this phrase, and the last few moves -->
   <div class="ap-mind" id="ap-mind" title="The AI DJ's decision on each 8-bar phrase">
     <div class="ap-mind-now" id="ap-mind-now"><span class="ap-mind-act ap-mind-ride">RIDE</span><span class="ap-mind-why">idle</span></div>
+    <div class="ap-mind-plan" id="ap-mind-plan" hidden></div>
     <ol class="ap-mind-log" id="ap-mind-log"></ol>
   </div>
 

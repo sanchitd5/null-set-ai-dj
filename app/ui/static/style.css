@@ -1432,6 +1432,18 @@ button.rebind-btn.is-armed {
 .ap-mind-instant  { background: rgba(255,60,90,.2);   color: #ff5a78; }
 .ap-mind-subdrop  { background: rgba(160,122,240,.2); color: #a07af0; }
 .ap-mind-layer    { background: rgba(0,220,120,.18);  color: #00dc78; }
+.ap-mind-loop_extend, .ap-mind-beat_jump { background: rgba(0,200,220,.18); color: #22d3ee; }
+.ap-mind-stutter, .ap-mind-filter_build, .ap-mind-echo_freeze { background: rgba(255,140,40,.2); color: #ff9a3c; }
+.ap-mind-holdloop { background: rgba(255,60,60,.25); color: #ff6b6b; }
+.ap-mind-tag { font-size: 8px; font-weight: 800; letter-spacing: .06em; padding: 0 4px; margin-right: 4px; border-radius: 2px; border: 1px solid currentColor; }
+.ap-mind-tag-ai { color: #c084fc; }
+.ap-mind-tag-rule { color: #94a3b8; }
+.ap-mind-tag-safety { color: #ff6b6b; }
+.ap-mind-plan { font-size: 10px; margin-top: 3px; padding: 2px 0 2px 6px; border-left: 2px solid #c084fc; }
+.ap-mind-plan[hidden] { display: none; }
+.ap-mind-planned { list-style: none; margin: 1px 0 0; padding: 0; font-size: 9px; }
+.ap-mind-planned li, .ap-mind-plan > div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ap-mind-dim { color: var(--outline); opacity: .7; }
 .ap-mind-log { list-style: none; margin: 2px 0 0; padding: 0; font-size: 9px; color: var(--outline); }
 .ap-mind-log li { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ap-mind-flash { border-left-color: var(--accent); animation: ap-mind-pulse 1.2s ease-out; }
