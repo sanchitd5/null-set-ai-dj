@@ -708,6 +708,8 @@ class MindPlanRequest(BaseModel):
     remix_used: list[str] = []      # remix moves already played on A
     mashup_possible: bool = False
     subdrop_last_track: bool = False
+    peak_moves: bool = False        # PEAK MOVES toggle: allow fakeout / peak_roll / beat_boost
+    big_moment_ok: bool = False     # browser's set-wide big-moment ledger allows one on A
 
 
 @app.post("/api/autopilot/plan")

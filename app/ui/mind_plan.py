@@ -23,6 +23,7 @@ import time
 from functools import lru_cache
 from typing import Any, Optional
 
+from app.music_brain.blend import drop_lines
 from app.ui import llm_gate
 from app.ui.autopilot_service import _extract_json, chat_raw
 
@@ -41,8 +42,14 @@ REMIX_GAP_PHRASES = 2        # remix phrases at least 2 apart: never two in a ro
 BEAT_LAYER_MIN_SCORE = 65
 
 TRANSITION_MOVES = ("hold", "preclear", "subdrop")
-REMIX_MOVES = ("loop_extend", "beat_jump", "stutter", "filter_build", "echo_freeze", "beat_layer")
-ALLOWED_MOVES = TRANSITION_MOVES + REMIX_MOVES
+REMIX_MOVES = ("loop_extend", "beat_jump", "stutter", "filter_build", "echo_freeze", "beat_layer", "peak_roll")
+# PEAK mode (dj-mind.js): only when the browser says peak moves are on.
+# peak_roll is a remix move (remix caps); fakeout is a BIG moment (max 1 per
+# song, gated by big_moment_ok from the browser's set-wide ledger); beat_boost
+# is once per song inside a drop. Grounding: ./DJ/05 Loop Roll, Build-to-Drop
+# Transition; ./DJ/13 Skrillex (silence before impact), Fred again.. (live drums).
+PEAK_MOVES = ("fakeout", "peak_roll", "beat_boost")
+ALLOWED_MOVES = TRANSITION_MOVES + REMIX_MOVES + ("fakeout", "beat_boost")
 DROP_LEADINS = ("stutter", "filter_build", "echo_freeze")  # tension -> release into a drop
 MAX_MOVES = 5
 PLAN_MAX_TOKENS = 600          # mlx_lm.server's default output length truncates JSON
@@ -57,6 +64,9 @@ MOVE_HELP = {
     "filter_build": "sweep lows and mids out over 8 bars, snap back open on the drop downbeat (phrase right before a drop)",
     "echo_freeze": "echo tail on the last beat of the phrase, then cut straight into the drop (phrase right before a drop)",
     "beat_layer": "lay the next song's vocal over this one with its lows cut (only if a mashup is possible and the match is strong)",
+    "peak_roll": "PEAK: filter riser + loop roll 1 > 1/2 > 1/4 beat over the last 2 bars of a build, released on the drop (build phrase right before a drop)",
+    "fakeout": "PEAK: 1 beat of silence (or 1 bar vocal-only) right before a drop, then slam back (build phrase right before a drop; max once, rare)",
+    "beat_boost": "PEAK: one 8-bar phrase of heavier live drums (open hats + claps) inside a drop (drop phrase, once per song)",
 }
 
 # -- DJ wiki grounding (./DJ/, extracted once and cached) ---------------------
@@ -243,6 +253,8 @@ def build_facts(a: dict, b: dict, candidates: list[dict], ctx: dict) -> dict:
     spans = [(t, phrases[i + 1] if i + 1 < len(phrases) else t + PHRASE_BARS * bar)
              for i, t in enumerate(phrases)]
     labels = [phrase_label(raw_secs, t, end) for t, end in spans]
+    # acoustic drop hits (labels flicker); same rule as dj-mind.js dropLines()
+    hits = [x for x, _, _ in drop_lines(phrases, a.get("energy_times"), a.get("energy_curve"), bar)]
     rows = []
     for i, (t, end) in enumerate(spans):
         if t < now or t > hi or end > duration + 0.5:
@@ -256,6 +268,7 @@ def build_facts(a: dict, b: dict, candidates: list[dict], ctx: dict) -> dict:
             "energy": energy,
             "vocal": round(_vocal_share(a.get("vocal_active_regions"), t, end), 2),
             "pre_drop": is_pre_drop(label, nxt),
+            "drop_hit": any(abs(x - t) <= bar for x in hits),
         })
     exits = [r["t"] for r in rows if lo - 0.01 <= r["t"] <= hi + 0.01]
     return {
@@ -282,6 +295,8 @@ def build_facts(a: dict, b: dict, candidates: list[dict], ctx: dict) -> dict:
         "mashup_possible": bool(ctx.get("mashup_possible")),
         "subdrop_last_track": bool(ctx.get("subdrop_last_track")),
         "remix_used": [m for m in ctx.get("remix_used") or [] if m in REMIX_MOVES],
+        "peak_moves": bool(ctx.get("peak_moves")),
+        "big_moment_ok": bool(ctx.get("big_moment_ok")),
     }
 
 
@@ -357,6 +372,9 @@ def validate_plan(raw: Any, facts: dict) -> dict:
         if kind not in ALLOWED_MOVES:
             drop(m, "unknown move")
             continue
+        if kind in PEAK_MOVES and not facts.get("peak_moves"):
+            drop(m, "peak moves are off")
+            continue
         try:
             at = _nearest(phrase_ts, float(m.get("at")), bar)
         except (TypeError, ValueError):
@@ -376,6 +394,10 @@ def validate_plan(raw: Any, facts: dict) -> dict:
         if kind in TRANSITION_MOVES and any(k["move"] == kind for k in kept):
             drop(m, "move type twice")
             continue
+        nxt_t = _nearest(phrase_ts, row["end"], bar)
+        nxt_row = rows.get(nxt_t) if nxt_t is not None else None
+        next_drop = bool(nxt_row and (nxt_row.get("drop_hit") or nxt_row["section"] == "drop"))
+        in_drop = bool(row.get("drop_hit") or row["section"] == "drop")
 
         bars = None
         if kind == "hold":
@@ -399,6 +421,24 @@ def validate_plan(raw: Any, facts: dict) -> dict:
             if on_track < MIN_BARS_ON_TRACK or (to_exit is not None and to_exit < EXIT_GUARD_BARS):
                 drop(m, "subdrop too close to song start or exit")
                 continue
+        elif kind in ("fakeout", "beat_boost"):
+            if kind in used_kinds:
+                drop(m, "move type already used on this song")
+                continue
+            if on_track < MIN_BARS_ON_TRACK or (to_exit is not None and to_exit < EXIT_GUARD_BARS):
+                drop(m, "peak move too close to song start or exit")
+                continue
+            if kind == "fakeout":
+                if not facts.get("big_moment_ok"):
+                    drop(m, "big-moment cap (1 per song, 2 per 3 songs, cooldown)")
+                    continue
+                if not next_drop or in_drop:
+                    drop(m, "fakeout only on the phrase right before a drop")
+                    continue
+            elif not in_drop:
+                drop(m, "beat_boost only inside a drop")
+                continue
+            used_kinds.add(kind)
         else:  # remix moves
             if remix_count >= REMIX_MAX_PER_SONG:
                 drop(m, f"remix cap {REMIX_MAX_PER_SONG} per song reached")
@@ -417,6 +457,9 @@ def validate_plan(raw: Any, facts: dict) -> dict:
                 continue
             if kind in DROP_LEADINS and not row["pre_drop"]:
                 drop(m, "drop lead-in needs the phrase right before a drop")
+                continue
+            if kind == "peak_roll" and (not next_drop or in_drop):
+                drop(m, "peak_roll only on the run-up right before a drop")
                 continue
             if kind == "loop_extend":
                 bars = m.get("bars") if m.get("bars") in (4, 8) else 8
@@ -496,6 +539,8 @@ def build_prompt(facts: dict) -> str:
         tags = [r["section"], f"energy {r['energy']}", f"vocal {r['vocal']}"]
         if r["pre_drop"]:
             tags.append("pre_drop")
+        if r.get("drop_hit"):
+            tags.append("drop_hit")
         if ok:
             tags.append("ok_remix")
         lines.append(f"  {r['t']}: {', '.join(tags)}")
@@ -508,6 +553,10 @@ def build_prompt(facts: dict) -> str:
     ]
     for k, v in MOVE_HELP.items():
         if k == "beat_layer" and not facts["mashup_possible"]:
+            continue
+        if k in PEAK_MOVES and not facts.get("peak_moves"):
+            continue
+        if k == "fakeout" and not facts.get("big_moment_ok"):
             continue
         lines.append(f"  {k}: {v}")
     brief = grounding([c["recipe"] for c in facts["candidates"]])

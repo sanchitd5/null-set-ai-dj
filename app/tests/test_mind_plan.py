@@ -219,3 +219,58 @@ def test_pre_drop_matches_js():
     assert mp.is_pre_drop("verse", "drop") and mp.is_pre_drop("build", "verse")
     assert not mp.is_pre_drop("build", "build") and not mp.is_pre_drop("chorus", "drop")
     assert not mp.is_pre_drop("verse", None)
+
+
+# ── PEAK moves in the LLM plan (same caps as dj-mind.js) ─────────────────────
+def _peak(moves, **ctx):
+    f = _facts(**{"peak_moves": True, "big_moment_ok": True, **ctx})
+    return mp.validate_plan({"candidate": 0, "exit": 176.0, "moves": moves}, f)
+
+
+def test_peak_moves_kept_on_their_phrases():
+    p = _peak([{"move": "fakeout", "at": 64.0, "reason": "silence then slam"},
+               {"move": "beat_boost", "at": 96.0, "reason": "heavier drums"},
+               {"move": "peak_roll", "at": 144.0, "reason": "roll into drop 2"}])
+    assert [m["move"] for m in p["moves"]] == ["fakeout", "beat_boost"]
+    assert "no remix in the last 24 bars" in p["dropped"][0]      # 144 is 16 bars before 176
+
+
+@pytest.mark.parametrize("moves, ctx, why", [
+    ([{"move": "fakeout", "at": 64.0}], {"peak_moves": False}, "peak moves are off"),
+    ([{"move": "peak_roll", "at": 64.0}], {"peak_moves": False}, "peak moves are off"),
+    ([{"move": "fakeout", "at": 64.0}], {"big_moment_ok": False}, "big-moment cap"),
+    ([{"move": "fakeout", "at": 80.0}], {}, "right before a drop"),
+    ([{"move": "fakeout", "at": 16.0}], {}, "too close to song start"),
+    ([{"move": "fakeout", "at": 64.0}, {"move": "fakeout", "at": 144.0}], {}, "already used"),
+    ([{"move": "beat_boost", "at": 32.0}], {}, "only inside a drop"),
+    ([{"move": "peak_roll", "at": 32.0}], {}, "only on the run-up right before a drop"),
+])
+def test_peak_moves_vetoed(moves, ctx, why):
+    p = _peak(moves, **ctx)
+    assert any(why in d for d in p["dropped"]), p["dropped"]
+
+
+def test_peak_help_only_when_allowed():
+    on = mp.build_prompt(_facts(peak_moves=True, big_moment_ok=True))
+    off = mp.build_prompt(_facts())
+    assert "fakeout" in on and "peak_roll" in on
+    assert "fakeout" not in off and "beat_boost" not in off
+
+
+def test_peak_roll_kept_on_a_build_before_a_drop():
+    p = _peak([{"move": "peak_roll", "at": 64.0, "reason": "roll into drop 1"}])
+    assert [m["move"] for m in p["moves"]] == ["peak_roll"], p["dropped"]
+
+
+def test_drop_hit_from_energy_lets_peak_moves_through_sliver_labels():
+    a = _analysis()
+    for s in a["sections"]:
+        s["label"] = "verse"                          # labels useless
+    a["energy_times"] = [x * 0.5 for x in range(448)]
+    a["energy_curve"] = [0.9 if 80 <= t < 112 else 0.4 for t in a["energy_times"]]
+    f = mp.build_facts(a, {"bpm": 122.0}, CANDS, {"window_lo": 144.0, "window_hi": 200.0,
+                                                   "peak_moves": True, "big_moment_ok": True})
+    assert {r["t"] for r in f["phrases"] if r["drop_hit"]} == {80.0}
+    p = mp.validate_plan({"candidate": 0, "exit": 176.0,
+                          "moves": [{"move": "fakeout", "at": 64.0}, {"move": "beat_boost", "at": 80.0}]}, f)
+    assert [m["move"] for m in p["moves"]] == ["fakeout", "beat_boost"], p["dropped"]

@@ -89,7 +89,7 @@ def test_drop_entry_lands_on_the_first_long_drop():
 
 def test_drop_entry_needs_a_long_drop_on_the_grid():
     a = _track(120)
-    assert "no long drop" in plan_blend(a, _track(120), 80.0, 170.0, entry_mode="drop")["reasons"][0]
+    assert "no drop" in plan_blend(a, _track(120), 80.0, 170.0, entry_mode="drop")["reasons"][0]
     off = _droppy(drop_at=101.0)                     # 5 s off B's 16 s phrase grid
     assert "no phrase line" in plan_blend(a, off, 80.0, 170.0, bars=8, entry_mode="drop")["reasons"][0]
     with pytest.raises(ValueError):
@@ -99,3 +99,34 @@ def test_drop_entry_needs_a_long_drop_on_the_grid():
 def test_match_mode_unchanged_by_drop_fields():
     plan = plan_blend(_track(120), _droppy(), 80.0, 170.0, bars=16)
     assert plan["entry_mode"] == "match" and plan["drop"] is None
+
+
+def test_drop_lines_found_by_energy_jump_not_labels():
+    from app.music_brain.blend import drop_lines
+    # 2 s bars, 16 s phrases; energy low, then a jump at 64 s and 160 s
+    phr = [i * 16.0 for i in range(14)]
+    lvl = {0: 0.3, 1: 0.35, 2: 0.4, 3: 0.5, 4: 0.9, 5: 0.9, 6: 0.4, 7: 0.45, 8: 0.5, 9: 0.55, 10: 0.95, 11: 0.9, 12: 0.4, 13: 0.3}
+    times = [x * 0.5 for x in range(448)]
+    curve = [lvl[int(t // 16)] for t in times]
+    got = drop_lines(phr, times, curve, 2.0)
+    assert [t for t, _, _ in got] == [64.0, 160.0]
+    assert got[0][1] == pytest.approx(0.9) and got[0][2] == pytest.approx(0.5)
+    # small rises are not drops
+    assert drop_lines(phr, times, [0.5 + 0.01 * (t // 16) for t in times], 2.0) == []
+
+
+def test_drop_entry_uses_energy_drop_when_labels_are_slivers():
+    b = _track(120)
+    b.energy_times = [x * 0.5 for x in range(480)]
+    b.energy_curve = [0.9 if 64 <= t < 96 else 0.35 for t in b.energy_times]
+    plan = plan_blend(_track(120), b, 80.0, 170.0, bars=8, entry_mode="drop")
+    assert plan["ok"] and plan["entry"] == 64.0 and plan["drop"]["start"] == 64.0
+
+
+def test_drop_rule_matches_dj_mind_js():
+    import re
+    from pathlib import Path
+    from app.music_brain import blend
+    js = (Path(blend.__file__).parents[1] / "ui" / "static" / "dj-mind.js").read_text(encoding="utf-8")
+    assert float(re.search(r"\bDROP_JUMP = ([0-9.]+)", js).group(1)) == blend.DROP_JUMP
+    assert float(re.search(r"\bPEAK_QUARTILE = ([0-9.]+)", js).group(1)) == blend.DROP_QUARTILE

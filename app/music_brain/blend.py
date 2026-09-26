@@ -33,6 +33,8 @@ ENERGY_MATCH_WEIGHT = 1.5      # |A exit energy - B entry energy| penalty (both 
 ALLOWED_BARS = (8, 16, 32)
 ENTRY_MODES = ("match", "drop")
 DROP_MIN_BARS = 8              # a "long" drop: same sliver filter as dj-mind.js mergeSections
+DROP_JUMP = 0.2                # drop line: phrase energy jumps this much (0-1) over the one before
+DROP_QUARTILE = 0.75           # ... and sits in the song's top quartile of phrase energies
 
 _EXIT_LABEL_BONUS = {"outro": 0.25, "breakdown": 0.2, "intro": 0.1, "build": 0.05}
 _ENTRY_LABEL_BONUS = {"intro": 0.25, "build": 0.1, "breakdown": 0.05}
@@ -77,6 +79,34 @@ def long_drops(t: TrackAnalysis, bar: float) -> List[Tuple[float, float, float]]
         else:
             merged.append([s.label, s.start, s.end, s.energy or 0.0])
     return [(a, b, e) for lab, a, b, e in merged if lab == "drop" and b - a >= DROP_MIN_BARS * bar]
+
+
+def _curve_mean(times, curve, start: float, end: float) -> Optional[float]:
+    vals = [e for x, e in zip(times or [], curve or []) if start <= x < end]
+    return sum(vals) / len(vals) if vals else None
+
+
+def drop_lines(phrases, times, curve, bar: float) -> List[Tuple[float, float, float]]:
+    """(t, energy, previous phrase energy) of the 8-bar phrase lines where a drop
+    hits. The analyzer's section labels flicker (1-3 s slivers; real tracks
+    rarely merge into a long "drop"), so a drop is found acoustically: the
+    phrase's mean energy is in the song's top quartile AND jumps >= DROP_JUMP
+    over the phrase before it (./DJ/05 [[Double Drop]] / [[Drop Swap]]: the
+    drop is the downbeat where the full track slams in). Same rule as
+    dropLines() in app/ui/static/dj-mind.js."""
+    L = 8 * bar
+    ph = [p for p in phrases or []]
+    es = [_curve_mean(times, curve, p, p + L) for p in ph]
+    known = sorted(e for e in es if e is not None)
+    if len(known) < 3:
+        return []
+    q3 = known[int(DROP_QUARTILE * (len(known) - 1))]
+    out = []
+    for i in range(1, len(ph)):
+        e, pe = es[i], es[i - 1]
+        if e is not None and pe is not None and e >= q3 and e - pe >= DROP_JUMP - 1e-9:
+            out.append((ph[i], e, pe))
+    return out
 
 
 def tempo_lock(a_bpm: float, b_bpm: float) -> Optional[Tuple[float, float]]:
@@ -146,9 +176,12 @@ def plan_blend(
     limit = b.duration * ENTRY_SEARCH_FRACTION
     drop_span = None
     if entry_mode == "drop":
-        drops = long_drops(b, 240.0 / b.bpm)
+        b_bar_own = 240.0 / b.bpm
+        drops = [(t, t + 8 * b_bar_own, e) for t, e, _ in
+                 drop_lines(b.phrase_boundaries_8bar, b.energy_times, b.energy_curve, b_bar_own)]
+        drops = sorted(drops + long_drops(b, b_bar_own))
         if not drops:
-            return {"ok": False, "reasons": ["incoming song has no long drop"]}
+            return {"ok": False, "reasons": ["incoming song has no drop"]}
         drop_span = drops[0]
         # Target B's drop energy, not A's exit energy: the drop IS the entry.
         a_energy = drop_span[2]
