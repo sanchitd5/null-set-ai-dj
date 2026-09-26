@@ -671,6 +671,8 @@
           <option value="halftime">HALF-TIME / TRAP</option>
           <option value="dnb">DNB TWO-STEP</option>
           <option value="tops">TOPS ONLY</option>
+          <option value="bhangra">BHANGRA (DHOL)</option>
+          <option value="dembow">DEMBOW</option>
         </select>
         <label class="hud-label" for="seq-swing">SWING</label>
         <input type="range" id="seq-swing" min="0" max="0.6" step="0.01" value="0" aria-label="Swing" />
@@ -729,6 +731,9 @@
       </label>
       <label class="hud-label" title="Peak-time moves on high-energy songs: double drop, drop swap, fake-out, roll into the drop, heavier live drums. Max 1 big moment per song, 2 per 3 songs">
         <input type="checkbox" id="ap-peak-toggle" checked /> PEAK MOVES
+      </label>
+      <label class="hud-label" title="The AI programs the BEAT GRID per song (pattern from the genre, kick muted, low level) and plays it on the song's drop for 8 bars, once per song. Pressing RUN yourself takes the grid over.">
+        <input type="checkbox" id="ap-grid-toggle" checked /> AI BEATS
       </label>
       <input type="range" id="ap-drums-level" min="0" max="1" step="0.01" value="0.25" aria-label="Live drums level" />
     </div>
@@ -821,5 +826,6 @@
 <script src="/dj-mind.js"></script>
 <script src="/download-progress.js"></script>
 <script src="/autopilot.js"></script>
+<script src="/beat-grid-ai.js"></script>
 </body>
 </html>

@@ -364,6 +364,7 @@
   // Shows what is actually lined up: the scheduled NEXT song, songs already
   // downloaded and waiting (READY), and songs still downloading (⬇).
   let scheduledNext = null;   // candidate booked for the coming transition
+  let scheduledFireAt = null; // track time of the booked transition on the playing deck
   let pendingSugs = [];       // suggestions whose downloads are in flight
   let aiPicking = false;
 
@@ -688,6 +689,7 @@
 
     if (gen !== undefined && gen !== prepGen) return false; // superseded by a restarted search
     const fireAt = scheduleTransition(currentId, nextId, nextName, candidate, blend, minExit);
+    scheduledFireAt = fireAt;
     tryMashup(currentId, nextId, nextName, fireAt); // fire-and-forget
     scheduledNext = cand;
     pendingSugs = []; // leftovers show up as READY when their download lands
@@ -1252,6 +1254,17 @@
     if (startBtn) startBtn.disabled = active;
     if (stopBtn)  stopBtn.disabled  = !active;
   }
+
+  // Read-only view for helpers (beat-grid-ai.js).
+  window.autopilotState = {
+    get active() { return active; },
+    get activeDeck() { return activeDeck; },
+    get trackId() { return currentTrackId; },
+    get genre() { return currentGenre; },
+    get entryPos() { return entryPos; },
+    get energy() { return currentEnergy; },
+    get fireAt() { return scheduledNext ? scheduledFireAt : null; },
+  };
 
   startBtn.addEventListener("click", start);
   if (stopBtn) stopBtn.addEventListener("click", stop);

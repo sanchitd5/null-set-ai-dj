@@ -266,6 +266,10 @@
     halftime: { [PAD.KICK]: [0, 11], [PAD.SNARE]: [8], [PAD.HAT]: [0, 2, 4, 6, 8, 10, 12, 13, 14, 15] },
     dnb:      { [PAD.KICK]: [0, 10], [PAD.SNARE]: [4, 12], [PAD.HAT]: [2, 6, 10, 14], [PAD.OPEN_HAT]: [14] },
     tops:     { [PAD.HAT]: [1, 3, 5, 7, 9, 11, 13, 15], [PAD.OPEN_HAT]: [2, 6, 10, 14], [PAD.CLAP]: [12] },
+    // bhangra: dhol chaal feel on the tom (3+3+2 accents), claps on 2 & 4
+    bhangra:  { [PAD.KICK]: [0, 8], [PAD.TOM]: [0, 3, 6, 8, 11, 14], [PAD.CLAP]: [4, 12], [PAD.HAT]: [2, 6, 10, 14] },
+    // dembow: boom-ch-boom-chick (reggaeton / dembow)
+    dembow:   { [PAD.KICK]: [0, 4, 8, 12], [PAD.SNARE]: [3, 6, 11, 14], [PAD.HAT]: [0, 2, 4, 6, 8, 10, 12, 14] },
   };
 
   const saved = readJSON(SEQ_KEY, {});
@@ -446,7 +450,11 @@
     if (lampEl) lampEl.classList.toggle("lamp-ok", seq.running);
     if (typeof questEvent === "function") questEvent("seq-run", seq.running ? 1 : 0);
   }
-  function toggleRun() { setRunning(!seq.running); }
+  let owner = null;   // "user" | "ai" | null: who started the current run
+  function toggleRun() {
+    owner = seq.running ? null : "user";
+    setRunning(!seq.running);
+  }
 
   buildGrid();
   if (clockEl) {
@@ -482,8 +490,39 @@
   });
   if (runBtn) runBtn.addEventListener("click", toggleRun);
 
-  window.beatGrid = { run: () => setRunning(true), stop: () => setRunning(false), toggle: toggleRun,
-                      isRunning: () => seq.running };
+  // API for the AI (autopilot) as well as scripts. The AI must use runAs /
+  // stopAs("ai"): it never takes over or stops a run the user started.
+  function loadPreset(name) {
+    const preset = PRESETS[name];
+    if (!preset) return false;
+    seq.steps = SAMPLE_PADS.map((_, p) => steps(preset[p] || []));
+    paintAll();
+    return true;
+  }
+  window.beatGrid = {
+    run: () => { owner = "user"; setRunning(true); },
+    stop: () => { owner = null; setRunning(false); },
+    toggle: toggleRun,
+    isRunning: () => seq.running,
+    owner: () => (seq.running ? owner : null),
+    presets: () => Object.keys(PRESETS),
+    loadPreset,
+    setMute(pad, on) {
+      seq.mutes[pad] = !!on;
+      const name = gridEl && gridEl.querySelector(`.seq-name[data-pad-label="${pad}"]`);
+      if (name) {
+        name.classList.toggle("is-muted", !!on);
+        name.setAttribute("aria-pressed", String(!!on));
+        name.parentElement.classList.toggle("is-muted", !!on);
+      }
+    },
+    setLevel(v) { seq.level = Math.min(1, Math.max(0, v)); applyLevel(); if (levelEl) levelEl.value = String(seq.level); },
+    setSubSafe(on) { seq.subSafe = !!on; applySubSafe(); if (subSafeEl) subSafeEl.checked = seq.subSafe; },
+    status: seqStatus,
+    runAs(who) { if (seq.running && owner === "user" && who !== "user") return false; owner = who; setRunning(true); return true; },
+    stopAs(who) { if (!seq.running || (owner === "user" && who !== "user")) return false; owner = null; setRunning(false); return true; },
+    PAD,
+  };
 
   // ---- keyboard: M runs / stops the grid; pad keycaps follow rebinds ----
   if (typeof ACTIONS !== "undefined" && typeof rebuildKeyMap === "function") {
