@@ -95,7 +95,7 @@ def _file_hash(path: Path) -> str:
 
 
 def analyze_tempo_and_beats(y: np.ndarray, sr: int) -> Tuple[float, np.ndarray]:
-    """Returns (bpm, beat_times). Beat 0 is treated as the downbeat anchor.
+    """Returns (bpm, beat_times). Bar/phrase phase comes from estimate_downbeat_phase.
 
     Section-consensus tempo (music_brain/tempo.py): a whole-song beat_track
     read "Cola" (122 BPM) as 80.7 because most of the song sits on a 2/3 pulse.
@@ -105,17 +105,140 @@ def analyze_tempo_and_beats(y: np.ndarray, sr: int) -> Tuple[float, np.ndarray]:
     return robust_tempo(y, sr)
 
 
-def compute_downbeats(beat_times: np.ndarray, beats_per_bar: int = BEATS_PER_BAR) -> np.ndarray:
-    """Every Nth beat starting from beat 0 (assumes 4/4 and that beat 0 is bar 1)."""
+def compute_downbeats(
+    beat_times: np.ndarray, beats_per_bar: int = BEATS_PER_BAR, offset: int = 0,
+) -> np.ndarray:
+    """Every Nth beat starting at beat index `offset` (4/4; see estimate_downbeat_phase)."""
     if len(beat_times) == 0:
         return beat_times
-    return beat_times[::beats_per_bar]
+    return beat_times[offset % beats_per_bar::beats_per_bar]
 
 
-def compute_phrase_boundaries(beat_times: np.ndarray, beats_per_phrase: int) -> np.ndarray:
+def compute_phrase_boundaries(
+    beat_times: np.ndarray, beats_per_phrase: int, offset: int = 0,
+) -> np.ndarray:
+    """Every Nth beat starting at beat index `offset` (the phrase anchor's index mod N)."""
     if len(beat_times) == 0:
         return beat_times
-    return beat_times[::beats_per_phrase]
+    return beat_times[offset % beats_per_phrase::beats_per_phrase]
+
+
+_GRID_HOP = 512
+
+
+def _norm(x: np.ndarray) -> np.ndarray:
+    m = float(np.mean(x)) if len(x) else 0.0
+    return x / m if m > 0 else x
+
+
+def estimate_downbeat_phase(
+    y: np.ndarray, sr: int, beat_times: np.ndarray, beats_per_bar: int = BEATS_PER_BAR,
+) -> int:
+    """Which beat offset (0..beats_per_bar-1) carries bar 1.
+
+    The tracker's beat 0 is wherever it locked on, often not a bar line. Two
+    cues land on downbeats: low-band onsets (bar-1 kicks and crashes hit
+    hardest) and harmonic change (chords move on the bar). Both are summed at
+    beat_times[offset::4]; the strongest offset wins.
+    """
+    n = len(beat_times)
+    if n < beats_per_bar * 4:
+        return 0
+    frames = librosa.time_to_frames(np.asarray(beat_times), sr=sr, hop_length=_GRID_HOP)
+    low = librosa.onset.onset_strength(y=y, sr=sr, hop_length=_GRID_HOP, fmax=150.0, n_mels=32)
+    frames = np.clip(frames, 0, len(low) - 1)
+    low_at = np.array([low[max(0, f - 2):f + 3].max() for f in frames])  # tracker jitter
+    chroma = librosa.feature.chroma_stft(y=y, sr=sr, hop_length=_GRID_HOP)
+    sync = librosa.util.sync(chroma, frames, aggregate=np.median)  # col i+1 = beat i..i+1
+    sync = sync / (np.linalg.norm(sync, axis=0, keepdims=True) + 1e-9)
+    change = np.zeros(n)
+    k = min(n, sync.shape[1] - 1)
+    if k > 1:
+        change[1:k] = 1.0 - np.sum(sync[:, 2:k + 1] * sync[:, 1:k], axis=0)
+    cue = _norm(low_at) + _norm(change)
+    scores = [float(np.mean(cue[o::beats_per_bar])) for o in range(beats_per_bar)]
+    return int(np.argmax(scores))
+
+
+def beat_log_energy(y: np.ndarray, sr: int, beat_times: np.ndarray) -> np.ndarray:
+    """Mean log RMS of each beat (beat i to beat i+1; the last beat to the end)."""
+    if len(beat_times) == 0:
+        return np.zeros(0)
+    rms = librosa.feature.rms(y=y, hop_length=_GRID_HOP)[0]
+    log_rms = np.log(rms + 1e-5)
+    frames = np.clip(
+        librosa.time_to_frames(np.asarray(beat_times), sr=sr, hop_length=_GRID_HOP),
+        0, len(log_rms) - 1,
+    )
+    ends = np.append(frames[1:], len(log_rms))
+    return np.array([
+        log_rms[f:e].mean() if e > f else log_rms[f] for f, e in zip(frames, ends)
+    ])
+
+
+def _energy_jumps(beat_energy: np.ndarray, w: int = BEATS_PER_BAR) -> np.ndarray:
+    """|mean of the next w beats - mean of the previous w| at every beat."""
+    n = len(beat_energy)
+    jumps = np.zeros(n)
+    if n <= 2 * w:
+        return jumps
+    c = np.concatenate([[0.0], np.cumsum(beat_energy)])
+    i = np.arange(w, n - w + 1)
+    jumps[i] = np.abs((c[i + w] - c[i]) - (c[i] - c[i - w])) / w
+    return jumps
+
+
+# A phrase-offset energy vote must beat the other offsets by this many
+# standard deviations; flatter songs fall back to the loudness anchor.
+PHRASE_VOTE_MIN_Z = 1.5
+
+
+def estimate_phrase_offset(
+    beat_times: np.ndarray,
+    downbeat_phase: int,
+    energy_times: np.ndarray,
+    energy: np.ndarray,
+    beats_per_bar: int = BEATS_PER_BAR,
+    beats_per_phrase: int = BEATS_PER_PHRASE,
+    beat_energy: Optional[np.ndarray] = None,
+    candidates: Optional[List[int]] = None,
+) -> int:
+    """Beat index (mod beats_per_phrase) where phrases start.
+
+    1. Energy vote (when `beat_energy` is given): sections change on phrase
+       lines, so the offset whose lines carry the largest energy jumps wins,
+       if it stands out by PHRASE_VOTE_MIN_Z. `candidates` restricts the vote
+       (16-bar phrases choose between the two 16-bar lines of an 8-bar grid)
+       and then skips the z test. On the 93-song library, held-out (choose on
+       the first half, score on the second) this beat both beat 0 and the
+       loudness anchor alone.
+    2. Loudness anchor: the first downbeat at or after the first energy
+       window above 0.2 * max (the music proper, not silence or a fade-in).
+    """
+    beat_times = np.asarray(beat_times)
+    n = len(beat_times)
+    phase = downbeat_phase % beats_per_bar
+    if n == 0:
+        return phase
+    if beat_energy is not None and len(beat_energy) >= 2 * beats_per_phrase:
+        jumps = _energy_jumps(np.asarray(beat_energy, dtype=float), beats_per_bar)
+        offs = list(candidates) if candidates else list(range(beats_per_phrase))
+        scores = np.array([jumps[o % beats_per_phrase::beats_per_phrase].mean() for o in offs])
+        best = int(np.argmax(scores))
+        if candidates:
+            return offs[best] % beats_per_phrase
+        z = (scores[best] - scores.mean()) / (scores.std() + 1e-9)
+        if z >= PHRASE_VOTE_MIN_Z:
+            return offs[best] % beats_per_phrase
+    start_t = 0.0
+    if len(energy):
+        loud = np.nonzero(np.asarray(energy) > 0.2 * float(np.max(energy)))[0]
+        if len(loud):
+            start_t = float(energy_times[loud[0]])
+    downbeat_idx = np.arange(phase, n, beats_per_bar)
+    after = downbeat_idx[beat_times[downbeat_idx] >= start_t - 1e-6]
+    anchor = int(after[0]) if len(after) else (int(downbeat_idx[0]) if len(downbeat_idx) else 0)
+    return anchor % beats_per_phrase
 
 
 def detect_camelot_key(y: np.ndarray, sr: int) -> KeyEstimate:
@@ -252,7 +375,8 @@ def vocal_presence_map(
 
 # Bump when analysis output changes so stale cached results are recomputed.
 # v2: section-consensus tempo (tempo.py).
-ANALYSIS_VERSION = 2
+# v3: downbeat phase + phrase offset (grid no longer assumes beat 0 is bar 1).
+ANALYSIS_VERSION = 3
 
 
 def _cache_path_for(audio_path: Path) -> Path:
@@ -282,11 +406,21 @@ def analyze(
     duration = float(librosa.get_duration(y=y, sr=sr))
 
     bpm, beat_times = analyze_tempo_and_beats(y, sr)
-    downbeats = compute_downbeats(beat_times)
-    phrases_8 = compute_phrase_boundaries(beat_times, BEATS_PER_PHRASE)
-    phrases_16 = compute_phrase_boundaries(beat_times, BEATS_PER_PHRASE * 2)
-    key = detect_camelot_key(y, sr)
     energy_times, energy = analyze_energy_curve(y, sr)
+    beat_energy = beat_log_energy(y, sr, beat_times)
+    off_8 = estimate_phrase_offset(
+        beat_times, estimate_downbeat_phase(y, sr, beat_times), energy_times, energy,
+        beat_energy=beat_energy,
+    )
+    phase = off_8 % BEATS_PER_BAR  # a phrase line is always a downbeat
+    off_16 = estimate_phrase_offset(
+        beat_times, phase, energy_times, energy, beats_per_phrase=BEATS_PER_PHRASE * 2,
+        beat_energy=beat_energy, candidates=[off_8, off_8 + BEATS_PER_PHRASE],
+    )
+    downbeats = compute_downbeats(beat_times, offset=phase)
+    phrases_8 = compute_phrase_boundaries(beat_times, BEATS_PER_PHRASE, offset=off_8)
+    phrases_16 = compute_phrase_boundaries(beat_times, BEATS_PER_PHRASE * 2, offset=off_16)
+    key = detect_camelot_key(y, sr)
     sections = segment_structure(energy_times, energy, duration)
 
     vocal_regions: List[Tuple[float, float]] = []
