@@ -1422,6 +1422,22 @@ button.rebind-btn.is-armed {
 .ap-energy-hold { background: rgba(80,180,255,.15); color: #50b4ff; }
 .ap-vibe { font-size: 10px; color: #a07af0; font-style: italic; }
 
+/* DJ mind: AI decision highlight */
+.ap-mind { padding: var(--sp-xs) var(--sp-sm); border-left: 2px solid var(--outline); margin: 4px 0; transition: border-color .3s; }
+.ap-mind-now { display: flex; gap: 6px; align-items: baseline; font-size: 11px; }
+.ap-mind-act { font-size: 9px; font-weight: 700; letter-spacing: .08em; padding: 1px 6px; border-radius: 3px; background: rgba(255,255,255,.08); color: var(--outline); }
+.ap-mind-why { font-size: 10px; color: var(--outline); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ap-mind-hold     { background: rgba(80,180,255,.18); color: #50b4ff; }
+.ap-mind-preclear { background: rgba(255,200,0,.18);  color: #ffc800; }
+.ap-mind-instant  { background: rgba(255,60,90,.2);   color: #ff5a78; }
+.ap-mind-subdrop  { background: rgba(160,122,240,.2); color: #a07af0; }
+.ap-mind-layer    { background: rgba(0,220,120,.18);  color: #00dc78; }
+.ap-mind-log { list-style: none; margin: 2px 0 0; padding: 0; font-size: 9px; color: var(--outline); }
+.ap-mind-log li { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ap-mind-flash { border-left-color: var(--accent); animation: ap-mind-pulse 1.2s ease-out; }
+@keyframes ap-mind-pulse { from { background: rgba(255,255,255,.08); } to { background: transparent; } }
+@media (prefers-reduced-motion: reduce) { .ap-mind-flash { animation: none; } }
+
 /* ------------------------------- footer --------------------------------- */
 
 .footbar {

@@ -371,19 +371,26 @@
     } catch { return null; }
   }
 
+  let energyNotedFor = null; // track whose energy the DJ mind already logged
   async function getSuggestions(trackId, avoid = []) {
     const setPos = Math.min(history.length / 10, 1.0);
     // `avoid` = titles rejected this round (failed download / vibe gate) so the
     // LLM does not propose them again on retry.
+    // DJ mind hint: "dip" after a long peak (study rule 9), "callback" late in
+    // the set (rule 7). Null most of the time.
+    const energyNote = window.djMind ? window.djMind.nextEnergyNote(setPos) : null;
     const res = await fetch("/api/autopilot/suggest", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ track_id: trackId, occasion, history: history.slice(-6).concat(avoid.slice(-6)), set_position: setPos, set_mode: setMode() }),
+      body: JSON.stringify({ track_id: trackId, occasion, history: history.slice(-6).concat(avoid.slice(-6)), set_position: setPos, set_mode: setMode(), energy_note: energyNote }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || res.statusText);
     const e = data.current_profile && parseFloat(data.current_profile.energy);
-    if (Number.isFinite(e)) currentEnergy = e <= 1 ? e * 10 : e;
+    if (Number.isFinite(e)) {
+      currentEnergy = e <= 1 ? e * 10 : e;
+      if (window.djMind && energyNotedFor !== trackId) { energyNotedFor = trackId; window.djMind.noteEnergy(currentEnergy); }
+    }
     return data.suggestions || [];
   }
 
@@ -511,29 +518,45 @@
 
     let executed = false;
     let filled = false;
-    const fireAt = effectiveATime - 1; // start crossfade 1s early
+    let fireAt = effectiveATime - 1; // start crossfade 1s early
+
+    // Hand the plan to the DJ mind: it may pre-clear the outgoing bass or hold
+    // the exit one phrase longer (bounded by the set-mode window + 16 bars).
+    const barS = 240 / ((od && od.bpm) || 128);
+    if (window.djMind) {
+      window.djMind.setPlan({
+        fireAt,
+        maxFireAt: Math.max(fireAt, Math.min(trackEnd, hi + 16 * barS) - 1),
+        style: candidate.overlap_style || "standard",
+        preClearBars: Number.isFinite(candidate.pre_clear_bars) ? candidate.pre_clear_bars : 8,
+      });
+    }
 
     const tick = setInterval(() => {
       if (!active) { clearInterval(tick); return; }
+      if (window.djMind) fireAt = window.djMind.fireAt(fireAt);
       const pos = deckPosition(activeDeck);
       const left = fireAt - pos;
 
-      // Live drums: 2-bar fill leading into the crossfade (glues the records).
+      // Live drums: 2-bar fill leading into the crossfade (glues the records),
+      // rationed by the mind (study rule 8: FX stay the exception).
       const od0 = window.decks && window.decks[activeDeck];
       const barSecs = (60 / ((od0 && od0.bpm) || 128)) * 4;
       if (!filled && left > 0 && left <= 2 * barSecs && window.beatLayer) {
         filled = true;
-        window.beatLayer.fill(2);
+        if (!window.djMind || window.djMind.fxAllowed("fill")) window.beatLayer.fill(2);
       }
 
       if (left > 0) {
         const scoreTag = score >= 65 ? `⭐${score}` : `⚡${score} (early exit)`;
+        playPlanTag = ` | ${w.label} ${fmtTime(fireAt + 1 - entryPos)}`;
         apStatus(`Next: ${nextName} | ${recipe} | ${scoreTag}${playPlanTag} | in ${left.toFixed(0)}s${mashupTag}`);
         return;
       }
       if (executed) return;
       executed = true;
       clearInterval(tick);
+      if (window.djMind) window.djMind.onTransition();
 
       if (window.mashup) window.mashup.cancel();
       mashupTag = "";
@@ -563,6 +586,7 @@
         entryPos = nextEntry;
         currentEnergy = null;
         if (window.beatLayer) window.beatLayer.follow(activeDeck);
+        if (window.djMind) window.djMind.follow(activeDeck);
 
         // Park crossfader fully on the new active deck side
         setRange(xfader, activeDeck === "a" ? -1 : 1);
@@ -686,6 +710,7 @@
       entryPos = 0;
       currentEnergy = null;
       if (window.beatLayer) window.beatLayer.follow("a");
+      if (window.djMind) { window.djMind.reset(); window.djMind.follow("a"); }
 
       history = [seedName];
       apStatus(`▶ Playing: ${seedName} — finding next track in background…`);
@@ -704,6 +729,7 @@
     mashupTag = "";
     clearRun();
     if (window.beatLayer) window.beatLayer.stop();
+    if (window.djMind) window.djMind.stop();
     apStatus("Autopilot stopped.");
     updateButtons();
   }
