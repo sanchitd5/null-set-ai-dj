@@ -118,6 +118,7 @@ _USER_TEMPLATE = (
     "Suggest {n} tracks. Prioritise: vibe continuity → harmonic compatibility → energy arc for {arc_phase} → diversity.\n"
     "Reply ONLY with the JSON object."
 )
+_KNOWLEDGE_TEMPLATE = "\n\nDJ KNOWLEDGE (from the ./DJ wiki):\n{brief}"
 
 
 def _set_arc_phase(set_position: float) -> str:
@@ -206,6 +207,55 @@ def _extract_json(text: str) -> dict:
     return json.loads(text[start:end])
 
 
+def chat_raw(
+    system: str,
+    user: str,
+    temperature: float = 0.5,
+    timeout: float | None = None,
+    model: str | None = None,
+    max_tokens: int | None = None,
+) -> str:
+    """One JSON-mode chat call to the local model; returns the raw text.
+
+    Supports openai v0.x/3.x (ChatCompletion.create) and v1.x/v2.x (OpenAI client).
+    response_format may be ignored by the server (mlx_lm.server): callers
+    always parse with _extract_json. max_tokens stops a server default from
+    truncating the JSON.
+    """
+    try:
+        import openai
+    except ImportError:
+        raise RuntimeError("openai package not installed — run: pip install openai")
+
+    base_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
+    model = model or os.environ.get("AUTOPILOT_MODEL", "gemma3:4b")
+    api_key = os.environ.get("OPENAI_API_KEY", "ollama")
+    messages = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user},
+    ]
+
+    if hasattr(openai, "OpenAI"):
+        client = openai.OpenAI(base_url=base_url, api_key=api_key, timeout=timeout)
+        resp = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            temperature=temperature,
+            response_format={"type": "json_object"},
+            **({"max_tokens": max_tokens} if max_tokens else {}),
+        )
+        return resp.choices[0].message.content or "{}"
+    openai.api_key = api_key
+    openai.api_base = base_url
+    kwargs = {"request_timeout": timeout} if timeout else {}
+    if max_tokens:
+        kwargs["max_tokens"] = max_tokens
+    resp = openai.ChatCompletion.create(
+        model=model, messages=messages, temperature=temperature, **kwargs,
+    )
+    return resp["choices"][0]["message"]["content"] or "{}"
+
+
 def suggest_next_tracks(
     title: str,
     artist: str,
@@ -219,6 +269,8 @@ def suggest_next_tracks(
     n: int = 3,
     set_mode: str = "hybrid",
     meta: dict | None = None,
+    genre: str = "",
+    history_display: list[str] | None = None,
 ) -> list[dict]:
     """
     Call local Ollama (gemma3:4b) to suggest next n tracks.
@@ -227,17 +279,11 @@ def suggest_next_tracks(
       mix_moment, energy_delta, search_query.
 
     set_position: 0.0 = start of set, 1.0 = end of set.
+    genre: this track's genre from an earlier suggestion ("" = generic DJ rules).
+    history_display: cleaned history names for the prompt; `history` (raw names)
+    still drives the repeat filter.
     Compatible with both openai v0.x/3.x (ChatCompletion.create) and v1.x/v2.x (OpenAI client).
     """
-    try:
-        import openai
-    except ImportError:
-        raise RuntimeError("openai package not installed — run: pip install openai")
-
-    base_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
-    model = os.environ.get("AUTOPILOT_MODEL", "gemma3:4b")
-    api_key = os.environ.get("OPENAI_API_KEY", "ollama")
-
     user_msg = _USER_TEMPLATE.format(
         title=title,
         artist=artist,
@@ -247,37 +293,21 @@ def suggest_next_tracks(
         energy=avg_energy,
         occasion=occasion or "general DJ set",
         set_mode_line=SET_MODE_LINES.get(set_mode, SET_MODE_LINES["hybrid"]),
-        history=", ".join(history[-6:]) if history else "none",
+        history=", ".join((history_display or history)[-6:]) if history else "none",
         set_pos_pct=round(set_position * 100),
         arc_phase=_set_arc_phase(set_position),
         n=n,
     )
 
-    messages = [
-        {"role": "system", "content": _SYSTEM},
-        {"role": "user", "content": user_msg},
-    ]
+    try:
+        from app.music_brain.dj_knowledge import selection_brief
+        brief = selection_brief(genre or "")
+    except Exception:  # grounding is best-effort
+        brief = ""
+    if brief:
+        user_msg += _KNOWLEDGE_TEMPLATE.format(brief=brief)
 
-    if hasattr(openai, "OpenAI"):
-        client = openai.OpenAI(base_url=base_url, api_key=api_key)
-        resp = client.chat.completions.create(
-            model=model,
-            messages=messages,
-            temperature=0.5,
-            response_format={"type": "json_object"},
-        )
-        raw = resp.choices[0].message.content or "{}"
-    else:
-        openai.api_key = api_key
-        openai.api_base = base_url
-        resp = openai.ChatCompletion.create(
-            model=model,
-            messages=messages,
-            temperature=0.5,
-        )
-        raw = resp["choices"][0]["message"]["content"] or "{}"
-
-    data = _extract_json(raw)
+    data = _extract_json(chat_raw(_SYSTEM, user_msg, temperature=0.5, max_tokens=700))
     suggestions = _filter_suggestions(data, history)[:n]
     if meta is not None:  # caller wants the model's read of the CURRENT track too
         meta["current_profile"] = data.get("current_profile") or {}

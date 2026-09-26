@@ -560,6 +560,16 @@ def _occasion_with_note(occasion: Optional[str], note: Optional[str]) -> str:
     return f"{base} ({extra})".strip() if extra else base
 
 
+# Normalised suggested title -> genre the model gave it, so the next suggest
+# call for that track can ground on the matching ./DJ genre playbook.
+_suggested_genres: Dict[str, str] = {}
+
+
+def _genre_key(title: str) -> str:
+    from app.ui.track_identity import clean_title
+    return " ".join(clean_title(title).lower().split())
+
+
 @app.post("/api/autopilot/suggest")
 def autopilot_suggest(req: AutopilotSuggestRequest):
     """Use local LLM (Ollama gemma3:4b by default) to suggest next tracks."""
@@ -583,12 +593,14 @@ def autopilot_suggest(req: AutopilotSuggestRequest):
     avg_energy = float(np.mean(curve)) if curve else 0.5
     camelot = analysis.key.camelot if analysis.key else "unknown"
 
+    from app.ui.track_identity import clean_identity
+
     display = _track_names.get(req.track_id, path.stem)
-    # Best-effort split of "Artist - Title" or "Title" from display name.
-    if " - " in display:
-        artist_part, title_part = display.split(" - ", 1)
-    else:
-        artist_part, title_part = "Unknown", display
+    # Primary artist + clean title only: featured artists and "(Official Video)"
+    # noise confuse the model.
+    artist_part, title_part = clean_identity(display)
+    history_display = [" - ".join(clean_identity(h)).removeprefix("Unknown - ") for h in req.history]
+    genre = _suggested_genres.get(_genre_key(title_part), "")
 
     # set_position: caller can supply it; if not, derive from history length (0→10 tracks = 0→1.0)
     if req.set_position is not None:
@@ -610,9 +622,14 @@ def autopilot_suggest(req: AutopilotSuggestRequest):
             set_position=set_position,
             set_mode=req.set_mode if req.set_mode in SET_MODES else "hybrid",
             meta=meta,
+            genre=genre,
+            history_display=history_display,
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"LLM suggest error: {exc}") from exc
+    for s in suggestions:
+        if s.get("title") and s.get("genre"):
+            _suggested_genres[_genre_key(s["title"])] = str(s["genre"])
     return {"suggestions": suggestions, "set_position": round(set_position, 2), **meta}
 
 
