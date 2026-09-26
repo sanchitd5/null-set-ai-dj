@@ -30,6 +30,16 @@ _EXIT_SECTIONS = {"breakdown", "outro", "drop", "build"}
 # Sections on the incoming track (B) that are unconditionally good entry points.
 _ENTRY_SECTIONS = {"intro", "breakdown"}
 
+# Recipe name fragments → energy direction they suit best.
+_HIGH_ENERGY_RECIPES = {
+    "Drop Swap", "Double Drop", "Build-to-Drop Transition", "Loop Roll",
+    "Hard Cut", "Stutter Transition", "Beat Jump Transition",
+}
+_LOW_ENERGY_RECIPES = {
+    "Basic Blend", "Long Blend", "EQ Blend", "Filter Transition",
+    "Echo Out", "Reverb Transition", "Breakdown Transition",
+}
+
 
 @dataclass
 class TransitionCandidate:
@@ -222,7 +232,8 @@ class RecipeMatcher:
 
         penalty = vocal_overlap_penalty(track_a, a_time, track_b, b_time)
         if recipe.requires_stems:
-            penalty *= 0.5  # stems let the recipe surgically mute the clashing vocal, but not perfectly
+            # Stems surgically isolate vocals; penalty drops more aggressively.
+            penalty *= 0.3
 
         raw = (0.35 * camelot_score) + (0.30 * bpm_score) + (0.20 * phrase_score) + (0.15 * (1 - penalty))
         # Hard gate: a camelot-only recipe should never rank well on a clashing pair.
@@ -249,6 +260,7 @@ class RecipeMatcher:
         track_a: TrackAnalysis,
         track_b: TrackAnalysis,
         top_n: int = 3,
+        energy_hint: str = "maintain",
     ) -> List[TransitionCandidate]:
         exit_points = find_exit_candidates(track_a) or (
             [track_a.phrase_boundaries_8bar[-1]] if track_a.phrase_boundaries_8bar else [max(track_a.duration - 30, 0.0)]
@@ -266,6 +278,15 @@ class RecipeMatcher:
         best_per_recipe: dict[str, TransitionCandidate] = {}
         for recipe in self.knowledge.get_all():
             candidate = self._score_one(recipe, track_a, a_time, track_b, b_time)
+            # Apply energy_hint nudge: ±5 points to steer recipe selection.
+            if energy_hint == "up" and recipe.name in _HIGH_ENERGY_RECIPES:
+                candidate.score = min(100.0, candidate.score + 5.0)
+            elif energy_hint == "down" and recipe.name in _LOW_ENERGY_RECIPES:
+                candidate.score = min(100.0, candidate.score + 5.0)
+            elif energy_hint == "up" and recipe.name in _LOW_ENERGY_RECIPES:
+                candidate.score = max(0.0, candidate.score - 5.0)
+            elif energy_hint == "down" and recipe.name in _HIGH_ENERGY_RECIPES:
+                candidate.score = max(0.0, candidate.score - 5.0)
             existing = best_per_recipe.get(recipe.name)
             if existing is None or candidate.score > existing.score:
                 best_per_recipe[recipe.name] = candidate

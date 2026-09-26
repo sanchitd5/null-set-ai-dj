@@ -33,18 +33,20 @@ A = minor keys, B = major keys. Hour arithmetic wraps: 12+1=1."""
 
 # ── Few-shot examples ─────────────────────────────────────────────────────────
 _FEW_SHOT = """\
-EXAMPLE 1 — melodic house, building phase (set_position 0.45):
-Current: "Marea (We've Lost Dancing)" by Fred again.. | 123 BPM | 3A | Energy 0.62 | Genre: melodic house
+EXAMPLE 1 — melodic house, early set (set_position 0.15), building vibe before branching out:
+Current: "Alvaro" by Fred again.. | 122 BPM | 11A | Energy 0.55 | Genre: melodic house
+History: [] (nothing played yet — safe to stay in same artist world)
 {"suggestions":[
-  {"artist":"Bicep","title":"Glue","reason":"2A (−1 hour) smooth harmonic move, 130 BPM lifts tempo naturally into build phase. Same euphoric breakdown architecture and sustained pad textures — crowd will feel the continuity.","genre":"melodic techno","expected_bpm":130,"expected_key":"2A","mix_moment":"exit at final breakdown ~bar 64","energy_delta":"up","vibe_link":"same euphoric breakdown builds and sustained pads"},
-  {"artist":"Lane 8","title":"Yard","reason":"3A identical key, 125 BPM near-seamless, emotive melodic techno shares Fred again..'s emotional weight without jarring the dancefloor.","genre":"melodic techno","expected_bpm":125,"expected_key":"3A","mix_moment":"exit at outro ~bar 80","energy_delta":"maintain","vibe_link":"shared emotional synth lead and rolling percussion texture"}
+  {"artist":"Fred again..","title":"Marea (We've Lost Dancing)","reason":"11A identical key, 123 BPM seamless, same granular vocal-sample construction and 4-bar melodic drop — deepens the Fred again.. vibe before branching out later.","genre":"melodic house","expected_bpm":123,"expected_key":"11A","mix_moment":"exit at vocal breakdown ~bar 48","energy_delta":"maintain","vibe_link":"same granular vocal chops and melodic 4-bar drops"},
+  {"artist":"Fred again..","title":"Delilah (pull me out of this)","reason":"12A (+1 hour) gentle key lift, 118 BPM keeps the tempo pocket tight, Fred again..'s signature layered field-recording textures make back-to-back tracks feel like chapters in one story.","genre":"melodic house","expected_bpm":118,"expected_key":"12A","mix_moment":"exit at outro pad wash ~bar 64","energy_delta":"maintain","vibe_link":"layered field-recording texture and slow-burn emotional build"}
 ]}
 
 EXAMPLE 2 — UK garage/deep house, peak (set_position 0.72):
 Current: "Latch" by Disclosure | 120 BPM | 4B | Energy 0.78 | Genre: UK garage / deep house
+History: ["Disclosure - When A Fire Starts To Burn", "Disclosure - Latch"]
 {"suggestions":[
-  {"artist":"Jamie xx","title":"I Know There's Gonna Be (Good Times)","reason":"4B identical key, 118 BPM seamless, shares UK bass DNA and vocal chop sensibility — crowd stays locked in.","genre":"UK bass / house","expected_bpm":118,"expected_key":"4B","mix_moment":"exit at second chorus ~bar 96","energy_delta":"maintain","vibe_link":"UK bass DNA, vocal chop style, same era"},
-  {"artist":"Duke Dumont","title":"Won't Look Back","reason":"5B (+1 hour) smooth move, 122 BPM slight lift, warm UK deep house keeps genre neighbourhood tight while pushing energy forward.","genre":"deep house","expected_bpm":122,"expected_key":"5B","mix_moment":"exit at breakdown ~bar 48","energy_delta":"up","vibe_link":"UK deep house warmth, soulful vocal stabs"}
+  {"artist":"Jamie xx","title":"I Know There's Gonna Be (Good Times)","reason":"4B identical key, 118 BPM seamless — shares the punchy UK bass drum pattern and pitched vocal-chop sensibility that defines Disclosure's sound.","genre":"UK bass / house","expected_bpm":118,"expected_key":"4B","mix_moment":"exit at second chorus ~bar 96","energy_delta":"maintain","vibe_link":"punchy UK bass kick and pitched vocal chop cadence"},
+  {"artist":"Duke Dumont","title":"Won't Look Back","reason":"5B (+1 hour) smooth harmonic lift, 122 BPM slight tempo push, warm soulful house keeps the UK flavour while nudging the dancefloor energy forward.","genre":"deep house","expected_bpm":122,"expected_key":"5B","mix_moment":"exit at breakdown ~bar 48","energy_delta":"up","vibe_link":"soulful vocal stabs and swung hi-hat groove"}
 ]}"""
 
 _SYSTEM = f"""\
@@ -63,15 +65,25 @@ VIBE CONTINUITY (critical rule):
   Suggestions MUST stay within 1–2 genre hops maximum.
   Allowed genre hops: deep house → tech house → minimal techno (ok), melodic house → melodic techno (ok).
   Forbidden jumps without a bridge: house → drum & bass, pop → techno, ambient → peak-hour trance.
-  The vibe_link field must name the specific sonic/atmospheric quality shared (e.g. "same dark warehouse energy", "similar synth texture and breakdown structure").
+  vibe_link MUST describe specific sonic characteristics, NOT genre labels:
+    Good: "same granular vocal chops and melodic 4-bar drops"
+    Good: "punchy UK bass kick and pitched vocal chop cadence"
+    Bad: "same genre", "similar style", "UK bass DNA"
+
+SAME-ARTIST RULE (important):
+  Suggesting the same ARTIST as the current track is valid and often preferred early in a set to
+  build a consistent vibe — back-to-back tracks by the same artist feel like chapters in one story.
+  NEVER penalize a suggestion just because the artist matches. Only avoid repeating the exact same
+  TRACK TITLE that appears in the history list.
 
 MIX MOMENT: For each suggestion specify WHERE in the outgoing track to begin the transition.
   Use format: "exit at [section] ~bar [N]" e.g. "exit at outro ~bar 64" or "exit at breakdown 2 ~bar 32"
 
-DIVERSITY: Avoid suggesting the same artist twice in one response. Think beyond obvious choices.
+AVOID TRACKS: The history list contains track names already played. Do NOT suggest any track whose
+  title appears in that list. Same artist is fine — only the exact title is banned.
 
 OUTPUT FORMAT — return ONLY valid JSON, no markdown, no explanation:
-{{"suggestions":[{{"artist":"","title":"","reason":"2-sentence reason referencing harmonic move, energy arc, and genre continuity","genre":"inferred genre of suggested track","expected_bpm":0,"expected_key":"","mix_moment":"exit at [section] ~bar N","energy_delta":"up|down|maintain","vibe_link":"short phrase naming the shared sonic quality"}}]}}
+{{"suggestions":[{{"artist":"","title":"","reason":"2-sentence reason referencing harmonic move, energy arc, and vibe continuity","genre":"inferred genre of suggested track","expected_bpm":0,"expected_key":"","mix_moment":"exit at [section] ~bar N","energy_delta":"up|down|maintain","vibe_link":"specific sonic characteristic shared — NOT a genre label"}}]}}
 
 {_FEW_SHOT}"""
 
@@ -82,7 +94,7 @@ _USER_TEMPLATE = (
     "Occasion: {occasion}\n"
     "Current track genre (infer from artist+title+BPM+key): [fill this before selecting]\n"
     "Suggestions MUST stay within this genre neighbourhood unless the occasion demands a shift.\n"
-    "Already played (do NOT repeat): {history}\n\n"
+    "Already played titles (avoid exact titles, same artist OK): {history}\n\n"
     "Suggest {n} tracks. Prioritise: vibe continuity → harmonic compatibility → energy arc for {arc_phase} → diversity.\n"
     "Reply ONLY with the JSON object."
 )

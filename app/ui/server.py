@@ -14,6 +14,7 @@ import mimetypes
 import shutil
 import uuid
 from pathlib import Path
+from typing import Dict, List, Optional
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -360,16 +361,27 @@ class AutopilotSuggestRequest(BaseModel):
     track_id: str
     occasion: Optional[str] = None
     history: list[str] = []
+    set_position: Optional[float] = None  # 0.0=start, 1.0=end; computed from history if omitted
 
 
 @app.post("/api/autopilot/suggest")
 def autopilot_suggest(req: AutopilotSuggestRequest):
     """Use local LLM (Ollama gemma3:4b by default) to suggest next tracks."""
+    import traceback
     import numpy as np
     from app.ui.autopilot_service import suggest_next_tracks
 
-    path = _track_path(req.track_id)
-    analysis = analyze_track(path)
+    try:
+        path = _track_path(req.track_id)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"_track_path error: {exc}") from exc
+
+    try:
+        analysis = analyze_track(path)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"analyze error: {exc}") from exc
 
     curve = list(analysis.energy_curve) if analysis.energy_curve is not None else []
     avg_energy = float(np.mean(curve)) if curve else 0.5
@@ -382,17 +394,27 @@ def autopilot_suggest(req: AutopilotSuggestRequest):
     else:
         artist_part, title_part = "Unknown", display
 
-    suggestions = suggest_next_tracks(
-        title=title_part,
-        artist=artist_part,
-        bpm=analysis.bpm or 128.0,
-        camelot=camelot,
-        duration=analysis.duration or 0.0,
-        avg_energy=avg_energy,
-        occasion=req.occasion or "",
-        history=req.history,
-    )
-    return {"suggestions": suggestions}
+    # set_position: caller can supply it; if not, derive from history length (0→10 tracks = 0→1.0)
+    if req.set_position is not None:
+        set_position = max(0.0, min(1.0, req.set_position))
+    else:
+        set_position = min(len(req.history) / 10.0, 1.0)
+
+    try:
+        suggestions = suggest_next_tracks(
+            title=title_part,
+            artist=artist_part,
+            bpm=analysis.bpm or 128.0,
+            camelot=camelot,
+            duration=analysis.duration or 0.0,
+            avg_energy=avg_energy,
+            occasion=req.occasion or "",
+            history=req.history,
+            set_position=set_position,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"LLM suggest error: {exc}") from exc
+    return {"suggestions": suggestions, "set_position": round(set_position, 2)}
 
 
 @app.post("/api/samples")
