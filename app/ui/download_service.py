@@ -41,7 +41,7 @@ _NON_MUSIC_KEYWORDS = re.compile(
     r"\b(interview|talks?\s+about|in\s+conversation|conversation\s+with|podcast|"
     r"reacts?|reaction|review|tutorial|how\s+to|lesson|masterclass|documentary|"
     r"behind\s+the\s+scenes|making\s+of|explains?|trailer|q\s*&\s*a|vlog|"
-    r"cover|karaoke|nightcore|slowed|sped\s+up|8d\s+audio|loop\s+version|hour\s+version)\b",
+    r"cover|karaoke|nightcore|slowed|sped\s+up|8d|spatial\s+audio|loop\s+version|hour\s+version)\b",
     re.IGNORECASE,
 )
 
