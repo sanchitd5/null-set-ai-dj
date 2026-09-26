@@ -481,7 +481,8 @@
     if (candidate.vibe && candidate.vibe.ok === false) {
       const why = (candidate.vibe.reasons || []).join("; ") || `distance ${candidate.vibe.distance}`;
       console.warn("Autopilot vibe reject:", nextName, why);
-      apStatus(`Skipping ${nextName}: ${why}`);
+      apStatus(`Not after this song: ${nextName} (${why}) — kept for later`);
+      cand.keep = true; // pairwise: may fit fine after the next song
       return false;
     }
 
@@ -514,7 +515,10 @@
       apStatus(`AI plan: ${plan.candidate.recipe}, exit ${fmtTime(plan.candidate.a_time)}`);
     }
 
-    const fireAt = scheduleTransition(currentId, nextId, nextName, candidate);
+    const blend = await requestBlend(currentId, nextId, candidate);
+    if (!active || currentTrackId !== currentId) return false;
+
+    const fireAt = scheduleTransition(currentId, nextId, nextName, candidate, blend);
     tryMashup(currentId, nextId, nextName, fireAt); // fire-and-forget
     return true;
   }
@@ -525,6 +529,64 @@
     const od = window.decks && window.decks[activeDeck];
     const trackEnd = (od && od.buffer ? od.buffer.duration : Infinity) - w.xf - 2;
     return { lo: Math.min(entryPos + w.min, trackEnd), hi: Math.min(entryPos + w.max, trackEnd) };
+  }
+
+  // Beat-to-beat blend plan: vocal-free exit phrase in the playing song,
+  // vocal-free entry phrase in the next one, and B's tempo-lock rate.
+  // null -> fall back to the matcher's points (still phrase + tempo aligned).
+  async function requestBlend(currentId, nextId, candidate) {
+    const win = exitWindow(candidate.score || 50);
+    const od = window.decks && window.decks[activeDeck];
+    const lo = Math.max(win.lo, deckPosition(activeDeck) + 20);
+    if (!od || !(win.hi > lo)) return null;
+    apStatus("Mapping vocals for a beat-to-beat blend…");
+    try {
+      const res = await fetch("/api/blend/plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          a_id: currentId, b_id: nextId, window_lo: lo, window_hi: win.hi,
+          a_bpm_effective: od.bpm * od._playbackRate(),
+          bars: setMode() === "quick" ? 8 : 16,
+        }),
+      });
+      const plan = await res.json();
+      if (!res.ok || !plan.ok) {
+        console.info("Blend plan unavailable:", plan.detail || (plan.reasons || []).join("; "));
+        return null;
+      }
+      return plan;
+    } catch (e) {
+      console.warn("Blend plan failed:", e.message);
+      return null;
+    }
+  }
+
+  function setDeckPitch(deckId, pct) {
+    const d = window.decks && window.decks[deckId];
+    if (!d) return;
+    const v = Math.max(-8, Math.min(8, pct));
+    d.setPitchPercent(v);
+    const fader = document.querySelector(`.pitch-fader[data-deck="${deckId}"]`);
+    if (fader) fader.value = String(v.toFixed(1));
+    const readout = document.getElementById(`pitch-readout-${deckId}`);
+    if (readout) readout.textContent = `${v > 0 ? "+" : ""}${v.toFixed(1)}%`;
+  }
+
+  // After a tempo-locked handover, drift the new song back to its own tempo
+  // over ~32 bars (inaudible steps), so pitch shift never accumulates.
+  function easePitchHome(deckId) {
+    const d = window.decks && window.decks[deckId];
+    if (!d || !d._pitchPercent) return;
+    const steps = 32;
+    const barMsNow = 240000 / ((d.bpm || 128) * d._playbackRate());
+    const start = d._pitchPercent;
+    for (let i = 1; i <= steps; i++) {
+      later(i * barMsNow, () => {
+        if (activeDeck !== deckId) return;
+        setDeckPitch(deckId, start * (1 - i / steps));
+      });
+    }
   }
 
   async function requestMindPlan(currentId, nextId, candidate) {
@@ -556,10 +618,18 @@
     renderQueue([]);
 
     // 1) Songs already pre-downloaded in an earlier round: no waiting.
-    while (ready.length && active) {
-      const c = ready.shift();
-      apStatus(`Trying pre-downloaded: ${c.name}`);
-      if (await tryCandidate(currentId, c)) return;
+    // Pairwise rejects go back to the END of the pool (tried once per song).
+    const pool = ready.splice(0, ready.length);
+    for (let i = 0; i < pool.length; i++) {
+      if (!active) return;
+      const c = pool[i];
+      apStatus(`Trying earlier suggestion: ${c.name} (${pool.length - i} in pool)`);
+      c.keep = false;
+      if (await tryCandidate(currentId, c)) {
+        pool.slice(i + 1).forEach(addReady); // untried ones stay for later
+        return;
+      }
+      if (c.keep) addReady(c);
     }
 
     // 2) Fresh AI suggestions, all downloading in parallel. Retry with new
@@ -598,6 +668,7 @@
           jobs.slice(i + 1).forEach((p) => p.then(addReady));
           return;
         }
+        if (c.keep) addReady(c); // fit problem with THIS song only: try again next time
         rejected.push(`${c.suggestion.artist} - ${c.suggestion.title}`);
       }
     }
@@ -606,10 +677,24 @@
     updateButtons();
   }
 
-  function scheduleTransition(currentId, nextId, nextName, candidate) {
+  function scheduleTransition(currentId, nextId, nextName, candidate, blend = null) {
     if (!active) return;
-    const bTime = candidate.b_time || 0;
-    const recipe = candidate.recipe || "Blend";
+    let bTime = candidate.b_time || 0;
+    let recipe = candidate.recipe || "Blend";
+    const od0bpm = (window.decks && window.decks[activeDeck] && window.decks[activeDeck].bpm) || 128;
+    // Beat-to-beat: when the tempos lock, hand beat to beat. Echo-outs and cuts
+    // are for tempo gaps; they turned "vocal -> beat" when used between
+    // compatible songs.
+    if (blend) {
+      bTime = blend.entry;
+      // A's vocal riding over B's instrumental intro is a classic long blend;
+      // only two vocals at once clash, so keep that overlap short (bass swap).
+      const bClean = blend.b_vocal_coverage == null || blend.b_vocal_coverage <= 0.15;
+      const k = recipeKind(recipe);
+      if (!bClean) recipe = "Bass Swap";
+      else if (!["bass", "blend", "default"].includes(k)) recipe = "Long Blend";
+      blend.clean = bClean;
+    }
     const score  = candidate.score  || 50;
 
     // Play-time window from the set mode, counted from when this song came in.
@@ -620,15 +705,18 @@
     const trackEnd = (od && od.buffer ? od.buffer.duration : Infinity) - w.xf - 2;
     const lo = Math.min(entryPos + w.min, trackEnd);
     const hi = Math.min(entryPos + w.max, trackEnd);
-    let exitAt = candidate.a_time;
-    if (!(exitAt >= lo && exitAt <= hi)) exitAt = Math.max(lo, Math.min(hi, exitAt || hi));
-    const effectiveATime = Math.max(exitAt, nowPos + 15); // never flip right after scheduling
+    let exitAt = blend ? blend.exit : candidate.a_time;
+    if (!blend && !(exitAt >= lo && exitAt <= hi)) exitAt = Math.max(lo, Math.min(hi, exitAt || hi));
+    // Keep the exit on A's phrase grid: push by whole phrases, never by seconds.
+    const phraseS = 32 * 60 / od0bpm;
+    let effectiveATime = exitAt;
+    while (effectiveATime < nowPos + 15) effectiveATime += phraseS;
     const xfDuration = w.xf;
     playPlanTag = ` | ${w.label} ${fmtTime(effectiveATime - entryPos)}`;
 
     let executed = false;
     let filled = false;
-    let fireAt = effectiveATime - 1; // start crossfade 1s early
+    let fireAt = effectiveATime; // B's entry lands exactly on this phrase line
 
     // Hand the plan to the DJ mind: it may pre-clear the outgoing bass or hold
     // the exit one phrase longer (bounded by the set-mode window + 16 bars).
@@ -636,7 +724,8 @@
     if (window.djMind) {
       window.djMind.setPlan({
         fireAt,
-        maxFireAt: Math.max(fireAt, Math.min(trackEnd, hi + 16 * barS) - 1),
+        // a vocal-free blend window is exact: the mind must not hold past it
+        maxFireAt: blend && blend.instrumental ? fireAt : Math.max(fireAt, Math.min(trackEnd, hi + 16 * barS)),
         style: candidate.overlap_style || "standard",
         preClearBars: Number.isFinite(candidate.pre_clear_bars) ? candidate.pre_clear_bars : 8,
       });
@@ -657,9 +746,10 @@
         if (!window.djMind || window.djMind.fxAllowed("fill")) window.beatLayer.fill(2);
       }
 
-      if (left > 0) {
+      if (left > 0.8) {
         const scoreTag = score >= 65 ? `⭐${score}` : `⚡${score} (early exit)`;
-        playPlanTag = ` | ${w.label} ${fmtTime(fireAt + 1 - entryPos)}`;
+        const bl = blend ? ` · beat blend ${blend.pitch_percent >= 0 ? "+" : ""}${blend.pitch_percent.toFixed(1)}%${blend.clean ? "" : " (short: both vocal)"}` : "";
+        playPlanTag = ` | ${w.label} ${fmtTime(fireAt - entryPos)}${bl}`;
         apStatus(`Next: ${nextName} | ${recipe} | ${scoreTag}${playPlanTag} | in ${left.toFixed(0)}s${mashupTag}`);
         return;
       }
@@ -670,19 +760,36 @@
 
       if (window.mashup) window.mashup.cancel();
       mashupTag = "";
-      apStatus(`Crossfading → ${nextName} (${recipe})…`);
+      apStatus(`Blending → ${nextName} (${recipe})…`);
 
-      // Start the staging deck at b_time
+      // Tempo-lock B to A, then start it sample-accurately so B's entry
+      // downbeat lands exactly on A's phrase line.
       const sd = window.decks && window.decks[stagingDeck()];
-      if (sd) sd.play(bTime);
+      const oa = window.decks && window.decks[activeDeck];
+      const rateA = oa ? oa._playbackRate() : 1;
+      if (sd && oa && oa.bpm > 0 && sd.bpm > 0) {
+        // Live A tempo (A may still be easing back from its own tempo lock);
+        // half/double time counts as a match.
+        const aEff = oa.bpm * rateA;
+        const lockRate = [1, 2, 0.5].map((m) => aEff / (sd.bpm * m))
+          .reduce((best, r) => (Math.abs(r - 1) < Math.abs(best - 1) ? r : best));
+        if (Math.abs(lockRate - 1) <= 0.08) setDeckPitch(stagingDeck(), (lockRate - 1) * 100);
+      }
+      const leadS = Math.max(0.05, (fireAt - deckPosition(activeDeck)) / rateA);
+      const t0 = audioCtx.currentTime + leadS;
+      if (sd) sd.play(bTime, false, t0);
       const nextEntry = bTime;
 
-      // Recipe-aware EQ-first transition toward the staging deck
+      // Recipe-aware EQ-first transition, started on the same downbeat.
       const outgoing = activeDeck;
-      const totalMs = executeTransition(recipe, outgoing, stagingDeck(), xfDuration);
+      const incoming = stagingDeck();
+      later(leadS * 1000, () => {
+        const totalMs = executeTransition(recipe, outgoing, incoming, xfDuration);
+        later(totalMs + 500, afterBlend);
+      });
 
       // After the transition completes, update state and continue
-      later(totalMs + 500, () => {
+      const afterBlend = () => {
         if (!active) return;
 
         // Stop the outgoing deck and put it back to neutral for its next load
@@ -697,13 +804,14 @@
         currentEnergy = null;
         if (window.beatLayer) window.beatLayer.follow(activeDeck);
         if (window.djMind) window.djMind.follow(activeDeck);
+        easePitchHome(activeDeck);
 
         // Park crossfader fully on the new active deck side
         setRange(xfader, activeDeck === "a" ? -1 : 1);
 
         prepareTransition(currentTrackId);
-      });
-    }, 500);
+      };
+    }, 200);
     runTimers.push(tick);
     return fireAt;
   }

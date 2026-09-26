@@ -283,7 +283,8 @@ class Deck {
       return this._clampPos(this._spinUpPos + (this.reversed ? -travelled : travelled));
     }
     if (!this.playing) return this.startOffset;
-    const travelled = (audioCtx.currentTime - this.startedAt) * this._playbackRate();
+    // max(0): before a scheduled start the position holds at the cue point
+    const travelled = Math.max(0, audioCtx.currentTime - this.startedAt) * this._playbackRate();
     const raw = this.startOffset + (this.reversed ? -travelled : travelled);
     const span = this._loopSpan;
     if (span && this.loopOn && raw >= span[1] && span[1] > span[0]) {
@@ -332,7 +333,10 @@ class Deck {
   // `spin` is true only for the transport PLAY action. Every internal restart
   // (seek, hot-cue jump, loop re-arm, reverse) passes it as false so those stay
   // instant.
-  play(fromPosition, spin = false) {
+  // `when` (audioCtx time, optional): start sample-accurately at that moment
+  // instead of now. The autopilot uses it to land the incoming downbeat
+  // exactly on the outgoing deck's phrase line (beat-to-beat blends).
+  play(fromPosition, spin = false, when = 0) {
     if (!this.buffer) return;
     if (audioCtx.state === "suspended") audioCtx.resume();
     this._cancelBrake();
@@ -357,9 +361,10 @@ class Deck {
     // grid, autopilot exit timing) stays inside the loop instead of running on.
     this._loopSpan = this.loopOn && !this.reversed ? [pos, Math.min(pos + this.loopBeats * 60 / (this.bpm || 128), duration)] : null;
     src.connect(this.inputGain);
-    src.start(0, Math.max(0, Math.min(bufPos, duration - 0.01)));
+    const startAt = when && when > audioCtx.currentTime ? when : 0;
+    src.start(startAt, Math.max(0, Math.min(bufPos, duration - 0.01)));
     this.source = src;
-    this.startedAt = audioCtx.currentTime;
+    this.startedAt = startAt || audioCtx.currentTime;
     this.startOffset = pos;
     this.playing = true;
 

@@ -392,6 +392,54 @@ def _vocals_stem(track_id: str) -> str:
     return path
 
 
+_vocal_regions: Dict[str, list] = {}
+
+
+def _vocal_regions_for(track_id: str) -> Optional[list]:
+    """Cached Demucs vocal-activity regions for a track, or None if separation fails."""
+    if track_id in _vocal_regions:
+        return _vocal_regions[track_id]
+    try:
+        from app.music_brain.analyzer import vocal_presence_map
+
+        regions = [list(r) for r in vocal_presence_map(Path(_vocals_stem(track_id)))]
+    except Exception as exc:
+        print(f"[blend] vocal map unavailable for {track_id}: {exc}", flush=True)
+        return None
+    _vocal_regions[track_id] = regions
+    return regions
+
+
+class BlendRequest(BaseModel):
+    a_id: str
+    b_id: str
+    window_lo: float
+    window_hi: float
+    a_bpm_effective: Optional[float] = None
+    bars: int = 16
+
+
+@app.post("/api/blend/plan")
+def post_blend_plan(req: BlendRequest):
+    """Beat-to-beat blend: vocal-free exit phrase in A, vocal-free entry phrase
+    in B, and the playback rate that locks B's tempo to A's."""
+    from app.music_brain.blend import ALLOWED_BARS, plan_blend
+
+    if req.bars not in ALLOWED_BARS:
+        raise HTTPException(status_code=400, detail=f"bars must be one of {list(ALLOWED_BARS)}")
+    if not (0 <= req.window_lo <= req.window_hi <= 3600):
+        raise HTTPException(status_code=400, detail="bad play window")
+    a = analyze_track(_track_path(req.a_id))
+    b = analyze_track(_track_path(req.b_id))
+    return plan_blend(
+        a, b, req.window_lo, req.window_hi,
+        a_bpm_effective=req.a_bpm_effective,
+        a_vocals=_vocal_regions_for(req.a_id),
+        b_vocals=_vocal_regions_for(req.b_id),
+        bars=req.bars,
+    )
+
+
 @app.post("/api/mashup/plan")
 def post_mashup_plan(req: MashupRequest):
     """Plan guest-vocal-over-host-beat ("A x B"). Separates vocals (cached) only
