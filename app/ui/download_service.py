@@ -22,6 +22,21 @@ _SPOTIFY_RE = re.compile(
 _YT_MUSIC_RE = re.compile(r"https?://music\.youtube\.com/")
 _YT_RE = re.compile(r"https?://(www\.)?(youtube\.com|youtu\.be)/")
 _YTSEARCH_RE = re.compile(r"ytsearch\d*:")
+# Autopilot suggestions: "spotsearch:Artist - Title" -> spotdl looks the song up on
+# Spotify (real released tracks only) and fetches duration-matched audio.
+_SPOTSEARCH_RE = re.compile(r"spotsearch:")
+
+# Live recordings: "(Live)", "[Live at ...]", "Song - Live", "Live at/in/from ...",
+# "Artist Live Song, City" (no dash before "Live", so "Oasis - Live Forever" passes).
+_LIVE_RE = re.compile(
+    r"[\(\[]\s*live\b|\blive\s+(at|in|from|@|on|session|version|recording|performance)\b|"
+    r"[-–]\s*live\s*$|^[^-–]+?\s+live\s+\w",
+    re.IGNORECASE,
+)
+
+
+def _is_live(title: str) -> bool:
+    return bool(_LIVE_RE.search(title))
 
 # Keywords that identify DJ mixes / live sets — reject these, only individual tracks allowed.
 _MIX_KEYWORDS = re.compile(
@@ -87,6 +102,8 @@ def _search_match_filter(words: list[str]):
             return "title looks like a mix/set"
         if _is_non_music(title):
             return "title looks like an interview/non-music video"
+        if _is_live(title):
+            return "title looks like a live recording"
         if words:
             hay = " " + _norm(f"{title} {info.get('channel') or ''} {info.get('uploader') or ''}") + " "
             hits = sum(1 for w in words if w in hay)
@@ -107,6 +124,8 @@ def detect_source(url: str) -> str:
         return "youtube"
     if _YTSEARCH_RE.match(url):
         return "youtube"  # yt-dlp handles ytsearch: natively
+    if _SPOTSEARCH_RE.match(url):
+        return "spotify_search"
     return "unknown"
 
 
@@ -116,7 +135,60 @@ def download_to_dir(url: str, output_dir: Path) -> list[Path]:
     source = detect_source(url)
     if source == "spotify":
         return _spotdl(url, output_dir)
+    if source == "spotify_search":
+        return _spotdl_search(_SPOTSEARCH_RE.sub("", url, count=1), output_dir)
     return _ytdlp(url, output_dir)
+
+
+SPOTDL_TIMEOUT_SECS = 240
+
+
+def _spotdl_search(query: str, output_dir: Path) -> list[Path]:
+    """Find a released song on Spotify by "Artist - Title" and download it.
+
+    No Spotify match means the song most likely does not exist (LLM made it up),
+    so this raises instead of falling back to a loose YouTube search, which is
+    how live recordings and sets used to slip in.
+    """
+    query = " ".join(query.split())
+    if not query or query.startswith("-") or len(query) > 200:
+        raise RuntimeError("invalid Spotify search query")
+    if _is_mix(query) or _is_non_music(query) or _is_live(query):
+        raise RuntimeError(f"not a studio song: \"{query}\"")
+
+    before = set(output_dir.glob("*.mp3"))
+    try:
+        result = subprocess.run(
+            [
+                sys.executable, "-m", "spotdl", "download", query,
+                "--output", str(output_dir / "{artists} - {title}.{output-ext}"),
+                "--format", "mp3",
+                "--bitrate", "320k",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=SPOTDL_TIMEOUT_SECS,
+        )
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"Spotify download timed out for \"{query}\"")
+    new_files = sorted(set(output_dir.glob("*.mp3")) - before)
+    if not new_files:
+        detail = (result.stdout or result.stderr or "").strip().splitlines()[-1:] or [""]
+        raise RuntimeError(f"no Spotify match for \"{query}\" ({detail[0][:120]})")
+    # spotdl takes Spotify's top hit even when it is unrelated (a made-up song
+    # came back as a random chart track), so the result must actually be the
+    # requested song: most query words present in "{artists} - {title}".
+    words = [w for w in _norm(query).split() if len(w) > 1]
+    for path in new_files:
+        hay = " " + _norm(path.stem) + " "
+        hits = sum(1 for w in words if f" {w} " in hay)
+        if words and hits / len(words) < _MIN_WORD_MATCH:
+            for p in new_files:
+                p.unlink(missing_ok=True)
+            raise RuntimeError(
+                f"no Spotify match for \"{query}\" (closest was \"{path.stem}\")"
+            )
+    return _reject_non_tracks(new_files)
 
 
 def _ytdlp(url: str, output_dir: Path) -> list[Path]:
@@ -176,14 +248,18 @@ def _ytdlp(url: str, output_dir: Path) -> list[Path]:
             "No matching studio track found (all results were mixes, interviews, "
             "clips or title mismatches)."
         )
-    # Reject DJ mixes / live sets — only individual studio tracks allowed.
+    return _reject_non_tracks(new_files, check_live=is_search)
+
+
+def _reject_non_tracks(new_files: list[Path], check_live: bool = True) -> list[Path]:
+    """Only individual studio tracks: no mixes / sets / interviews / live
+    recordings / >9 min files. (Live check is skipped for a URL the user pasted.)"""
     clean = []
     for path in new_files:
-        if _is_mix(path.stem) or _is_non_music(path.stem):
+        if _is_mix(path.stem) or _is_non_music(path.stem) or (check_live and _is_live(path.stem)):
             path.unlink(missing_ok=True)
             raise RuntimeError(
-                f"Downloaded file looks like a DJ mix/set: \"{path.stem}\". "
-                "Try a more specific search query."
+                f"Downloaded file looks like a mix, set or live recording: \"{path.stem}\"."
             )
         # Secondary duration guard using file size heuristic (320 kbps MP3).
         # 9 min × 60 s × 320 000 bit/s / 8 = ~21.6 MB. Anything bigger → reject.

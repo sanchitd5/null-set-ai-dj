@@ -196,7 +196,11 @@ async def download_from_url(req: DownloadRequest):
     tmp_dir = UPLOAD_DIR / f"_dl_{uuid.uuid4().hex}"
     try:
         try:
-            paths = download_to_dir(req.url, tmp_dir)
+            # Off the event loop: a Spotify/YouTube fetch can take 1-2 min and
+            # would otherwise stall every other request (audio, analysis, UI).
+            from starlette.concurrency import run_in_threadpool
+
+            paths = await run_in_threadpool(download_to_dir, req.url, tmp_dir)
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc))
 
@@ -482,6 +486,10 @@ class AutopilotSuggestRequest(BaseModel):
 _ENERGY_NOTES = {
     "dip": "the set has been at peak energy for a while - pick something that lets "
            "the energy dip a little before building again, not another peak",
+    # Set study rule 7: bookend the set by recalling the opening idea late on.
+    "callback": "the set is near its end - one track that calls back the opening "
+                "track (first title in the history: same artist, hook or key family) "
+                "would bookend the set, recontextualized, not a repeat",
 }
 
 

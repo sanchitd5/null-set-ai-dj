@@ -286,11 +286,10 @@ def suggest_next_tracks(
     for s in suggestions:
         artist_s = s.get("artist", "")
         title_s = s.get("title", "")
-        # Exclude mixes, DJ sets, and live recordings — only individual studio tracks.
-        s["search_query"] = (
-            f"ytsearch1:{artist_s} {title_s} audio -mix -\"DJ set\" -\"live set\""
-            f" -liveset -\"radio show\" -\"podcast\" -\"essential mix\""
-        )
+        # Spotify lookup (released studio tracks only; no match = likely made-up
+        # song -> skipped). Replaces the loose YouTube search that let live
+        # recordings and sets through.
+        s["search_query"] = f"spotsearch:{artist_s} - {title_s}"
         # Ensure all expected fields present with defaults
         s.setdefault("genre", "")
         s.setdefault("mix_moment", "")
