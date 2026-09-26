@@ -54,16 +54,32 @@
     }, stepMs);
   }
 
+  const ENERGY_DELTA_CLASS = { up: "ap-energy-up", down: "ap-energy-down", maintain: "ap-energy-hold" };
+  const ENERGY_DELTA_LABEL = { up: "↑ Energy up", down: "↓ Energy down", maintain: "→ Hold energy" };
+
   function renderQueue(items) {
     if (!queueEl) return;
-    if (!items.length) { queueEl.innerHTML = "<div class='ap-empty'>Generating set…</div>"; return; }
-    queueEl.innerHTML = items.map((s, i) => `
+    if (!items.length) {
+      queueEl.innerHTML = "<div class='ap-empty'>⏳ Finding next track…</div>";
+      return;
+    }
+    queueEl.innerHTML = items.map((s, i) => {
+      const eClass = ENERGY_DELTA_CLASS[s.energy_delta] || "";
+      const eLabel = ENERGY_DELTA_LABEL[s.energy_delta] || "";
+      const genre   = s.genre ? `<span class="ap-genre">${s.genre}</span>` : "";
+      const moment  = s.mix_moment ? `<span class="ap-moment" title="Mix moment">${s.mix_moment}</span>` : "";
+      const energy  = eLabel ? `<span class="ap-energy ${eClass}">${eLabel}</span>` : "";
+      return `
       <div class="ap-item ${i === 0 ? "ap-next" : ""}">
         <span class="ap-pos">${i === 0 ? "NEXT" : `+${i + 1}`}</span>
-        <span class="ap-name">${s.artist || "?"} — ${s.title || "?"}</span>
-        <span class="ap-meta">${s.expected_key || ""}  ${s.expected_bpm ? s.expected_bpm + " BPM" : ""}</span>
-        <span class="ap-why">${s.reason || ""}</span>
-      </div>`).join("");
+        <div class="ap-item-main">
+          <span class="ap-name">${s.artist || "?"} — ${s.title || "?"}</span>
+          <span class="ap-meta">${s.expected_key || ""}${s.expected_bpm ? "  " + s.expected_bpm + " BPM" : ""}${genre ? "  " + genre : ""}</span>
+          <span class="ap-badges">${energy}${moment}</span>
+          <span class="ap-why">${s.reason || ""}</span>
+        </div>
+      </div>`;
+    }).join("");
   }
 
   // ── API calls ─────────────────────────────────────────────────────────────
@@ -103,9 +119,18 @@
   // ── core loop ─────────────────────────────────────────────────────────────
   async function prepareTransition(currentId) {
     if (!active) return;
-    apStatus("AI choosing next track…");
+    apStatus("⏳ Loading next track — AI selecting…");
+    renderQueue([]);
 
-    const suggestions = await getSuggestions(currentId);
+    let suggestions;
+    try {
+      suggestions = await getSuggestions(currentId);
+    } catch (e) {
+      apStatus(`Suggest error: ${e.message}`);
+      active = false;
+      updateButtons();
+      return;
+    }
     renderQueue(suggestions);
 
     for (const s of suggestions) {
@@ -232,8 +257,8 @@
       if (da) da.play(0, true);
 
       history = [seedName];
-      apStatus(`Playing: ${seedName}`);
-      prepareTransition(currentTrackId);
+      apStatus(`▶ Playing: ${seedName} — finding next track in background…`);
+      prepareTransition(currentTrackId); // fire-and-forget: seed already playing
 
     } catch (e) {
       apStatus(`Autopilot error: ${e.message}`);

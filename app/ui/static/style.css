@@ -1398,11 +1398,10 @@ button.rebind-btn.is-armed {
 }
 .ap-empty { color: var(--outline); font-size: 11px; padding: var(--sp-sm) 0; }
 .ap-item {
-  display: grid;
-  grid-template-columns: 52px 1fr auto auto;
-  align-items: center;
+  display: flex;
+  align-items: flex-start;
   gap: var(--sp-sm);
-  padding: 5px var(--sp-sm);
+  padding: 6px var(--sp-sm);
   border-radius: var(--r-sm);
   background: var(--s-high);
   font-family: var(--mono);
@@ -1412,7 +1411,15 @@ button.rebind-btn.is-armed {
 .ap-pos { font-size: 9px; font-weight: 700; letter-spacing: 0.1em; color: var(--accent); }
 .ap-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ap-meta { font-size: 10px; color: var(--outline); white-space: nowrap; }
-.ap-why { font-size: 10px; color: var(--outline); grid-column: 1 / -1; padding-left: 52px; }
+.ap-why { font-size: 10px; color: var(--outline); padding-top: 2px; }
+.ap-item-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ap-badges { display: flex; gap: 4px; flex-wrap: wrap; }
+.ap-genre { font-size: 9px; background: rgba(255,255,255,.08); border-radius: 3px; padding: 1px 5px; color: var(--outline); letter-spacing: .05em; text-transform: uppercase; }
+.ap-moment { font-size: 9px; color: var(--outline); font-style: italic; }
+.ap-energy { font-size: 9px; font-weight: 700; border-radius: 3px; padding: 1px 5px; letter-spacing: .05em; }
+.ap-energy-up   { background: rgba(0,220,120,.15); color: #00dc78; }
+.ap-energy-down { background: rgba(255,140,0,.15); color: #ff8c00; }
+.ap-energy-hold { background: rgba(80,180,255,.15); color: #50b4ff; }
 
 /* ------------------------------- footer --------------------------------- */
 
