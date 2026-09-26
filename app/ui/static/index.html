@@ -660,6 +660,10 @@
     <div class="ap-btns">
       <button class="hw-btn accent-btn" id="ap-start-btn">▶ START SET</button>
       <button class="hw-btn" id="ap-stop-btn" disabled>■ STOP</button>
+      <label class="hud-label" title="Synced drum machine: sparse fills, build rolls and breakdown kicks on the playing deck's beatgrid">
+        <input type="checkbox" id="ap-drums-toggle" checked /> LIVE DRUMS
+      </label>
+      <input type="range" id="ap-drums-level" min="0" max="1" step="0.01" value="0.25" aria-label="Live drums level" />
     </div>
   </div>
 
@@ -735,6 +739,7 @@
 <script src="/fx-rack.js"></script>
 <script src="/automation.js"></script>
 <script src="/performance.js"></script>
+<script src="/beat-layer.js"></script>
 <script src="/browser.js"></script>
 <script src="/autopilot.js"></script>
 </body>

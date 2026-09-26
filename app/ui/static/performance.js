@@ -22,7 +22,7 @@ function getNoiseBuffer() {
   return noiseBuffer;
 }
 
-function noiseVoice(dest, { duration, type, freq, q = 1, gain = 1, decay }) {
+function noiseVoice(dest, { duration, type, freq, q = 1, gain = 1, decay, when }) {
   const src = audioCtx.createBufferSource();
   src.buffer = getNoiseBuffer();
   const filter = audioCtx.createBiquadFilter();
@@ -30,7 +30,7 @@ function noiseVoice(dest, { duration, type, freq, q = 1, gain = 1, decay }) {
   filter.frequency.value = freq;
   filter.Q.value = q;
   const env = audioCtx.createGain();
-  const t = audioCtx.currentTime;
+  const t = Math.max(audioCtx.currentTime, when || 0);
   env.gain.setValueAtTime(0.0001, t);
   env.gain.exponentialRampToValueAtTime(gain, t + 0.003);
   env.gain.exponentialRampToValueAtTime(0.0001, t + (decay || duration));
@@ -41,10 +41,10 @@ function noiseVoice(dest, { duration, type, freq, q = 1, gain = 1, decay }) {
   src.stop(t + duration + 0.05);
 }
 
-function toneVoice(dest, { wave = "sine", from, to, duration, gain = 1, glideTime }) {
+function toneVoice(dest, { wave = "sine", from, to, duration, gain = 1, glideTime, when }) {
   const osc = audioCtx.createOscillator();
   osc.type = wave;
-  const t = audioCtx.currentTime;
+  const t = Math.max(audioCtx.currentTime, when || 0);
   osc.frequency.setValueAtTime(from, t);
   osc.frequency.exponentialRampToValueAtTime(to, t + (glideTime || duration));
   const env = audioCtx.createGain();
@@ -60,45 +60,45 @@ function toneVoice(dest, { wave = "sine", from, to, duration, gain = 1, glideTim
 const SAMPLE_PADS = [
   {
     name: "KICK", key: "t",
-    play: (d) => { toneVoice(d, { from: 150, to: 45, duration: 0.45, gain: 1.0, glideTime: 0.12 }); noiseVoice(d, { duration: 0.05, type: "lowpass", freq: 300, gain: 0.35, decay: 0.03 }); },
+    play: (d, w) => { toneVoice(d, { from: 150, to: 45, duration: 0.45, gain: 1.0, glideTime: 0.12, when: w }); noiseVoice(d, { duration: 0.05, type: "lowpass", freq: 300, gain: 0.35, decay: 0.03, when: w }); },
   },
   {
     name: "SNARE", key: "y",
-    play: (d) => { noiseVoice(d, { duration: 0.22, type: "highpass", freq: 1400, gain: 0.8, decay: 0.18 }); toneVoice(d, { wave: "triangle", from: 220, to: 150, duration: 0.14, gain: 0.5 }); },
+    play: (d, w) => { noiseVoice(d, { duration: 0.22, type: "highpass", freq: 1400, gain: 0.8, decay: 0.18, when: w }); toneVoice(d, { wave: "triangle", from: 220, to: 150, duration: 0.14, gain: 0.5, when: w }); },
   },
   {
     name: "CLAP", key: "u",
-    play: (d) => {
+    play: (d, w) => {
       [0, 0.014, 0.03].forEach((offset) => {
-        setTimeout(() => noiseVoice(d, { duration: 0.18, type: "bandpass", freq: 1500, q: 1.1, gain: 1.4, decay: 0.13 }), offset * 1000);
+        noiseVoice(d, { duration: 0.18, type: "bandpass", freq: 1500, q: 1.1, gain: 1.4, decay: 0.13, when: Math.max(audioCtx.currentTime, w || 0) + offset });
       });
     },
   },
   {
     name: "HAT", key: "g",
-    play: (d) => noiseVoice(d, { duration: 0.07, type: "highpass", freq: 8000, gain: 0.5, decay: 0.045 }),
+    play: (d, w) => noiseVoice(d, { duration: 0.07, type: "highpass", freq: 8000, gain: 0.5, decay: 0.045, when: w }),
   },
   {
     name: "OPEN HAT", key: "h",
-    play: (d) => noiseVoice(d, { duration: 0.42, type: "highpass", freq: 7000, gain: 0.45, decay: 0.35 }),
+    play: (d, w) => noiseVoice(d, { duration: 0.42, type: "highpass", freq: 7000, gain: 0.45, decay: 0.35, when: w }),
   },
   {
     name: "TOM", key: "v",
-    play: (d) => toneVoice(d, { wave: "sine", from: 260, to: 90, duration: 0.42, gain: 0.85, glideTime: 0.3 }),
+    play: (d, w) => toneVoice(d, { wave: "sine", from: 260, to: 90, duration: 0.42, gain: 0.85, glideTime: 0.3, when: w }),
   },
   {
     name: "ZAP", key: "b",
-    play: (d) => toneVoice(d, { wave: "sawtooth", from: 900, to: 70, duration: 0.3, gain: 0.5 }),
+    play: (d, w) => toneVoice(d, { wave: "sawtooth", from: 900, to: 70, duration: 0.3, gain: 0.5, when: w }),
   },
   {
     name: "SWEEP", key: "n",
-    play: (d) => {
+    play: (d, w) => {
       const src = audioCtx.createBufferSource();
       src.buffer = getNoiseBuffer();
       const filter = audioCtx.createBiquadFilter();
       filter.type = "bandpass";
       filter.Q.value = 3;
-      const t = audioCtx.currentTime;
+      const t = Math.max(audioCtx.currentTime, w || 0);
       filter.frequency.setValueAtTime(300, t);
       filter.frequency.exponentialRampToValueAtTime(7000, t + 0.85);
       const env = audioCtx.createGain();
@@ -121,11 +121,13 @@ const padGains = SAMPLE_PADS.map(() => {
   return g;
 });
 
-function triggerPad(index) {
+// `when` (audioCtx time) lets the beat layer schedule sample-accurate hits;
+// `dest` routes into the beat layer's own bus instead of the pad fader.
+function triggerPad(index, when, dest) {
   if (audioCtx.state === "suspended") audioCtx.resume();
   const pad = SAMPLE_PADS[index];
   if (!pad) return;
-  pad.play(padGains[index]);
+  pad.play(dest || padGains[index], when);
   document.querySelectorAll(`[data-pad="${index}"]`).forEach((el) => {
     if (el.tagName !== "BUTTON") return;
     el.classList.add("hit", "pad-hit");

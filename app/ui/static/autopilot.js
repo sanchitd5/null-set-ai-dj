@@ -505,12 +505,21 @@
     const xfDuration = aTime < hardCap ? 16 : 8;
 
     let executed = false;
+    let filled = false;
     const fireAt = effectiveATime - 1; // start crossfade 1s early
 
     const tick = setInterval(() => {
       if (!active) { clearInterval(tick); return; }
       const pos = deckPosition(activeDeck);
       const left = fireAt - pos;
+
+      // Live drums: 2-bar fill leading into the crossfade (glues the records).
+      const od0 = window.decks && window.decks[activeDeck];
+      const barSecs = (60 / ((od0 && od0.bpm) || 128)) * 4;
+      if (!filled && left > 0 && left <= 2 * barSecs && window.beatLayer) {
+        filled = true;
+        window.beatLayer.fill(2);
+      }
 
       if (left > 0) {
         const scoreTag = score >= 65 ? `⭐${score}` : `⚡${score} (early exit)`;
@@ -543,6 +552,7 @@
         history.push(nextName);
         activeDeck = stagingDeck();
         currentTrackId = nextId;
+        if (window.beatLayer) window.beatLayer.follow(activeDeck);
 
         // Park crossfader fully on the new active deck side
         setRange(xfader, activeDeck === "a" ? -1 : 1);
@@ -585,6 +595,7 @@
       // Play deck A
       const da = window.decks && window.decks.a;
       if (da) da.play(0, true);
+      if (window.beatLayer) window.beatLayer.follow("a");
 
       history = [seedName];
       apStatus(`▶ Playing: ${seedName} — finding next track in background…`);
@@ -600,6 +611,7 @@
   function stop() {
     active = false;
     clearRun();
+    if (window.beatLayer) window.beatLayer.stop();
     apStatus("Autopilot stopped.");
     updateButtons();
   }
