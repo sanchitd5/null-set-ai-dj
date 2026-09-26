@@ -139,7 +139,15 @@ def _start_mlx() -> bool:
         state["detail"] = f"mlx warm-up failed: {exc}"
         return False
     _publish("mlx", f"{MLX_URL}/v1", MLX_MODEL, warm)
+    _unload_ollama()  # don't hold a second 17 GB copy of the model in memory
     return True
+
+
+def _unload_ollama() -> None:
+    try:
+        _http_json(f"{OLLAMA_URL}/api/generate", {"model": OLLAMA_MODEL, "keep_alive": 0}, timeout=30)
+    except Exception:
+        pass  # Ollama not running: nothing to free
 
 
 def _start_ollama() -> bool:
