@@ -166,6 +166,10 @@ def bpm_compatibility(bpm_a: float, bpm_b: float) -> Tuple[float, str]:
         return 1.0, "seamless"
     if pct_diff <= 0.06:
         return 0.75, "ramp"
+    half = min(abs(bpm_a - 2 * bpm_b) / max(bpm_a, 2 * bpm_b),
+               abs(2 * bpm_a - bpm_b) / max(2 * bpm_a, bpm_b))
+    if half <= 0.06:
+        return (0.75 if half <= 0.03 else 0.6), "half_time"
     return 0.2, "cut_required"
 
 
