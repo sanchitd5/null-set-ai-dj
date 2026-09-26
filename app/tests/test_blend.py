@@ -130,3 +130,16 @@ def test_drop_rule_matches_dj_mind_js():
     js = (Path(blend.__file__).parents[1] / "ui" / "static" / "dj-mind.js").read_text(encoding="utf-8")
     assert float(re.search(r"\bDROP_JUMP = ([0-9.]+)", js).group(1)) == blend.DROP_JUMP
     assert float(re.search(r"\bPEAK_QUARTILE = ([0-9.]+)", js).group(1)) == blend.DROP_QUARTILE
+
+
+def test_exit_waits_for_first_drop_and_entry_not_after_bs_drop():
+    a, b = _track(120), _track(120)            # bar 2 s, phrase 16 s
+    curve = [0.3] * 240
+    for t in range(64, 96):                    # A's drop phrase at 64 s
+        curve[t] = 0.95
+    a.energy_times, a.energy_curve = [float(t) for t in range(240)], curve
+    b.energy_times, b.energy_curve = [float(t) for t in range(240)], list(curve)   # B's drop at 64 s too
+    plan = plan_blend(a, b, 30.0, 60.0, a_vocals=[], b_vocals=[], bars=8, a_entry=0.0)
+    assert plan["ok"] and plan["min_exit"] == pytest.approx(64 + 16)   # drop + 8 bars
+    assert plan["exit"] >= 80.0                                        # window stretched past the drop
+    assert plan["entry"] <= 64.0                                       # B enters at or before its drop

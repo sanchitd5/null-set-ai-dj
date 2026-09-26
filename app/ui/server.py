@@ -432,6 +432,7 @@ class BlendRequest(BaseModel):
     a_bpm_effective: Optional[float] = None
     bars: int = 16
     entry_mode: str = "match"       # "drop": enter on B's first long drop (peak moves)
+    a_entry: Optional[float] = None  # where the playing song came in (its drop must play first)
 
 
 @app.post("/api/blend/plan")
@@ -455,6 +456,7 @@ def post_blend_plan(req: BlendRequest):
         b_vocals=_vocal_regions_for(req.b_id),
         bars=req.bars,
         entry_mode=req.entry_mode,
+        a_entry=req.a_entry,
     )
 
 

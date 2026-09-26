@@ -28,6 +28,7 @@ Regions = List[Tuple[float, float]]
 
 MAX_TEMPO_DEVIATION = 0.08     # beyond this a pitch-locked blend sounds wrong
 MAX_VOCAL_COVERAGE = 0.15      # "instrumental" = at most 15% of the blend has vocal
+DROP_HOLD_BARS = 8             # play at least this much of A's first drop before leaving
 ENTRY_SEARCH_FRACTION = 0.45   # B's entry must leave >= 55% of the song to play
 ENERGY_MATCH_WEIGHT = 1.5      # |A exit energy - B entry energy| penalty (both 0-1, own-peak normalised)
 ALLOWED_BARS = (8, 16, 32)
@@ -131,6 +132,7 @@ def plan_blend(
     b_vocals: Optional[Regions] = None,
     bars: int = 16,
     entry_mode: str = "match",
+    a_entry: Optional[float] = None,
 ) -> dict:
     """entry_mode "match": B enters where its energy matches A's exit.
     entry_mode "drop": B enters on its first long drop (peak moves DOUBLE DROP /
@@ -140,9 +142,25 @@ def plan_blend(
     if entry_mode not in ENTRY_MODES:
         raise ValueError(f"entry_mode must be one of {ENTRY_MODES}")
     a_eff = a_bpm_effective or a.bpm
+    # Don't skip A's drop: the exit may not come before A's first drop (after
+    # where A came in) has played DROP_HOLD_BARS. The play window stretches to
+    # allow it when the song is long enough. Returned even on a tempo gap so
+    # the caller can respect it for echo-out exits too.
+    min_exit = None
+    a_own_bar = 240.0 / a.bpm if a.bpm > 0 else 2.0
+    a_drops = [t for t, _, _ in drop_lines(a.phrase_boundaries_8bar, a.energy_times, a.energy_curve, a_own_bar)]
+    after = [t for t in a_drops if t >= (a_entry or 0.0) - 0.01]
+    if after:
+        min_exit = after[0] + DROP_HOLD_BARS * a_own_bar
+        if min_exit + bars * a_own_bar <= a.duration:
+            window_lo = max(window_lo, min_exit)
+            window_hi = max(window_hi, window_lo)
+        else:
+            min_exit = None
     lock = tempo_lock(a_eff, b.bpm)
     if lock is None:
-        return {"ok": False, "reasons": [f"tempo gap too big for a beat blend ({b.bpm:.1f} vs {a_eff:.1f} BPM)"]}
+        return {"ok": False, "min_exit": min_exit,
+                "reasons": [f"tempo gap too big for a beat blend ({b.bpm:.1f} vs {a_eff:.1f} BPM)"]}
     rate, mult = lock
     a_bar = 240.0 / a.bpm                  # A track-seconds per bar
     b_bar = 240.0 / (b.bpm * mult)         # B track-seconds per (A-locked) bar
@@ -189,8 +207,13 @@ def plan_blend(
     # Only B's own phrase grid: its first boundary is its first detected
     # downbeat (5.9 s into Lane 8 "Little By Little"), not 0:00. Entering at
     # 0:00 put B's downbeats off A's phrase line by whatever the intro pad is.
+    b_first_drop = next(iter(t for t, _, _ in drop_lines(
+        b.phrase_boundaries_8bar, b.energy_times, b.energy_curve, 240.0 / b.bpm if b.bpm > 0 else 2.0)), None)
     for e in b.phrase_boundaries_8bar:
         if e > limit or e + b_len > b.duration:
+            continue
+        # never enter past B's first drop: its biggest moment must be heard
+        if entry_mode == "match" and b_first_drop is not None and e > b_first_drop + 0.01:
             continue
         # drop mode: only B's phrase line on the drop downbeat (within a bar)
         if drop_span and abs(e - drop_span[0]) > 240.0 / b.bpm + 0.01:
@@ -235,6 +258,7 @@ def plan_blend(
         "semitones": round(12 * math.log2(rate), 3),
         "a_vocal_coverage": None if a_cov is None else round(a_cov, 3),
         "b_vocal_coverage": None if b_cov is None else round(b_cov, 3),
+        "min_exit": None if min_exit is None else round(min_exit, 3),
         "exit_energy": None if a_energy is None else round(a_energy, 3),
         "entry_energy": None if b_energy is None else round(b_energy, 3),
         "exit_label": _label_at(a, exit_t),

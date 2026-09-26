@@ -629,9 +629,21 @@
     const plen = p1 - p0;
     const [pLab, pEnergy] = phraseLabel(a.sections, p0, p1);
     const [nLab] = phraseLabel(a.sections, p1, p1 + plen);
-    const dropIn = (n) => {                     // any drop phrase in the n bars after p1
-      for (let k = 0; k * PHRASE_BARS < n; k++) {
-        if (RELEASE_LABELS.includes(phraseLabel(a.sections, p1 + k * plen, p1 + (k + 1) * plen)[0])) return true;
+    // A beat jump of n bars skips [p1, p1+n) and lands on p1+n. Blocked when a
+    // skipped phrase OR the landing phrase holds a drop (labels flicker, so the
+    // acoustic drop detector counts too), or when a skipped phrase is at or
+    // above the song's median energy - that is a hook / popular section, not a
+    // "weak stretch" (user: "AI skips drops and popular sections").
+    const medE = (() => {
+      const e = long.map((x) => x.energy).filter(Number.isFinite).sort((x, y) => x - y);
+      return e.length ? e[Math.floor(0.5 * (e.length - 1))] : null;
+    })();
+    const dropIn = (n) => {
+      for (let k = 0; k * PHRASE_BARS <= n; k++) {
+        const t0 = p1 + k * plen, [lab, en] = phraseLabel(a.sections, t0, t0 + plen);
+        if (RELEASE_LABELS.includes(lab) || isDropAt(d, t0, bar)) return true;
+        const skipped = k * PHRASE_BARS < n;
+        if (skipped && medE != null && Number.isFinite(en) && en >= medE) return true;
       }
       return false;
     };

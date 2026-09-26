@@ -681,11 +681,13 @@
       apStatus(`AI plan: ${plan.candidate.recipe}, exit ${fmtTime(plan.candidate.a_time)}`);
     }
 
-    const blend = await requestBlend(currentId, nextId, candidate);
+    const plan0 = await requestBlend(currentId, nextId, candidate);
+    const blend = plan0 && plan0.ok !== false ? plan0 : null;
+    const minExit = plan0 && plan0.min_exit != null ? plan0.min_exit : null;
     if (!active || currentTrackId !== currentId) return false;
 
     if (gen !== undefined && gen !== prepGen) return false; // superseded by a restarted search
-    const fireAt = scheduleTransition(currentId, nextId, nextName, candidate, blend);
+    const fireAt = scheduleTransition(currentId, nextId, nextName, candidate, blend, minExit);
     tryMashup(currentId, nextId, nextName, fireAt); // fire-and-forget
     scheduledNext = cand;
     pendingSugs = []; // leftovers show up as READY when their download lands
@@ -719,12 +721,14 @@
           a_id: currentId, b_id: nextId, window_lo: lo, window_hi: win.hi,
           a_bpm_effective: od.bpm * od._playbackRate(),
           bars: setMode() === "quick" || steering === "move" ? 8 : 16,
+          a_entry: entryPos, // the playing song's first drop must play before we leave
         }),
       });
       const plan = await res.json();
       if (!res.ok || !plan.ok) {
         console.info("Blend plan unavailable:", plan.detail || (plan.reasons || []).join("; "));
-        return null;
+        // tempo gap: no beat blend, but the drop floor still applies to the echo-out exit
+        return res.ok && plan.min_exit != null ? { ok: false, min_exit: plan.min_exit } : null;
       }
       // PEAK MOVES: on top of the tempo-locked plan, an entry on B's first long
       // drop for DOUBLE DROP / DROP SWAP. The DJ mind decides whether to use it.
@@ -898,7 +902,7 @@
     setTimeout(() => { if (active && gen === prepGen) prepareTransition(currentId); }, 20000);
   }
 
-  function scheduleTransition(currentId, nextId, nextName, candidate, blend = null) {
+  function scheduleTransition(currentId, nextId, nextName, candidate, blend = null, minExit = null) {
     if (!active) return;
     let bTime = candidate.b_time || 0;
     let recipe = candidate.recipe || "Blend";
@@ -937,6 +941,8 @@
     const hi = Math.min(entryPos + w.max, trackEnd);
     let exitAt = blend ? blend.exit : candidate.a_time;
     if (!blend && !(exitAt >= lo && exitAt <= hi)) exitAt = Math.max(lo, Math.min(hi, exitAt || hi));
+    // never leave before the playing song's first drop has played (server floor)
+    if (!blend && minExit != null && exitAt < minExit && minExit < trackEnd) exitAt = minExit;
     // PEAK mode (dj-mind.js peakTransition): tempo-locked pairs only, land B's
     // drop on A's drop downbeat - Double Drop or Drop Swap. null -> blend.
     const peakT = blend && blend.drop && window.djMind && window.djMind.planPeak
