@@ -328,31 +328,88 @@
   const ENERGY_DELTA_CLASS = { up: "ap-energy-up", down: "ap-energy-down", maintain: "ap-energy-hold" };
   const ENERGY_DELTA_LABEL = { up: "↑ Energy up", down: "↓ Energy down", maintain: "→ Hold energy" };
 
-  function renderQueue(items) {
+  // Text from YouTube titles / the LLM goes into innerHTML: escape it.
+  function esc(v) {
+    return String(v == null ? "" : v).replace(/[&<>"']/g, (c) => (
+      { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+
+  // ── AI playlist panel ─────────────────────────────────────────────────────
+  // Shows what is actually lined up: the scheduled NEXT song, songs already
+  // downloaded and waiting (READY), and songs still downloading (⬇).
+  let scheduledNext = null;   // candidate booked for the coming transition
+  let pendingSugs = [];       // suggestions whose downloads are in flight
+  let aiPicking = false;
+
+  function sugOf(c) {
+    return (c && c.suggestion) || { title: c && c.name };
+  }
+
+  function showQueue() {
+    const rows = [];
+    if (scheduledNext) rows.push({ s: sugOf(scheduledNext), tag: "NEXT" });
+    ready.forEach((c) => rows.push({ s: sugOf(c), tag: "READY" }));
+    const have = new Set(rows.map((r) => `${r.s.artist}|${r.s.title}`));
+    pendingSugs.forEach((s) => { if (!have.has(`${s.artist}|${s.title}`)) rows.push({ s, tag: "⬇" }); });
+    renderQueue(rows);
+  }
+
+  function renderQueue(rows) {
     if (!queueEl) return;
-    if (!items.length) {
-      queueEl.innerHTML = "<div class='ap-empty'>⏳ Finding next track…</div>";
+    if (!rows.length) {
+      queueEl.innerHTML = `<div class='ap-empty'>${aiPicking ? "⏳ AI picking the next songs…" : "⏳ Finding next track…"}</div>`;
       return;
     }
-    queueEl.innerHTML = items.map((s, i) => {
+    queueEl.innerHTML = rows.map(({ s, tag }) => {
       const eClass = ENERGY_DELTA_CLASS[s.energy_delta] || "";
       const eLabel = ENERGY_DELTA_LABEL[s.energy_delta] || "";
-      const genre   = s.genre ? `<span class="ap-genre">${s.genre}</span>` : "";
-      const moment  = s.mix_moment ? `<span class="ap-moment" title="Mix moment">${s.mix_moment}</span>` : "";
+      const genre   = s.genre ? `<span class="ap-genre">${esc(s.genre)}</span>` : "";
+      const moment  = s.mix_moment ? `<span class="ap-moment" title="Mix moment">${esc(s.mix_moment)}</span>` : "";
       const energy  = eLabel ? `<span class="ap-energy ${eClass}">${eLabel}</span>` : "";
-      const vibe    = s.vibe_link ? `<span class="ap-vibe">"${s.vibe_link}"</span>` : "";
+      const vibe    = s.vibe_link ? `<span class="ap-vibe">"${esc(s.vibe_link)}"</span>` : "";
+      const isNext = tag === "NEXT";
+      const name = s.artist ? `${esc(s.artist)} — ${esc(s.title)}` : esc(s.title || "?");
       return `
-      <div class="ap-item ${i === 0 ? "ap-next" : ""}" id="${i === 0 ? "ap-next-item" : ""}">
-        <span class="ap-pos">${i === 0 ? "NEXT" : `+${i + 1}`}</span>
+      <div class="ap-item ${isNext ? "ap-next" : ""}" ${isNext ? 'id="ap-next-item"' : ""}>
+        <span class="ap-pos">${tag}</span>
         <div class="ap-item-main">
-          <span class="ap-name">${s.artist || "?"} — ${s.title || "?"}</span>
-          <span class="ap-meta">${s.expected_key || ""}${s.expected_bpm ? "  " + s.expected_bpm + " BPM" : ""}${genre ? "  " + genre : ""}${i === 0 ? '  <span id="ap-match-score" style="display:none"></span>' : ""}</span>
+          <span class="ap-name">${name}</span>
+          <span class="ap-meta">${esc(s.expected_key || "")}${s.expected_bpm ? "  " + esc(s.expected_bpm) + " BPM" : ""}${genre ? "  " + genre : ""}${isNext ? '  <span id="ap-match-score" style="display:none"></span>' : ""}</span>
           <span class="ap-badges">${energy}${moment}</span>
           ${vibe}
-          <span class="ap-why">${s.reason || ""}</span>
+          <span class="ap-why">${esc(s.reason || "")}</span>
         </div>
       </div>`;
     }).join("");
+  }
+
+  // Keep a playlist ahead: once the next song is booked, ask the AI what
+  // follows IT and pre-download those, so the pool never runs dry and the
+  // panel always shows what is coming.
+  let toppingUp = false;
+  async function topUpPool(afterId) {
+    if (toppingUp || !active || ready.length >= 2) return;
+    toppingUp = true;
+    aiPicking = !ready.length;
+    showQueue();
+    try {
+      const avoid = [scheduledNext && scheduledNext.name, ...ready.map((c) => c.name)].filter(Boolean);
+      const sugs = await getSuggestions(afterId, avoid, { lookAhead: true });
+      if (!active) return;
+      pendingSugs = sugs;
+      aiPicking = false;
+      showQueue();
+      await Promise.all(sugs.map((sg) => downloadSuggestion(sg).then(addReady).catch((e) => {
+        console.warn("Prefetch failed:", sg.title, e.message);
+      })));
+    } catch (e) {
+      console.warn("Playlist top-up failed:", e.message);
+    } finally {
+      pendingSugs = [];
+      aiPicking = false;
+      toppingUp = false;
+      showQueue();
+    }
   }
 
   // ── API calls ─────────────────────────────────────────────────────────────
@@ -384,13 +441,13 @@
   }
 
   let energyNotedFor = null; // track whose energy the DJ mind already logged
-  async function getSuggestions(trackId, avoid = []) {
+  async function getSuggestions(trackId, avoid = [], opts = {}) {
     const setPos = Math.min(history.length / 10, 1.0);
     // `avoid` = titles rejected this round (failed download / vibe gate) so the
     // LLM does not propose them again on retry.
     // DJ mind hint: "dip" after a long peak (study rule 9), "callback" late in
     // the set (rule 7). Null most of the time.
-    const energyNote = window.djMind ? window.djMind.nextEnergyNote(setPos) : null;
+    const energyNote = window.djMind && !opts.lookAhead ? window.djMind.nextEnergyNote(setPos) : null;
     const res = await fetch("/api/autopilot/suggest", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -399,7 +456,9 @@
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || res.statusText);
     const e = data.current_profile && parseFloat(data.current_profile.energy);
-    if (Number.isFinite(e)) {
+    // Look-ahead calls describe the NEXT song: they must not overwrite the
+    // playing song's energy (it drives the set-mode window).
+    if (Number.isFinite(e) && !opts.lookAhead) {
       currentEnergy = e <= 1 ? e * 10 : e;
       if (window.djMind && energyNotedFor !== trackId) { energyNotedFor = trackId; window.djMind.noteEnergy(currentEnergy); }
     }
@@ -459,6 +518,7 @@
     if (!c || history.includes(c.name) || ready.some((r) => r.track_id === c.track_id)) return;
     ready.push(c);
     while (ready.length > MAX_READY) ready.shift();
+    showQueue();
   }
 
   // Match + gates + load + schedule one downloaded candidate. True = scheduled.
@@ -520,6 +580,10 @@
 
     const fireAt = scheduleTransition(currentId, nextId, nextName, candidate, blend);
     tryMashup(currentId, nextId, nextName, fireAt); // fire-and-forget
+    scheduledNext = cand;
+    pendingSugs = []; // leftovers show up as READY when their download lands
+    showQueue();
+    topUpPool(nextId); // fire-and-forget: songs for AFTER the next one
     return true;
   }
 
@@ -615,7 +679,7 @@
   // ── core loop ─────────────────────────────────────────────────────────────
   async function prepareTransition(currentId) {
     if (!active) return;
-    renderQueue([]);
+    showQueue();
 
     // 1) Songs already pre-downloaded in an earlier round: no waiting.
     // Pairwise rejects go back to the END of the pool (tried once per song).
@@ -649,7 +713,8 @@
         apStatus(`Suggest error: ${e.message}`);
         continue;
       }
-      renderQueue(suggestions);
+      pendingSugs = suggestions;
+      showQueue();
       if (!suggestions.length) continue;
       apStatus(`⬇ Pre-downloading ${suggestions.length} songs…`);
 
@@ -798,6 +863,7 @@
         resetDeck(outgoing);
 
         history.push(nextName);
+        scheduledNext = null;
         activeDeck = stagingDeck();
         currentTrackId = nextId;
         entryPos = nextEntry;
@@ -902,6 +968,8 @@
     active = true;
     activeDeck = "a";
     updateButtons();
+    scheduledNext = null;
+    pendingSugs = [];
     renderQueue([]);
 
     try {
@@ -944,6 +1012,8 @@
   function stop() {
     active = false;
     ready.length = 0;
+    scheduledNext = null;
+    pendingSugs = [];
     if (window.mashup) window.mashup.cancel();
     mashupTag = "";
     clearRun();
