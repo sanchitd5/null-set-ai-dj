@@ -28,6 +28,9 @@ command -v ffmpeg >/dev/null 2>&1 || echo "warning: ffmpeg not found - downloads
 # Stop a previous server on this port. The bracket keeps pkill from matching
 # this script's own command line.
 pkill -f "[u]vicorn app.ui.server" 2>/dev/null || true
+# wait for the old server to finish shutting down before starting a new one
+for _ in $(seq 1 20); do pgrep -f "[u]vicorn app.ui.server" >/dev/null || break; sleep 0.5; done
+pkill -9 -f "[u]vicorn app.ui.server" 2>/dev/null || true
 sleep 1
 PIDS="$(lsof -ti ":$PORT" 2>/dev/null || true)"
 if [[ -n "$PIDS" ]]; then

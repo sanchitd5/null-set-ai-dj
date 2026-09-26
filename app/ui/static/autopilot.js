@@ -259,6 +259,13 @@
     const midOut = () => eqEl(out, "mid");
     const highOut = () => eqEl(out, "high");
     const at = (bars, fn) => later(bars * bar, fn);
+    // One owner of the sub at every moment, and never nobody: A keeps its lows
+    // until one beat before the swap line, B's lows open on the line
+    // ([[Bass Swap]], [[EQ & Frequency Management]]).
+    const bassSwapAt = (bars) => {
+      at(bars - 0.25, () => rampParam(lowOut, null, LOW_KILL, beat));
+      at(bars, () => rampParam(lowIn, LOW_KILL, 0, beat));
+    };
 
     // Incoming deck always enters with its sub killed: single bass owner.
     setRange(lowIn(), LOW_KILL);
@@ -268,11 +275,10 @@
 
     let total;
     switch (kind) {
-      case "bass": // 8 bars: cut A low, snap B low at the drop (bar 4)
-        rampParam(lowOut, null, LOW_KILL, 4 * bar);
+      case "bass": // [[Bass Swap]]: B rises with no lows, one-downbeat bass swap at bar 4
         rampParam(xfEl, fromXf, 0, 4 * bar);
+        bassSwapAt(4);
         at(4, () => {
-          rampParam(lowIn, LOW_KILL, 0, beat);
           rampParam(xfEl, 0, toXf, 4 * bar);
           rampParam(highOut, null, HIGH_SWEEP, 4 * bar);
         });
@@ -289,24 +295,22 @@
         total = 8.5;
         break;
 
-      case "echo": // arm ECHO on A, kill its low, tail carries B's entry
+      case "echo": // arm ECHO on A; A keeps its lows until the bar-4 swap, tail carries B's entry
         setFx(out, "echo", 0.7);
-        rampParam(lowOut, null, LOW_KILL, 2 * bar);
         rampParam(xfEl, fromXf, 0, 4 * bar);
+        bassSwapAt(4);
         at(4, () => {
-          rampParam(lowIn, LOW_KILL, 0, bar);
           rampParam(xfEl, 0, toXf, 2 * bar);
           rampParam(highOut, null, HIGH_SWEEP, 2 * bar);
         });
         total = 8;
         break;
 
-      case "filter": // sweep A low/mid down over 4 bars, swap at centre
-        rampParam(lowOut, null, LOW_KILL, 4 * bar);
+      case "filter": // sweep A's mids down over 4 bars; lows swap on the bar-4 line
         rampParam(midOut, null, -10, 4 * bar);
         rampParam(xfEl, fromXf, 0, 4 * bar);
+        bassSwapAt(4);
         at(4, () => {
-          rampParam(lowIn, LOW_KILL, 0, 2 * bar);
           rampParam(xfEl, 0, toXf, 4 * bar);
           rampParam(highOut, null, HIGH_SWEEP, 4 * bar);
         });
@@ -323,12 +327,9 @@
       case "loop": // 2-bar loop roll on A holds the exit point steady
         setLoopLength(out, 8);
         setLoop(out, true);
-        at(2, () => {
-          rampParam(lowOut, null, LOW_KILL, 2 * bar);
-          rampParam(xfEl, fromXf, 0, 2 * bar);
-        });
+        at(2, () => rampParam(xfEl, fromXf, 0, 2 * bar));
+        bassSwapAt(4);
         at(4, () => {
-          rampParam(lowIn, LOW_KILL, 0, beat);
           rampParam(xfEl, 0, toXf, 2 * bar);
           rampParam(highOut, null, HIGH_SWEEP, 2 * bar);
         });
@@ -336,22 +337,25 @@
         total = 8;
         break;
 
-      case "blend": // 16-bar EQ-first blend
-        rampParam(lowOut, null, LOW_KILL, 4 * bar);
-        at(4, () => rampParam(xfEl, fromXf, 0, 4 * bar));
+      case "blend": // 16-bar EQ-first blend: B rises under A (no lows) for 8 bars,
+        // one-downbeat bass swap on the bar-8 line, then A fades out over 8 bars.
+        // (Old version cut A's lows over bars 0-4 and opened B's at bar 8:
+        // 13-15 s with nobody on the bass - measured, research/notes/crossfade-analysis.)
+        rampParam(xfEl, fromXf, 0, 8 * bar);
+        bassSwapAt(8);
         at(8, () => {
-          rampParam(lowIn, LOW_KILL, 0, 2 * bar);
           rampParam(xfEl, 0, toXf, 8 * bar);
           rampParam(highOut, null, HIGH_SWEEP, 8 * bar);
         });
         total = 16;
         break;
 
-      default: // 8-bar bass swap then 8-bar crossfader sweep
-        rampParam(lowOut, null, LOW_KILL, 4 * bar);
-        at(4, () => rampParam(lowIn, LOW_KILL, 0, 4 * bar));
+      default: // 16 bars: same shape as the blend (the old default kept the fader on
+        // A for 8 bars with A's lows already cut: a long thin stretch)
+        rampParam(xfEl, fromXf, 0, 8 * bar);
+        bassSwapAt(8);
         at(8, () => {
-          rampParam(xfEl, fromXf, toXf, 8 * bar);
+          rampParam(xfEl, 0, toXf, 8 * bar);
           rampParam(highOut, null, HIGH_SWEEP, 8 * bar);
         });
         total = 16;

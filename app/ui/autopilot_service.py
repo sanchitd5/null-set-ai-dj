@@ -673,18 +673,18 @@ def suggest_next_tracks(
 
     prio = llm_gate.LOOKAHEAD if lookahead else llm_gate.SUGGEST
     data = None
-    for attempt in range(2):  # one retry when the JSON is past repair
+    for attempt in range(3):  # two retries when the JSON is past repair (gemma-4 slips now and then)
         # 0.75: song picks should vary between runs (0.5 replayed the same set from
         # the same seed); the transition PLAN stays at a low temperature.
-        raw = chat_raw(system_msg, user_msg, temperature=SUGGEST_TEMPERATURE,
+        raw = chat_raw(system_msg, user_msg, temperature=SUGGEST_TEMPERATURE if attempt == 0 else 0.4,
                        max_tokens=1100 if lead_to else 700, priority=prio)  # lead JSON is longer
         try:
             data = _extract_json(raw)
             break
         except ValueError as exc:  # JSONDecodeError is a ValueError
-            if attempt:
+            if attempt >= 2:
                 raise
-            print(f"[suggest] bad JSON, retrying once: {exc}", flush=True)
+            print(f"[suggest] bad JSON (attempt {attempt + 1}/3), retrying: {exc}", flush=True)
     if lead_to:
         data["steering"] = "move"  # the user's destination: no continuity / key filters against it
     suggestions = _filter_suggestions(

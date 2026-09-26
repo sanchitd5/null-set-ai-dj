@@ -151,8 +151,12 @@ def _start_mlx() -> bool:
             [sys.executable, "-m", "mlx_lm.server", "--model", MLX_MODEL,
              "--host", "127.0.0.1", "--port", str(MLX_PORT)],
             stdout=log, stderr=subprocess.STDOUT,
+            # its own session: the model server outlives app restarts on purpose
+            # (a restart must not reload 15 GB). It used to be stopped at exit,
+            # and a restart racing the old app's shutdown killed the model the
+            # NEW app had just adopted (ECONNREFUSED on :8081).
+            start_new_session=True,
         )
-        atexit.register(stop)
         deadline = time.time() + MLX_START_TIMEOUT_S
         state["detail"] = "starting mlx_lm.server"
         while time.time() < deadline:
