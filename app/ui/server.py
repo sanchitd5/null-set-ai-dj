@@ -641,12 +641,17 @@ def autopilot_suggest(req: AutopilotSuggestRequest):
     avg_energy = float(np.mean(curve)) if curve else 0.5
     camelot = analysis.key.camelot if analysis.key else "unknown"
 
-    from app.ui.track_identity import clean_identity
+    from app.ui.track_identity import clean_identity, credited_artists
 
     display = _track_names.get(req.track_id, path.stem)
     # Primary artist + clean title only: featured artists and "(Official Video)"
     # noise confuse the model.
     artist_part, title_part = clean_identity(display)
+    # Collabs: give the model every credit ("LATIN MAFIA & Fred again..") and let
+    # it anchor on the best-known producer (see CREDITS rule in the prompt).
+    credits = credited_artists(display)
+    if len(credits) > 1:
+        artist_part = " & ".join(credits[:3])
     history_display = [" - ".join(clean_identity(h)).removeprefix("Unknown - ") for h in req.history]
     genre = _suggested_genres.get(_genre_key(title_part), "")
 

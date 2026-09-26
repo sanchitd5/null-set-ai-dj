@@ -33,3 +33,11 @@ def test_selection_brief_grounded_and_capped():
     assert "GENRE PLAYBOOK (Drum & Bass (DnB) Playbook)" in b
     assert "Two Anchors" in b and "CONTINUITY OR CONTRAST" in b
     assert "[[" not in b and "**" not in b  # wiki markup stripped
+
+
+def test_credited_artists():
+    from app.ui.track_identity import credited_artists
+    assert credited_artists("LATIN MAFIA, Fred again.. - Te Estoy Correteando") == ["LATIN MAFIA", "Fred again.."]
+    assert credited_artists("Disclosure - Latch (feat. Sam Smith)") == ["Disclosure", "Sam Smith"]
+    assert credited_artists("Jamie xx - Gosh") == ["Jamie xx"]
+    assert credited_artists("Hackney Pigeon (Sammy Virji VIP)") == []

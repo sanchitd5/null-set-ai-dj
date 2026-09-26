@@ -15,7 +15,7 @@ clean_identity() returns the PRIMARY artist and the bare song title:
 from __future__ import annotations
 
 import re
-from typing import Tuple
+from typing import List, Tuple
 
 _SEPARATORS = re.compile(r"\s+[-–—|｜]\s+|\s[｜|]\s?")
 _ARTIST_SPLIT = re.compile(
@@ -43,6 +43,24 @@ def clean_title(title: str) -> str:
     t = _TRAILING_CREDIT.sub("", t)
     t = re.sub(r"\s{2,}", " ", t).strip(" -–—|｜")
     return t or title.strip()
+
+
+def credited_artists(display: str) -> List[str]:
+    """Every credited artist, in credit order ("LATIN MAFIA, Fred again.. - X" ->
+    ["LATIN MAFIA", "Fred again.."]); includes "(feat. ...)" credits from the title."""
+    parts = _SEPARATORS.split(display.strip(), maxsplit=1)
+    names: List[str] = []
+    if len(parts) == 2 and parts[0] and parts[1]:
+        names += [n.strip() for n in _ARTIST_SPLIT.split(parts[0]) if n.strip()]
+        m = re.search(r"[\(\[]\s*(?:feat\.?|ft\.?|featuring|with)\s+([^)\]]+)[\)\]]", parts[1], re.IGNORECASE)
+        if m:
+            names += [n.strip() for n in _ARTIST_SPLIT.split(m.group(1)) if n.strip()]
+    seen, out = set(), []
+    for n in names:
+        if n.lower() not in seen:
+            seen.add(n.lower())
+            out.append(n)
+    return out
 
 
 def clean_identity(display: str) -> Tuple[str, str]:

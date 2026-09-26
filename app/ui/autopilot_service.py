@@ -89,6 +89,14 @@ FORBIDDEN SUGGESTIONS (never, regardless of any other rule):
   compilations, albums, EPs, interviews, remix packs, anything longer than 9 minutes.
   Suggest ONLY individual released songs, using the song's real title.
 
+CREDITS RULE (collaborations): when the current song credits several artists
+  ("A & B"), decide which credit defines its SOUND - usually the best-known
+  producer whose discography you know best - and anchor on that artist's world:
+  their other songs first, then close peers. A lesser-known featured or
+  co-credited artist must not pull the set into their genre. Example: "LATIN MAFIA
+  & Fred again.. - Te Estoy Correteando" -> anchor on Fred again.. (his own
+  songs, UK dance / melodic house peers), not Latin house.
+
 SAME-ARTIST RULE (important):
   Suggesting the same ARTIST as the current track is valid and often preferred early in a set to
   build a consistent vibe — back-to-back tracks by the same artist feel like chapters in one story.
