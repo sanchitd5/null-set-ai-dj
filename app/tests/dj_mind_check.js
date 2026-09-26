@@ -144,4 +144,116 @@ assert.strictEqual(holdLoopAnchor([], hsecs, 205, 224, 2), 176);
 assert.strictEqual(holdLoopAnchor([], [], 205, 224, 2), 192);
 assert.strictEqual(holdLoopBars(0), 8); assert.strictEqual(holdLoopBars(3), 4);
 
+// ── PEAK mode ────────────────────────────────────────────────────────────────
+{
+  const { camelotScore, energyQ3, isPeak, bigMomentBlock, peakBlock, peakTransition, BIG_COOLDOWN_S,
+          BEAT_BOOST_COOLDOWN_S, BACKSPIN_MAX } = core;
+  // Camelot table (CLAUDE.md section 4)
+  assert.strictEqual(camelotScore("8A", "8A"), 1); assert.strictEqual(camelotScore("12A", "1A"), 0.9);
+  assert.strictEqual(camelotScore("8A", "8B"), 0.85); assert.strictEqual(camelotScore("8A", "10A"), 0.8);
+  assert.strictEqual(camelotScore("8A", "11A"), 0); assert.strictEqual(camelotScore("8A", "9B"), 0);
+  assert.strictEqual(camelotScore(null, "8A"), 0);
+  // eligibility
+  assert.strictEqual(energyQ3([{ energy: 0.2 }, { energy: 0.4 }, { energy: 0.6 }, { energy: 0.9 }, { energy: 1 }]), 0.9);
+  assert.ok(isPeak({ profileEnergy: 8 }));
+  assert.ok(!isPeak({ profileEnergy: 7, section: "verse" }));
+  assert.ok(isPeak({ setMode: "quick", energyQ3: 0.8, sectionEnergy: 0.85 }));
+  assert.ok(!isPeak({ setMode: "hybrid", energyQ3: 0.8, sectionEnergy: 0.85 }));
+  assert.ok(isPeak({ section: "drop" }) && isPeak({ section: "build", nextSection: "drop" }));
+
+  // big-moment restraint: per song, same kind back to back, 3-song window, cooldown, first 16 bars
+  const T = 10000;
+  assert.strictEqual(bigMomentBlock("fakeout", 5, [], 40, T), null);
+  assert.match(bigMomentBlock("fakeout", 5, [], 12, T), /first 16 bars/);
+  assert.match(bigMomentBlock("drop_swap", 5, [{ track: 5, kind: "fakeout", at: 0 }], 40, T), /one big moment per song/);
+  assert.match(bigMomentBlock("fakeout", 5, [{ track: 4, kind: "fakeout", at: 0 }], 40, T), /same big move/);
+  assert.strictEqual(bigMomentBlock("drop_swap", 5, [{ track: 4, kind: "fakeout", at: 0 }], 40, T), null);
+  const two = [{ track: 3, kind: "double_drop", at: 0 }, { track: 4, kind: "fakeout", at: 1000 }];
+  assert.match(bigMomentBlock("drop_swap", 5, two, 40, T), /2 big moments in the last 3 songs/);
+  assert.strictEqual(bigMomentBlock("drop_swap", 6, two, 40, T), null);       // song 3 left the window
+  assert.match(bigMomentBlock("drop_swap", 6, [{ track: 4, kind: "fakeout", at: T - 60 }], 40, T), /cooldown/);
+  assert.strictEqual(bigMomentBlock("drop_swap", 6, [{ track: 4, kind: "fakeout", at: T - BIG_COOLDOWN_S }], 40, T), null);
+
+  // in-song peak moves through decide()
+  const pk = (o) => s(Object.assign({ peakOn: true, peak: true, phraseSection: "build", nextPhraseSection: "drop",
+                                      nextSection: "drop", section: "build", bigBlock: null, remixUsed: [],
+                                      remixCount: 0, lastRemixPhrase: -9, phraseIdx: 4, drumsOn: true,
+                                      secsSinceBoost: 1e9, lastBarVocal: 0 }, o));
+  let dec = decide(pk({}));
+  assert.strictEqual(dec.action, "fakeout"); assert.ok(dec.peak); assert.strictEqual(dec.source, "RULE");
+  assert.strictEqual(dec.bars, 0.25);                                          // 1 beat of silence
+  assert.strictEqual(decide(pk({ lastBarVocal: 0.8 })).bars, 1);              // 1 bar, vocal only
+  // big moment used -> roll instead; roll used -> nothing big
+  dec = decide(pk({ bigBlock: "one big moment per song" }));
+  assert.strictEqual(dec.action, "peak_roll"); assert.ok(dec.peak);
+  assert.strictEqual(decide(pk({ bigBlock: "x", remixUsed: ["peak_roll"], remixCount: 1 })).action, "ride");
+  // off / not peak / early / near exit / vocal layer -> nothing peak
+  for (const o of [{ peakOn: false }, { peak: false }, { barsOnTrack: 8 }, { barsToExit: 20 }, { mashupActive: true }]) {
+    assert.ok(!decide(pk(o)).peak, JSON.stringify(o));
+  }
+  assert.match(peakBlock("fakeout", pk({ phraseSection: "drop", section: "drop" })), /inside the drop/);
+  assert.match(peakBlock("fakeout", pk({ nextSection: "verse" })), /no drop/);
+  // beat boost: inside a drop, drums on, once per song, cooldown
+  const inDrop = { phraseSection: "drop", section: "drop", nextPhraseSection: "drop" };
+  dec = decide(pk(inDrop));
+  assert.strictEqual(dec.action, "beat_boost"); assert.strictEqual(dec.bars, 8);
+  assert.ok(!decide(pk({ ...inDrop, drumsOn: false })).peak);
+  assert.ok(!decide(pk({ ...inDrop, boostThisTrack: true })).peak);
+  assert.ok(!decide(pk({ ...inDrop, secsSinceBoost: BEAT_BOOST_COOLDOWN_S - 1 })).peak);
+  // AI-proposed peak move: tagged AI + PEAK, rules keep the veto
+  const aiF = { move: "fakeout", at: 0, reason: "hit them" };
+  dec = decide(pk({ aiMove: aiF }));
+  assert.strictEqual(dec.action, "fakeout"); assert.strictEqual(dec.source, "AI"); assert.ok(dec.peak);
+  assert.ok(!(decide(pk({ aiMove: aiF, bigBlock: "cooldown" })).action === "fakeout" &&
+              decide(pk({ aiMove: aiF, bigBlock: "cooldown" })).source === "AI"));
+  // peak transition style never pre-clears; shows DOUBLE DROP near the exit
+  assert.strictEqual(decide(s({ barsToExit: 20, overlapStyle: "peak" })).action, "ride");
+  dec = decide(s({ barsToExit: 6, overlapStyle: "peak", peakKind: "drop_swap" }));
+  assert.strictEqual(dec.action, "drop_swap"); assert.ok(dec.peak);
+
+  // peakTransition: double drop needs key >= 0.8; else drop swap into a stronger drop
+  const b2 = 2;                                                   // 120 BPM bar
+  const aDrops = [{ t: 96, energy: 0.95, prevEnergy: 0.6 }];
+  const base2 = { peakOn: true, peak: true, aDrops,
+                  aVocal: [], lo: 50, hi: 150, plannedExit: 128, entryPos: 0, bar: b2, keyScore: 0.9,
+                  bDropEnergy: 0.95, log: [], trackIdx: 5, now: 1e4, brakesUsed: 0, lastSwapBraked: false,
+                  drop: { ok: true, entry_mode: "drop", drop: { start: 88, end: 104 }, entry: 88, b_vocal_coverage: 0 } };
+  const pt = (o) => peakTransition(Object.assign({}, base2, o));
+  let r = pt({});
+  assert.strictEqual(r.kind, "double_drop"); assert.strictEqual(r.exitAt, 96); assert.strictEqual(r.bTime, 88);
+  assert.strictEqual(r.recipe, "Double Drop");
+  r = pt({ keyScore: 0.5 });
+  assert.strictEqual(r.kind, "drop_swap"); assert.ok(r.brake);
+  assert.strictEqual(pt({ keyScore: 0.5, bDropEnergy: 0.5 }), null);          // weaker drop: just blend
+  assert.strictEqual(pt({ keyScore: 0.5, brakesUsed: BACKSPIN_MAX }).brake, false);
+  assert.strictEqual(pt({ keyScore: 0.5, lastSwapBraked: true }).brake, false);
+  assert.strictEqual(pt({ peakOn: false }), null);
+  assert.strictEqual(pt({ peak: false }), null);
+  assert.strictEqual(pt({ drop: null }), null);
+  assert.strictEqual(pt({ drop: { ...base2.drop, entry_mode: "match" } }), null);   // intro entry: never a peak move
+  assert.strictEqual(pt({ lo: 100 }), null);                                    // A's drop outside the window
+  assert.strictEqual(pt({ aVocal: [[96, 160]], drop: { ...base2.drop, b_vocal_coverage: 0.9 }, keyScore: 0.9,
+                          bDropEnergy: 0.5 }), null);                          // two vocals, weaker drop
+  assert.strictEqual(pt({ log: [{ track: 5, kind: "fakeout", at: 0 }] }), null);   // song already had its moment
+  assert.strictEqual(pt({ log: [{ track: 4, kind: "double_drop", at: 0 }] }).kind, "drop_swap"); // not twice in a row
+}
+
+// drop lines: energy jump into the top quartile, not the flickering labels
+{
+  const { dropLines, decide: dec2 } = core;
+  const phr = Array.from({ length: 14 }, (_, i) => i * 16);
+  const lvl = [0.3, 0.35, 0.4, 0.5, 0.9, 0.9, 0.4, 0.45, 0.5, 0.55, 0.95, 0.9, 0.4, 0.3];
+  const times = Array.from({ length: 448 }, (_, i) => i * 0.5);
+  const curve = times.map((t) => lvl[Math.floor(t / 16)]);
+  assert.deepStrictEqual(dropLines(phr, times, curve, 2).map((x) => x.t), [64, 160]);
+  assert.deepStrictEqual(dropLines(phr, times, times.map((t) => 0.5 + 0.01 * Math.floor(t / 16)), 2), []);
+  assert.deepStrictEqual(dropLines([], [], [], 2), []);
+  // flags from drop lines drive the peak moves even with sliver labels
+  const st = s({ peakOn: true, peak: true, phraseSection: "verse", nextPhraseSection: "verse", nextDrop: true,
+                 bigBlock: null, remixUsed: [], remixCount: 0, lastRemixPhrase: -9, phraseIdx: 4 });
+  assert.strictEqual(dec2(st).action, "fakeout");
+  assert.strictEqual(dec2({ ...st, bigBlock: "x" }).action, "peak_roll");
+  assert.strictEqual(dec2({ ...st, nextDrop: false, inDrop: true, drumsOn: true, secsSinceBoost: 1e9 }).action, "beat_boost");
+}
+
 console.log("dj-mind core ok");

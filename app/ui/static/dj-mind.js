@@ -60,8 +60,40 @@
   const FILTER_MID_DB = -18;           // filter build: mids swept this far out
   const HOLD_LOOP_LEAD_S = 24;         // safety loop when the end is this close
   const HOLD_LOOP_PASSES = 3;          // then shrink 8 -> 4 bars
-  const REMIX_MOVES = ["loop_extend", "beat_jump", "stutter", "filter_build", "echo_freeze", "beat_layer"];
+  const REMIX_MOVES = ["loop_extend", "beat_jump", "stutter", "filter_build", "echo_freeze", "beat_layer", "peak_roll"];
   const DROP_LEADINS = ["stutter", "filter_build", "echo_freeze"];  // tension -> release
+
+  // PEAK mode: bold moves on high-energy songs ("heavy beat mixing to surprise
+  // everyone"), rare enough to hit hard. Grounding:
+  //   ./DJ/05 [[Double Drop]] (one bass, key-safe, "not more than 4-5 a set"),
+  //   [[Drop Swap]] (cut on the drop downbeat; never into a weaker drop),
+  //   [[Backspin (Spinback)]] ("2-3 times in a 2-hour set"), [[Loop Roll]] /
+  //   [[Stutter Transition]] (roll released on beat 1), [[Build-to-Drop Transition]];
+  //   ./DJ/13 [[Skrillex Case Study]] (1-beat silence before impact, slam cut),
+  //   [[Martin Garrix Case Study]] (fader cut before the drop, the vocal carries),
+  //   [[Fred again.. Case Study]] (live drums over the record);
+  //   ./DJ/06 [[Energy Management & Dynamics]] (contrast: constant peak numbs);
+  //   ./DJ/09 Dubstep / Trap / DnB / EDM playbooks (drops are the event).
+  // Restraint: <= 1 BIG moment per song, never the same kind on two songs in a
+  // row, none in the first 16 bars, <= 2 in any 3 songs, 4 min apart.
+  const PEAK_PROFILE_ENERGY = 8;       // LLM current_profile energy (1-10)
+  const PEAK_QUARTILE = 0.75;          // quick mode: section energy in the top quartile
+  const BIG_MOMENTS = ["double_drop", "fakeout", "drop_swap"];
+  const BIG_MIN_BARS = 16;
+  const BIG_WINDOW_SONGS = 3, BIG_MAX_PER_WINDOW = 2;
+  const BIG_COOLDOWN_S = 240;
+  const PEAK_KEY_MIN = 0.8;            // Double Drop: same / adjacent / relative key
+  const DOUBLE_DROP_BARS = 8;
+  const DOUBLE_DROP_MAX_VOCAL = 0.3;   // one record carries the vocal, not both
+  const BACKSPIN_MAX = 2;              // per set, never on two drop swaps running
+  const BEAT_BOOST_BARS = 8;
+  const BEAT_BOOST_COOLDOWN_S = 300;
+  const FAKEOUT_VOCAL_SHARE = 0.5;     // vocal in the last bar -> 1 bar vocal-only, else 1 beat silence
+  const PEAK_MOVES = ["fakeout", "peak_roll", "beat_boost"];   // in-song; the LLM may plan these
+  // Drop line: labels flicker (1-3 s slivers), so a drop is found by energy:
+  // the phrase is in the song's top quartile and jumps >= DROP_JUMP over the
+  // phrase before. Same rule as drop_lines() in app/music_brain/blend.py.
+  const DROP_JUMP = 0.2;
 
   // ---------------------------------------------------------------- pure core
   function mergeSections(sections, barSecs) {
@@ -175,14 +207,152 @@
     stutter: () => "loop roll 4 > 2 > 1 > 1/2 beat over the last 2 bars into the drop",
     filter_build: () => "sweeping lows and mids out, snap open on the drop",
     echo_freeze: () => "echo tail on the last beat, cut straight into the drop",
+    peak_roll: () => "filter riser + loop roll 1 > 1/2 > 1/4 beat, released on the drop",
   };
   const REMIX_RULE = { loop_extend: "Loops & Beat Jumps", beat_jump: "Loops & Beat Jumps",
                        stutter: "tension/release", filter_build: "Filter Transition",
-                       echo_freeze: "Echo Out" };
+                       echo_freeze: "Echo Out", peak_roll: "Loop Roll" };
 
   function remixMove(kind, bars, why, source) {
     return { action: kind, rule: REMIX_RULE[kind] || "", bars, source,
              why: why || REMIX_WHY[kind](bars) };
+  }
+
+  // -- PEAK mode ------------------------------------------------------------
+  // Camelot compatibility, same table as CLAUDE.md section 4 / mixing plan.
+  function camelotScore(a, b) {
+    const pa = /^(\d{1,2})([AB])$/i.exec(String(a || "").trim());
+    const pb = /^(\d{1,2})([AB])$/i.exec(String(b || "").trim());
+    if (!pa || !pb) return 0;
+    const d = Math.min((+pa[1] - +pb[1] + 12) % 12, (+pb[1] - +pa[1] + 12) % 12);
+    if (pa[2].toUpperCase() !== pb[2].toUpperCase()) return d === 0 ? 0.85 : 0;
+    return d === 0 ? 1 : d === 1 ? 0.9 : d === 2 ? 0.8 : 0;
+  }
+  // Energy at the top quartile of the song's merged (8+ bar) sections.
+  function energyQ3(longSecs) {
+    const e = (longSecs || []).map((x) => x.energy).filter(Number.isFinite).sort((a, b) => a - b);
+    return e.length ? e[Math.floor(PEAK_QUARTILE * (e.length - 1))] : null;
+  }
+  // [{t, energy, prevEnergy}] drop lines on the 8-bar phrase grid.
+  function dropLines(phrases, times, curve, bar) {
+    const ph = phrases || [], tt = times || [], cv = curve || [], L = PHRASE_BARS * bar;
+    const es = ph.map((p) => {
+      let sum = 0, n = 0;
+      for (let i = 0; i < tt.length; i++) if (tt[i] >= p && tt[i] < p + L) { sum += cv[i]; n++; }
+      return n ? sum / n : null;
+    });
+    const known = es.filter((e) => e != null).sort((a, b) => a - b);
+    if (known.length < 3) return [];
+    const q3 = known[Math.floor(PEAK_QUARTILE * (known.length - 1))];
+    const out = [];
+    for (let i = 1; i < ph.length; i++) {
+      const e = es[i], pe = es[i - 1];
+      if (e != null && pe != null && e >= q3 && e - pe >= DROP_JUMP - 1e-9) out.push({ t: ph[i], energy: e, prevEnergy: pe });
+    }
+    return out;
+  }
+  // The playing song is at peak: LLM energy >= 8, or quick mode in a top-
+  // quartile section, or a drop now / on the next phrase line.
+  function isPeak(s) {
+    if (Number.isFinite(s.profileEnergy) && s.profileEnergy >= PEAK_PROFILE_ENERGY) return true;
+    if (s.setMode === "quick" && s.energyQ3 != null && s.sectionEnergy >= s.energyQ3) return true;
+    return !!(s.inDrop || s.nextDrop || s.section === "drop" || s.nextSection === "drop");
+  }
+  // Why a BIG moment (double drop / fake-out / drop swap) may NOT happen on song
+  // `idx` now. `log` = [{track, kind, at}] of earlier big moments (set-wide).
+  function bigMomentBlock(kind, idx, log, barsOnTrack, now) {
+    const l = log || [];
+    if (barsOnTrack < BIG_MIN_BARS) return `first ${BIG_MIN_BARS} bars`;
+    if (l.some((b) => b.track === idx)) return "one big moment per song";
+    if (l.some((b) => b.track === idx - 1 && b.kind === kind)) return "same big move as the last song";
+    if (l.filter((b) => b.track > idx - BIG_WINDOW_SONGS).length >= BIG_MAX_PER_WINDOW) {
+      return `${BIG_MAX_PER_WINDOW} big moments in the last ${BIG_WINDOW_SONGS} songs`;
+    }
+    if (l.length && now - l[l.length - 1].at < BIG_COOLDOWN_S) return "big-moment cooldown";
+    return null;
+  }
+  // Why an in-song peak move may NOT run on this phrase (null = allowed).
+  function peakBlock(kind, s, bars) {
+    if (!s.peakOn) return "peak moves off";
+    if (!s.peak) return "song not at peak";
+    if (s.mashupActive) return "vocal layer running";
+    if (s.barsOnTrack < MIN_BARS_ON_TRACK) return `first ${MIN_BARS_ON_TRACK} bars`;
+    if (s.barsToExit != null && s.barsToExit <= EXIT_GUARD_BARS) return `last ${EXIT_GUARD_BARS} bars before exit`;
+    const nextDrop = s.nextDrop || (s.nextPhraseSection === "drop" && s.nextSection === "drop");
+    const inDrop = s.inDrop || (s.phraseSection === "drop" && s.section === "drop");
+    if (kind === "fakeout") {
+      if (!nextDrop) return "no drop on the next downbeat";
+      if (inDrop) return "already inside the drop";
+      return s.bigBlock || null;
+    }
+    if (kind === "peak_roll") {
+      if (!nextDrop || inDrop) return "roll only on the run-up into a drop";
+      return remixBlock("peak_roll", s, bars);
+    }
+    if (kind === "beat_boost") {
+      if (!inDrop) return "boost only inside a drop";
+      if (!s.drumsOn) return "live drums off";
+      if (s.boostThisTrack || s.secsSinceBoost < BEAT_BOOST_COOLDOWN_S) return "beat boost cooldown";
+      return null;
+    }
+    return "unknown move";
+  }
+  const PEAK_RULE = { fakeout: "Skrillex silence", peak_roll: "Loop Roll", beat_boost: "Fred again.. drums",
+                      double_drop: "Double Drop", drop_swap: "Drop Swap" };
+  function peakMove(kind, s, why, source) {
+    const vocalBar = (s.lastBarVocal || 0) >= FAKEOUT_VOCAL_SHARE;
+    const d = { action: kind, rule: PEAK_RULE[kind], source, peak: true, why: why || "" };
+    if (kind === "fakeout") {
+      d.bars = vocalBar ? 1 : 0.25;                       // 1 bar vocal-only, or 1 beat of nothing
+      d.why = d.why || (vocalBar ? "1 bar with only the vocal, then the drop slams back"
+                                 : "1 beat of silence, then the drop slams back");
+      if (vocalBar) d.rule = "Garrix fader cut";
+    } else if (kind === "peak_roll") d.why = d.why || REMIX_WHY.peak_roll();
+    else if (kind === "beat_boost") {
+      d.bars = BEAT_BOOST_BARS;
+      d.why = d.why || `open hats + claps over ${BEAT_BOOST_BARS} bars of the drop`;
+    }
+    return d;
+  }
+  function peakRule(s) {
+    if (!s.peakOn || !s.peak) return null;
+    if (!peakBlock("fakeout", s)) return peakMove("fakeout", s, "", "RULE");
+    if ((s.remixCount || 0) < REMIX_RULE_MAX && !peakBlock("peak_roll", s)) return peakMove("peak_roll", s, "", "RULE");
+    if (!peakBlock("beat_boost", s)) return peakMove("beat_boost", s, "", "RULE");
+    return null;
+  }
+  // Peak TRANSITION: land B's drop on A's drop downbeat. Needs a tempo-locked
+  // blend plan with entry_mode "drop" (never around the echo-out fallback).
+  // Returns {kind, recipe, exitAt, bTime, brake, why} or null (= just blend).
+  // p: {peakOn, peak, drop (blend plan, entry_mode "drop"), aDrops (dropLines of A),
+  //     aVocal, lo, hi, plannedExit, entryPos, bar, keyScore, bDropEnergy,
+  //     log, trackIdx, now, brakesUsed, lastSwapBraked}
+  function peakTransition(p) {
+    const drop = p.drop;
+    if (!p.peakOn || !p.peak || !drop || !drop.ok || drop.entry_mode !== "drop" || !drop.drop) return null;
+    const bar = p.bar;
+    const drops = (p.aDrops || []).filter((x) => x.t >= p.lo && x.t <= p.hi);
+    drops.sort((u, v) => Math.abs(u.t - p.plannedExit) - Math.abs(v.t - p.plannedExit));
+    const block = (kind, t) => bigMomentBlock(kind, p.trackIdx, p.log, (t - p.entryPos) / bar, p.now);
+    for (const d of drops) {
+      const aVoc = vocalShare(p.aVocal, d.t, d.t + DOUBLE_DROP_BARS * bar);
+      const bVoc = drop.b_vocal_coverage;
+      const oneVocal = aVoc <= DOUBLE_DROP_MAX_VOCAL || (bVoc != null && bVoc <= DOUBLE_DROP_MAX_VOCAL);
+      if (p.keyScore >= PEAK_KEY_MIN && oneVocal && !block("double_drop", d.t)) {
+        return { kind: "double_drop", recipe: "Double Drop", exitAt: d.t, bTime: drop.entry, brake: false,
+                 why: `both drops on one downbeat, ${DOUBLE_DROP_BARS} bars, only B's bass - then A cuts` };
+      }
+    }
+    for (const d of drops) {
+      // Drop Swap "When NOT": into a drop weaker than the one it replaces.
+      if (!(p.bDropEnergy >= d.energy - 0.05)) continue;
+      if (block("drop_swap", d.t)) continue;
+      const brake = (p.brakesUsed || 0) < BACKSPIN_MAX && !p.lastSwapBraked;
+      return { kind: "drop_swap", recipe: "Slam Cut", exitAt: d.t, bTime: drop.entry, brake,
+               why: brake ? "A's build winds down (brake), B's drop hits on the downbeat"
+                          : "A's build, then B's drop cuts in on the downbeat" };
+    }
+    return null;
   }
 
   // Live veto of one AI-planned move: the rules stay in charge.
@@ -195,7 +365,7 @@
       return null;
     }
     if (m.move === "preclear") {
-      if (!exitNear || s.overlapStyle === "instant") return "no pre-clear on an instant swap";
+      if (!exitNear || s.overlapStyle === "instant" || s.overlapStyle === "peak") return "no pre-clear on an instant swap";
       if (s.preCleared || !(s.barsToExit > 2 && s.barsToExit <= 16 + PRECLEAR_SLACK_BARS)) return "outside the pre-clear window";
       return null;
     }
@@ -211,6 +381,7 @@
       // Rides on the mashup layer (next record's vocal over this beat, lows killed).
       return s.mashupActive ? null : "no layer booked on this phrase";
     }
+    if (PEAK_MOVES.includes(m.move)) return peakBlock(m.move, s, m.bars);
     if (REMIX_MOVES.includes(m.move)) return remixBlock(m.move, s, m.bars);
     return "unknown move";
   }
@@ -223,6 +394,12 @@
         s.barsToExit <= PHRASE_BARS + PRECLEAR_SLACK_BARS) {
       return { action: "instant", rule: "1", why: "records meet on a drop - bass swaps on one downbeat" };
     }
+    // Peak transition (double drop / drop swap) booked by peakTransition().
+    if (exitNear && s.overlapStyle === "peak" && !s.instantShown &&
+        s.barsToExit <= PHRASE_BARS + PRECLEAR_SLACK_BARS) {
+      const k = s.peakKind === "drop_swap" ? "drop_swap" : "double_drop";
+      return { action: k, rule: PEAK_RULE[k], source: "RULE", peak: true, why: s.peakWhy || "" };
+    }
     // The AI's planned move for this phrase, if the live state still allows it.
     let vetoed = "";
     if (s.aiMove) {
@@ -230,6 +407,7 @@
       if (!block) {
         const m = s.aiMove;
         if (m.move === "beat_layer") return { action: "layer", rule: "2", source: "AI", why: m.reason || "layering the next record" };
+        if (PEAK_MOVES.includes(m.move)) return peakMove(m.move, s, m.reason, "AI");
         if (REMIX_MOVES.includes(m.move)) return remixMove(m.move, m.bars, m.reason, "AI");
         const bars = m.move === "subdrop" ? subdropBars(s.barSecs) : undefined;
         return { action: m.move, rule: "", bars, source: "AI",
@@ -249,8 +427,8 @@
           s.holdsUsed < holdCap && s.holdRoomBars >= HOLD_BARS) {
         return { action: "hold", rule: "4.1", why: "build running into the exit - let it resolve first" };
       }
-      if (s.overlapStyle === "instant") {
-        // handled in decide(); an instant pair never pre-clears
+      if (s.overlapStyle === "instant" || s.overlapStyle === "peak") {
+        // handled in decide(); an instant / peak pair never pre-clears
       } else if (!s.preCleared && s.barsToExit > 2 &&
                  s.barsToExit <= s.preClearBars + PRECLEAR_SLACK_BARS) {
         return { action: "preclear", rule: "3",
@@ -271,6 +449,8 @@
       return { action: "subdrop", rule: "4", bars,
                why: `vocal up front - sub out for ${bars} bars, then back in hard` };
     }
+    const pk = peakRule(s);
+    if (pk) return pk;
     // Remix rules (no AI plan, or the plan had nothing here). Rules stop at
     // REMIX_RULE_MAX; only an AI plan uses the full per-song cap.
     if ((s.remixCount || 0) < REMIX_RULE_MAX) {
@@ -325,7 +505,9 @@
 
   const core = { decide, mergeSections, sectionAt, phraseAt, vocalShare, subdropBars, energyNote,
                  phraseBounds, phraseLabel, isPreDrop, remixBlock, aiVeto, needsHoldLoop, holdLoopAnchor, holdLoopBars,
-                 PRECLEAR_DB, LOW_KILL, REMIX_MOVES };
+                 PRECLEAR_DB, LOW_KILL, REMIX_MOVES,
+                 camelotScore, energyQ3, isPeak, dropLines, DROP_JUMP, bigMomentBlock, peakBlock, peakTransition,
+                 PEAK_MOVES, BIG_MOMENTS, BIG_COOLDOWN_S, BEAT_BOOST_BARS, BEAT_BOOST_COOLDOWN_S, BACKSPIN_MAX };
   root.djMindCore = core;
   if (typeof module !== "undefined" && module.exports) module.exports = core;
   if (typeof document === "undefined") return;
@@ -336,7 +518,9 @@
                   subdrop: "SUB DROP", layer: "LAYER", ride: "RIDE",
                   loop_extend: "LOOP EXTEND", beat_jump: "BEAT JUMP", stutter: "STUTTER",
                   filter_build: "FILTER BUILD", echo_freeze: "ECHO FREEZE",
-                  holdloop: "HOLD LOOP" };
+                  holdloop: "HOLD LOOP", peak_roll: "ROLL INTO DROP",
+                  double_drop: "DOUBLE DROP", drop_swap: "DROP SWAP", fakeout: "FAKE-OUT",
+                  beat_boost: "BEAT BOOST" };
 
   let deckId = null, timer = null, timers = [];
   let lastPhrase = null, trackIdx = 0, subdropTrackIdx = -9;
@@ -350,6 +534,11 @@
   let lastFillTransition = -9, transitions = 0;
   const energies = []; let callbackDone = false;
   const log = [];
+  // PEAK ledger (set-wide): big moments, backspins, beat boosts, LLM energy
+  const bigLog = [];                            // [{track, kind, at}]
+  let brakesUsed = 0, lastSwapBraked = false;
+  let boostTrackIdx = -9, lastBoostAt = -Infinity;
+  let profileE = null;                          // LLM current_profile energy of the playing song
 
   const nowS = () => performance.now() / 1000;
   const deck = () => (deckId && window.decks ? window.decks[deckId] : null);
@@ -375,7 +564,8 @@
     const panel = document.getElementById("ap-mind");
     if (!nowEl) return;
     const tag = dec.source || (dec.action === "holdloop" ? "SAFETY" : dec.action !== "ride" ? "RULE" : "");
-    nowEl.innerHTML = (tag ? `<span class="ap-mind-tag ap-mind-tag-${tag.toLowerCase()}">${tag}</span>` : "") +
+    const peakTag = (p) => (p ? `<span class="ap-mind-tag ap-mind-tag-peak">PEAK</span>` : "");
+    nowEl.innerHTML = peakTag(dec.peak) + (tag ? `<span class="ap-mind-tag ap-mind-tag-${tag.toLowerCase()}">${tag}</span>` : "") +
       `<span class="ap-mind-act ap-mind-${dec.action}">${LABEL[dec.action]}</span>` +
       `<span class="ap-mind-why">${esc(dec.why)}${dec.rule ? ` · ${esc(dec.rule)}` : ""}</span>`;
     if (panel && dec.action !== "ride") {
@@ -383,7 +573,7 @@
     }
     if (logEl) {
       logEl.innerHTML = log.slice(-4).reverse()
-        .map((l) => `<li>${l.tag ? `<span class="ap-mind-tag ap-mind-tag-${l.tag.toLowerCase()}">${l.tag}</span>` : ""}` +
+        .map((l) => `<li>${peakTag(l.peak)}${l.tag ? `<span class="ap-mind-tag ap-mind-tag-${l.tag.toLowerCase()}">${l.tag}</span>` : ""}` +
                     `<b>${LABEL[l.action]}</b> ${l.clock} ${esc(l.why)}</li>`).join("");
     }
   }
@@ -419,6 +609,14 @@
     return document.querySelector(`.eq-knob[data-deck="${id}"][data-band="${band}"]`);
   }
 
+  function aDropLines(d, bar) {
+    const a = d.analysis || {};
+    if (a._mindDrops && a._mindDropsBar === bar) return a._mindDrops;
+    a._mindDrops = dropLines(a.phrase_boundaries_8bar, a.energy_times, a.energy_curve, bar);
+    a._mindDropsBar = bar;
+    return a._mindDrops;
+  }
+  function isDropAt(d, t, bar) { return aDropLines(d, bar).some((x) => Math.abs(x.t - t) <= bar); }
   function state(d, pos) {
     const a = d.analysis || {};
     const bar = barSecsOf(d);
@@ -439,9 +637,11 @@
     };
     const aiMove = aiFor === trackIdx
       ? aiMoves.find((m) => !m.done && Math.abs(m.at - p0) <= bar) || null : null;
-    return {
+    const st = {
       barSecs: bar, phraseIdx: idx, phraseStart: p0, phraseEnd: p1,
       section: sec ? sec.label : null,
+      nextSection: (sectionAt(long, p1 + 0.01) || {}).label || null,
+      inDrop: isDropAt(d, p0, bar), nextDrop: isDropAt(d, p1, bar),
       sectionEnergy: sec ? sec.energy : 0.5,
       sectionBarsLeft: sec ? (sec.end - pos) / bar : 0,
       vocalAhead: vocalShare(a.vocal_active_regions, pos, pos + PHRASE_BARS * bar),
@@ -462,7 +662,17 @@
       remixUsed, remixCount: remixUsed.length, lastRemixPhrase,
       aiMove,
       rate,
+      // PEAK mode
+      peakOn: peakOn(), profileEnergy: profileE, energyQ3: energyQ3(long),
+      bigBlock: plan && plan.style === "peak" ? "the transition is this song's big moment"
+        : bigMomentBlock("fakeout", trackIdx, bigLog, (pos - (d._mindEntry || 0)) / bar, nowS()),
+      drumsOn: !!(window.beatLayer && window.beatLayer.boostUntil && window.beatLayer.isEnabled()),
+      boostThisTrack: boostTrackIdx === trackIdx, secsSinceBoost: nowS() - lastBoostAt,
+      lastBarVocal: vocalShare(a.vocal_active_regions, p1 - bar, p1),
+      peakKind: plan ? plan.peakKind : null, peakWhy: plan ? plan.peakWhy : null,
     };
+    st.peak = isPeak(st);
+    return st;
   }
 
   function apply(dec, st, d) {
@@ -527,6 +737,44 @@
       // is disarmed a bar in so the drop plays clean.
       at(end - beat, () => fxEcho(id, true));
       at(end + bar, () => fxEcho(id, false));
+    } else if (dec.action === "double_drop" || dec.action === "drop_swap") {
+      instantShown = true;                       // the transition itself runs in autopilot.js
+    } else if (dec.action === "fakeout") {
+      // [[Skrillex Case Study]]: 1 beat of nothing before impact (the ear's
+      // reflex makes the drop feel louder). [[Martin Garrix Case Study]]: cut
+      // for the last bar and let the vocal carry (lows + highs out, mids stay).
+      // Either way the drop downbeat slams back at full level.
+      bigLog.push({ track: trackIdx, kind: "fakeout", at: nowS() });
+      lastMoveAt = nowS();
+      if (dec.bars >= 1) {
+        const lo = eqBand(id, "low"), hi = eqBand(id, "high");
+        at(end - bar, () => { setKnob(lo, LOW_KILL); setKnob(hi, LOW_KILL); });
+        at(end, () => { setKnob(lo, 0); setKnob(hi, 0); });
+      } else {
+        const vol = document.querySelector(`.volume-fader[data-deck="${id}"]`);
+        let was = null;
+        at(end - beat, () => { was = vol ? vol.value : null; setKnob(vol, 0); });
+        at(end, () => { if (was != null) setKnob(vol, was); });
+      }
+    } else if (dec.action === "peak_roll") {
+      // [[Loop Roll]] / [[Build-to-Drop Transition]]: last 2 bars of the build,
+      // loop 1 beat x4, 1/2 x2, 1/4 x2 (8 beats of wall time) under a filter
+      // riser (lows + mids swept out), released exactly on the drop downbeat.
+      const L = end - 2 * bar;
+      const lo = eqBand(id, "low"), mid = eqBand(id, "mid");
+      let t = ms(L - pos);
+      later(t, () => { if (deckId === id) { ramp(lo, LOW_KILL, ms(2 * bar - beat)); ramp(mid, FILTER_MID_DB, ms(2 * bar - beat)); } });
+      for (const [lenBeats, playBeats] of [[1, 4], [0.5, 2], [0.25, 2]]) {
+        later(t, () => { if (deckId === id) loopAt(d, id, L, lenBeats); });
+        t += ms(playBeats * beat);
+      }
+      later(t - 10, () => { if (deckId === id) { loopRelease(d, id, end); setKnob(lo, 0); setKnob(mid, 0); } });
+      busyUntil = nowS() + t / 1000 + 1;
+    } else if (dec.action === "beat_boost") {
+      // [[Fred again.. Case Study]]: live drums over the record, here one
+      // 8-bar phrase of open hats + claps inside a peak drop (beat-layer.js).
+      boostTrackIdx = trackIdx; lastBoostAt = nowS();
+      if (window.beatLayer && window.beatLayer.boostUntil) window.beatLayer.boostUntil(end);
     }
   }
 
@@ -572,7 +820,7 @@
   function say(dec, pos) {
     const m = Math.floor(pos / 60), s = Math.floor(pos % 60);
     const tag = dec.source || (dec.action === "holdloop" ? "SAFETY" : dec.action !== "ride" ? "RULE" : "");
-    log.push({ action: dec.action, why: dec.why, tag, clock: `${m}:${String(s).padStart(2, "0")}` });
+    log.push({ action: dec.action, why: dec.why, tag, peak: !!dec.peak, clock: `${m}:${String(s).padStart(2, "0")}` });
     if (log.length > 20) log.shift();
     render(dec);
   }
@@ -604,6 +852,7 @@
   const toggleOn = (id) => { const el = document.getElementById(id); return !el || el.checked; };
   const mindOn = () => toggleOn("ap-mind-toggle");
   const aiOn = () => mindOn() && toggleOn("ap-ai-toggle");
+  const peakOn = () => mindOn() && toggleOn("ap-peak-toggle");
   const esc = (t) => String(t == null ? "" : t).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   const clock = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, "0")}`;
 
@@ -649,6 +898,9 @@
           remix_used: remixUsed.slice(),
           mashup_possible: !!win.mashupPossible,
           subdrop_last_track: subdropTrackIdx === trackIdx - 1,
+          peak_moves: peakOn(),
+          big_moment_ok: !(plan && plan.style === "peak") &&
+            !bigMomentBlock("fakeout", trackIdx, bigLog, BIG_MIN_BARS, nowS() + 60),
         }),
       });
       const p = await res.json();
@@ -672,7 +924,7 @@
   // -- public API (called by autopilot.js) -----------------------------------
   function follow(id) {
     deckId = id; lastPhrase = null;
-    trackIdx++; holdsUsed = 0; preCleared = false; instantShown = false; plan = null;
+    trackIdx++; holdsUsed = 0; preCleared = false; instantShown = false; plan = null; profileE = null;
     remixUsed = []; lastRemixPhrase = null; busyUntil = 0; holdLoop = null;
     if (!timer) timer = setInterval(tick, TICK_MS);
   }
@@ -701,6 +953,10 @@
   }
   function fireAt(fallback) { return plan ? plan.fireAt : fallback; }
   function onTransition() {
+    if (plan && plan.style === "peak") {
+      bigLog.push({ track: trackIdx, kind: plan.peakKind, at: nowS() });
+      if (plan.peakKind === "drop_swap") { if (plan.brake) brakesUsed++; lastSwapBraked = !!plan.brake; }
+    }
     cancelMoves(); transitions++; plan = null; aiMoves = []; aiFor = null; holdLoop = null;
     renderPlan(null);
   }
@@ -708,7 +964,7 @@
   // an instant swap (the swap itself is the event).
   function fxAllowed(kind) {
     if (kind !== "fill") return true;
-    if (plan && plan.style === "instant") return false;
+    if (plan && (plan.style === "instant" || plan.style === "peak")) return false;
     if (transitions - lastFillTransition < 2) return false;
     lastFillTransition = transitions;
     return true;
@@ -719,10 +975,35 @@
     if (n === "callback") callbackDone = true;
     return n;
   }
+  // Peak transition for the booked pair (autopilot.js scheduleTransition hook).
+  // ctx: {drop (blend plan, entry_mode "drop"), lo, hi, plannedExit, entryPos, inDeck}
+  function planPeak(ctx) {
+    const d = deck();
+    if (!d || !ctx || !ctx.drop) return null;
+    const a = d.analysis || {}, bar = barSecsOf(d);
+    const inn = window.decks && window.decks[ctx.inDeck];
+    const b = (inn && inn.analysis) || {};
+    const bE = aDropLines(inn || {}, barSecsOf(inn)).find((x) => Math.abs(x.t - ctx.drop.entry) <= barSecsOf(inn));
+    const mode = document.getElementById("ap-mode");
+    return peakTransition({
+      peakOn: peakOn(),
+      // song-level only: a transition changes the vibe, so "has a drop" is not enough
+      peak: (Number.isFinite(profileE) && profileE >= PEAK_PROFILE_ENERGY) || (mode && mode.value === "quick"),
+      drop: ctx.drop, aDrops: aDropLines(d, bar),
+      aVocal: a.vocal_active_regions, lo: ctx.lo, hi: ctx.hi, plannedExit: ctx.plannedExit,
+      entryPos: ctx.entryPos || 0, bar,
+      keyScore: camelotScore(a.key && a.key.camelot, b.key && b.key.camelot),
+      bDropEnergy: bE ? bE.energy : (ctx.drop.entry_energy != null ? ctx.drop.entry_energy : null),
+      log: bigLog, trackIdx, now: nowS(), brakesUsed, lastSwapBraked,
+    });
+  }
+  function setProfileEnergy(e) { profileE = Number.isFinite(e) ? (e <= 1 ? e * 10 : e) : null; }
   function reset() { stop(); energies.length = 0; callbackDone = false; log.length = 0;
+                     bigLog.length = 0; brakesUsed = 0; lastSwapBraked = false;
+                     boostTrackIdx = -9; lastBoostAt = -Infinity; profileE = null;
                      trackIdx = 0; subdropTrackIdx = -9; lastMoveAt = -Infinity;
                      transitions = 0; lastFillTransition = -9; }
 
   window.djMind = { follow, stop, reset, setPlan, fireAt, onTransition, fxAllowed,
-                    noteEnergy, nextEnergyNote, requestPlan, core };
+                    noteEnergy, nextEnergyNote, requestPlan, planPeak, setProfileEnergy, core };
 })(typeof window !== "undefined" ? window : globalThis);

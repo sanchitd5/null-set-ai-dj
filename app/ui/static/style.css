@@ -1438,6 +1438,7 @@ button.rebind-btn.is-armed {
 .ap-mind-tag { font-size: 8px; font-weight: 800; letter-spacing: .06em; padding: 0 4px; margin-right: 4px; border-radius: 2px; border: 1px solid currentColor; }
 .ap-mind-tag-ai { color: #c084fc; }
 .ap-mind-tag-rule { color: #94a3b8; }
+.ap-mind-tag-peak { color: #ff3c5a; }
 .ap-mind-tag-safety { color: #ff6b6b; }
 .ap-mind-plan { font-size: 10px; margin-top: 3px; padding: 2px 0 2px 6px; border-left: 2px solid #c084fc; }
 .ap-mind-plan[hidden] { display: none; }

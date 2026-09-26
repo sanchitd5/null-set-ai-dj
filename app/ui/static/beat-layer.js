@@ -39,6 +39,7 @@
   let timer = null;
   let lastTrackT = null;   // track time up to which steps are already booked
   let fillUntil = -1;      // track time: transition fill active until here
+  let boostUntil = -1;                 // track time: peak BEAT BOOST active until here (dj-mind.js)
 
   // 16-step patterns (one bar of 16ths). 1 = hit.
   const P = {
@@ -109,7 +110,9 @@
   //   - last bar of a real (>= 8 bar) build: one light roll, max 1 per 32 bars
   //   - last 4 bars of a real breakdown (kick drives back in)
   //   - one 8-bar phrase in four during verses: light hats + claps
-  // Intros, outros and drops are left alone (the record already carries them).
+  // Intros, outros and drops are left alone (the record already carries them),
+  // except one DJ-mind BEAT BOOST phrase in a peak drop: open hats + claps
+  // ([[Fred again.. Case Study]], live drums; no snares - "too many snares").
   function hitsFor(d, t, step, barLen, phraseIdx) {
     const hits = [];
     const add = (pad, vel) => hits.push({ pad, vel });
@@ -148,8 +151,13 @@
         if (barsLeft <= 1 && rollOk && P.backbeat[step]) add(PAD.SNARE, 0.35);
         if (barsLeft <= 1 && step === 15) lastRollAt = t;
         break;
+      case "drop":
+        if (t >= boostUntil) break;
+        if (P.offHat[step]) add(PAD.OPEN_HAT, 0.4);
+        if (P.backbeat[step]) add(PAD.CLAP, 0.4);
+        break;
       default:
-        break; // intro / outro / drop: silence
+        break; // intro / outro: silence
     }
     return { hits, energy };
   }
@@ -201,6 +209,7 @@
     deckId = id;
     lastTrackT = null;
     fillUntil = -1;
+    boostUntil = -1;
     lastRollAt = -Infinity;
     if (!timer) timer = setInterval(schedule, TICK_MS);
   }
@@ -220,10 +229,14 @@
     fillUntil = d._currentPosition() + bars * barLen;
   }
 
+  // Heavier pattern inside a drop until track time `t` (one 8-bar phrase).
+  function boostUntil_(t) { boostUntil = Number.isFinite(t) ? t : -1; }
+
   function setEnabled(on) { enabled = !!on; if (!on) lastTrackT = null; }
   function setLevel(v) { bus.gain.setTargetAtTime(Math.max(0, Math.min(1, v)), audioCtx.currentTime, 0.05); }
 
-  window.beatLayer = { follow, stop, fill, setEnabled, setLevel, get deck() { return deckId; } };
+  window.beatLayer = { follow, stop, fill, setEnabled, setLevel, boostUntil: boostUntil_,
+                       isEnabled: () => enabled, get deck() { return deckId; } };
 
   // UI: LIVE DRUMS toggle + level in the autopilot panel.
   const toggle = document.getElementById("ap-drums-toggle");
