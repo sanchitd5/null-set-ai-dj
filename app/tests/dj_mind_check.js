@@ -256,4 +256,37 @@ assert.strictEqual(holdLoopBars(0), 8); assert.strictEqual(holdLoopBars(3), 4);
   assert.strictEqual(dec2({ ...st, nextDrop: false, inDrop: true, drumsOn: true, secsSinceBoost: 1e9 }).action, "beat_boost");
 }
 
+// LAYER transition: eligibility, caps, set-mode bars, pre-clear veto
+{
+  const { layerBars, layerVeto, layerDecision, LAYER_EVERY, aiVeto } = core;
+  assert.deepStrictEqual(layerBars("long"), { maxHold: 64, unwind: 16 });
+  assert.deepStrictEqual(layerBars("quick"), { maxHold: 16, unwind: 8 });
+  assert.strictEqual(layerBars("hybrid").maxHold, 32);
+  const ok = { ok: true, keyScore: 0.9, vocalClash: 0, groove: true, sinceLayer: LAYER_EVERY,
+               steering: false, peak: false, energy: 6 };
+  assert.strictEqual(layerVeto(ok), null);
+  assert.deepStrictEqual(layerDecision(ok), { layer: true, source: "RULE", why: "locked tempo, keys fit, steady grooves" });
+  assert.match(layerVeto({ ...ok, keyScore: 0.7 }), /keys/);
+  assert.match(layerVeto({ ...ok, vocalClash: 0.2 }), /vocals/);
+  assert.match(layerVeto({ ...ok, groove: false }), /groove/);
+  assert.match(layerVeto({ ...ok, steering: true }), /steering/);
+  assert.match(layerVeto({ ...ok, peak: true }), /peak/);
+  assert.match(layerVeto({ ...ok, sinceLayer: LAYER_EVERY - 1 }), /one layer every/);   // restraint cap
+  assert.match(layerVeto({ ok: false, why: "not tempo-locked" }), /tempo/);
+  assert.match(layerVeto(null), /no layer/);
+  // the AI proposes, the rules keep the veto
+  assert.strictEqual(layerDecision({ ...ok, aiProposed: true, aiWhy: "grooves ride" }).source, "AI");
+  const vetoed = layerDecision({ ...ok, aiProposed: true, sinceLayer: 0 });
+  assert.strictEqual(vetoed.layer, false);
+  assert.strictEqual(vetoed.source, "AI");
+  // peak floor: rules alone don't layer, the AI may
+  assert.strictEqual(layerDecision({ ...ok, energy: 9 }).layer, false);
+  assert.strictEqual(layerDecision({ ...ok, energy: 9, aiProposed: true }).layer, true);
+  // a LAYER never pre-clears A's bass and blocks phrase moves while it runs
+  assert.strictEqual(decide(s({ barsToExit: 10, overlapStyle: "layer" })).action, "ride");
+  assert.match(aiVeto({ move: "preclear" }, s({ barsToExit: 10, overlapStyle: "layer" })), /LAYER/);
+  assert.strictEqual(decide(s({ layerActive: true, layerSource: "AI" })).action, "layer");
+  assert.strictEqual(decide(s({ layerActive: true, layerSource: "AI" })).source, "AI");
+}
+
 console.log("dj-mind core ok");

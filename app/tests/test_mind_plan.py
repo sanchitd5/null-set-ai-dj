@@ -199,7 +199,7 @@ def test_constants_match_dj_mind_js():
     js = (Path(mp.__file__).parent / "static" / "dj-mind.js").read_text(encoding="utf-8")
     for name in ("PHRASE_BARS", "MIN_SECTION_BARS", "MIN_BARS_ON_TRACK", "EXIT_GUARD_BARS",
                  "HOLD_BARS", "PRECLEAR_SLACK_BARS", "SUBDROP_MAX_ENERGY", "REMIX_MAX_PER_SONG",
-                 "REMIX_GAP_PHRASES", "BEAT_LAYER_MIN_SCORE"):
+                 "REMIX_GAP_PHRASES", "BEAT_LAYER_MIN_SCORE", "LAYER_MIN_KEY"):
         m = re.search(rf"\b{name} = ([0-9.]+)", js)
         assert m, name
         assert float(m.group(1)) == float(getattr(mp, name)), name

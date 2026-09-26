@@ -365,6 +365,7 @@
       return null;
     }
     if (m.move === "preclear") {
+      if (s.overlapStyle === "layer") return "LAYER: A keeps the bass until the hand-off";
       if (!exitNear || s.overlapStyle === "instant" || s.overlapStyle === "peak") return "no pre-clear on an instant swap";
       if (s.preCleared || !(s.barsToExit > 2 && s.barsToExit <= 16 + PRECLEAR_SLACK_BARS)) return "outside the pre-clear window";
       return null;
@@ -386,9 +387,47 @@
     return "unknown move";
   }
 
+  // -- LAYER transition (set study section 8 item 4, [[3-Deck Layering]]) -----
+  // 2-3 songs held together for minutes, then unwound: the study's most common
+  // pattern (14 of 30 segments). Restraint: at most one LAYER every
+  // LAYER_EVERY transitions; the rules veto whatever the AI proposes.
+  const LAYER_EVERY = 3;
+  const LAYER_MIN_KEY = 0.8;
+  const LAYER_MAX_CLASH = 0.03;
+  // Hold / unwind bars by set mode: LONG the long end, QUICK 16 bars at most.
+  function layerBars(setMode) {
+    if (setMode === "long") return { maxHold: 64, unwind: 16 };
+    if (setMode === "quick") return { maxHold: 16, unwind: 8 };
+    return { maxHold: 32, unwind: 8 };
+  }
+  // Why a LAYER is off for this pair, or null. c: {ok (server plan), keyScore,
+  // vocalClash, groove, sinceLayer (transitions since the last one), steering,
+  // peak, energy (0-10), aiProposed}.
+  function layerVeto(c) {
+    if (!c || !c.ok) return (c && c.why) || "no layer window";
+    if (c.steering) return "steering: bridge songs are short";
+    if (c.peak) return "a peak move owns this transition";
+    if (!(c.keyScore >= LAYER_MIN_KEY)) return "keys too far";
+    if (c.groove === false) return "no steady groove";
+    if (!(c.vocalClash <= LAYER_MAX_CLASH)) return "two vocals would overlap";
+    if (c.sinceLayer < LAYER_EVERY) return `one layer every ${LAYER_EVERY} songs`;
+    return null;
+  }
+  // -> { layer: bool, source: "AI" | "RULE", why }.
+  function layerDecision(c) {
+    const veto = layerVeto(c);
+    if (veto) return { layer: false, source: c && c.aiProposed ? "AI" : "RULE", why: veto };
+    if (c.aiProposed) return { layer: true, source: "AI", why: c.aiWhy || "AI: both grooves ride together" };
+    // Rule pick: a peak floor wants swaps and drops, not a slow layer.
+    if (Number.isFinite(c.energy) && c.energy >= 8) return { layer: false, source: "RULE", why: "peak floor: swap, don't layer" };
+    return { layer: true, source: "RULE", why: "locked tempo, keys fit, steady grooves" };
+  }
+
   // state -> { action, why, rule, source }. One move per phrase; order is priority.
   function decide(s) {
     const exitNear = s.barsToExit != null;
+    // A LAYER transition is running: both records ride, no phrase moves.
+    if (s.layerActive) return { action: "layer", rule: "L", source: s.layerSource, why: s.layerWhy || "two records layered" };
     // Recipe-forced: an instant-swap pair meets on a drop, whatever the plan says.
     if (exitNear && s.overlapStyle === "instant" && !s.instantShown &&
         s.barsToExit <= PHRASE_BARS + PRECLEAR_SLACK_BARS) {
@@ -427,8 +466,9 @@
           s.holdsUsed < holdCap && s.holdRoomBars >= HOLD_BARS) {
         return { action: "hold", rule: "4.1", why: "build running into the exit - let it resolve first" };
       }
-      if (s.overlapStyle === "instant" || s.overlapStyle === "peak") {
-        // handled in decide(); an instant / peak pair never pre-clears
+      if (s.overlapStyle === "instant" || s.overlapStyle === "peak" || s.overlapStyle === "layer") {
+        // handled in decide(); an instant / peak pair never pre-clears, and a
+        // LAYER keeps A's bass until the hand-off inside the layer
       } else if (!s.preCleared && s.barsToExit > 2 &&
                  s.barsToExit <= s.preClearBars + PRECLEAR_SLACK_BARS) {
         return { action: "preclear", rule: "3",
@@ -507,7 +547,8 @@
                  phraseBounds, phraseLabel, isPreDrop, remixBlock, aiVeto, needsHoldLoop, holdLoopAnchor, holdLoopBars,
                  PRECLEAR_DB, LOW_KILL, REMIX_MOVES,
                  camelotScore, energyQ3, isPeak, dropLines, DROP_JUMP, bigMomentBlock, peakBlock, peakTransition,
-                 PEAK_MOVES, BIG_MOMENTS, BIG_COOLDOWN_S, BEAT_BOOST_BARS, BEAT_BOOST_COOLDOWN_S, BACKSPIN_MAX };
+                 PEAK_MOVES, BIG_MOMENTS, BIG_COOLDOWN_S, BEAT_BOOST_BARS, BEAT_BOOST_COOLDOWN_S, BACKSPIN_MAX,
+                 layerBars, layerVeto, layerDecision, LAYER_EVERY };
   root.djMindCore = core;
   if (typeof module !== "undefined" && module.exports) module.exports = core;
   if (typeof document === "undefined") return;
@@ -532,6 +573,8 @@
   let remixUsed = [], lastRemixPhrase = null, busyUntil = 0;
   let holdLoop = null;                          // {start, bars, passes} safety loop
   let lastFillTransition = -9, transitions = 0;
+  let lastLayerTransition = -9;                 // LAYER ledger (one every LAYER_EVERY)
+  let layerRun = null;                          // {until (nowS), source, why} while a LAYER plays
   const energies = []; let callbackDone = false;
   const log = [];
   // PEAK ledger (set-wide): big moments, backspins, beat boosts, LLM energy
@@ -841,6 +884,11 @@
     const d = deck();
     if (!d || !d.playing) return;
     const pos = d._currentPosition();
+    if (layerRun) {
+      // LAYER running: A unwinds on its own EQ plan; no hold loop, no moves.
+      if (nowS() < layerRun.until) return;
+      layerRun = null;
+    }
     holdLoopTick(d, pos);
     if (holdLoop || nowS() < busyUntil) return;   // a loop is running: no new phrase moves
     const bar = barSecsOf(d);
@@ -937,13 +985,26 @@
   function follow(id) {
     deckId = id; lastPhrase = null;
     trackIdx++; holdsUsed = 0; preCleared = false; instantShown = false; plan = null; profileE = null;
-    remixUsed = []; lastRemixPhrase = null; busyUntil = 0; holdLoop = null;
+    remixUsed = []; lastRemixPhrase = null; busyUntil = 0; holdLoop = null; layerRun = null;
     if (!timer) timer = setInterval(tick, TICK_MS);
+  }
+  // LAYER: may this pair layer now? ctx as layerVeto(); adds the set-wide ledger.
+  function planLayer(ctx) {
+    return layerDecision(Object.assign({}, ctx, { sinceLayer: transitions - lastLayerTransition }));
+  }
+  // The LAYER booked by planLayer() starts now (call after onTransition()).
+  function layering(secs, info = {}) {
+    lastLayerTransition = transitions;
+    layerRun = { until: nowS() + Math.max(0, secs), source: info.source || "RULE", why: info.why || "" };
+    cancelMoves(); holdLoop = null;
+    const d = deck();
+    say({ action: "layer", rule: "L", source: info.source || "RULE",
+          why: info.why || "two records layered" }, d ? d._currentPosition() : 0);
   }
   function stop() {
     cancelMoves();
     if (timer) { clearInterval(timer); timer = null; }
-    deckId = null; plan = null; aiMoves = []; aiFor = null; holdLoop = null;
+    deckId = null; plan = null; aiMoves = []; aiFor = null; holdLoop = null; layerRun = null;
     renderPlan(null);
     render({ action: "ride", rule: "", why: "idle" });
   }
@@ -1014,8 +1075,9 @@
                      bigLog.length = 0; brakesUsed = 0; lastSwapBraked = false;
                      boostTrackIdx = -9; lastBoostAt = -Infinity; profileE = null;
                      trackIdx = 0; subdropTrackIdx = -9; lastMoveAt = -Infinity;
-                     transitions = 0; lastFillTransition = -9; }
+                     transitions = 0; lastFillTransition = -9; lastLayerTransition = -9; layerRun = null; }
 
   window.djMind = { follow, stop, reset, setPlan, fireAt, onTransition, fxAllowed,
-                    noteEnergy, nextEnergyNote, requestPlan, planPeak, setProfileEnergy, core };
+                    noteEnergy, nextEnergyNote, requestPlan, planPeak, setProfileEnergy,
+                    planLayer, layering, get layerActive() { return !!layerRun; }, core };
 })(typeof window !== "undefined" ? window : globalThis);
