@@ -274,3 +274,28 @@ def test_resolve_candidate_manual_times_without_recipe_uses_top_recipe(matcher: 
     assert resolved.recipe.name == top_match.recipe.name
     assert resolved.a_time == 45.0
     assert resolved.b_time == 15.0
+
+
+# --- Overlap style (set study gfF8jzBVWvM, item 3) -----------------------
+
+def test_overlap_style_per_recipe():
+    from app.music_brain.recipe_matcher import PRE_CLEAR_BARS, overlap_style
+
+    assert overlap_style("Drop Swap") == "instant"
+    assert overlap_style("Breakdown Transition") == "slow"
+    assert overlap_style("EQ Blend") == "standard"
+    assert PRE_CLEAR_BARS["instant"] == 0 < PRE_CLEAR_BARS["standard"] < PRE_CLEAR_BARS["slow"]
+
+
+def test_overlap_style_names_exist_in_cookbook():
+    from app.music_brain.recipe_matcher import _INSTANT_RECIPES, _SLOW_RECIPES
+
+    names = {r.name for r in KnowledgeParser().get_all()}
+    assert (_INSTANT_RECIPES | _SLOW_RECIPES) <= names
+
+
+def test_candidate_dict_carries_overlap():
+    a, b = _track(bpm=128.0, camelot="8B"), _track(bpm=129.0, camelot="8B")
+    d = RecipeMatcher().match(a, b, top_n=1)[0].to_dict()
+    assert d["overlap_style"] in {"instant", "standard", "slow"}
+    assert d["pre_clear_bars"] in {0, 8, 16}

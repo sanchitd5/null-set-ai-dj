@@ -41,6 +41,33 @@ _LOW_ENERGY_RECIPES = {
 }
 
 
+# How long the two records overlap, per recipe (set study gfF8jzBVWvM, section 8
+# item 3): clean drop swaps there ran under ~2 s, breakdown/filter entries 15-20 s+
+# with the low end pre-cleared first. One constant per kind can't hold both.
+#   instant  - bass moves on one downbeat, no pre-clear
+#   slow     - long overlap, outgoing bass pre-cleared ~16 bars early
+#   standard - everything else, ~8 bars of pre-clear
+_INSTANT_RECIPES = {
+    "Drop Swap", "Bass Swap", "Double Drop", "Hard Cut", "Quick Cut",
+    "Vocal Punchline Drop Snap", "Backspin (Spinback)",
+}
+_SLOW_RECIPES = {
+    "Breakdown Transition", "Filter Transition", "Long Blend", "Echo Out",
+    "Reverb Transition", "Genre Bridge", "Tempo Bridge", "3-Deck Layering",
+    "Stems Transition", "Instrumental Overlay", "Acapella Overlay",
+}
+PRE_CLEAR_BARS = {"instant": 0, "standard": 8, "slow": 16}
+
+
+def overlap_style(recipe_name: str) -> str:
+    """'instant' | 'standard' | 'slow' overlap for a recipe name."""
+    if recipe_name in _INSTANT_RECIPES:
+        return "instant"
+    if recipe_name in _SLOW_RECIPES:
+        return "slow"
+    return "standard"
+
+
 @dataclass
 class TransitionCandidate:
     recipe: TransitionRecipe
@@ -54,7 +81,10 @@ class TransitionCandidate:
     explanation: str
 
     def to_dict(self) -> dict:
+        style = overlap_style(self.recipe.name)
         return {
+            "overlap_style": style,
+            "pre_clear_bars": PRE_CLEAR_BARS[style],
             "recipe": self.recipe.name,
             "score": round(self.score, 1),
             "a_time": round(self.a_time, 2),

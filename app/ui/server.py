@@ -474,6 +474,21 @@ class AutopilotSuggestRequest(BaseModel):
     history: list[str] = []
     set_position: Optional[float] = None  # 0.0=start, 1.0=end; computed from history if omitted
     set_mode: str = "hybrid"  # long | quick | hybrid
+    # "dip": the set has sat near its loudness peak for a while, so ask for a
+    # track that lets energy fall back before building again (set study rule 9).
+    energy_note: Optional[str] = None
+
+
+_ENERGY_NOTES = {
+    "dip": "the set has been at peak energy for a while - pick something that lets "
+           "the energy dip a little before building again, not another peak",
+}
+
+
+def _occasion_with_note(occasion: Optional[str], note: Optional[str]) -> str:
+    base = occasion or ""
+    extra = _ENERGY_NOTES.get(note or "")
+    return f"{base} ({extra})".strip() if extra else base
 
 
 @app.post("/api/autopilot/suggest")
@@ -521,7 +536,7 @@ def autopilot_suggest(req: AutopilotSuggestRequest):
             camelot=camelot,
             duration=analysis.duration or 0.0,
             avg_energy=avg_energy,
-            occasion=req.occasion or "",
+            occasion=_occasion_with_note(req.occasion, req.energy_note),
             history=req.history,
             set_position=set_position,
             set_mode=req.set_mode if req.set_mode in SET_MODES else "hybrid",

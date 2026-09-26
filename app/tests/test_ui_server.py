@@ -224,3 +224,12 @@ def test_recording_download_round_trips_bytes():
 def test_recording_download_unknown_id_404():
     res = client.get("/api/recordings/doesnotexist")
     assert res.status_code == 404
+
+
+def test_occasion_energy_note():
+    from app.ui.server import _occasion_with_note
+
+    assert _occasion_with_note("wedding", None) == "wedding"
+    assert _occasion_with_note("wedding", "bogus") == "wedding"
+    assert "dip" in _occasion_with_note("wedding", "dip")
+    assert _occasion_with_note(None, "dip").startswith("(")
