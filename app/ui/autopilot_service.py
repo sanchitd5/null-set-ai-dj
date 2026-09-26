@@ -144,6 +144,7 @@ TEMPO_LOCK_PCT = 0.06  # the autopilot pitch-locks the next song within +/-8%; a
 
 
 MIN_THEME_FIT = 6.0
+SUGGEST_TEMPERATURE = 0.75
 
 
 def _num(v):
@@ -195,7 +196,11 @@ _USER_TEMPLATE = (
     "track_profile stays close to it. Stay in this genre neighbourhood unless the occasion demands a shift.\n"
     "Already played this set - NEVER suggest these again: {history}\n"
     "Artists heard in the last few songs (pick someone else unless it is a deliberate "
-    "same-artist moment early in the set): {recent_artists}\n\n"
+    "same-artist moment early in the set): {recent_artists}\n"
+    "Played in the listener's EARLIER sets - they have heard these recently, so prefer fresh "
+    "songs over them (only reuse one if it is clearly the perfect fit): {earlier_sets}\n"
+    "At least ONE of your suggestions must be a less obvious pick (a deep cut, a newer release "
+    "or a lesser-played gem that still fits every rule), not the genre's most famous anthem.\n\n"
     "Suggest {n} tracks. Prioritise: vibe continuity → harmonic compatibility → energy arc for {arc_phase} → diversity.\n"
     "Reply ONLY with the JSON object."
 )
@@ -409,6 +414,7 @@ def suggest_next_tracks(
     genre: str = "",
     history_display: list[str] | None = None,
     lookahead: bool = False,
+    earlier_sets: list[str] | None = None,
 ) -> list[dict]:
     """
     Call local Ollama (gemma3:4b) to suggest next n tracks.
@@ -435,6 +441,7 @@ def suggest_next_tracks(
         set_mode_line=SET_MODE_LINES.get(set_mode, SET_MODE_LINES["hybrid"]),
         history=", ".join((history_display or history)[-30:]) if history else "none",
         recent_artists=_recent_artists(history_display or history),
+        earlier_sets=", ".join(earlier_sets or []) or "none",
         set_pos_pct=round(set_position * 100),
         arc_phase=_set_arc_phase(set_position),
         n=n,
@@ -451,7 +458,9 @@ def suggest_next_tracks(
     prio = llm_gate.LOOKAHEAD if lookahead else llm_gate.SUGGEST
     data = None
     for attempt in range(2):  # one retry when the JSON is past repair
-        raw = chat_raw(_SYSTEM, user_msg, temperature=0.5, max_tokens=700, priority=prio)
+        # 0.75: song picks should vary between runs (0.5 replayed the same set from
+        # the same seed); the transition PLAN stays at a low temperature.
+        raw = chat_raw(_SYSTEM, user_msg, temperature=SUGGEST_TEMPERATURE, max_tokens=700, priority=prio)
         try:
             data = _extract_json(raw)
             break

@@ -650,6 +650,7 @@ def _occasion_with_note(occasion: Optional[str], note: Optional[str], variety: s
 # Normalised suggested title -> genre the model gave it, so the next suggest
 # call for that track can ground on the matching ./DJ genre playbook.
 _suggested_genres: Dict[str, str] = {}
+_set_memory = None  # app.ui.set_memory.SetMemory, created on first suggest
 
 
 def _genre_key(title: str) -> str:
@@ -700,6 +701,16 @@ def autopilot_suggest(req: AutopilotSuggestRequest):
     else:
         set_position = min(len(req.history) / 10.0, 1.0)
 
+    # Cross-set memory: remember this set's songs, offer the earlier sets' ones
+    # to the prompt as "heard recently, prefer fresh" (not on look-ahead calls).
+    from app.ui.set_memory import SetMemory
+    global _set_memory
+    if _set_memory is None:
+        _set_memory = SetMemory(CACHE_DIR / "set_memory.json")
+    if not req.lookahead:
+        _set_memory.record(history_display)
+    earlier = _set_memory.earlier_sets(history_display)
+
     meta: dict = {}
     try:
         suggestions = suggest_next_tracks(
@@ -718,6 +729,7 @@ def autopilot_suggest(req: AutopilotSuggestRequest):
             genre=genre,
             history_display=history_display,
             lookahead=req.lookahead,
+            earlier_sets=earlier,
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"LLM suggest error: {exc}") from exc
