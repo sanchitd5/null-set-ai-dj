@@ -35,6 +35,22 @@ _LIVE_RE = re.compile(
 )
 
 
+_AUDIO_GLOBS = ("*.flac", "*.mp3", "*.m4a", "*.opus", "*.ogg", "*.wav")
+
+
+def _audio_files(directory: Path) -> set[Path]:
+    return {p for g in _AUDIO_GLOBS for p in directory.glob(g)}
+
+
+def _duration_secs(path: Path) -> float | None:
+    try:
+        import soundfile as sf
+
+        return sf.info(str(path)).duration
+    except Exception:
+        return None  # unreadable by soundfile (e.g. m4a): rely on the pre-download filter
+
+
 def _is_live(title: str) -> bool:
     return bool(_LIVE_RE.search(title))
 
@@ -130,7 +146,7 @@ def detect_source(url: str) -> str:
 
 
 def download_to_dir(url: str, output_dir: Path) -> list[Path]:
-    """Download audio to output_dir. Returns list of new .mp3 paths."""
+    """Download audio to output_dir. Returns list of new audio file paths (FLAC)."""
     output_dir.mkdir(parents=True, exist_ok=True)
     source = detect_source(url)
     if source == "spotify":
@@ -156,14 +172,13 @@ def _spotdl_search(query: str, output_dir: Path) -> list[Path]:
     if _is_mix(query) or _is_non_music(query) or _is_live(query):
         raise RuntimeError(f"not a studio song: \"{query}\"")
 
-    before = set(output_dir.glob("*.mp3"))
+    before = _audio_files(output_dir)
     try:
         result = subprocess.run(
             [
                 sys.executable, "-m", "spotdl", "download", query,
                 "--output", str(output_dir / "{artists} - {title}.{output-ext}"),
-                "--format", "mp3",
-                "--bitrate", "320k",
+                "--format", "flac",
             ],
             capture_output=True,
             text=True,
@@ -171,7 +186,7 @@ def _spotdl_search(query: str, output_dir: Path) -> list[Path]:
         )
     except subprocess.TimeoutExpired:
         raise RuntimeError(f"Spotify download timed out for \"{query}\"")
-    new_files = sorted(set(output_dir.glob("*.mp3")) - before)
+    new_files = sorted(_audio_files(output_dir) - before)
     if not new_files:
         detail = (result.stdout or result.stderr or "").strip().splitlines()[-1:] or [""]
         raise RuntimeError(f"no Spotify match for \"{query}\" ({detail[0][:120]})")
@@ -195,7 +210,7 @@ def _ytdlp(url: str, output_dir: Path) -> list[Path]:
     if _yt_dlp is None:
         raise RuntimeError("yt-dlp not installed — run: pip install yt-dlp")
 
-    before = set(output_dir.glob("*.mp3"))
+    before = _audio_files(output_dir)
 
     # Search queries: widen to a pool of results and take the FIRST one that is a real
     # song matching the query (not an interview, mix, clip). Direct URLs: only guard
@@ -212,21 +227,18 @@ def _ytdlp(url: str, output_dir: Path) -> list[Path]:
         "noplaylist": True,
         "match_filter": _search_match_filter(words),
         "max_downloads": 1,
-        "writethumbnail": True,
         "quiet": True,
         "no_warnings": True,
         "postprocessors": [
-            {
-                "key": "FFmpegExtractAudio",
-                "preferredcodec": "mp3",
-                "preferredquality": "320",
-            },
+            # FLAC, not MP3: YouTube's best stream is already lossy (~128 kbps
+            # Opus/AAC); re-encoding it to MP3 stacked a second lossy pass.
+            # FLAC keeps exactly what YouTube delivered.
+            {"key": "FFmpegExtractAudio", "preferredcodec": "flac"},
             {"key": "FFmpegMetadata", "add_metadata": True},
-            {"key": "EmbedThumbnail"},
         ],
-        "postprocessor_args": {
-            "FFmpegExtractAudio": ["-id3v2_version", "3"],
-        },
+        # 16-bit: the lossy source has no more resolution than that; ffmpeg's
+        # default s32 FLAC doubled file size for nothing.
+        "postprocessor_args": {"extractaudio": ["-sample_fmt", "s16"]},
     }
     for attempt in range(2):  # YouTube intermittently answers 403 on the first stream fetch
         try:
@@ -241,7 +253,7 @@ def _ytdlp(url: str, output_dir: Path) -> list[Path]:
                 continue
             raise
 
-    after = set(output_dir.glob("*.mp3"))
+    after = _audio_files(output_dir)
     new_files = sorted(after - before)
     if not new_files:
         raise RuntimeError(
@@ -261,13 +273,12 @@ def _reject_non_tracks(new_files: list[Path], check_live: bool = True) -> list[P
             raise RuntimeError(
                 f"Downloaded file looks like a mix, set or live recording: \"{path.stem}\"."
             )
-        # Secondary duration guard using file size heuristic (320 kbps MP3).
-        # 9 min × 60 s × 320 000 bit/s / 8 = ~21.6 MB. Anything bigger → reject.
-        size_mb = path.stat().st_size / (1024 * 1024)
-        if size_mb > 22:
+        # Length guard: >9 min is almost certainly a mix / set / compilation.
+        secs = _duration_secs(path)
+        if secs is not None and secs >= MAX_TRACK_SECS:
             path.unlink(missing_ok=True)
             raise RuntimeError(
-                f"Track too long (>{size_mb:.0f} MB — likely a mix/set): \"{path.stem}\". "
+                f"Track too long ({secs / 60:.1f} min, likely a mix/set): \"{path.stem}\". "
                 "Only individual tracks under 9 minutes are allowed."
             )
         clean.append(path)
@@ -275,15 +286,14 @@ def _reject_non_tracks(new_files: list[Path], check_live: bool = True) -> list[P
 
 
 def _spotdl(url: str, output_dir: Path) -> list[Path]:
-    before = set(output_dir.glob("*.mp3"))
+    before = _audio_files(output_dir)
 
     result = subprocess.run(
         [
             sys.executable, "-m", "spotdl",
             "download", url,
             "--output", str(output_dir),
-            "--format", "mp3",
-            "--bitrate", "320k",
+            "--format", "flac",
         ],
         capture_output=True,
         text=True,
@@ -293,5 +303,5 @@ def _spotdl(url: str, output_dir: Path) -> list[Path]:
             f"spotdl failed:\n{result.stderr.strip() or result.stdout.strip()}"
         )
 
-    after = set(output_dir.glob("*.mp3"))
+    after = _audio_files(output_dir)
     return sorted(after - before)
