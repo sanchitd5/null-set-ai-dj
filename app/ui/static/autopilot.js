@@ -468,7 +468,22 @@
 
   let energyNotedFor = null; // track whose energy the DJ mind already logged
   const profileById = {};    // LLM current_profile energy (1-10) per track id: PEAK mode
+  // Network-level failures (server restarting, connection refused) are retried
+  // with backoff and do NOT use up one of prepareTransition's rounds.
   async function getSuggestions(trackId, avoid = [], opts = {}) {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await getSuggestionsOnce(trackId, avoid, opts);
+      } catch (e) {
+        const transient = e instanceof TypeError || /Failed to fetch|NetworkError|timed out|502|503/.test(e.message);
+        if (!transient || attempt >= 4 || !active) throw e;
+        apStatus(`Server not answering — retrying (${attempt + 1}/4)…`);
+        await new Promise((r) => setTimeout(r, 5000));
+      }
+    }
+  }
+
+  async function getSuggestionsOnce(trackId, avoid = [], opts = {}) {
     const setPos = Math.min(history.length / 10, 1.0);
     // `avoid` = titles rejected this round (failed download / vibe gate) so the
     // LLM does not propose them again on retry.
@@ -831,9 +846,11 @@
         rejected.push(`${c.suggestion.artist} - ${c.suggestion.title}`);
       }
     }
-    apStatus(`All suggestions failed after ${MAX_ROUNDS} tries — autopilot stopped.`);
-    active = false;
-    updateButtons();
+    // Never end the set over this: the playing song keeps going (HOLD LOOP near
+    // its end) and the search retries. Stopping here turned a 10 s server
+    // restart into a dead set.
+    apStatus(`No next song yet after ${MAX_ROUNDS} tries — retrying in 20 s (music keeps playing)`);
+    setTimeout(() => { if (active && gen === prepGen) prepareTransition(currentId); }, 20000);
   }
 
   function scheduleTransition(currentId, nextId, nextName, candidate, blend = null) {
