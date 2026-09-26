@@ -158,10 +158,23 @@ def _media_type_for(path: Path) -> str:
     return mimetypes.guess_type(path.name)[0] or "application/octet-stream"
 
 
+_BLOB_SUFFIXES = _AUDIO_SUFFIXES | {".webm"}
+SAMPLE_MAX_BYTES = 25 * 1024 * 1024  # one-shots and chops, not whole songs
+
+
 async def _store_blob(file: UploadFile, directory: Path, registry: Dict[str, Path],
-                      default_suffix: str) -> tuple[str, Path]:
-    suffix = Path(file.filename or "").suffix or default_suffix
+                      default_suffix: str, max_bytes: Optional[int] = None) -> tuple[str, Path]:
+    # The suffix picks the served Content-Type, so only audio suffixes are
+    # accepted: an ".html" upload served back same-origin would be stored XSS.
+    suffix = (Path(file.filename or "").suffix or default_suffix).lower()
+    if suffix not in _BLOB_SUFFIXES:
+        raise HTTPException(status_code=400, detail=f"Unsupported audio file type: {suffix}")
     contents = await file.read()
+    if not contents:
+        raise HTTPException(status_code=400, detail="Empty upload")
+    if max_bytes is not None and len(contents) > max_bytes:
+        raise HTTPException(status_code=413,
+                            detail=f"File too large ({len(contents) // (1024 * 1024)} MB, max {max_bytes // (1024 * 1024)} MB)")
     blob_id = hashlib.sha256(contents).hexdigest()[:16]
     dest = directory / f"{blob_id}{suffix}"
     dest.write_bytes(contents)
@@ -758,7 +771,8 @@ def autopilot_plan(req: MindPlanRequest):
 @app.post("/api/samples")
 async def upload_sample(file: UploadFile, label: Optional[str] = Form(default=None)):
     """Uploads a custom one-shot for the console's sampler pad grid."""
-    sample_id, dest = await _store_blob(file, SAMPLES_CACHE_DIR, _samples, ".wav")
+    sample_id, dest = await _store_blob(file, SAMPLES_CACHE_DIR, _samples, ".wav",
+                                        max_bytes=SAMPLE_MAX_BYTES)
     resolved_label = label or Path(file.filename or dest.name).stem
     _sample_labels[sample_id] = resolved_label
     _save_sample_labels()

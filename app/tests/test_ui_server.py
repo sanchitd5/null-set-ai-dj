@@ -187,6 +187,24 @@ def test_sample_download_round_trips_bytes():
     assert res.content == SAMPLE_BYTES
 
 
+def test_sample_upload_rejects_non_audio_suffix():
+    # served back same-origin by suffix, so .html would be stored XSS
+    res = client.post("/api/samples", files={"file": ("pad.html", b"<script>1</script>", "text/html")})
+    assert res.status_code == 400
+
+
+def test_sample_upload_rejects_empty_file():
+    res = client.post("/api/samples", files={"file": ("empty.wav", b"", "audio/wav")})
+    assert res.status_code == 400
+
+
+def test_sample_upload_rejects_oversize(monkeypatch):
+    import app.ui.server as server
+    monkeypatch.setattr(server, "SAMPLE_MAX_BYTES", 8)
+    res = client.post("/api/samples", files={"file": ("big.wav", b"0123456789", "audio/wav")})
+    assert res.status_code == 413
+
+
 def test_sample_download_unknown_id_404():
     res = client.get("/api/samples/doesnotexist")
     assert res.status_code == 404

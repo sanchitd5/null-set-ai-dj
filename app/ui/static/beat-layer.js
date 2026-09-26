@@ -197,7 +197,9 @@
           const v = audioCtx.createGain();
           v.gain.value = h.vel * lvl;
           v.connect(bus);
-          triggerPad(h.pad, when, v);
+          // synth voice always: a vocal chop loaded into the KICK slot must
+          // not start firing on every kick the layer books.
+          triggerPad(h.pad, when, v, { synth: true });
           setTimeout(() => v.disconnect(), (when - now) * 1000 + 1500);
         }
       }
@@ -236,7 +238,8 @@
   function setLevel(v) { bus.gain.setTargetAtTime(Math.max(0, Math.min(1, v)), audioCtx.currentTime, 0.05); }
 
   window.beatLayer = { follow, stop, fill, setEnabled, setLevel, boostUntil: boostUntil_,
-                       isEnabled: () => enabled, get deck() { return deckId; } };
+                       isEnabled: () => enabled, get deck() { return deckId; },
+                       grid };  // shared with the step sequencer (sampler-deck.js)
 
   // UI: LIVE DRUMS toggle + level in the autopilot panel.
   const toggle = document.getElementById("ap-drums-toggle");

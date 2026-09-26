@@ -121,18 +121,58 @@ const padGains = SAMPLE_PADS.map(() => {
   return g;
 });
 
+// User-loaded one-shots (sampler-deck.js fills these). A slot with a buffer
+// plays it instead of the synth voice; `padVoices` lets a retrigger choke the
+// previous hit of the same slot, the way a hardware sampler cuts a vocal chop.
+const padSamples = SAMPLE_PADS.map(() => null);   // { buffer, name, sampleId } | null
+const padVoices = SAMPLE_PADS.map(() => null);
+
+function playPadSample(index, dest, when) {
+  const slot = padSamples[index];
+  const t = Math.max(audioCtx.currentTime, when || 0);
+  const prev = padVoices[index];
+  if (prev) { try { prev.stop(t); } catch (_) { /* already ended */ } }
+  const src = audioCtx.createBufferSource();
+  src.buffer = slot.buffer;
+  src.connect(dest);
+  src.onended = () => { if (padVoices[index] === src) padVoices[index] = null; src.disconnect(); };
+  src.start(t);
+  padVoices[index] = src;
+}
+
 // `when` (audioCtx time) lets the beat layer schedule sample-accurate hits;
 // `dest` routes into the beat layer's own bus instead of the pad fader.
-function triggerPad(index, when, dest) {
+// `opts.synth` forces the built-in voice even when a sample is loaded.
+// Hand-played hits (no `when`) snap to the sampler's QUANTIZE grid if set.
+function triggerPad(index, when, dest, opts = {}) {
   if (audioCtx.state === "suspended") audioCtx.resume();
   const pad = SAMPLE_PADS[index];
   if (!pad) return;
-  pad.play(dest || padGains[index], when);
-  document.querySelectorAll(`[data-pad="${index}"]`).forEach((el) => {
-    if (el.tagName !== "BUTTON") return;
-    el.classList.add("hit", "pad-hit");
-    setTimeout(() => el.classList.remove("hit", "pad-hit"), 130);
+  if (when == null && typeof window.samplerQuantize === "function") when = window.samplerQuantize();
+  const out = dest || padGains[index];
+  if (padSamples[index] && !opts.synth) playPadSample(index, out, when);
+  else pad.play(out, when);
+  // Light the pad when the hit actually sounds, not when it was booked.
+  const delay = Math.max(0, ((when || 0) - audioCtx.currentTime) * 1000);
+  setTimeout(() => {
+    document.querySelectorAll(`[data-pad="${index}"]`).forEach((el) => {
+      if (el.tagName !== "BUTTON") return;
+      el.classList.add("hit", "pad-hit");
+      setTimeout(() => el.classList.remove("hit", "pad-hit"), 130);
+    });
+  }, delay);
+}
+
+// Pads fire on pointerdown: a click fires on release, which is a finger
+// drummer's worth of latency. Keyboard activation (Enter/Space on a focused
+// pad) still arrives as a click with detail 0.
+function bindPadPress(btn, fire) {
+  btn.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    fire();
   });
+  btn.addEventListener("click", (e) => { if (e.detail === 0) fire(); });
 }
 
 const padGrid = document.getElementById("pad-grid");
@@ -142,8 +182,8 @@ if (padGrid) {
     cell.className = "pad-cell";
     cell.innerHTML = `
       <button class="sample-pad" data-pad="${i}">
-        <span class="pad-name">${pad.name}</span>
-        <span class="pad-key">KEY ${pad.key.toUpperCase()}</span>
+        <span class="pad-name" data-pad-label="${i}">${pad.name}</span>
+        <span class="pad-key">KEY <span data-pad-keycap="${i}">${pad.key.toUpperCase()}</span></span>
       </button>
       <div class="pad-vol-row">
         <span class="hud-label">VOL</span>
@@ -154,7 +194,7 @@ if (padGrid) {
       </div>
     `;
     padGrid.appendChild(cell);
-    cell.querySelector(".sample-pad").addEventListener("click", () => triggerPad(i));
+    bindPadPress(cell.querySelector(".sample-pad"), () => triggerPad(i));
     const vol = cell.querySelector(".pad-vol");
     vol.addEventListener("input", () => { padGains[i].gain.value = parseFloat(vol.value); });
     initKnob(cell.querySelector(".knob-wrap"));
@@ -500,8 +540,8 @@ function buildSamplerBank(bank) {
     const btn = document.createElement("button");
     btn.className = "pad";
     btn.dataset.pad = String(i);
-    btn.innerHTML = `<span class="pad-num">${pad.name}</span><span class="pad-sub">${pad.key.toUpperCase()}</span>`;
-    btn.addEventListener("click", () => triggerPad(i));
+    btn.innerHTML = `<span class="pad-num" data-pad-label="${i}">${pad.name}</span><span class="pad-sub" data-pad-keycap="${i}">${pad.key.toUpperCase()}</span>`;
+    bindPadPress(btn, () => triggerPad(i));
     bank.appendChild(btn);
   });
 }

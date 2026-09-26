@@ -630,11 +630,61 @@
     <div class="panel-title">
       <span class="lamp lamp-ok"></span>
       <span>8-SLOT SAMPLER BANK</span>
-      <span class="chip">SYNTHESIZED ONE-SHOTS</span>
+      <span class="chip" id="sampler-chip">SYNTH KIT</span>
     </div>
-    <span class="hud-label">KEYS T Y U G / H V B N · pads route through the master fader, so they are captured by REC</span>
+    <div class="sampler-tools">
+      <label class="hud-label" for="sampler-quant" title="Hand-played pads (click or key) wait for the next grid point of the clock deck, so a late hit still lands on the beat">QUANTIZE</label>
+      <select id="sampler-quant" aria-label="Pad quantize">
+        <option value="0" selected>OFF</option>
+        <option value="0.25">1/16</option>
+        <option value="0.5">1/8</option>
+        <option value="1">BEAT</option>
+        <option value="4">BAR</option>
+      </select>
+      <span class="hud-label" id="sampler-status" role="status" aria-live="polite">Drop an audio file on a pad to load it. Pads are recorded by REC.</span>
+    </div>
   </div>
   <div class="pad-grid" id="pad-grid"></div>
+
+  <!-- Step sequencer: live beat mixing on top of the playing record -->
+  <div class="seq" id="seq">
+    <div class="seq-head">
+      <div class="panel-title">
+        <span class="lamp" id="seq-lamp"></span>
+        <span>BEAT GRID</span>
+        <span class="chip">16 STEPS · LOCKED TO THE DECK</span>
+      </div>
+      <div class="seq-controls">
+        <button type="button" class="hw-btn accent-btn" id="seq-run" aria-pressed="false" title="Start / stop the beat grid (key M). Steps land on the clock deck's analysed beatgrid">▶ RUN</button>
+        <label class="hud-label" for="seq-clock">CLOCK</label>
+        <select id="seq-clock" aria-label="Sequencer clock deck" title="AUTO follows the autopilot's deck, else the loudest playing deck">
+          <option value="auto" selected>AUTO</option>
+          <option value="a">DECK A</option>
+          <option value="b">DECK B</option>
+        </select>
+        <label class="hud-label" for="seq-preset">PATTERN</label>
+        <select id="seq-preset" aria-label="Load a pattern">
+          <option value="" selected>LOAD…</option>
+          <option value="four">FOUR ON THE FLOOR</option>
+          <option value="house">HOUSE</option>
+          <option value="breaks">BREAKBEAT</option>
+          <option value="halftime">HALF-TIME / TRAP</option>
+          <option value="dnb">DNB TWO-STEP</option>
+          <option value="tops">TOPS ONLY</option>
+        </select>
+        <label class="hud-label" for="seq-swing">SWING</label>
+        <input type="range" id="seq-swing" min="0" max="0.6" step="0.01" value="0" aria-label="Swing" />
+        <label class="hud-label" for="seq-level">LEVEL</label>
+        <input type="range" id="seq-level" min="0" max="1" step="0.01" value="0.6" aria-label="Beat grid level" />
+        <label class="hud-label" title="High-pass the grid at 120 Hz so the record keeps the sub-bass (one track owns the low end)">
+          <input type="checkbox" id="seq-subsafe" checked /> SUB SAFE
+        </label>
+        <button type="button" class="hw-btn" id="seq-clear">CLEAR</button>
+      </div>
+    </div>
+    <div class="seq-grid" id="seq-grid" role="grid" aria-label="Beat grid steps"></div>
+    <p class="panel-note" id="seq-status">Click steps to program a pattern, then RUN. Click a row name to mute it live.</p>
+  </div>
 </section>
 
 <!-- ========================================================================= -->
@@ -765,6 +815,7 @@
 <script src="/automation.js"></script>
 <script src="/performance.js"></script>
 <script src="/beat-layer.js"></script>
+<script src="/sampler-deck.js"></script>
 <script src="/mashup-layer.js"></script>
 <script src="/browser.js"></script>
 <script src="/dj-mind.js"></script>
