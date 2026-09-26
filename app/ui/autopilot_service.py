@@ -139,6 +139,23 @@ OUTPUT FORMAT — return ONLY valid JSON, no markdown, no explanation:
 TEMPO_LOCK_PCT = 0.06  # the autopilot pitch-locks the next song within +/-8%; aim inside 6%
 
 
+def _bare_title(title: str) -> str:
+    """Song identity for repeat checks: no (...)/[...] tags, feat. credits, punctuation."""
+    t = re.sub(r"[\(\[][^\)\]]*[\)\]]", " ", str(title).lower())
+    t = re.sub(r"\s+(feat\.?|ft\.?|featuring)\s+.*$", "", t)
+    return " ".join(re.sub(r"[^a-z0-9 ]+", " ", t).split())
+
+
+def _recent_artists(names: list, n: int = 4) -> str:
+    """Artists of the last n played songs ("Artist - Title" names)."""
+    out = []
+    for name in list(names or [])[-n:]:
+        artist = str(name).split(" - ", 1)[0].strip()
+        if artist and artist.lower() not in (a.lower() for a in out):
+            out.append(artist)
+    return ", ".join(out) or "none"
+
+
 def tempo_window(bpm: float) -> str:
     """Explicit BPM ranges the next song must sit in (small models get this
     arithmetic wrong, so hand it over pre-computed). Half/double time counts:
@@ -161,7 +178,9 @@ _USER_TEMPLATE = (
     "choose a remix / edit that fits rather than leaving it): {tempo_window}\n"
     "First fill current_genre and current_profile for THIS song, then pick songs whose own "
     "track_profile stays close to it. Stay in this genre neighbourhood unless the occasion demands a shift.\n"
-    "Already played titles (avoid exact titles, same artist OK): {history}\n\n"
+    "Already played this set - NEVER suggest these again: {history}\n"
+    "Artists heard in the last few songs (pick someone else unless it is a deliberate "
+    "same-artist moment early in the set): {recent_artists}\n\n"
     "Suggest {n} tracks. Prioritise: vibe continuity → harmonic compatibility → energy arc for {arc_phase} → diversity.\n"
     "Reply ONLY with the JSON object."
 )
@@ -215,6 +234,7 @@ def _filter_suggestions(data: dict, history: list[str]) -> list[dict]:
     from app.ui.download_service import _is_mix, _is_non_music
 
     played = {h.lower() for h in history}
+    played_bare = {_bare_title(h.split(" - ", 1)[-1]) for h in history}
     cur = data.get("current_profile")
     ok, clashes = [], []
     for s in data.get("suggestions", []) or []:
@@ -223,8 +243,8 @@ def _filter_suggestions(data: dict, history: list[str]) -> list[dict]:
         label = f"{s.get('artist', '')} {s['title']}"
         if _is_mix(label) or _is_non_music(label):
             continue
-        if any(s["title"].lower() in p for p in played):
-            continue
+        if _bare_title(s["title"]) in played_bare or any(s["title"].lower() in p for p in played):
+            continue  # same song again, incl. a remix / feat. variant of a played one
         # Steering toward the occasion's music is a deliberate genre/mood move:
         # continuity clashes with the CURRENT song are expected, not errors.
         steer = str(data.get("steering", "")).lower().startswith("move")
@@ -384,7 +404,8 @@ def suggest_next_tracks(
         energy=avg_energy,
         occasion=occasion or "general DJ set",
         set_mode_line=SET_MODE_LINES.get(set_mode, SET_MODE_LINES["hybrid"]),
-        history=", ".join((history_display or history)[-6:]) if history else "none",
+        history=", ".join((history_display or history)[-30:]) if history else "none",
+        recent_artists=_recent_artists(history_display or history),
         set_pos_pct=round(set_position * 100),
         arc_phase=_set_arc_phase(set_position),
         n=n,

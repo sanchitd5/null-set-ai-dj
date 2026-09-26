@@ -52,3 +52,14 @@ def test_steering_skips_profile_clash_filter():
                             {"artist": "Panjabi MC", "title": "Mundian To Bach Ke", "track_profile": bhangra}]}
     assert len(_filter_suggestions(dict(data, steering="stay"), [])) == 1    # continuity keeps only the closest clash
     assert len(_filter_suggestions(dict(data, steering="move"), [])) == 2    # steering: both kept
+
+
+def test_repeat_filter_catches_remix_and_feat_variants():
+    from app.ui.autopilot_service import _filter_suggestions
+    data = {"suggestions": [
+        {"artist": "Badshah", "title": "Proper Patola (Remix) [feat. Diljit Dosanjh]"},
+        {"artist": "Panjabi MC", "title": "Mundian To Bach Ke (Bhangra Remix)"},
+        {"artist": "Divine", "title": "Bombay Slums"},
+    ]}
+    played = ["Diljit Dosanjh - Proper Patola", "Panjabi MC - Mundian To Bach Ke"]
+    assert [s["title"] for s in _filter_suggestions(data, played)] == ["Bombay Slums"]
