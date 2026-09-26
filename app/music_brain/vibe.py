@@ -27,11 +27,13 @@ from app.music_brain.config import ANALYSIS_CACHE_DIR
 VIBE_VERSION = 1
 
 # Per-feature scale: a delta equal to the scale counts as 1.0 in the distance.
-LOUDNESS_SCALE_DB = 4.0        # 4 dB RMS difference is clearly audible
-BRIGHTNESS_SCALE_OCT = 0.4     # ~0.4 octave centroid shift = different tone
-ONSET_SCALE_PER_SEC = 1.5      # 1.5 onsets/s = markedly busier / sparser
+LOUDNESS_SCALE_DB = 4.0        # reported only: a DJ trims gain, it is not a vibe clash
+BRIGHTNESS_SCALE_OCT = 0.6     # whole-track centroid; 0.4 rejected every on-genre pick
+ONSET_SCALE_PER_SEC = 2.5      # after a sparse vocal track (4 onsets/s) house sits at 6-7
 ENERGY_SCALE = 0.12            # mean of normalised RMS curve
 DEFAULT_THRESHOLD = 1.8
+# Live set, Fred again.. "Marea" seed: Lane 8 / Ben Böhmer / Yotto were all rejected,
+# mainly for "louder by 5-6 dB" (mastering level, fixed with the trim knob).
 
 
 @dataclass
@@ -114,13 +116,12 @@ def vibe_distance(a: VibeFeatures, b: VibeFeatures, threshold: float = DEFAULT_T
         "onset_rate": round(d_onset, 2),
         "energy": round(d_energy, 2),
     }
-    distance = math.sqrt(d_loud ** 2 + d_bright ** 2 + d_onset ** 2 + d_energy ** 2)
+    # Loudness is NOT part of the distance: level differences are mastering, and
+    # the deck trim fixes them. It is returned as gain_match_db for the caller.
+    distance = math.sqrt(d_bright ** 2 + d_onset ** 2 + d_energy ** 2)
+    gain_match_db = round(a.loudness_dbfs - b.loudness_dbfs, 1)
 
     reasons: List[str] = []
-    if abs(d_loud) > 1.0:
-        reasons.append(
-            f"{'louder' if d_loud > 0 else 'quieter'} by {abs(b.loudness_dbfs - a.loudness_dbfs):.1f} dB"
-        )
     if abs(d_bright) > 1.0:
         reasons.append(
             f"{'brighter' if d_bright > 0 else 'darker'} tone ({a.brightness_hz:.0f} Hz -> {b.brightness_hz:.0f} Hz)"
@@ -140,6 +141,7 @@ def vibe_distance(a: VibeFeatures, b: VibeFeatures, threshold: float = DEFAULT_T
         "ok": distance <= threshold,
         "reasons": reasons,
         "components": components,
+        "gain_match_db": gain_match_db,
         "a": a.to_dict(),
         "b": b.to_dict(),
     }

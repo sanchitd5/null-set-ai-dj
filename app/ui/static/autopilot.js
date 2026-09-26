@@ -173,6 +173,18 @@
   }
 
   // Put a deck back to neutral so it is clean when it becomes the staging deck.
+  // Level-match the incoming song to the playing one (trim knob, like a DJ
+  // gain-staging on the mixer): vibe gate reports gain_match_db = playing RMS
+  // minus candidate RMS. Clamped to the knob's range (-12 dB .. +6 dB).
+  function matchGain(outDeck, inDeck, db) {
+    const knob = (d) => document.querySelector(`.gain-knob[data-deck="${d}"]`);
+    const outK = knob(outDeck), inK = knob(inDeck);
+    if (!inK) return;
+    const base = outK ? parseFloat(outK.value) || 1 : 1;
+    const g = Number.isFinite(db) ? base * Math.pow(10, db / 20) : base;
+    setRange(inK, Math.max(0.25, Math.min(2, g)).toFixed(2));
+  }
+
   function resetDeck(deck) {
     setRange(eqEl(deck, "low"), 0);
     setRange(eqEl(deck, "mid"), 0);
@@ -493,6 +505,7 @@
     const blob = await audioRes.blob();
     if (!active) return false;
     await loadIntoDeck(stagingDeck(), nextId, nextName, blob);
+    matchGain(activeDeck, stagingDeck(), candidate.vibe && candidate.vibe.gain_match_db);
     const plan = await aiPlan;
     if (!active || currentTrackId !== currentId) return false;
     if (plan && plan.candidate) {
