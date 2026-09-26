@@ -164,7 +164,8 @@ def _ytdlp(url: str, output_dir: Path) -> list[Path]:
         except _yt_dlp.utils.MaxDownloadsReached:
             break  # got our one matching track
         except _yt_dlp.utils.DownloadError as exc:
-            if attempt == 0 and "403" in str(exc):
+            msg = str(exc)
+            if attempt == 0 and ("403" in msg or "timed out" in msg.lower()):
                 continue
             raise
 
