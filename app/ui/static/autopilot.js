@@ -14,6 +14,8 @@
   let occasion = "";
   let history = [];           // display names of played tracks (last 5 kept)
   let mashupTag = "";         // status suffix while a vocal layer is booked
+  let entryPos = 0;           // track time where the current song came in
+  let currentEnergy = null;   // LLM's 1-10 energy read of the current song
 
   // ── UI refs ───────────────────────────────────────────────────────────────
   const seedInput      = document.getElementById("ap-seed-input");
@@ -376,10 +378,12 @@
     const res = await fetch("/api/autopilot/suggest", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ track_id: trackId, occasion, history: history.slice(-6).concat(avoid.slice(-6)), set_position: setPos }),
+      body: JSON.stringify({ track_id: trackId, occasion, history: history.slice(-6).concat(avoid.slice(-6)), set_position: setPos, set_mode: setMode() }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || res.statusText);
+    const e = data.current_profile && parseFloat(data.current_profile.energy);
+    if (Number.isFinite(e)) currentEnergy = e <= 1 ? e * 10 : e;
     return data.suggestions || [];
   }
 
@@ -491,20 +495,19 @@
     const recipe = candidate.recipe || "Blend";
     const score  = candidate.score  || 50;
 
-    // Cap play time: good match (score ≥ 65) → max 120s; poor match → 60s.
-    // This keeps sets moving and bails early on weak transitions.
-    const MAX_PLAY_SECS = score >= 65 ? 120 : 60;
-    const nowPos  = deckPosition(activeDeck);
-    const hardCap = nowPos + MAX_PLAY_SECS;
-
-    // Use the recipe's suggested exit point, but never past the hard cap.
-    // Ensure at least 15s of play before any crossfade fires.
-    const aTime = Math.min(candidate.a_time, hardCap);
-    const MIN_PLAY_SECS = 15;
-    const effectiveATime = Math.max(aTime, nowPos + MIN_PLAY_SECS);
-
-    // Shorter crossfade for early-bail situations so it doesn't drag.
-    const xfDuration = aTime < hardCap ? 16 : 8;
+    // Play-time window from the set mode, counted from when this song came in.
+    // Prefer the matcher's phrase-aligned exit if it falls inside the window.
+    const w = playWindow(score);
+    const nowPos = deckPosition(activeDeck);
+    const od = window.decks && window.decks[activeDeck];
+    const trackEnd = (od && od.buffer ? od.buffer.duration : Infinity) - w.xf - 2;
+    const lo = Math.min(entryPos + w.min, trackEnd);
+    const hi = Math.min(entryPos + w.max, trackEnd);
+    let exitAt = candidate.a_time;
+    if (!(exitAt >= lo && exitAt <= hi)) exitAt = Math.max(lo, Math.min(hi, exitAt || hi));
+    const effectiveATime = Math.max(exitAt, nowPos + 15); // never flip right after scheduling
+    const xfDuration = w.xf;
+    playPlanTag = ` | ${w.label} ${fmtTime(effectiveATime - entryPos)}`;
 
     let executed = false;
     let filled = false;
@@ -525,7 +528,7 @@
 
       if (left > 0) {
         const scoreTag = score >= 65 ? `⭐${score}` : `⚡${score} (early exit)`;
-        apStatus(`Next: ${nextName} | ${recipe} | ${scoreTag} | in ${left.toFixed(0)}s${mashupTag}`);
+        apStatus(`Next: ${nextName} | ${recipe} | ${scoreTag}${playPlanTag} | in ${left.toFixed(0)}s${mashupTag}`);
         return;
       }
       if (executed) return;
@@ -539,6 +542,7 @@
       // Start the staging deck at b_time
       const sd = window.decks && window.decks[stagingDeck()];
       if (sd) sd.play(bTime);
+      const nextEntry = bTime;
 
       // Recipe-aware EQ-first transition toward the staging deck
       const outgoing = activeDeck;
@@ -556,6 +560,8 @@
         history.push(nextName);
         activeDeck = stagingDeck();
         currentTrackId = nextId;
+        entryPos = nextEntry;
+        currentEnergy = null;
         if (window.beatLayer) window.beatLayer.follow(activeDeck);
 
         // Park crossfader fully on the new active deck side
@@ -566,6 +572,36 @@
     }, 500);
     runTimers.push(tick);
     return fireAt;
+  }
+
+  // ── set modes ─────────────────────────────────────────────────────────────
+  // LONG   songs ride 3-6 min, long 24 s blends (Fred's layered, patient mode)
+  // QUICK  1-2 min, 8 s blends, high energy (weak match bails at 1 min)
+  // HYBRID per song: weak match or high energy (>= 7/10) -> quick,
+  //        deep / low energy (<= 5/10) -> long, else in between
+  let playPlanTag = "";
+  function setMode() {
+    const el = document.getElementById("ap-mode");
+    const v = el ? el.value : "hybrid";
+    return ["long", "quick", "hybrid"].includes(v) ? v : "hybrid";
+  }
+
+  const WINDOWS = {
+    long:   { min: 180, max: 360, xf: 24, label: "LONG" },
+    medium: { min: 120, max: 240, xf: 16, label: "MID" },
+    quick:  { min: 45,  max: 120, xf: 8,  label: "QUICK" },
+    bail:   { min: 30,  max: 60,  xf: 8,  label: "QUICK·bail" },
+  };
+
+  function playWindow(score) {
+    const mode = setMode();
+    const weak = score < 65;
+    if (mode === "long") return WINDOWS.long;
+    if (mode === "quick") return weak ? WINDOWS.bail : WINDOWS.quick;
+    if (weak) return WINDOWS.bail;
+    if (currentEnergy != null && currentEnergy >= 7) return WINDOWS.quick;
+    if (currentEnergy != null && currentEnergy <= 5) return WINDOWS.long;
+    return WINDOWS.medium;
   }
 
   // ── live mashup ("A x B") ─────────────────────────────────────────────────
@@ -647,6 +683,8 @@
       // Play deck A
       const da = window.decks && window.decks.a;
       if (da) da.play(0, true);
+      entryPos = 0;
+      currentEnergy = null;
       if (window.beatLayer) window.beatLayer.follow("a");
 
       history = [seedName];

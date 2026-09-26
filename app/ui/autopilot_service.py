@@ -111,6 +111,7 @@ _USER_TEMPLATE = (
     "BPM: {bpm:.1f} | Camelot Key: {camelot} | Duration: {duration:.0f}s | "
     "Avg Energy: {energy:.2f}/1.0 | Set position: {set_pos_pct}% through set\n"
     "Occasion: {occasion}\n"
+    "Set mode: {set_mode_line}\n"
     "First fill current_genre and current_profile for THIS song, then pick songs whose own "
     "track_profile stays close to it. Stay in this genre neighbourhood unless the occasion demands a shift.\n"
     "Already played titles (avoid exact titles, same artist OK): {history}\n\n"
@@ -183,6 +184,16 @@ def _filter_suggestions(data: dict, history: list[str]) -> list[dict]:
     return ok or clashes[:1]
 
 
+SET_MODES = ("long", "quick", "hybrid")
+SET_MODE_LINES = {
+    "long": "LONG (each song plays 3-6 min): pick deep, rolling songs with long intros/outros and "
+            "patient builds that reward a long ride; energy changes slowly (maintain or gentle up).",
+    "quick": "QUICK (songs switch every 1-2 min, high energy): pick instantly recognisable, "
+             "high-energy songs with early hooks and big drops; energy stays high (up or maintain, never down).",
+    "hybrid": "HYBRID: mix both, long rides on deep grooves, quick switches on peak-energy songs.",
+}
+
+
 def _extract_json(text: str) -> dict:
     """Robustly pull the first {...} block from LLM output."""
     text = text.strip()
@@ -206,6 +217,8 @@ def suggest_next_tracks(
     history: list[str],
     set_position: float = 0.0,
     n: int = 3,
+    set_mode: str = "hybrid",
+    meta: dict | None = None,
 ) -> list[dict]:
     """
     Call local Ollama (gemma3:4b) to suggest next n tracks.
@@ -233,6 +246,7 @@ def suggest_next_tracks(
         duration=duration,
         energy=avg_energy,
         occasion=occasion or "general DJ set",
+        set_mode_line=SET_MODE_LINES.get(set_mode, SET_MODE_LINES["hybrid"]),
         history=", ".join(history[-6:]) if history else "none",
         set_pos_pct=round(set_position * 100),
         arc_phase=_set_arc_phase(set_position),
@@ -265,6 +279,9 @@ def suggest_next_tracks(
 
     data = _extract_json(raw)
     suggestions = _filter_suggestions(data, history)[:n]
+    if meta is not None:  # caller wants the model's read of the CURRENT track too
+        meta["current_profile"] = data.get("current_profile") or {}
+        meta["current_genre"] = data.get("current_genre") or ""
 
     for s in suggestions:
         artist_s = s.get("artist", "")

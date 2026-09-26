@@ -658,6 +658,11 @@
            placeholder="Occasion (e.g. late night club, festival warm-up, chill sunset)…"
            autocomplete="off" />
     <div class="ap-btns">
+      <select id="ap-mode" aria-label="Set mode" title="LONG: songs play 3-6 min · QUICK: high energy, switch every 1-2 min · HYBRID: decides per song">
+        <option value="hybrid" selected>HYBRID</option>
+        <option value="long">LONG SET · 3-6 min</option>
+        <option value="quick">QUICK · high energy</option>
+      </select>
       <button class="hw-btn accent-btn" id="ap-start-btn">▶ START SET</button>
       <button class="hw-btn" id="ap-stop-btn" disabled>■ STOP</button>
       <label class="hud-label" title="Synced drum machine: sparse fills, build rolls and breakdown kicks on the playing deck's beatgrid">

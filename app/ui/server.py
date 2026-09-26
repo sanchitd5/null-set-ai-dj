@@ -473,6 +473,7 @@ class AutopilotSuggestRequest(BaseModel):
     occasion: Optional[str] = None
     history: list[str] = []
     set_position: Optional[float] = None  # 0.0=start, 1.0=end; computed from history if omitted
+    set_mode: str = "hybrid"  # long | quick | hybrid
 
 
 @app.post("/api/autopilot/suggest")
@@ -480,7 +481,7 @@ def autopilot_suggest(req: AutopilotSuggestRequest):
     """Use local LLM (Ollama gemma3:4b by default) to suggest next tracks."""
     import traceback
     import numpy as np
-    from app.ui.autopilot_service import suggest_next_tracks
+    from app.ui.autopilot_service import SET_MODES, suggest_next_tracks
 
     try:
         path = _track_path(req.track_id)
@@ -511,6 +512,7 @@ def autopilot_suggest(req: AutopilotSuggestRequest):
     else:
         set_position = min(len(req.history) / 10.0, 1.0)
 
+    meta: dict = {}
     try:
         suggestions = suggest_next_tracks(
             title=title_part,
@@ -522,10 +524,12 @@ def autopilot_suggest(req: AutopilotSuggestRequest):
             occasion=req.occasion or "",
             history=req.history,
             set_position=set_position,
+            set_mode=req.set_mode if req.set_mode in SET_MODES else "hybrid",
+            meta=meta,
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"LLM suggest error: {exc}") from exc
-    return {"suggestions": suggestions, "set_position": round(set_position, 2)}
+    return {"suggestions": suggestions, "set_position": round(set_position, 2), **meta}
 
 
 @app.post("/api/samples")

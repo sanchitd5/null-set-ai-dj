@@ -70,9 +70,34 @@
     return null;
   }
 
+  // The analyzer labels sections on a 1 s energy grid, so a song comes back as
+  // dozens of 1-3 s "build"/"breakdown" slivers. Acting on those made the layer
+  // snare-roll every few seconds. Merge same-label neighbours and only trust
+  // runs of at least MIN_SECTION_BARS; everything else counts as nothing.
+  const MIN_SECTION_BARS = 8;
+  const ROLL_COOLDOWN_BARS = 32;
+  let lastRollAt = -Infinity; // track time of the last build/breakdown roll
+
+  function longSections(d) {
+    const a = d.analysis;
+    if (!a) return [];
+    const bar = (60 / (d.bpm || 128)) * 4;
+    if (a._beatLayerLong && a._beatLayerLongBar === bar) return a._beatLayerLong;
+    const merged = [];
+    for (const s of a.sections || []) {
+      const last = merged[merged.length - 1];
+      if (last && last.label === s.label && Math.abs(last.end - s.start) < 0.01) {
+        last.energy = (last.energy * (last.end - last.start) + s.energy * (s.end - s.start)) / (s.end - last.start);
+        last.end = s.end;
+      } else merged.push({ ...s });
+    }
+    a._beatLayerLong = merged.filter((s) => s.end - s.start >= MIN_SECTION_BARS * bar);
+    a._beatLayerLongBar = bar;
+    return a._beatLayerLong;
+  }
+
   function sectionAt(d, t) {
-    const secs = (d.analysis && d.analysis.sections) || [];
-    for (const s of secs) if (t >= s.start && t < s.end) return s;
+    for (const s of longSections(d)) if (t >= s.start && t < s.end) return s;
     return null;
   }
 
@@ -81,25 +106,26 @@
   // RESTRAINT: the record is the star. The layer stays silent most of the
   // time and only speaks at moments that earn it:
   //   - fill into a transition (2 bars)
-  //   - last 2 bars of a build (snare roll into the drop)
-  //   - last 4 bars of a breakdown (kick drives back in)
+  //   - last bar of a real (>= 8 bar) build: one light roll, max 1 per 32 bars
+  //   - last 4 bars of a real breakdown (kick drives back in)
   //   - one 8-bar phrase in four during verses: light hats + claps
   // Intros, outros and drops are left alone (the record already carries them).
   function hitsFor(d, t, step, barLen, phraseIdx) {
     const hits = [];
     const add = (pad, vel) => hits.push({ pad, vel });
     const sec = sectionAt(d, t);
-    const label = sec ? sec.label : "verse";
+    const label = sec ? sec.label : "none";
+    const rollOk = t - lastRollAt >= ROLL_COOLDOWN_BARS * barLen;
     const barsLeft = sec ? (sec.end - t) / barLen : 99;
     const energy = sec && typeof sec.energy === "number" ? sec.energy : 0.6;
 
-    // Transition fill: snare 8ths, then a tom run + sweep in the final bar.
+    // Transition fill: one light bar, then a short tom run + sweep.
     if (t < fillUntil) {
       const left = (fillUntil - t) / barLen;
       if (left <= 1) {
-        if (P.tomFill[step]) add(PAD.TOM, 0.7);
-        if (step === 0) add(PAD.SWEEP, 0.5);
-      } else if (P.roll8[step]) add(PAD.SNARE, 0.35);
+        if (P.tomFill[step]) add(PAD.TOM, 0.6);
+        if (step === 0) add(PAD.SWEEP, 0.45);
+      } else if (P.backbeat[step]) add(PAD.SNARE, 0.3);
       return { hits, energy };
     }
 
@@ -111,14 +137,16 @@
         if (P.backbeat[step]) add(PAD.CLAP, 0.35);
         break;
       case "build":
-        if (barsLeft > 2) break;
-        if ((barsLeft <= 1 ? P.roll16 : P.roll8)[step]) add(PAD.SNARE, barsLeft <= 1 ? 0.6 : 0.4);
-        if (barsLeft <= 1 && step === 0) add(PAD.SWEEP, 0.6);
+        if (barsLeft > 1 || !rollOk) break;
+        if (P.roll8[step]) add(PAD.SNARE, 0.45);
+        if (step === 0) add(PAD.SWEEP, 0.5);
+        if (step === 15) lastRollAt = t;
         break;
       case "breakdown":
         // record's own kick is out here, so a kick adds no sub clash
-        if (barsLeft <= 4 && P.four[step]) add(PAD.KICK, 0.45);
-        if (barsLeft <= 1 && P.roll8[step]) add(PAD.SNARE, 0.45);
+        if (barsLeft <= 4 && P.four[step]) add(PAD.KICK, 0.4);
+        if (barsLeft <= 1 && rollOk && P.backbeat[step]) add(PAD.SNARE, 0.35);
+        if (barsLeft <= 1 && step === 15) lastRollAt = t;
         break;
       default:
         break; // intro / outro / drop: silence
@@ -173,6 +201,7 @@
     deckId = id;
     lastTrackT = null;
     fillUntil = -1;
+    lastRollAt = -Infinity;
     if (!timer) timer = setInterval(schedule, TICK_MS);
   }
 
