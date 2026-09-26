@@ -70,7 +70,11 @@ _NON_MUSIC_KEYWORDS = re.compile(
     r"\b(interview|talks?\s+about|in\s+conversation|conversation\s+with|podcast|"
     r"reacts?|reaction|review|tutorial|how\s+to|lesson|masterclass|documentary|"
     r"behind\s+the\s+scenes|making\s+of|explains?|trailer|q\s*&\s*a|vlog|"
-    r"cover|karaoke|nightcore|slowed|sped\s+up|8d|spatial\s+audio|loop\s+version|hour\s+version)\b",
+    r"cover|karaoke|nightcore|slowed|sped\s+up|8d|spatial\s+audio|loop\s+version|hour\s+version|"
+    # tribute / imitation uploads that reuse the real title and artist names
+    r"8[\s-]?bit|16[\s-]?bit|chiptune|emulation|tribute|in\s+the\s+style\s+of|originally\s+performed|"
+    r"made\s+famous|music\s+box|lullaby|piano\s+version|string\s+quartet|orchestral\s+version|"
+    r"ringtone|backing\s+track|type\s+beat)\b",
     re.IGNORECASE,
 )
 
@@ -139,7 +143,13 @@ def _search_match_filter(words: list[str], song: Optional[tuple[list[str], list[
             t_hits = sum(1 for w in title_w if f" {w} " in vt)
             if title_w and t_hits / len(title_w) < 0.8:
                 return f"song title does not match ({t_hits}/{len(title_w)} words)"
-            a_hits = sum(1 for w in artist_w if f" {w} " in full)
+            # Prefer YouTube's artist metadata (YT Music results carry it): a tribute
+            # upload puts the real artist in its TITLE, but not in its artist field.
+            meta_artist = info.get("artists") or info.get("artist") or info.get("creator")
+            if isinstance(meta_artist, list):
+                meta_artist = " ".join(str(x) for x in meta_artist)
+            artist_hay = " " + _norm(str(meta_artist)) + " " if meta_artist else full
+            a_hits = sum(1 for w in artist_w if f" {w} " in artist_hay)
             if artist_w and a_hits / len(artist_w) < 0.5:
                 return f"artist does not match ({a_hits}/{len(artist_w)} words)"
             if _VERSION_RE.search(title) and not _VERSION_RE.search(raw_title):
