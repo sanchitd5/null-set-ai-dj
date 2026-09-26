@@ -407,89 +407,153 @@
     return candidate;
   }
 
+  // ── pre-download pool ─────────────────────────────────────────────────────
+  // Every suggestion starts downloading as soon as the AI proposes it (the
+  // server runs 2 downloads in parallel; progress bars in the panel). Songs that
+  // finish but are not used right away wait in `ready`, so the next transition
+  // can often start with no download at all and the playing song never runs
+  // out before the next one exists.
+  const ready = [];     // { track_id, name, duration, suggestion }
+  const MAX_READY = 4;
+
+  // Length check: the server already rejects < 90 s and >= 9 min; LONG mode
+  // needs songs that can actually ride 3-6 min.
+  function minSongSecs() { return setMode() === "long" ? 180 : 90; }
+
+  async function trackDuration(trackId) {
+    try {
+      const a = await fetch(`/api/tracks/${trackId}/analysis`).then((r) => r.json());
+      return a && a.duration ? a.duration : 0;
+    } catch { return 0; }
+  }
+
+  async function downloadSuggestion(s) {
+    const label = `${s.artist} — ${s.title}`;
+    const cached = await findCached(s.artist, s.title);
+    if (cached) {
+      return { track_id: cached.track_id, name: cached.display_name || label,
+               duration: await trackDuration(cached.track_id), suggestion: s };
+    }
+    const tracks = window.dlJobs
+      ? await window.dlJobs.run(s.search_query, label)
+      : await importUrl(s.search_query);
+    if (!tracks.length) throw new Error("nothing downloaded");
+    const t = tracks[0];
+    return { track_id: t.track_id, name: t.display_name || label,
+             duration: t.duration || (await trackDuration(t.track_id)), suggestion: s };
+  }
+
+  function addReady(c) {
+    if (!c || history.includes(c.name) || ready.some((r) => r.track_id === c.track_id)) return;
+    ready.push(c);
+    while (ready.length > MAX_READY) ready.shift();
+  }
+
+  // Match + gates + load + schedule one downloaded candidate. True = scheduled.
+  async function evaluateCandidate(currentId, cand) {
+    if (!active || !cand) return false;
+    const nextId = cand.track_id;
+    const nextName = cand.name;
+    if (nextId === currentId || history.includes(nextName)) return false;
+    if (cand.duration && cand.duration < minSongSecs()) {
+      apStatus(`Skipping ${nextName}: ${fmtTime(cand.duration)} is too short for a ${setMode().toUpperCase()} set`);
+      return false;
+    }
+
+    apStatus(`Matching transition → ${nextName}…`);
+    const candidate = await matchTracks(currentId, nextId);
+    if (!candidate) return false;
+
+    // Measured vibe gate: reject candidates whose loudness / brightness /
+    // onset density / energy sit too far from what is playing right now.
+    if (candidate.vibe && candidate.vibe.ok === false) {
+      const why = (candidate.vibe.reasons || []).join("; ") || `distance ${candidate.vibe.distance}`;
+      console.warn("Autopilot vibe reject:", nextName, why);
+      apStatus(`Skipping ${nextName}: ${why}`);
+      return false;
+    }
+
+    // Show match score on the NEXT queue card.
+    const scoreEl = document.getElementById("ap-match-score");
+    if (scoreEl) {
+      const sc = Math.round(candidate.score || 0);
+      const good = sc >= 65;
+      scoreEl.textContent = `${good ? "⭐" : "⚡"} ${sc}/100${good ? "" : " · early exit"}`;
+      scoreEl.style.cssText = `display:inline;font-weight:700;color:${good ? "#4ade80" : "#f97316"};margin-left:6px`;
+    }
+
+    // Preload next track into staging deck
+    apStatus(`Loading ${nextName} into deck ${stagingDeck().toUpperCase()}…`);
+    const audioRes = await fetch(`/api/audio/tracks/${nextId}`);
+    if (!audioRes.ok) return false;
+    const blob = await audioRes.blob();
+    if (!active) return false;
+    await loadIntoDeck(stagingDeck(), nextId, nextName, blob);
+
+    const fireAt = scheduleTransition(currentId, nextId, nextName, candidate);
+    tryMashup(currentId, nextId, nextName, fireAt); // fire-and-forget
+    return true;
+  }
+
+  async function tryCandidate(currentId, cand) {
+    try { return await evaluateCandidate(currentId, cand); }
+    catch (e) {
+      console.warn("Autopilot candidate failed:", cand && cand.name, e.message);
+      apStatus(`Skipping ${cand && cand.name}: ${e.message}`);
+      return false;
+    }
+  }
+
   // ── core loop ─────────────────────────────────────────────────────────────
   async function prepareTransition(currentId) {
     if (!active) return;
-    apStatus("⏳ Loading next track — AI selecting…");
     renderQueue([]);
 
-    // Retry with fresh LLM suggestions when every candidate fails (download
-    // error, no real song found, vibe gate). Rejected titles are fed back as
+    // 1) Songs already pre-downloaded in an earlier round: no waiting.
+    while (ready.length && active) {
+      const c = ready.shift();
+      apStatus(`Trying pre-downloaded: ${c.name}`);
+      if (await tryCandidate(currentId, c)) return;
+    }
+
+    // 2) Fresh AI suggestions, all downloading in parallel. Retry with new
+    // suggestions when every candidate fails; rejected titles are fed back as
     // "avoid" so the model proposes different songs.
     const MAX_ROUNDS = 3;
     const rejected = [];
     for (let round = 1; round <= MAX_ROUNDS; round++) {
       if (!active) return;
-      if (round > 1) apStatus(`⏳ Retrying with new suggestions (${round}/${MAX_ROUNDS})…`);
-
-    let suggestions;
-    try {
-      suggestions = await getSuggestions(currentId, rejected);
-    } catch (e) {
-      console.warn("Autopilot suggest failed:", e.message);
-      apStatus(`Suggest error: ${e.message}`);
-      continue;
-    }
-    renderQueue(suggestions);
-
-    for (const s of suggestions) {
-      if (!active) return;
-      rejected.push(`${s.artist} - ${s.title}`); // only matters if this one fails too
+      apStatus(round > 1 ? `⏳ Retrying with new suggestions (${round}/${MAX_ROUNDS})…`
+                         : "⏳ AI selecting next songs…");
+      let suggestions;
       try {
-        const label = `${s.artist} — ${s.title}`;
-
-        // Check cache before downloading — skip yt-dlp if already on server.
-        let nextId, nextName;
-        const cached = await findCached(s.artist, s.title);
-        if (cached) {
-          apStatus(`Using cached: ${label}`);
-          nextId   = cached.track_id;
-          nextName = cached.display_name || cached.filename || label;
-        } else {
-          apStatus(`Downloading: ${label}…`);
-          const tracks = await importUrl(s.search_query);
-          if (!tracks.length) continue;
-          nextId   = tracks[0].track_id;
-          nextName = tracks[0].display_name || label;
-        }
-
-        apStatus(`Matching transition…`);
-        const candidate = await matchTracks(currentId, nextId);
-        if (!candidate) continue;
-
-        // Measured vibe gate: reject candidates whose loudness / brightness /
-        // onset density / energy sit too far from what is playing right now.
-        if (candidate.vibe && candidate.vibe.ok === false) {
-          const why = (candidate.vibe.reasons || []).join("; ") || `distance ${candidate.vibe.distance}`;
-          console.warn("Autopilot vibe reject:", s.title, why);
-          apStatus(`Skipping ${nextName}: ${why}`);
-          continue;
-        }
-
-        // Show match score on the NEXT queue card.
-        const scoreEl = document.getElementById("ap-match-score");
-        if (scoreEl) {
-          const sc = Math.round(candidate.score || 0);
-          const good = sc >= 65;
-          scoreEl.textContent = `${good ? "⭐" : "⚡"} ${sc}/100${good ? "" : " · early exit"}`;
-          scoreEl.style.cssText = `display:inline;font-weight:700;color:${good ? "#4ade80" : "#f97316"};margin-left:6px`;
-        }
-
-        // Preload next track into staging deck
-        apStatus(`Loading ${nextName} into deck ${stagingDeck().toUpperCase()}…`);
-        const audioRes = await fetch(`/api/audio/tracks/${nextId}`);
-        if (!audioRes.ok) continue;
-        const blob = await audioRes.blob();
-        await loadIntoDeck(stagingDeck(), nextId, nextName, blob);
-
-        const fireAt = scheduleTransition(currentId, nextId, nextName, candidate);
-        tryMashup(currentId, nextId, nextName, fireAt); // fire-and-forget
-        return;
+        suggestions = await getSuggestions(currentId, rejected);
       } catch (e) {
-        console.warn("Autopilot suggestion failed:", s.title, e.message);
-        apStatus(`Skipping ${s.title}: ${e.message}`);
+        console.warn("Autopilot suggest failed:", e.message);
+        apStatus(`Suggest error: ${e.message}`);
+        continue;
       }
-    }
+      renderQueue(suggestions);
+      if (!suggestions.length) continue;
+      apStatus(`⬇ Pre-downloading ${suggestions.length} songs…`);
+
+      const jobs = suggestions.map((s) => downloadSuggestion(s).catch((e) => {
+        rejected.push(`${s.artist} - ${s.title}`);
+        console.warn("Download failed:", s.title, e.message);
+        return null;
+      }));
+      // Highest-ranked suggestion first; the rest keep downloading meanwhile.
+      for (let i = 0; i < jobs.length; i++) {
+        const c = await jobs[i];
+        if (!active) return;
+        if (!c) continue;
+        if (await tryCandidate(currentId, c)) {
+          // Leftovers finish in the background and wait for later transitions.
+          jobs.slice(i + 1).forEach((p) => p.then(addReady));
+          return;
+        }
+        rejected.push(`${c.suggestion.artist} - ${c.suggestion.title}`);
+      }
     }
     apStatus(`All suggestions failed after ${MAX_ROUNDS} tries — autopilot stopped.`);
     active = false;
@@ -725,6 +789,7 @@
 
   function stop() {
     active = false;
+    ready.length = 0;
     if (window.mashup) window.mashup.cancel();
     mashupTag = "";
     clearRun();

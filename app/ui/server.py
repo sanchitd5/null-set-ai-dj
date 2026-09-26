@@ -181,14 +181,14 @@ class DownloadRequest(BaseModel):
 
 @app.post("/api/download")
 async def download_from_url(req: DownloadRequest):
-    """Download a YouTube, YouTube Music, or Spotify URL and register as a track."""
+    """Download a YouTube or YouTube Music URL and register as a track."""
     from app.ui.download_service import detect_source, download_to_dir
 
     source = detect_source(req.url)
     if source == "unknown":
         raise HTTPException(
             status_code=400,
-            detail="Unsupported URL. Paste a YouTube, YouTube Music, or Spotify link.",
+            detail="Unsupported URL. Paste a YouTube or YouTube Music link.",
         )
 
     # Download into a private temp dir so thumbnails / .part files from a failed
@@ -196,7 +196,7 @@ async def download_from_url(req: DownloadRequest):
     tmp_dir = UPLOAD_DIR / f"_dl_{uuid.uuid4().hex}"
     try:
         try:
-            # Off the event loop: a Spotify/YouTube fetch can take 1-2 min and
+            # Off the event loop: a YouTube fetch can take a minute and
             # would otherwise stall every other request (audio, analysis, UI).
             from starlette.concurrency import run_in_threadpool
 
@@ -204,21 +204,66 @@ async def download_from_url(req: DownloadRequest):
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc))
 
-        results = []
-        for path in paths:
-            original_name = path.stem
-            data = path.read_bytes()
-            track_id = hashlib.sha256(data).hexdigest()[:16]
-            dest = UPLOAD_DIR / f"{track_id}{path.suffix}"
-            if not dest.exists():
-                shutil.move(str(path), dest)
-            _tracks[track_id] = dest
-            _remember_track_name(track_id, original_name)
-            results.append({"track_id": track_id, "filename": dest.name, "display_name": original_name})
+        results = _register_downloaded(paths)
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
     return {"source": source, "tracks": results}
+
+
+def _register_downloaded(paths: List[Path]) -> List[dict]:
+    """Move downloaded audio into UPLOAD_DIR under its content-hash id."""
+    results = []
+    for path in paths:
+        original_name = path.stem
+        data = path.read_bytes()
+        track_id = hashlib.sha256(data).hexdigest()[:16]
+        dest = UPLOAD_DIR / f"{track_id}{path.suffix}"
+        if not dest.exists():
+            shutil.move(str(path), dest)
+        _tracks[track_id] = dest
+        _remember_track_name(track_id, original_name)
+        results.append({"track_id": track_id, "filename": dest.name, "display_name": original_name})
+    return results
+
+
+class DownloadJobRequest(BaseModel):
+    url: str
+    label: str = ""
+
+
+@app.post("/api/download/jobs")
+def post_download_job(req: DownloadJobRequest):
+    """Start a background download (pre-download / prefetch); poll for progress."""
+    from app.ui import download_jobs
+    from app.ui.download_service import detect_source, download_to_dir
+
+    if detect_source(req.url) == "unknown":
+        raise HTTPException(status_code=400, detail="Unsupported URL.")
+    job_id = download_jobs.start_job(
+        req.url, req.label[:120], UPLOAD_DIR,
+        download_fn=download_to_dir,
+        register_fn=_register_downloaded,
+        analyze_fn=lambda tid: analyze_track(_track_path(tid)),
+    )
+    return {"job_id": job_id}
+
+
+@app.get("/api/download/jobs")
+def get_download_jobs():
+    from app.ui import download_jobs
+
+    return {"jobs": download_jobs.list_jobs()[:20]}
+
+
+@app.get("/api/download/jobs/{job_id}")
+def get_download_job(job_id: str):
+    from app.ui import download_jobs
+
+    job = download_jobs.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Unknown job")
+    return job
 
 
 @app.post("/api/tracks")

@@ -1,30 +1,28 @@
 """
-URL download service: YouTube, YouTube Music, Spotify → MP3.
+URL download service: YouTube / YouTube Music -> FLAC (yt-dlp).
 
-YouTube / YouTube Music: yt-dlp (direct stream extraction).
-Spotify track/album/playlist: spotdl (matches on YouTube Music, downloads MP3).
+Autopilot suggestions use "ytmsearch:Artist - Title": YouTube Music's *songs*
+search (official audio, no videos/live uploads), falling back to a regular
+YouTube search; both go through the same song filters (no mixes, sets, live
+recordings, interviews, covers; 90 s - 9 min; title must match the query).
 """
 from __future__ import annotations
 
 import re
-import subprocess
-import sys
 from pathlib import Path
+from typing import Callable, Optional
+from urllib.parse import quote_plus
 
 try:
     import yt_dlp as _yt_dlp
 except ImportError:
     _yt_dlp = None
 
-_SPOTIFY_RE = re.compile(
-    r"https?://open\.spotify\.com/(track|album|playlist)/[A-Za-z0-9]+"
-)
 _YT_MUSIC_RE = re.compile(r"https?://music\.youtube\.com/")
 _YT_RE = re.compile(r"https?://(www\.)?(youtube\.com|youtu\.be)/")
 _YTSEARCH_RE = re.compile(r"ytsearch\d*:")
-# Autopilot suggestions: "spotsearch:Artist - Title" -> spotdl looks the song up on
-# Spotify (real released tracks only) and fetches duration-matched audio.
-_SPOTSEARCH_RE = re.compile(r"spotsearch:")
+# Autopilot suggestions: "ytmsearch:Artist - Title" -> YouTube Music songs search.
+_YTMSEARCH_RE = re.compile(r"ytmsearch:")
 
 # Live recordings: "(Live)", "[Live at ...]", "Song - Live", "Live at/in/from ...",
 # "Artist Live Song, City" (no dash before "Live", so "Oasis - Live Forever" passes).
@@ -99,8 +97,22 @@ def _query_words(url: str) -> list[str]:
     return [w for w in words if w and w != "audio"]
 
 
-def _search_match_filter(words: list[str]):
-    """yt-dlp match_filter: accept only a real song whose title matches the query."""
+# Alternate versions: only accepted when the requested title asks for one.
+_VERSION_RE = re.compile(
+    r"\b(remix|re-?edit|edit|rework|bootleg|vip|flip|extended|mashup|refix|dub|sped|slowed|acoustic|instrumental)\b",
+    re.IGNORECASE,
+)
+
+
+def _search_match_filter(words: list[str], song: Optional[tuple[list[str], list[str], str]] = None):
+    """yt-dlp match_filter: accept only a real song whose title matches the query.
+
+    song = (artist_words, title_words, raw_title) for "Artist - Title" queries:
+    stricter than `words` — the song title's words must be in the VIDEO title
+    (not the channel), the artist must appear in title or channel, and remixes /
+    edits are rejected unless the requested title is one ("Four Tet - Baby" must
+    not resolve to "Dream Baby Dream (Four Tet Remix)").
+    """
 
     def _filter(info: dict, *, incomplete: bool = False):
         # yt-dlp also calls this on the search-results container itself (and on
@@ -120,6 +132,19 @@ def _search_match_filter(words: list[str]):
             return "title looks like an interview/non-music video"
         if _is_live(title):
             return "title looks like a live recording"
+        if song:
+            artist_w, title_w, raw_title = song
+            vt = " " + _norm(title) + " "
+            full = " " + _norm(f"{title} {info.get('channel') or ''} {info.get('uploader') or ''}") + " "
+            t_hits = sum(1 for w in title_w if f" {w} " in vt)
+            if title_w and t_hits / len(title_w) < 0.8:
+                return f"song title does not match ({t_hits}/{len(title_w)} words)"
+            a_hits = sum(1 for w in artist_w if f" {w} " in full)
+            if artist_w and a_hits / len(artist_w) < 0.5:
+                return f"artist does not match ({a_hits}/{len(artist_w)} words)"
+            if _VERSION_RE.search(title) and not _VERSION_RE.search(raw_title):
+                return "alternate version (remix/edit) not requested"
+            return None
         if words:
             hay = " " + _norm(f"{title} {info.get('channel') or ''} {info.get('uploader') or ''}") + " "
             hits = sum(1 for w in words if w in hay)
@@ -131,82 +156,76 @@ def _search_match_filter(words: list[str]):
 
 
 def detect_source(url: str) -> str:
-    """Return 'spotify', 'youtube_music', 'youtube', 'ytsearch', or 'unknown'."""
-    if _SPOTIFY_RE.match(url):
-        return "spotify"
+    """Return 'youtube_music', 'youtube', or 'unknown'."""
     if _YT_MUSIC_RE.match(url):
         return "youtube_music"
     if _YT_RE.match(url):
         return "youtube"
     if _YTSEARCH_RE.match(url):
         return "youtube"  # yt-dlp handles ytsearch: natively
-    if _SPOTSEARCH_RE.match(url):
-        return "spotify_search"
+    if _YTMSEARCH_RE.match(url):
+        return "youtube_music"
     return "unknown"
 
 
-def download_to_dir(url: str, output_dir: Path) -> list[Path]:
-    """Download audio to output_dir. Returns list of new audio file paths (FLAC)."""
-    output_dir.mkdir(parents=True, exist_ok=True)
-    source = detect_source(url)
-    if source == "spotify":
-        return _spotdl(url, output_dir)
-    if source == "spotify_search":
-        return _spotdl_search(_SPOTSEARCH_RE.sub("", url, count=1), output_dir)
-    return _ytdlp(url, output_dir)
+Progress = Callable[[str, Optional[float]], None]  # (stage, percent 0-100 or None)
 
 
-SPOTDL_TIMEOUT_SECS = 240
+def _noop_progress(stage: str, percent: Optional[float] = None) -> None:
+    pass
 
 
-def _spotdl_search(query: str, output_dir: Path) -> list[Path]:
-    """Find a released song on Spotify by "Artist - Title" and download it.
+def download_to_dir(url: str, output_dir: Path, progress: Optional[Progress] = None) -> list[Path]:
+    """Download audio to output_dir. Returns list of new audio file paths (FLAC).
 
-    No Spotify match means the song most likely does not exist (LLM made it up),
-    so this raises instead of falling back to a loose YouTube search, which is
-    how live recordings and sets used to slip in.
+    progress(stage, percent) is called from the download thread: percent is a
+    real byte ratio while downloading, None (indeterminate) for search / convert steps.
     """
-    query = " ".join(query.split())
-    if not query or query.startswith("-") or len(query) > 200:
-        raise RuntimeError("invalid Spotify search query")
-    if _is_mix(query) or _is_non_music(query) or _is_live(query):
-        raise RuntimeError(f"not a studio song: \"{query}\"")
-
-    before = _audio_files(output_dir)
-    try:
-        result = subprocess.run(
-            [
-                sys.executable, "-m", "spotdl", "download", query,
-                "--output", str(output_dir / "{artists} - {title}.{output-ext}"),
-                "--format", "flac",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=SPOTDL_TIMEOUT_SECS,
-        )
-    except subprocess.TimeoutExpired:
-        raise RuntimeError(f"Spotify download timed out for \"{query}\"")
-    new_files = sorted(_audio_files(output_dir) - before)
-    if not new_files:
-        detail = (result.stdout or result.stderr or "").strip().splitlines()[-1:] or [""]
-        raise RuntimeError(f"no Spotify match for \"{query}\" ({detail[0][:120]})")
-    # spotdl takes Spotify's top hit even when it is unrelated (a made-up song
-    # came back as a random chart track), so the result must actually be the
-    # requested song: most query words present in "{artists} - {title}".
-    words = [w for w in _norm(query).split() if len(w) > 1]
-    for path in new_files:
-        hay = " " + _norm(path.stem) + " "
-        hits = sum(1 for w in words if f" {w} " in hay)
-        if words and hits / len(words) < _MIN_WORD_MATCH:
-            for p in new_files:
-                p.unlink(missing_ok=True)
-            raise RuntimeError(
-                f"no Spotify match for \"{query}\" (closest was \"{path.stem}\")"
+    progress = progress or _noop_progress
+    output_dir.mkdir(parents=True, exist_ok=True)
+    if _YTMSEARCH_RE.match(url):
+        query = " ".join(_YTMSEARCH_RE.sub("", url, count=1).split())
+        if not query or len(query) > 200:
+            raise RuntimeError("invalid search query")
+        if _is_mix(query) or _is_non_music(query) or _is_live(query):
+            raise RuntimeError(f"not a studio song: \"{query}\"")
+        progress("searching YouTube Music", None)
+        artist, _, title = query.partition(" - ")
+        if not title:
+            artist, title = "", query
+        song = (_words_of(artist), _words_of(title), title)
+        try:
+            return _ytdlp(
+                f"https://music.youtube.com/search?q={quote_plus(query)}#songs",
+                output_dir, progress, words=_words_of(query), song=song,
             )
-    return _reject_non_tracks(new_files)
+        except RuntimeError as exc:
+            if "No matching studio track" not in str(exc):
+                raise
+            progress("searching YouTube", None)  # song not on YT Music: regular search
+            return _ytdlp(f"ytsearch{_SEARCH_POOL}:{query} audio", output_dir, progress,
+                          words=_words_of(query), song=song)
+    progress("searching YouTube" if _YTSEARCH_RE.match(url) else "fetching", None)
+    return _ytdlp(url, output_dir, progress)
 
 
-def _ytdlp(url: str, output_dir: Path) -> list[Path]:
+def _words_of(query: str) -> list[str]:
+    return [w for w in _norm(query).split() if w and w != "audio"]
+
+
+def _ytdlp(url: str, output_dir: Path, progress: Optional[Progress] = None,
+           words: Optional[list[str]] = None,
+           song: Optional[tuple[list[str], list[str], str]] = None) -> list[Path]:
+    progress = progress or _noop_progress
+
+    def _dl_hook(d: dict) -> None:
+        if d.get("status") == "downloading":
+            total = d.get("total_bytes") or d.get("total_bytes_estimate")
+            done = d.get("downloaded_bytes") or 0
+            progress("downloading", (100.0 * done / total) if total else None)
+        elif d.get("status") == "finished":
+            progress("converting", None)
+
     if _yt_dlp is None:
         raise RuntimeError("yt-dlp not installed — run: pip install yt-dlp")
 
@@ -215,17 +234,22 @@ def _ytdlp(url: str, output_dir: Path) -> list[Path]:
     # Search queries: widen to a pool of results and take the FIRST one that is a real
     # song matching the query (not an interview, mix, clip). Direct URLs: only guard
     # length / mix / non-music.
-    is_search = bool(_YTSEARCH_RE.match(url))
-    words = _query_words(url) if is_search else []
-    if is_search:
+    is_music_search = url.startswith("https://music.youtube.com/search")
+    is_search = bool(_YTSEARCH_RE.match(url)) or is_music_search
+    if words is None:
+        words = _query_words(url) if _YTSEARCH_RE.match(url) else []
+    if _YTSEARCH_RE.match(url):
         url = _YTSEARCH_RE.sub(f"ytsearch{_SEARCH_POOL}:", url, count=1)
 
     opts = {
         "format": "bestaudio/best",
         "outtmpl": str(output_dir / "%(title)s.%(ext)s"),
         "windowsfilenames": True,
-        "noplaylist": True,
-        "match_filter": _search_match_filter(words),
+        # a search results page IS a playlist; only single direct links get noplaylist
+        "noplaylist": not is_search,
+        "playlistend": _SEARCH_POOL,
+        "match_filter": _search_match_filter(words, song),
+        "progress_hooks": [_dl_hook],
         "max_downloads": 1,
         "quiet": True,
         "no_warnings": True,
@@ -283,25 +307,3 @@ def _reject_non_tracks(new_files: list[Path], check_live: bool = True) -> list[P
             )
         clean.append(path)
     return clean
-
-
-def _spotdl(url: str, output_dir: Path) -> list[Path]:
-    before = _audio_files(output_dir)
-
-    result = subprocess.run(
-        [
-            sys.executable, "-m", "spotdl",
-            "download", url,
-            "--output", str(output_dir),
-            "--format", "flac",
-        ],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"spotdl failed:\n{result.stderr.strip() or result.stdout.strip()}"
-        )
-
-    after = _audio_files(output_dir)
-    return sorted(after - before)

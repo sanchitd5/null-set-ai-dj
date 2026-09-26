@@ -32,7 +32,6 @@ fastapi                                    # Phase 5: web workbench (ui/server.p
 uvicorn                                    # Phase 5: ASGI server for ui/server.py
 python-multipart                           # Phase 5: file upload parsing for ui/server.py
 yt-dlp>=2024.1.0                           # YouTube / YouTube Music audio download
-spotdl>=4.0.0                              # Spotify → YouTube Music → MP3 (no Spotify API keys needed)
 
 # NOTE: dsp_rack.py (Phase 3) was speced to use Spotify's `pedalboard`, but its
 # native audio-processing code was found to segfault unconditionally on this

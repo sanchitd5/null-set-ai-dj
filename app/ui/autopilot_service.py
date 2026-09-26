@@ -286,10 +286,9 @@ def suggest_next_tracks(
     for s in suggestions:
         artist_s = s.get("artist", "")
         title_s = s.get("title", "")
-        # Spotify lookup (released studio tracks only; no match = likely made-up
-        # song -> skipped). Replaces the loose YouTube search that let live
-        # recordings and sets through.
-        s["search_query"] = f"spotsearch:{artist_s} - {title_s}"
+        # YouTube Music songs search with strict song matching (see
+        # download_service): no live recordings, sets, remixes or covers.
+        s["search_query"] = f"ytmsearch:{artist_s} - {title_s}"
         # Ensure all expected fields present with defaults
         s.setdefault("genre", "")
         s.setdefault("mix_moment", "")

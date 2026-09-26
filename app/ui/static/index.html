@@ -652,7 +652,7 @@
 
   <div class="ap-controls">
     <input type="text" id="ap-seed-input"
-           placeholder="Seed URL — YouTube, YouTube Music or Spotify track…"
+           placeholder="Seed URL — YouTube or YouTube Music track…"
            autocomplete="off" spellcheck="false" />
     <input type="text" id="ap-occasion-input"
            placeholder="Occasion (e.g. late night club, festival warm-up, chill sunset)…"
@@ -681,6 +681,7 @@
     <ol class="ap-mind-log" id="ap-mind-log"></ol>
   </div>
 
+  <div class="ap-downloads" id="ap-downloads" aria-live="polite" aria-label="Pre-downloads"></div>
   <div class="ap-queue" id="ap-queue">
     <div class="ap-empty">Set not running — start above.</div>
   </div>
@@ -715,7 +716,7 @@
 
   <div class="url-import-row">
     <input type="text" id="url-import-input"
-           placeholder="Paste YouTube, YouTube Music or Spotify URL and press IMPORT or Enter…"
+           placeholder="Paste a YouTube or YouTube Music URL and press IMPORT or Enter…"
            autocomplete="off" spellcheck="false" />
     <button class="hw-btn" id="url-import-btn">IMPORT</button>
     <span id="url-import-status" class="hud-label"></span>
@@ -757,6 +758,7 @@
 <script src="/mashup-layer.js"></script>
 <script src="/browser.js"></script>
 <script src="/dj-mind.js"></script>
+<script src="/download-progress.js"></script>
 <script src="/autopilot.js"></script>
 </body>
 </html>

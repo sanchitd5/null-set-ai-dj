@@ -220,7 +220,7 @@
   // A freshly uploaded track becomes a browser row straight away.
   document.addEventListener("deck-track-loaded", () => { refresh(); });
 
-  // --- URL import (YouTube / YouTube Music / Spotify) ---
+  // --- URL import (YouTube / YouTube Music) ---
   const urlInput = document.getElementById("url-import-input");
   const urlBtn = document.getElementById("url-import-btn");
   const urlStatusEl = document.getElementById("url-import-status");
