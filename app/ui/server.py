@@ -418,16 +418,19 @@ class BlendRequest(BaseModel):
     window_hi: float
     a_bpm_effective: Optional[float] = None
     bars: int = 16
+    entry_mode: str = "match"       # "drop": enter on B's first long drop (peak moves)
 
 
 @app.post("/api/blend/plan")
 def post_blend_plan(req: BlendRequest):
     """Beat-to-beat blend: vocal-free exit phrase in A, vocal-free entry phrase
     in B, and the playback rate that locks B's tempo to A's."""
-    from app.music_brain.blend import ALLOWED_BARS, plan_blend
+    from app.music_brain.blend import ALLOWED_BARS, ENTRY_MODES, plan_blend
 
     if req.bars not in ALLOWED_BARS:
         raise HTTPException(status_code=400, detail=f"bars must be one of {list(ALLOWED_BARS)}")
+    if req.entry_mode not in ENTRY_MODES:
+        raise HTTPException(status_code=400, detail=f"entry_mode must be one of {list(ENTRY_MODES)}")
     if not (0 <= req.window_lo <= req.window_hi <= 3600):
         raise HTTPException(status_code=400, detail="bad play window")
     a = analyze_track(_track_path(req.a_id))
@@ -438,6 +441,7 @@ def post_blend_plan(req: BlendRequest):
         a_vocals=_vocal_regions_for(req.a_id),
         b_vocals=_vocal_regions_for(req.b_id),
         bars=req.bars,
+        entry_mode=req.entry_mode,
     )
 
 

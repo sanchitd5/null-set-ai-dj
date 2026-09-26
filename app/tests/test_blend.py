@@ -66,3 +66,36 @@ def test_entry_matches_exit_energy_not_just_intro():
     plan = plan_blend(a, b, 80.0, 170.0, a_vocals=[], b_vocals=[], bars=16)
     assert plan["entry"] >= 64.0                        # enters at B's matching peak, not its quiet intro
     assert plan["entry_energy"] == pytest.approx(0.9)
+
+
+# ── entry_mode "drop" (peak moves: DOUBLE DROP / DROP SWAP) ───────────────────
+def _droppy(bpm=120, drop_at=96.0):
+    # 2 s bars: drop is 1-3 s slivers on the energy grid, merged to 32 s
+    secs = [StructureSection("intro", 0, 32, 0.3), StructureSection("build", 32, drop_at, 0.6)]
+    secs += [StructureSection("drop", drop_at + i * 2, drop_at + (i + 1) * 2, 0.95) for i in range(16)]
+    secs += [StructureSection("drop", 200, 204, 0.9),               # sliver: not a long drop
+             StructureSection("outro", 204, 240, 0.3)]
+    return _track(bpm, sections=secs)
+
+
+def test_drop_entry_lands_on_the_first_long_drop():
+    a, b = _track(120), _droppy(drop_at=96.0)
+    plan = plan_blend(a, b, 80.0, 170.0, bars=8, entry_mode="drop")
+    assert plan["ok"] and plan["entry_mode"] == "drop"
+    assert plan["entry"] == 96.0 and plan["entry_label"] == "drop"   # past 45%: allowed in drop mode
+    assert plan["drop"] == {"start": 96.0, "end": 128.0}
+    assert plan["entry_energy"] is None or plan["entry_energy"] > 0
+
+
+def test_drop_entry_needs_a_long_drop_on_the_grid():
+    a = _track(120)
+    assert "no long drop" in plan_blend(a, _track(120), 80.0, 170.0, entry_mode="drop")["reasons"][0]
+    off = _droppy(drop_at=101.0)                     # 5 s off B's 16 s phrase grid
+    assert "no phrase line" in plan_blend(a, off, 80.0, 170.0, bars=8, entry_mode="drop")["reasons"][0]
+    with pytest.raises(ValueError):
+        plan_blend(a, off, 80.0, 170.0, entry_mode="peak")
+
+
+def test_match_mode_unchanged_by_drop_fields():
+    plan = plan_blend(_track(120), _droppy(), 80.0, 170.0, bars=16)
+    assert plan["entry_mode"] == "match" and plan["drop"] is None

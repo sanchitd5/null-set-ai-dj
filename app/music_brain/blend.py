@@ -31,6 +31,8 @@ MAX_VOCAL_COVERAGE = 0.15      # "instrumental" = at most 15% of the blend has v
 ENTRY_SEARCH_FRACTION = 0.45   # B's entry must leave >= 55% of the song to play
 ENERGY_MATCH_WEIGHT = 1.5      # |A exit energy - B entry energy| penalty (both 0-1, own-peak normalised)
 ALLOWED_BARS = (8, 16, 32)
+ENTRY_MODES = ("match", "drop")
+DROP_MIN_BARS = 8              # a "long" drop: same sliver filter as dj-mind.js mergeSections
 
 _EXIT_LABEL_BONUS = {"outro": 0.25, "breakdown": 0.2, "intro": 0.1, "build": 0.05}
 _ENTRY_LABEL_BONUS = {"intro": 0.25, "build": 0.1, "breakdown": 0.05}
@@ -62,6 +64,21 @@ def _mean_energy(t: TrackAnalysis, start: float, end: float) -> Optional[float]:
     return sum(vals) / len(vals) if vals else None
 
 
+def long_drops(t: TrackAnalysis, bar: float) -> List[Tuple[float, float, float]]:
+    """(start, end, energy) of drop sections at least DROP_MIN_BARS long, after
+    merging adjacent same-label slivers (raw sections are 1-3 s on the energy
+    grid). Same merge as mergeSections() in app/ui/static/dj-mind.js."""
+    merged: List[list] = []
+    for s in t.sections:
+        if merged and merged[-1][0] == s.label and abs(merged[-1][2] - s.start) < 0.01:
+            la, sa = merged[-1][2] - merged[-1][1], s.end - s.start
+            merged[-1][3] = (merged[-1][3] * la + (s.energy or 0.0) * sa) / max(1e-6, la + sa)
+            merged[-1][2] = s.end
+        else:
+            merged.append([s.label, s.start, s.end, s.energy or 0.0])
+    return [(a, b, e) for lab, a, b, e in merged if lab == "drop" and b - a >= DROP_MIN_BARS * bar]
+
+
 def tempo_lock(a_bpm: float, b_bpm: float) -> Optional[Tuple[float, float]]:
     """(playback_rate for B, B bpm multiplier) so B's beat matches A's, or None."""
     if a_bpm <= 0 or b_bpm <= 0:
@@ -83,9 +100,15 @@ def plan_blend(
     a_vocals: Optional[Regions] = None,
     b_vocals: Optional[Regions] = None,
     bars: int = 16,
+    entry_mode: str = "match",
 ) -> dict:
+    """entry_mode "match": B enters where its energy matches A's exit.
+    entry_mode "drop": B enters on its first long drop (peak moves DOUBLE DROP /
+    DROP SWAP land B's drop on A's drop downbeat; ./DJ/05 Double Drop, Drop Swap)."""
     if bars not in ALLOWED_BARS:
         raise ValueError(f"bars must be one of {ALLOWED_BARS}")
+    if entry_mode not in ENTRY_MODES:
+        raise ValueError(f"entry_mode must be one of {ENTRY_MODES}")
     a_eff = a_bpm_effective or a.bpm
     lock = tempo_lock(a_eff, b.bpm)
     if lock is None:
@@ -118,11 +141,23 @@ def plan_blend(
     # instrumental for the whole blend, leaving enough of B to play.
     entries = []
     limit = b.duration * ENTRY_SEARCH_FRACTION
+    drop_span = None
+    if entry_mode == "drop":
+        drops = long_drops(b, 240.0 / b.bpm)
+        if not drops:
+            return {"ok": False, "reasons": ["incoming song has no long drop"]}
+        drop_span = drops[0]
+        # Target B's drop energy, not A's exit energy: the drop IS the entry.
+        a_energy = drop_span[2]
+        limit = b.duration
     # Only B's own phrase grid: its first boundary is its first detected
     # downbeat (5.9 s into Lane 8 "Little By Little"), not 0:00. Entering at
     # 0:00 put B's downbeats off A's phrase line by whatever the intro pad is.
     for e in b.phrase_boundaries_8bar:
         if e > limit or e + b_len > b.duration:
+            continue
+        # drop mode: only B's phrase line on the drop downbeat (within a bar)
+        if drop_span and abs(e - drop_span[0]) > 240.0 / b.bpm + 0.01:
             continue
         cov = _coverage(b_vocals, e, e + b_len) if b_vocals is not None else None
         score = -0.15 * (e / max(1.0, limit))            # mild: more of B left to play
@@ -135,7 +170,8 @@ def plan_blend(
             score -= 2.0 * cov
         entries.append((score, e, cov, b_energy))
     if not entries:
-        return {"ok": False, "reasons": ["incoming song too short for this blend"]}
+        why = "no phrase line on the incoming drop" if drop_span else "incoming song too short for this blend"
+        return {"ok": False, "reasons": [why]}
 
     en_score, entry_t, b_cov, b_energy = max(entries)
     reasons = []
@@ -147,8 +183,11 @@ def plan_blend(
         instrumental = False
         reasons.append(f"no vocal-free entry (best {b_cov:.0%} vocal)")
 
+    out_drop = None if drop_span is None else {"start": round(drop_span[0], 3), "end": round(drop_span[1], 3)}
     return {
         "ok": True,
+        "entry_mode": entry_mode,
+        "drop": out_drop,           # drop mode: B's long drop the entry lands on
         "instrumental": instrumental,   # False: blend anyway but keep it short
         "vocals_known": vocals_known,
         "reasons": reasons,
