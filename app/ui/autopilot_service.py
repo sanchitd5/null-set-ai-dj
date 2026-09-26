@@ -17,6 +17,8 @@ import json
 import os
 import re
 
+from app.ui import llm_gate
+
 # ── Camelot wheel compatibility rules ─────────────────────────────────────────
 # Listed explicitly so a small local model doesn't have to derive them.
 _CAMELOT_COMPAT = """\
@@ -228,7 +230,33 @@ def _extract_json(text: str) -> dict:
     end = text.rfind("}") + 1
     if start == -1 or end == 0:
         raise ValueError(f"No JSON in response: {text[:200]}")
-    return json.loads(text[start:end])
+    return _loads_repaired(text[start:end])
+
+
+def _loads_repaired(body: str, max_fixes: int = 20) -> dict:
+    """json.loads, fixing the small-model slips seen live at the exact spot
+    the decoder stops: a missing comma ("Expecting ',' delimiter") and a
+    trailing comma before } or ]. Anything else re-raises (caller retries)."""
+    for _ in range(max_fixes):
+        try:
+            return json.loads(body)
+        except json.JSONDecodeError as exc:
+            pos = exc.pos
+            prev = body[:pos].rstrip()
+            if body[pos:pos + 1] == "," and body[pos + 1:].lstrip()[:1] in ("}", "]"):
+                body = body[:pos] + body[pos + 1:]  # py3.13+: points at the comma
+            elif exc.msg.startswith("Expecting ',' delimiter"):
+                body = body[:pos] + "," + body[pos:]
+            elif prev.endswith(",") and body[pos:pos + 1] in ("}", "]"):
+                body = prev[:-1] + body[pos:]
+            elif exc.msg.startswith("Expecting property name") and prev.endswith(","):
+                body = prev[:-1] + body[pos:]
+            else:
+                raise
+    return json.loads(body)
+
+
+GATE_WAIT_S = 240.0  # suggest / look-ahead give up after this long in the queue
 
 
 def chat_raw(
@@ -238,13 +266,25 @@ def chat_raw(
     timeout: float | None = None,
     model: str | None = None,
     max_tokens: int | None = None,
+    priority: int = llm_gate.SUGGEST,
 ) -> str:
     """One JSON-mode chat call to the local model; returns the raw text.
 
-    Supports openai v0.x/3.x (ChatCompletion.create) and v1.x/v2.x (OpenAI client).
-    response_format may be ignored by the server (mlx_lm.server): callers
-    always parse with _extract_json. max_tokens stops a server default from
-    truncating the JSON.
+    Every call passes the priority gate (app/ui/llm_gate.py): one LLM call at
+    a time, PLAN before SUGGEST before LOOKAHEAD. A plan's `timeout` covers
+    its wait in the queue plus the call itself.
+    """
+    wait = timeout if timeout is not None else GATE_WAIT_S
+    with llm_gate.gate.slot(priority, wait_timeout=wait) as waited:
+        left = None if timeout is None else max(5.0, timeout - waited)
+        return _chat_call(system, user, temperature, left, model, max_tokens)
+
+
+def _chat_call(system, user, temperature, timeout, model, max_tokens) -> str:
+    """The HTTP call itself. Supports openai v0.x/3.x (ChatCompletion.create)
+    and v1.x/v2.x (OpenAI client). response_format may be ignored by the
+    server (mlx_lm.server): callers always parse with _extract_json.
+    max_tokens stops a server default from truncating the JSON.
     """
     try:
         import openai
@@ -295,6 +335,7 @@ def suggest_next_tracks(
     meta: dict | None = None,
     genre: str = "",
     history_display: list[str] | None = None,
+    lookahead: bool = False,
 ) -> list[dict]:
     """
     Call local Ollama (gemma3:4b) to suggest next n tracks.
@@ -306,6 +347,7 @@ def suggest_next_tracks(
     genre: this track's genre from an earlier suggestion ("" = generic DJ rules).
     history_display: cleaned history names for the prompt; `history` (raw names)
     still drives the repeat filter.
+    lookahead: songs for AFTER the booked next one; lowest LLM priority.
     Compatible with both openai v0.x/3.x (ChatCompletion.create) and v1.x/v2.x (OpenAI client).
     """
     user_msg = _USER_TEMPLATE.format(
@@ -332,7 +374,17 @@ def suggest_next_tracks(
     if brief:
         user_msg += _KNOWLEDGE_TEMPLATE.format(brief=brief)
 
-    data = _extract_json(chat_raw(_SYSTEM, user_msg, temperature=0.5, max_tokens=700))
+    prio = llm_gate.LOOKAHEAD if lookahead else llm_gate.SUGGEST
+    data = None
+    for attempt in range(2):  # one retry when the JSON is past repair
+        raw = chat_raw(_SYSTEM, user_msg, temperature=0.5, max_tokens=700, priority=prio)
+        try:
+            data = _extract_json(raw)
+            break
+        except ValueError as exc:  # JSONDecodeError is a ValueError
+            if attempt:
+                raise
+            print(f"[suggest] bad JSON, retrying once: {exc}", flush=True)
     suggestions = _filter_suggestions(data, history)[:n]
     if meta is not None:  # caller wants the model's read of the CURRENT track too
         meta["current_profile"] = data.get("current_profile") or {}

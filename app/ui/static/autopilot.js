@@ -451,7 +451,7 @@
     const res = await fetch("/api/autopilot/suggest", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ track_id: trackId, occasion, history: history.slice(-6).concat(avoid.slice(-6)), set_position: setPos, set_mode: setMode(), energy_note: energyNote }),
+      body: JSON.stringify({ track_id: trackId, occasion, history: history.slice(-6).concat(avoid.slice(-6)), set_position: setPos, set_mode: setMode(), energy_note: energyNote, lookahead: !!opts.lookAhead }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || res.statusText);

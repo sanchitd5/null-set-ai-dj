@@ -23,6 +23,7 @@ import time
 from functools import lru_cache
 from typing import Any, Optional
 
+from app.ui import llm_gate
 from app.ui.autopilot_service import _extract_json, chat_raw
 
 log = logging.getLogger("mind_plan")
@@ -524,8 +525,9 @@ def plan_model() -> str:
 def plan_pair(facts: dict, timeout: float = 60.0, llm=None) -> dict:
     """Ask the model for a plan and validate it. `llm(system, user) -> str` is injectable."""
     model = plan_model()
+    # PLAN priority: jumps any queued suggest / look-ahead call (llm_gate.py).
     call = llm or (lambda s, u: chat_raw(s, u, temperature=0.3, timeout=timeout, model=model,
-                                          max_tokens=PLAN_MAX_TOKENS))
+                                          max_tokens=PLAN_MAX_TOKENS, priority=llm_gate.PLAN))
     t0 = time.monotonic()
     raw_text = call(_SYSTEM, build_prompt(facts))
     latency = time.monotonic() - t0

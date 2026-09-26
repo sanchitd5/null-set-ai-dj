@@ -58,8 +58,9 @@ def _boot_llm() -> None:
 @app.get("/api/llm/status")
 def get_llm_status():
     from app.ui import model_runtime
+    from app.ui.llm_gate import gate
 
-    return model_runtime.status()
+    return {**model_runtime.status(), "gate": gate.snapshot()}
 
 _knowledge = KnowledgeParser()
 _matcher = RecipeMatcher(_knowledge)
@@ -590,6 +591,9 @@ class AutopilotSuggestRequest(BaseModel):
     # "dip": the set has sat near its loudness peak for a while, so ask for a
     # track that lets energy fall back before building again (set study rule 9).
     energy_note: Optional[str] = None
+    # Look-ahead (songs for AFTER the booked next one): lowest LLM priority,
+    # waits behind any transition plan (app/ui/llm_gate.py).
+    lookahead: bool = False
 
 
 _ENERGY_NOTES = {
@@ -677,6 +681,7 @@ def autopilot_suggest(req: AutopilotSuggestRequest):
             meta=meta,
             genre=genre,
             history_display=history_display,
+            lookahead=req.lookahead,
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"LLM suggest error: {exc}") from exc
