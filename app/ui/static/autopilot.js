@@ -744,7 +744,7 @@
   let prepGen = 0;        // bumps on every (re)started next-song search
   let prepStartedAt = 0;  // ms timestamp of the current search
   async function prepareTransition(currentId) {
-    if (!active || gen !== prepGen) return;
+    if (!active) return;
     const gen = ++prepGen;
     prepStartedAt = Date.now();
     showQueue();
