@@ -126,7 +126,10 @@ def plan_blend(
             continue
         cov = _coverage(a_vocals, x, x + a_len) if a_vocals is not None else None
         score = _EXIT_LABEL_BONUS.get(_label_at(a, x), 0.0)
-        score += 0.1 * (x - window_lo) / max(1.0, window_hi - window_lo)  # ride a little longer
+        # ride the song: an early exit is only worth it for a clearly better
+        # (vocal-free / outro) phrase. 0.1 let a breakdown bonus cut a QUICK
+        # song at 0:46 of a 1-2 min window.
+        score += 0.35 * (x - window_lo) / max(1.0, window_hi - window_lo)
         if cov is not None:
             score -= 2.0 * cov
         exits.append((score, x, cov))

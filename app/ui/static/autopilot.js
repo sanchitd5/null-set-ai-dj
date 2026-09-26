@@ -947,7 +947,7 @@
   const WINDOWS = {
     long:   { min: 180, max: 360, xf: 24, label: "LONG" },
     medium: { min: 120, max: 240, xf: 16, label: "MID" },
-    quick:  { min: 45,  max: 120, xf: 8,  label: "QUICK" },
+    quick:  { min: 60,  max: 120, xf: 8,  label: "QUICK" }, // user: "1-2 min"; 45 s felt rushed
     bail:   { min: 30,  max: 60,  xf: 8,  label: "QUICK·bail" },
   };
 
