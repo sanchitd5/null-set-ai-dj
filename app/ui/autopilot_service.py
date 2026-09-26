@@ -4,8 +4,8 @@ AI DJ Autopilot: LLM-powered next-track suggestion.
 Uses a local Ollama model (default: gemma3:4b) via the OpenAI-compatible API.
 Set OLLAMA_BASE_URL (default http://localhost:11434/v1) and
 AUTOPILOT_MODEL (default gemma3:4b) in your .env to override.
-Falls back to OpenAI if OPENAI_API_KEY is set and OLLAMA_BASE_URL is
-explicitly pointed at api.openai.com.
+
+Compatible with openai v0.x/3.x (ChatCompletion.create) and v1.x/v2.x (OpenAI client).
 
 Ollama quick-start:
     curl -fsSL https://ollama.com/install.sh | sh
@@ -63,18 +63,17 @@ def suggest_next_tracks(
     """
     Call local Ollama (gemma3:4b) to suggest next n tracks.
     Returns list of {artist, title, reason, expected_bpm, expected_key, search_query}.
+
+    Compatible with both openai v0.x/3.x (ChatCompletion.create) and v1.x/v2.x (OpenAI client).
     """
     try:
-        from openai import OpenAI
+        import openai
     except ImportError:
         raise RuntimeError("openai package not installed — run: pip install openai")
 
     base_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
     model = os.environ.get("AUTOPILOT_MODEL", "gemma3:4b")
-    # Ollama ignores the api_key but the client requires a non-empty value.
     api_key = os.environ.get("OPENAI_API_KEY", "ollama")
-
-    client = OpenAI(base_url=base_url, api_key=api_key)
 
     user_msg = _USER_TEMPLATE.format(
         title=title,
@@ -88,18 +87,33 @@ def suggest_next_tracks(
         n=n,
     )
 
-    resp = client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": _SYSTEM},
-            {"role": "user", "content": user_msg},
-        ],
-        temperature=0.7,
-        # JSON mode — supported by Ollama for gemma3 and llama3 family.
-        response_format={"type": "json_object"},
-    )
+    messages = [
+        {"role": "system", "content": _SYSTEM},
+        {"role": "user", "content": user_msg},
+    ]
 
-    raw = resp.choices[0].message.content or "{}"
+    # Detect API version: v1+ has OpenAI class; v0.x/3.x uses module-level functions.
+    if hasattr(openai, "OpenAI"):
+        # v1.x / v2.x
+        client = openai.OpenAI(base_url=base_url, api_key=api_key)
+        resp = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            temperature=0.7,
+            response_format={"type": "json_object"},
+        )
+        raw = resp.choices[0].message.content or "{}"
+    else:
+        # v0.x / v3.x (openai.ChatCompletion.create style)
+        openai.api_key = api_key
+        openai.api_base = base_url
+        resp = openai.ChatCompletion.create(
+            model=model,
+            messages=messages,
+            temperature=0.7,
+        )
+        raw = resp["choices"][0]["message"]["content"] or "{}"
+
     data = _extract_json(raw)
     suggestions = data.get("suggestions", [])[:n]
 
