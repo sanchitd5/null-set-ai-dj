@@ -235,6 +235,59 @@ def loudness_label(dbfs: float | None) -> str:
     return f"{db:.0f} dBFS ({label})"
 
 
+_LEAD_SYSTEM = (
+    "You are a professional open-format DJ taking the dance floor on a journey the DJ asked for. "
+    "You know music across cultures and languages (Western electronic, pop, hip-hop, Punjabi / "
+    "Bollywood, Latin, Afrobeats...). Suggest REAL released songs only. Reply with JSON only."
+)
+
+_LEAD_TEMPLATE = (
+    'NOW PLAYING: "{title}" by {artist} | {bpm:.0f} BPM | key {camelot}\n'
+    "{lead}\n"
+    "{tempo_line}\n"
+    "Already played (never again): {history}\n\n"
+    "Think of the path: what connects the current song's world to the destination's world "
+    "(shared producers, crossover collabs, fusion remixes, similar rhythm), then give {n} songs "
+    "for THIS step.\n"
+    'JSON: {{"steering":"move","occasion_fit":0,"current_genre":"","current_profile":{{"energy":0,'
+    '"tempo_feel":"","drums":"","vocals":"","mood":"","texture":""}},"suggestions":[{{"artist":"",'
+    '"title":"","reason":"why it is this step of the journey","genre":"","expected_bpm":0,'
+    '"expected_key":"","mix_moment":"","energy_delta":"up|down|maintain","vibe_link":"",'
+    '"occasion_fit":0,"track_profile":{{"energy":0,"tempo_feel":"","drums":"","vocals":"",'
+    '"mood":"","texture":""}}}}]}}'
+)
+
+
+def lead_line(lead_to: str, step: int, steps: int, bpm: float | None = None) -> str:
+    """DESTINATION block for the user's LEAD TO request (top of the prompt).
+
+    Tucked into the occasion text, the destination lost to vibe continuity /
+    ALLOWED KEYS / TEMPO WINDOW and the model kept suggesting the current world
+    (Marea -> Anyma, Yotto when asked to lead to Diljit Dosanjh - Lover). So it
+    gets its own highest-priority line with an explicit per-step ratio.
+    """
+    target = " ".join(str(lead_to or "").split())[:120]
+    if not target or steps <= 0:
+        return ""
+    step = max(1, min(int(step or 1), int(steps)))
+    is_song = " - " in target
+    tempo = f" (~{float(bpm):.0f} BPM)" if bpm else ""
+    frac = step / steps
+    how = ("a crossover / fusion that still has the current song's feel but clearly adds the "
+           "destination's sound" if frac < 0.45 else
+           "mostly the destination's world, keeping one thread (tempo, energy or texture) to the "
+           "current song" if frac < 0.9 else
+           "squarely inside the destination's own world")
+    tail = ("The destination SONG itself plays right after the last step - do NOT suggest it; "
+            "pick songs that lead naturally into it."
+            if is_song else "After the last step the set stays in that world.")
+    return (f"DESTINATION (the DJ's explicit instruction - HIGHEST priority, overrides VIBE "
+            f"CONTINUITY, SAME-ARTIST, ALLOWED KEYS and occasion rules; tempo still blends): "
+            f"lead the set to \"{target}\"{tempo} in {steps} songs. This is step {step} of {steps}: "
+            f"every suggestion must be {how}. Genre / language / culture of each suggestion must be "
+            f"visibly closer to the destination than the current song. {tail}\n")
+
+
 def tempo_bridge_line(tempo_target: float, tempo_note: str = "") -> str:
     """A bridge ladder step: the next song aims at a new tempo, not the current one."""
     lo, hi = tempo_target * 0.96, tempo_target * 1.04
@@ -255,6 +308,7 @@ _USER_TEMPLATE = (
     "BPM: {bpm:.1f} | Camelot Key: {camelot} | Duration: {duration:.0f}s | "
     "Avg Energy: {energy:.2f}/1.0 (relative to this song's own peak) | Loudness: {loudness} | "
     "Set position: {set_pos_pct}% through set\n"
+    "{lead_line}"
     "Occasion: {occasion}\n"
     "Set mode: {set_mode_line}\n"
     "{tempo_line}"
@@ -509,6 +563,10 @@ def suggest_next_tracks(
     loudness_dbfs: float | None = None,
     tempo_target: float | None = None,
     tempo_note: str = "",
+    lead_to: str = "",
+    lead_step: int = 0,
+    lead_steps: int = 0,
+    lead_bpm: float | None = None,
 ) -> list[dict]:
     """
     Call local Ollama (gemma3:4b) to suggest next n tracks.
@@ -535,6 +593,7 @@ def suggest_next_tracks(
         else _TEMPO_WINDOW_LINE.format(tempo_window=tempo_window(bpm))
     )
     user_msg = _USER_TEMPLATE.format(
+        lead_line=lead_line(lead_to, lead_step, lead_steps, lead_bpm),
         tempo_line=tempo_line,
         allowed_keys=allowed_keys(camelot),
         loudness=loudness_label(loudness_dbfs),
@@ -562,12 +621,27 @@ def suggest_next_tracks(
     if brief:
         user_msg += _KNOWLEDGE_TEMPLATE.format(brief=brief)
 
+    system_msg = _SYSTEM
+    if lead_to and lead_steps:
+        # LEAD TO: a focused prompt. With the full prompt the model saw the
+        # DESTINATION line but its continuity rules / house few-shot won
+        # (Marea -> Anyma, Lane 8, Ben Böhmer when asked for Diljit Dosanjh).
+        system_msg = _LEAD_SYSTEM
+        user_msg = _LEAD_TEMPLATE.format(
+            title=title, artist=artist, bpm=bpm, camelot=camelot,
+            lead=lead_line(lead_to, lead_step, lead_steps, lead_bpm).strip(),
+            tempo_line=tempo_line.strip(),
+            history=", ".join((history_display or history)[-30:]) if history else "none",
+            n=n,
+        )
+
     prio = llm_gate.LOOKAHEAD if lookahead else llm_gate.SUGGEST
     data = None
     for attempt in range(2):  # one retry when the JSON is past repair
         # 0.75: song picks should vary between runs (0.5 replayed the same set from
         # the same seed); the transition PLAN stays at a low temperature.
-        raw = chat_raw(_SYSTEM, user_msg, temperature=SUGGEST_TEMPERATURE, max_tokens=700, priority=prio)
+        raw = chat_raw(system_msg, user_msg, temperature=SUGGEST_TEMPERATURE,
+                       max_tokens=1100 if lead_to else 700, priority=prio)  # lead JSON is longer
         try:
             data = _extract_json(raw)
             break
@@ -575,8 +649,10 @@ def suggest_next_tracks(
             if attempt:
                 raise
             print(f"[suggest] bad JSON, retrying once: {exc}", flush=True)
+    if lead_to:
+        data["steering"] = "move"  # the user's destination: no continuity / key filters against it
     suggestions = _filter_suggestions(
-        data, history, occasion_set=bool((occasion or "").strip()), current_key=camelot,
+        data, history, occasion_set=bool((occasion or "").strip()) and not lead_to, current_key=camelot,
     )
     # Songs from EARLIER sets are dropped whenever a fresh alternative exists:
     # the soft prompt hint alone let "Lane 8 - Little By Little" follow Fred

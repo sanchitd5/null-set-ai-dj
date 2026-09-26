@@ -440,6 +440,11 @@
   function showQueue() {
     const rows = [];
     if (scheduledNext) rows.push({ s: sugOf(scheduledNext), tag: "NEXT" });
+    if (leadTo && !leadTo.arrived) {
+      rows.push({ s: leadTo.cand ? Object.assign({}, sugOf(leadTo.cand), { reason: "your LEAD TO destination" })
+                                 : { title: leadTo.text, reason: `steering there in ${leadTo.steps} songs` },
+                  tag: leadTo.cand ? `TARGET ${Math.max(0, leadTo.steps - 1 - leadTo.played)}` : "LEAD" });
+    }
     ready.forEach((c) => rows.push({ s: sugOf(c), tag: "READY" }));
     const have = new Set(rows.map((r) => `${r.s.artist}|${r.s.title}`));
     pendingSugs.forEach((s) => { if (!have.has(`${s.artist}|${s.title}`)) rows.push({ s, tag: "⬇" }); });
@@ -566,7 +571,7 @@
     const res = await fetch("/api/autopilot/suggest", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ track_id: trackId, occasion: occasionWithBridge(opts), history: history.slice(-30).concat(avoid.slice(-6)), set_position: setPos, set_mode: setMode(), energy_note: energyNote, lookahead: !!opts.lookAhead,
+      body: JSON.stringify({ track_id: trackId, occasion: occasionWithBridge(opts), ...leadFields(opts), history: history.slice(-30).concat(avoid.slice(-6)), set_position: setPos, set_mode: setMode(), energy_note: energyNote, lookahead: !!opts.lookAhead,
         variety_run: varietyRun().run, variety_genre: varietyRun().genre,
         tempo_target: bridgeTarget(opts.lookAhead), tempo_note: bridgeNote(opts.lookAhead) || null,
         elapsed_seconds: setStartedAt ? (Date.now() - setStartedAt) / 1000 : null }),
@@ -709,6 +714,114 @@
     return base && t ? `${base} — TEMPO BRIDGE: songs natively near ${Math.round(t)} BPM (${bridgeNote(opts.lookAhead)})` : base;
   }
 
+  // ── LEAD TO (user-directed destination) ──────────────────────────────────
+  // The user types where the set should end up and in how many songs:
+  //   "Artist - Title" -> that exact song is pre-downloaded and played as the
+  //                       destination after the steering songs;
+  //   an artist / genre -> the set steers into that world, then stays there.
+  // Every step stays beat-matched: the destination's tempo becomes a BRIDGE
+  // PATH target, and each suggestion round is told how far along it is.
+  let leadTo = null; // { text, kind, steps, played, cand, bpm, arrived }
+  const leadStatusEl = document.getElementById("ap-lead-status");
+  const leadBox = document.getElementById("ap-lead");
+  const leadCancel = document.getElementById("ap-lead-cancel");
+
+  function leadStatus(msg) {
+    if (leadStatusEl) leadStatusEl.textContent = msg || "";
+    if (leadBox) leadBox.classList.toggle("is-leading", !!leadTo);
+    if (leadCancel) leadCancel.hidden = !leadTo;
+  }
+
+  function leadFields(opts = {}) {
+    if (!leadTo) return {};
+    return { lead_to: leadTo.text, lead_steps: leadTo.steps,
+             lead_step: Math.min(leadTo.steps, leadTo.played + (opts.lookAhead ? 2 : 1)),
+             lead_bpm: leadTo.bpm || null };
+  }
+
+  function leadHint(base, opts = {}) {
+    if (!leadTo) return base;
+    const step = Math.min(leadTo.steps, leadTo.played + (opts.lookAhead ? 2 : 1));
+    const last = step >= leadTo.steps;
+    let hint;
+    if (leadTo.kind === "song") {
+      hint = `LEAD TO "${leadTo.text}"${leadTo.bpm ? ` (~${Math.round(leadTo.bpm)} BPM)` : ""}: step ${step} of ${leadTo.steps}; ` +
+             `each song clearly closer to it in genre, energy and sound; the target song itself plays after the last step, ` +
+             `so do NOT suggest it; pick songs that lead naturally into it`;
+    } else {
+      hint = `LEAD TO "${leadTo.text}": step ${step} of ${leadTo.steps}; each song clearly closer to that world` +
+             (last ? " (FINAL step: be fully inside it now)" : "");
+    }
+    return base ? `${base} — ${hint}` : hint;
+  }
+
+  async function startLead() {
+    const input = document.getElementById("ap-lead-input");
+    const text = input ? input.value.trim() : "";
+    if (!text) { leadStatus("Type a song ('Artist - Title'), an artist or a genre"); return; }
+    if (!active) { leadStatus("Start a set first; LEAD steers a running set"); return; }
+    const stepsEl = document.getElementById("ap-lead-steps");
+    const steps = Math.max(2, Math.min(6, parseInt(stepsEl ? stepsEl.value : "4", 10) || 4));
+    const kind = / [-–—] /.test(text) ? "song" : "style";
+    leadTo = { text, kind, steps, played: 0, cand: null, bpm: 0, arrived: false };
+    leadStatus(kind === "song" ? `fetching the destination "${text}"…` : `steering toward ${text} in ${steps} songs`);
+    // steer the NEXT pick, not the one already booked: drop not-yet-booked
+    // pool songs that were chosen for the old direction
+    ready.length = 0;
+    pendingSugs = [];
+    showQueue();
+    if (kind === "song") {
+      const [artist, ...rest] = text.split(/ [-–—] /);
+      try {
+        const c = await downloadSuggestion({ artist: artist.trim(), title: rest.join(" - ").trim(),
+                                              search_query: `ytmsearch:${text}`,
+                                              reason: "your LEAD TO destination", genre: "" });
+        if (!leadTo || leadTo.text !== text) return; // cancelled meanwhile
+        leadTo.cand = c;
+        leadTo.bpm = c.bpm || 0;
+        leadStatus(`→ ${c.name}${c.bpm ? ` (${Math.round(c.bpm)} BPM)` : ""} after ${steps - 1} steering song${steps > 2 ? "s" : ""}`);
+        // tempo ladder toward the destination (fewer steps than the lead)
+        if (c.bpm && !locks(playingBpm(), c.bpm)) startBridge(c.bpm, `lead to ${c.name}`, steps - 1);
+      } catch (e) {
+        leadStatus(`couldn't find "${text}" (${e.message}) — steering toward its style instead`);
+        if (leadTo) leadTo.kind = "style";
+      }
+    }
+    showQueue();
+  }
+
+  function cancelLead(msg) {
+    leadTo = null;
+    leadStatus(msg || "");
+    showQueue();
+  }
+
+  // Called after every transition.
+  function advanceLead() {
+    if (!leadTo) return;
+    if (leadTo.arrived) {
+      const t = leadTo.text;
+      cancelLead(`✓ arrived: ${t}`);
+      return;
+    }
+    leadTo.played++;
+    if (leadTo.kind === "style" && leadTo.played >= leadTo.steps) {
+      // arrived in that world: keep it as the set's direction from here on
+      occasion = occasion ? `${occasion}; now inside ${leadTo.text}` : leadTo.text;
+      cancelLead(`✓ now in ${leadTo.text} — the set stays there`);
+      return;
+    }
+    leadStatus(leadTo.kind === "song"
+      ? `step ${leadTo.played}/${leadTo.steps - 1} toward ${leadTo.cand ? leadTo.cand.name : leadTo.text}`
+      : `step ${leadTo.played}/${leadTo.steps} toward ${leadTo.text}`);
+  }
+
+  // The destination song is due: after steps-1 steering songs.
+  function leadDue() {
+    return !!(leadTo && leadTo.kind === "song" && leadTo.cand && !leadTo.arrived &&
+              leadTo.played >= leadTo.steps - 1);
+  }
+
   // ── BRIDGE PATH (set study item 5, [[Genre Bridge Playbook]]) ─────────────
   // A far tempo target (beyond the 8% lock, or the occasion steering into
   // another genre) becomes a BPM ladder of beat-matched songs, <= ~6% per step
@@ -755,13 +868,14 @@
     return i < 0 ? "" : `bridge step ${i + 1}/${bridge.total} toward ${Math.round(bridge.toBpm)} BPM` +
       (bridge.link !== "direct" ? ` (${bridge.link}-time link at the end)` : "");
   }
-  async function startBridge(toBpm, why) {
+  async function startBridge(toBpm, why, stepsCap) {
     const from = playingBpm();
     if (bridge || bridgePending || !(toBpm > 0) || !from || locks(from, toBpm)) return;
     bridgePending = true;
     try {
       // occasion steering keeps its 5-7 song cap; a plain tempo target gets 5
-      const maxSteps = steering === "move" ? Math.max(2, MAX_STEER_STEPS - steerStep) : 5;
+      const maxSteps = stepsCap ? Math.max(1, stepsCap)
+        : steering === "move" ? Math.max(2, MAX_STEER_STEPS - steerStep) : 5;
       const res = await fetch("/api/bridge/plan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1066,6 +1180,18 @@
     prepStartedAt = Date.now();
     showQueue();
 
+    // 0) LEAD TO destination is due: book it (beat-matched when the tempo
+    // locks; otherwise the tempo-jump fallback, it's where the user asked to go).
+    if (leadDue()) {
+      apStatus(`LEAD TO: bringing in ${leadTo.cand.name}`);
+      allowTempoJump = true;
+      const c = Object.assign({}, leadTo.cand, { keep: false });
+      if (await tryCandidate(currentId, c, gen)) { leadTo.arrived = true; return; }
+      if (!active || gen !== prepGen) return;
+      leadStatus(`couldn't book ${leadTo.cand.name} yet — one more steering song`);
+      allowTempoJump = false;
+    }
+
     // 1) Songs already pre-downloaded in an earlier round: no waiting.
     // Pairwise rejects go back to the END of the pool (tried once per song).
     allowTempoJump = false;
@@ -1326,6 +1452,7 @@
         resetDeck(outgoing);
 
         history.push(nextName);
+        advanceLead();
         playedIds.push(nextId);
         unmuteBeatLayer();
         genreLog.push(currentGenre || "");
@@ -1450,6 +1577,8 @@
     history = [];
     steering = "stay";
     steerStep = 0;
+    leadTo = null;
+    leadStatus("");
     genreLog = [];
     currentGenre = "";
     songsSinceJump = 0;
@@ -1522,6 +1651,7 @@
     if (watchdog) { clearInterval(watchdog); watchdog = null; }
     active = false;
     ready.length = 0;
+    cancelLead();
     scheduledNext = null;
     pendingSugs = [];
     if (window.mashup) window.mashup.cancel();
@@ -1550,6 +1680,12 @@
     get fireAt() { return scheduledNext ? scheduledFireAt : null; },
     get layering() { return !!(window.djMind && window.djMind.layerActive); },
   };
+
+  const leadGo = document.getElementById("ap-lead-go");
+  if (leadGo) leadGo.addEventListener("click", startLead);
+  if (leadCancel) leadCancel.addEventListener("click", () => cancelLead("lead cancelled — the set carries on"));
+  const leadInput = document.getElementById("ap-lead-input");
+  if (leadInput) leadInput.addEventListener("keydown", (e) => { if (e.key === "Enter") startLead(); });
 
   startBtn.addEventListener("click", start);
   if (stopBtn) stopBtn.addEventListener("click", stop);

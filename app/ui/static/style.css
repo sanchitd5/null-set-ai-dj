@@ -1559,3 +1559,9 @@ button.rebind-btn.is-armed {
 @media (prefers-reduced-motion: reduce) {
   .dl-fill.indeterminate { animation: none; width: 100%; opacity: 0.4; }
 }
+
+/* ── LEAD TO ─────────────────────────────────────────────────────────── */
+.ap-lead { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 6px 0; }
+.ap-lead input[type="text"] { flex: 1 1 320px; min-width: 200px; }
+.ap-lead-status { opacity: 0.85; }
+.ap-lead.is-leading { outline: 1px solid rgba(250, 204, 21, 0.45); border-radius: 4px; padding: 4px; }

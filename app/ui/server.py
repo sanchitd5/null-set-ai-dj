@@ -796,6 +796,11 @@ class AutopilotSuggestRequest(BaseModel):
     # the current one. Tempo only - never an occasion, theme lock or steering.
     tempo_target: Optional[float] = None
     tempo_note: Optional[str] = None
+    # LEAD TO (user destination): "Artist - Title" / artist / genre, step k of N
+    lead_to: str = ""
+    lead_step: int = 0
+    lead_steps: int = 0
+    lead_bpm: Optional[float] = None
 
 
 DEFAULT_SET_LENGTH_S = 3600.0
@@ -930,6 +935,10 @@ def autopilot_suggest(req: AutopilotSuggestRequest):
             loudness_dbfs=loudness_dbfs,
             tempo_target=req.tempo_target,
             tempo_note=req.tempo_note or "",
+            lead_to=req.lead_to[:160],
+            lead_step=max(0, min(req.lead_step, 12)),
+            lead_steps=max(0, min(req.lead_steps, 12)),
+            lead_bpm=req.lead_bpm,
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"LLM suggest error: {exc}") from exc
