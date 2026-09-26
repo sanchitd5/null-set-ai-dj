@@ -74,4 +74,74 @@ assert.strictEqual(energyNote([5, 6], 0.9, false), "callback");
 assert.strictEqual(energyNote([5, 6], 0.9, true), null);
 assert.strictEqual(energyNote([9], 0.2, false), null);
 
+// ---- AI plan + remix moves ------------------------------------------------
+const { aiVeto, remixBlock, needsHoldLoop, holdLoopAnchor, holdLoopBars, phraseBounds } = core;
+const rx = (o) => s(Object.assign({ phraseIdx: 6, lastRemixPhrase: null, remixUsed: [], remixCount: 0,
+                                    preDrop: false, skipHitsDrop: { 8: false, 16: false } }, o));
+
+// AI move allowed -> tagged AI, reason kept
+let d = decide(rx({ preDrop: true, aiMove: { move: "filter_build", at: 0, reason: "tension" } }));
+assert.strictEqual(d.action, "filter_build"); assert.strictEqual(d.source, "AI"); assert.strictEqual(d.why, "tension");
+// AI move vetoed (drop lead-in without a drop next) -> rule choice, veto noted
+d = decide(rx({ aiMove: { move: "stutter", at: 0 } }));
+assert.strictEqual(d.action, "ride"); assert.ok(/vetoed/.test(d.why));
+// rules alone: pre-drop phrase -> a drop lead-in, tagged RULE
+d = decide(rx({ preDrop: true }));
+assert.ok(["stutter", "filter_build", "echo_freeze"].includes(d.action)); assert.strictEqual(d.source, "RULE");
+// kinds rotate: used lead-in is skipped
+d = decide(rx({ preDrop: true, remixUsed: ["stutter"], remixCount: 1 }));
+assert.strictEqual(d.action, "filter_build");
+// restraint: never two remix phrases in a row, none in first 16 / last 24 bars, per-song cap
+assert.strictEqual(decide(rx({ preDrop: true, lastRemixPhrase: 5 })).action, "ride");
+assert.strictEqual(decide(rx({ preDrop: true, barsOnTrack: 8 })).action, "ride");
+assert.strictEqual(decide(rx({ preDrop: true, barsToExit: 20 })).action, "ride");
+assert.strictEqual(decide(rx({ preDrop: true, remixCount: 3, remixUsed: ["loop_extend", "beat_jump", "echo_freeze"] })).action, "ride");
+assert.ok(remixBlock("filter_build", rx({ preDrop: true, remixCount: 4 })));
+// AI may use the 4th remix slot, rules stop at 3
+d = decide(rx({ preDrop: true, remixCount: 3, remixUsed: ["a", "b", "c"], aiMove: { move: "echo_freeze", at: 0 } }));
+assert.strictEqual(d.action, "echo_freeze");
+// beat jump: weak intro/verse only, never over a drop; loop extend on a hot drop
+const weak = { phraseSection: "verse", phraseEnergy: 0.3, nextPhraseSection: "verse" };
+assert.strictEqual(decide(rx(weak)).action, "beat_jump");
+assert.strictEqual(decide(rx({ ...weak, nextPhraseSection: "build" })).action, "ride");
+assert.strictEqual(decide(rx({ ...weak, skipHitsDrop: { 8: true } })).action, "ride");
+assert.strictEqual(decide(rx({ ...weak, setMode: "long" })).action, "ride");
+const hot = { phraseSection: "drop", phraseEnergy: 0.9, nextPhraseSection: "drop" };
+assert.strictEqual(decide(rx(hot)).action, "loop_extend");
+assert.strictEqual(decide(rx({ ...hot, setMode: "quick" })).action, "ride");
+// phrase label: the section covering most of the phrase wins
+const pl = core.phraseLabel([{ label: "verse", start: 0, end: 4, energy: 0.4 },
+  { label: "drop", start: 4, end: 16, energy: 0.8 }], 0, 16);
+assert.strictEqual(pl[0], "drop"); assert.ok(Math.abs(pl[1] - 0.7) < 1e-9);
+assert.deepStrictEqual(core.phraseLabel([], 0, 16), [null, null]);
+assert.strictEqual(core.isPreDrop("verse", "drop"), true);
+assert.strictEqual(core.isPreDrop("build", "verse"), true);
+assert.strictEqual(core.isPreDrop("build", "build"), false);
+assert.strictEqual(core.isPreDrop("chorus", "drop"), false);
+// safety rules still veto AI transition moves
+assert.ok(aiVeto({ move: "preclear" }, rx({ barsToExit: 10, overlapStyle: "instant" })));
+assert.strictEqual(aiVeto({ move: "preclear" }, rx({ barsToExit: 10 })), null);
+assert.ok(aiVeto({ move: "subdrop" }, rx({ section: "verse", subdropLastTrack: true })));
+assert.ok(aiVeto({ move: "hold" }, rx({ barsToExit: 30 })));
+assert.ok(aiVeto({ move: "beat_layer" }, rx({})));
+assert.strictEqual(decide(rx({ mashupActive: true, aiMove: { move: "beat_layer", at: 0 } })).source, "AI");
+// instant swap is recipe-forced even with an AI move pending
+assert.strictEqual(decide(rx({ barsToExit: 4, overlapStyle: "instant", aiMove: { move: "hold", at: 0 } })).action, "instant");
+
+// phrase bounds from downbeats / grid
+assert.deepStrictEqual(phraseBounds(downs, 1, bar), [8 * bar, 16 * bar]);
+assert.deepStrictEqual(phraseBounds([], 2, 2), [32, 48]);
+
+// ---- hold loop safety net --------------------------------------------------
+assert.strictEqual(needsHoldLoop(20, false, false), true);
+assert.strictEqual(needsHoldLoop(20, true, false), false);   // transition scheduled
+assert.strictEqual(needsHoldLoop(40, false, false), false);  // not near the end
+assert.strictEqual(needsHoldLoop(20, false, true), false);   // already looping
+// last clean phrase before the outro (grid 2 s bars: phrases every 16 s, outro at 192)
+const hsecs = [{ label: "drop", start: 160, end: 192, energy: 0.9 }, { label: "outro", start: 192, end: 224, energy: 0.4 }];
+assert.strictEqual(holdLoopAnchor([], hsecs, 205, 224, 2), 176);
+// no outro: last whole phrase that has started
+assert.strictEqual(holdLoopAnchor([], [], 205, 224, 2), 192);
+assert.strictEqual(holdLoopBars(0), 8); assert.strictEqual(holdLoopBars(3), 4);
+
 console.log("dj-mind core ok");
