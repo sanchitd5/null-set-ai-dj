@@ -15,6 +15,16 @@
   const KEEP_ERROR_MS = 30000;
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const POLL_TIMEOUT_MS = 15000;
+  const MAX_POLL_ERRORS = 8;      // ~ a server restart's worth of failed polls
+  const JOB_DEADLINE_MS = 6 * 60 * 1000;
+
+  async function fetchT(url, opts = {}, ms = POLL_TIMEOUT_MS) {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), ms);
+    try { return await fetch(url, Object.assign({}, opts, { signal: ctl.signal })); }
+    finally { clearTimeout(timer); }
+  }
 
   function makeRow(label) {
     if (!box) return { update() {}, done() {}, fail() {} };
@@ -75,7 +85,7 @@
   }
 
   async function run(url, label) {
-    const res = await fetch("/api/download/jobs", {
+    const res = await fetchT("/api/download/jobs", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ url, label: label || "" }),
@@ -83,14 +93,25 @@
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || res.statusText);
     const row = makeRow(label || url);
+    const began = Date.now();
+    let errors = 0;
     for (;;) {
       await sleep(POLL_MS);
+      if (Date.now() - began > JOB_DEADLINE_MS) {
+        row.fail("gave up after 6 min");
+        throw new Error("download job timed out");
+      }
       let job;
       try {
-        const r = await fetch(`/api/download/jobs/${data.job_id}`);
+        const r = await fetchT(`/api/download/jobs/${data.job_id}`);
+        if (r.status === 404) throw new Error("job lost (server restarted)");
         if (!r.ok) throw new Error(`job ${r.status}`);
         job = await r.json();
+        errors = 0;
       } catch (e) {
+        // transient (timeout / connection refused during a restart): retry;
+        // a 404 means the server forgot the job, so stop right away
+        if (++errors < MAX_POLL_ERRORS && !String(e.message).includes("job lost")) continue;
         row.fail(e.message);
         throw e;
       }

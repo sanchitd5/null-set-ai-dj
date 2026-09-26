@@ -7,6 +7,30 @@
 // Requires: window.decks, window.loadIntoDeck, setStatus (app.js + deck-controller.js).
 
 (function () {
+  // Every request the autopilot makes has a deadline. Without one, a request
+  // lost in a server restart never settled and the set sat in HOLD LOOP
+  // forever ("Matching transition..." stuck). Budgets match the work behind
+  // each endpoint (LLM queue, Demucs stems, 30-50 MB FLAC audio).
+  const _fetch = window.fetch.bind(window);
+  function deadlineFor(url) {
+    const u = String(url);
+    if (u.includes("/api/download")) return 300000;
+    if (u.includes("/api/blend/plan") || u.includes("/api/mashup/plan")) return 180000;
+    if (u.includes("/api/autopilot/suggest")) return 150000;
+    if (u.includes("/api/audio/")) return 120000;
+    if (u.includes("/api/match") || u.includes("/analysis")) return 90000;
+    if (u.includes("/api/tracks")) return 20000;
+    return 60000;
+  }
+  function fetch(url, opts = {}) {
+    const ctl = new AbortController();
+    const ms = deadlineFor(url);
+    const timer = setTimeout(() => ctl.abort(), ms);
+    return _fetch(url, Object.assign({}, opts, { signal: ctl.signal }))
+      .catch((e) => { throw e.name === "AbortError" ? new Error(`timed out after ${ms / 1000}s: ${url}`) : e; })
+      .finally(() => clearTimeout(timer));
+  }
+
   // ── state ─────────────────────────────────────────────────────────────────
   let active = false;
   let activeDeck = "a";       // which deck is currently playing
@@ -247,9 +271,11 @@
         break;
 
       case "double": // both drops together for 8 bars, then cut A
+        // [[Double Drop]]: one bass only - B's lows open, A's killed on the same
+        // downbeat (no ramp: two subs must never overlap).
         setRange(xfEl(), 0);
-        rampParam(lowOut, null, LOW_KILL, beat);
-        rampParam(lowIn, LOW_KILL, 0, beat);
+        setRange(lowOut(), LOW_KILL);
+        setRange(lowIn(), 0);
         at(8, () => setRange(xfEl(), toXf));
         total = 8.5;
         break;
@@ -441,6 +467,7 @@
   }
 
   let energyNotedFor = null; // track whose energy the DJ mind already logged
+  const profileById = {};    // LLM current_profile energy (1-10) per track id: PEAK mode
   async function getSuggestions(trackId, avoid = [], opts = {}) {
     const setPos = Math.min(history.length / 10, 1.0);
     // `avoid` = titles rejected this round (failed download / vibe gate) so the
@@ -456,6 +483,9 @@
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || res.statusText);
     const e = data.current_profile && parseFloat(data.current_profile.energy);
+    // Look-ahead describes the booked next song: keep it for when that song plays.
+    if (Number.isFinite(e)) profileById[trackId] = e <= 1 ? e * 10 : e;
+    if (window.djMind && trackId === currentTrackId) window.djMind.setProfileEnergy(profileById[trackId]);
     // Look-ahead calls describe the NEXT song: they must not overwrite the
     // playing song's energy (it drives the set-mode window).
     if (Number.isFinite(e) && !opts.lookAhead) {
@@ -533,7 +563,7 @@
   }
   let allowTempoJump = false; // set on the last round so the set never stalls
 
-  async function evaluateCandidate(currentId, cand) {
+  async function evaluateCandidate(currentId, cand, gen) {
     if (!active || !cand) return false;
     const nextId = cand.track_id;
     const nextName = cand.name;
@@ -594,6 +624,7 @@
     const blend = await requestBlend(currentId, nextId, candidate);
     if (!active || currentTrackId !== currentId) return false;
 
+    if (gen !== undefined && gen !== prepGen) return false; // superseded by a restarted search
     const fireAt = scheduleTransition(currentId, nextId, nextName, candidate, blend);
     tryMashup(currentId, nextId, nextName, fireAt); // fire-and-forget
     scheduledNext = cand;
@@ -634,6 +665,23 @@
       if (!res.ok || !plan.ok) {
         console.info("Blend plan unavailable:", plan.detail || (plan.reasons || []).join("; "));
         return null;
+      }
+      // PEAK MOVES: on top of the tempo-locked plan, an entry on B's first long
+      // drop for DOUBLE DROP / DROP SWAP. The DJ mind decides whether to use it.
+      const peakEl = document.getElementById("ap-peak-toggle");
+      if (window.djMind && window.djMind.planPeak && (!peakEl || peakEl.checked)) {
+        try {
+          const r2 = await fetch("/api/blend/plan", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              a_id: currentId, b_id: nextId, window_lo: lo, window_hi: win.hi,
+              a_bpm_effective: od.bpm * od._playbackRate(), bars: 8, entry_mode: "drop",
+            }),
+          });
+          const drop = await r2.json();
+          if (r2.ok && drop.ok) plan.drop = drop;
+        } catch (e) { /* peak moves are optional: plain blend */ }
       }
       return plan;
     } catch (e) {
@@ -683,8 +731,8 @@
     }));
   }
 
-  async function tryCandidate(currentId, cand) {
-    try { return await evaluateCandidate(currentId, cand); }
+  async function tryCandidate(currentId, cand, gen) {
+    try { return await evaluateCandidate(currentId, cand, gen); }
     catch (e) {
       console.warn("Autopilot candidate failed:", cand && cand.name, e.message);
       apStatus(`Skipping ${cand && cand.name}: ${e.message}`);
@@ -693,8 +741,12 @@
   }
 
   // ── core loop ─────────────────────────────────────────────────────────────
+  let prepGen = 0;        // bumps on every (re)started next-song search
+  let prepStartedAt = 0;  // ms timestamp of the current search
   async function prepareTransition(currentId) {
-    if (!active) return;
+    if (!active || gen !== prepGen) return;
+    const gen = ++prepGen;
+    prepStartedAt = Date.now();
     showQueue();
 
     // 1) Songs already pre-downloaded in an earlier round: no waiting.
@@ -702,11 +754,11 @@
     allowTempoJump = false;
     const pool = ready.splice(0, ready.length);
     for (let i = 0; i < pool.length; i++) {
-      if (!active) return;
+      if (!active || gen !== prepGen) return;
       const c = pool[i];
       apStatus(`Trying earlier suggestion: ${c.name} (${pool.length - i} in pool)`);
       c.keep = false;
-      if (await tryCandidate(currentId, c)) {
+      if (await tryCandidate(currentId, c, gen)) {
         pool.slice(i + 1).forEach(addReady); // untried ones stay for later
         return;
       }
@@ -728,11 +780,11 @@
         allowTempoJump = true;
         const waiting = ready.splice(0, ready.length);
         for (let i = 0; i < waiting.length; i++) {
-          if (!active) return;
+          if (!active || gen !== prepGen) return;
           const c = waiting[i];
           apStatus(`No beat-matchable pick — tempo-jump to ${c.name} (Echo Out / breakdown)`);
           c.keep = false;
-          if (await tryCandidate(currentId, c)) {
+          if (await tryCandidate(currentId, c, gen)) {
             waiting.slice(i + 1).forEach(addReady);
             return;
           }
@@ -740,7 +792,7 @@
         }
         allowTempoJump = false;
       }
-      if (!active) return;
+      if (!active || gen !== prepGen) return;
       apStatus(round > 1 ? `⏳ Retrying with new suggestions (${round}/${MAX_ROUNDS})…`
                          : "⏳ AI selecting next songs…");
       let suggestions;
@@ -768,9 +820,9 @@
       // Highest-ranked suggestion first; the rest keep downloading meanwhile.
       for (let i = 0; i < jobs.length; i++) {
         const c = await jobs[i];
-        if (!active) return;
+        if (!active || gen !== prepGen) return;
         if (!c) continue;
-        if (await tryCandidate(currentId, c)) {
+        if (await tryCandidate(currentId, c, gen)) {
           // Leftovers finish in the background and wait for later transitions.
           jobs.slice(i + 1).forEach((p) => p.then(addReady));
           return;
@@ -822,11 +874,18 @@
     const hi = Math.min(entryPos + w.max, trackEnd);
     let exitAt = blend ? blend.exit : candidate.a_time;
     if (!blend && !(exitAt >= lo && exitAt <= hi)) exitAt = Math.max(lo, Math.min(hi, exitAt || hi));
+    // PEAK mode (dj-mind.js peakTransition): tempo-locked pairs only, land B's
+    // drop on A's drop downbeat - Double Drop or Drop Swap. null -> blend.
+    const peakT = blend && blend.drop && window.djMind && window.djMind.planPeak
+      ? window.djMind.planPeak({ drop: blend.drop, lo: Math.max(lo, nowPos + 15), hi,
+                                 plannedExit: exitAt, entryPos, inDeck: stagingDeck() })
+      : null;
+    if (peakT) { recipe = peakT.recipe; bTime = peakT.bTime; exitAt = peakT.exitAt; }
     // Keep the exit on A's phrase grid: push by whole phrases, never by seconds.
     const phraseS = 32 * 60 / od0bpm;
     let effectiveATime = exitAt;
     while (effectiveATime < nowPos + 15) effectiveATime += phraseS;
-    const xfDuration = w.xf;
+    const xfDuration = peakT ? Math.max(16, w.xf) : w.xf;   // full 8-bar double drop in any mode
     playPlanTag = ` | ${w.label} ${fmtTime(effectiveATime - entryPos)}`;
 
     let executed = false;
@@ -840,8 +899,9 @@
       window.djMind.setPlan({
         fireAt,
         // a vocal-free blend window is exact: the mind must not hold past it
-        maxFireAt: blend && blend.instrumental ? fireAt : Math.max(fireAt, Math.min(trackEnd, hi + 16 * barS)),
-        style: overlapStyle,
+        maxFireAt: peakT || (blend && blend.instrumental) ? fireAt : Math.max(fireAt, Math.min(trackEnd, hi + 16 * barS)),
+        style: peakT ? "peak" : overlapStyle,
+        peakKind: peakT ? peakT.kind : null, peakWhy: peakT ? peakT.why : null, brake: !!(peakT && peakT.brake),
         preClearBars: Number.isFinite(candidate.pre_clear_bars) ? candidate.pre_clear_bars : 8,
       });
     }
@@ -894,6 +954,11 @@
       const t0 = audioCtx.currentTime + leadS;
       if (sd) sd.play(bTime, false, t0);
       const nextEntry = bTime;
+      // Drop Swap + [[Backspin (Spinback)]]: A's build winds down (deck brake,
+      // 0.8 s) into the downbeat where B's drop cuts in.
+      if (peakT && peakT.brake && oa && typeof oa.brake === "function") {
+        later(Math.max(0, leadS - 0.8) * 1000, () => oa.brake());
+      }
 
       // Recipe-aware EQ-first transition, started on the same downbeat.
       const outgoing = activeDeck;
@@ -919,7 +984,10 @@
         entryPos = nextEntry;
         currentEnergy = null;
         if (window.beatLayer) window.beatLayer.follow(activeDeck);
-        if (window.djMind) window.djMind.follow(activeDeck);
+        if (window.djMind) {
+          window.djMind.follow(activeDeck);
+          window.djMind.setProfileEnergy(profileById[currentTrackId]);
+        }
         easePitchHome(activeDeck);
 
         // Park crossfader fully on the new active deck side
@@ -1050,6 +1118,7 @@
 
       history = [seedName];
       apStatus(`▶ Playing: ${seedName} — finding next track in background…`);
+      startWatchdog();
       prepareTransition(currentTrackId); // fire-and-forget: seed already playing
 
     } catch (e) {
@@ -1059,7 +1128,24 @@
     }
   }
 
+  // Watchdog: if no next song has been booked 150 s into a search, start a
+  // fresh search (the old one is abandoned via prepGen). HOLD LOOP keeps the
+  // music going meanwhile.
+  const WATCHDOG_MS = 150000;
+  let watchdog = null;
+  function startWatchdog() {
+    if (watchdog) clearInterval(watchdog);
+    watchdog = setInterval(() => {
+      if (!active || scheduledNext || !prepStartedAt) return;
+      if (Date.now() - prepStartedAt < WATCHDOG_MS) return;
+      console.warn("Autopilot watchdog: next-song search stalled, restarting it");
+      apStatus("⚠ Next-song search stalled — restarting it");
+      prepareTransition(currentTrackId);
+    }, 10000);
+  }
+
   function stop() {
+    if (watchdog) { clearInterval(watchdog); watchdog = null; }
     active = false;
     ready.length = 0;
     scheduledNext = null;
