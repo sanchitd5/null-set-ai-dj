@@ -598,6 +598,22 @@ class AutopilotSuggestRequest(BaseModel):
     # Look-ahead (songs for AFTER the booked next one): lowest LLM priority,
     # waits behind any transition plan (app/ui/llm_gate.py).
     lookahead: bool = False
+    # Variety: how many songs in a row were the same subgenre, and which one.
+    variety_run: int = 0
+    variety_genre: str = ""
+
+
+VARIETY_RUN_MAX = 6  # wiki "What Do I Play Next": contrast once a style plateaus
+
+
+def _variety_note(run: int, genre: str) -> str:
+    if run < VARIETY_RUN_MAX or not genre:
+        return ""
+    return (f"the last {run} songs were all {genre[:40]} and the floor is getting bored - "
+            f"switch to a NEIGHBOURING subgenre now that still fits the occasion (e.g. bhangra -> "
+            f"Punjabi hip-hop / Punjabi pop / bhangra-house / Bollywood dance; melodic house -> "
+            f"afro house / tech house / UK garage), entered through a beat-matched remix or bridge, "
+            f"energy kept up; do NOT suggest another {genre[:40]} song")
 
 
 _ENERGY_NOTES = {
@@ -610,10 +626,10 @@ _ENERGY_NOTES = {
 }
 
 
-def _occasion_with_note(occasion: Optional[str], note: Optional[str]) -> str:
+def _occasion_with_note(occasion: Optional[str], note: Optional[str], variety: str = "") -> str:
     base = occasion or ""
-    extra = _ENERGY_NOTES.get(note or "")
-    return f"{base} ({extra})".strip() if extra else base
+    extras = [x for x in (_ENERGY_NOTES.get(note or ""), variety) if x]
+    return f"{base} ({'; '.join(extras)})".strip() if extras else base
 
 
 # Normalised suggested title -> genre the model gave it, so the next suggest
@@ -678,7 +694,8 @@ def autopilot_suggest(req: AutopilotSuggestRequest):
             camelot=camelot,
             duration=analysis.duration or 0.0,
             avg_energy=avg_energy,
-            occasion=_occasion_with_note(req.occasion, req.energy_note),
+            occasion=_occasion_with_note(req.occasion, req.energy_note,
+                                         _variety_note(req.variety_run, req.variety_genre)),
             history=req.history,
             set_position=set_position,
             set_mode=req.set_mode if req.set_mode in SET_MODES else "hybrid",

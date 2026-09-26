@@ -494,7 +494,8 @@
     const res = await fetch("/api/autopilot/suggest", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ track_id: trackId, occasion: occasionWithStep(opts), history: history.slice(-6).concat(avoid.slice(-6)), set_position: setPos, set_mode: setMode(), energy_note: energyNote, lookahead: !!opts.lookAhead }),
+      body: JSON.stringify({ track_id: trackId, occasion: occasionWithStep(opts), history: history.slice(-6).concat(avoid.slice(-6)), set_position: setPos, set_mode: setMode(), energy_note: energyNote, lookahead: !!opts.lookAhead,
+        variety_run: varietyRun().run, variety_genre: varietyRun().genre }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || res.statusText);
@@ -502,6 +503,7 @@
     // music ("punjabi wedding" while Fred again.. plays) -> steer, even across
     // a tempo gap (Echo Out), instead of holding out for a beat-matchable pick.
     if (!opts.lookAhead) {
+      if (data.current_genre) currentGenre = data.current_genre;
       steering = data.steering === "move" && steerStep < MAX_STEER_STEPS ? "move" : "stay";
       if (steering === "stay") steerStep = 0;
     }
@@ -598,6 +600,19 @@
     return songsSinceJump >= (peak ? PEAK_JUMP_EVERY : JUMP_EVERY);
   }
   let steering = "stay";      // "move" while steering toward the occasion's music
+  // Variety: subgenre of each played song, to spot a style that has plateaued.
+  let genreLog = [];
+  let currentGenre = "";
+  function genreFamily(g) {
+    return String(g || "").toLowerCase().split(/[\/,&(]| - /)[0].replace(/[^a-z0-9 ]+/g, " ").trim();
+  }
+  function varietyRun() {
+    const fam = genreFamily(currentGenre || genreLog[genreLog.length - 1]);
+    if (!fam) return { run: 0, genre: "" };
+    let run = 0;
+    for (let i = genreLog.length - 1; i >= 0 && genreFamily(genreLog[i]) === fam; i--) run++;
+    return { run, genre: fam };
+  }
   let steerStep = 0;          // bridge songs played so far on the current steer (cap 7)
   const HIGH_ENERGY_OCCASION = /\b(wedding|shaadi|sangeet|baraat|mehndi|reception|party|club\s*night|peak|festival|rave|birthday|bachelor(ette)?|new\s*year)\b/i;
   const MAX_STEER_STEPS = 7;
@@ -1026,6 +1041,8 @@
         resetDeck(outgoing);
 
         history.push(nextName);
+        genreLog.push(currentGenre || "");
+        currentGenre = (scheduledNext && scheduledNext.suggestion && scheduledNext.suggestion.genre) || "";
         songsSinceJump = jumpPending ? 0 : songsSinceJump + 1;
         jumpPending = false;
         if (steering === "move") steerStep++;
@@ -1145,6 +1162,8 @@
     history = [];
     steering = "stay";
     steerStep = 0;
+    genreLog = [];
+    currentGenre = "";
     songsSinceJump = 0;
     jumpPending = false;
     active = true;
