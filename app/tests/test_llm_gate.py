@@ -29,7 +29,9 @@ def test_plan_jumps_queued_lookaheads():
     plan.start()  # arrives last, runs right after the call in flight
     for t in [first, plan, *waiters]:
         t.join(3)
-    assert order == [LOOKAHEAD, PLAN, SUGGEST, LOOKAHEAD, LOOKAHEAD]
+    # extra look-aheads behind a running one are refused (never pile up);
+    # the plan still goes right after the call in flight
+    assert order == [LOOKAHEAD, PLAN, SUGGEST]
 
 
 def test_one_call_at_a_time_and_timeout_leaves_queue_clean():
@@ -76,3 +78,22 @@ def test_suggest_retries_once_on_bad_json(monkeypatch):
     monkeypatch.setattr(svc, "chat_raw", lambda *a, **k: next(replies))
     out = svc.suggest_next_tracks("T", "A", 124.0, "8A", 200.0, 0.7, "", [])
     assert out == []
+
+
+def test_lookahead_never_piles_up():
+    import threading
+    import pytest
+    from app.ui import llm_gate as g
+    gate = g.PriorityGate()
+    release = threading.Event()
+    def hold():
+        with gate.slot(g.SUGGEST):
+            release.wait(2)
+    t = threading.Thread(target=hold); t.start()
+    import time; time.sleep(0.05)
+    with pytest.raises(g.GateTimeout):            # something urgent running+queued? a look-ahead is refused
+        waiter = threading.Thread(target=lambda: gate.slot(g.SUGGEST, wait_timeout=2).__enter__())
+        waiter.start(); time.sleep(0.05)
+        with gate.slot(g.LOOKAHEAD, wait_timeout=1):
+            pass
+    release.set(); t.join(); waiter.join()

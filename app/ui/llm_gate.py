@@ -43,6 +43,13 @@ class PriorityGate:
         t0 = time.monotonic()
         deadline = None if wait_timeout is None else t0 + wait_timeout
         with self._cv:
+            # Look-ahead is optional pre-fetching: never let it pile up. Refuse it
+            # at once when another look-ahead is queued / running or anything more
+            # urgent is waiting (a live set stalled behind 3 queued look-aheads).
+            if priority == LOOKAHEAD and (
+                self._busy == LOOKAHEAD or any(p <= LOOKAHEAD for p, _ in self._queue)
+            ):
+                raise GateTimeout("lookahead skipped: the LLM is busy with more urgent work")
             ticket = (priority, next(self._seq))
             heapq.heappush(self._queue, ticket)
             try:
