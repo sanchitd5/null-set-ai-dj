@@ -401,7 +401,7 @@ GENRE_FAMILIES = {
                     "indian", "filmi", "sufi", "qawwali", "haryanvi", "tamil", "telugu"),
     "electronic": ("house", "techno", "garage", "trance", "edm", "electronic", "electronica",
                    "dubstep", "drum & bass", "drum and bass", "dnb", "bass music", "breakbeat",
-                   "downtempo", "ambient", "future bass", "electro", "idm", "jungle"),
+                   "downtempo", "ambient", "future bass", "electro", "idm", "jungle", "dance"),
     "hiphop": ("hip-hop", "hip hop", "rap", "trap", "drill", "grime"),
     "rnb": ("r&b", "rnb", "soul"),
     "latin": ("reggaeton", "latin", "dembow", "cumbia", "bachata", "salsa", "urbano"),
@@ -411,6 +411,21 @@ GENRE_FAMILIES = {
     "country": ("country", "folk", "americana"),
     "jazz": ("jazz", "funk", "disco"),
 }
+
+
+def _few_shot_titles() -> set:
+    """Bare titles of the few-shot ANSWERS. gemma-4 sometimes returns an example
+    verbatim (Cigarettes After Sex -> "Marea"/"Delilah", current_genre copied too)."""
+    return {_bare_title(t) for t in re.findall(r'"title":"([^"]+)"', _FEW_SHOT)}
+
+
+def _parroted(data: dict, title: str) -> bool:
+    """True when every suggestion is a few-shot answer and the current song isn't an example."""
+    if f'"{title}"' in _FEW_SHOT:
+        return False
+    sugg = [x for x in data.get("suggestions", []) or [] if isinstance(x, dict) and x.get("title")]
+    ex = _few_shot_titles()
+    return bool(sugg) and all(_bare_title(x["title"]) in ex for x in sugg)
 
 
 def _genre_families(label) -> set:
@@ -736,6 +751,8 @@ def suggest_next_tracks(
                        max_tokens=1100 if lead_to else 700, priority=prio)  # lead JSON is longer
         try:
             data = _extract_json(raw)
+            if _parroted(data, title):
+                raise ValueError("copied the few-shot example answers")
             break
         except ValueError as exc:  # JSONDecodeError is a ValueError
             if attempt >= 2:

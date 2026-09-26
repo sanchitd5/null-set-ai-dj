@@ -45,11 +45,30 @@ def test_all_jumps_triggers_one_retry(monkeypatch):
     import json
     import app.ui.autopilot_service as svc
     jump = {"current_genre": "Urdu pop", "steering": "move", "suggestions": [
-        {"artist": "Fred again..", "title": "Delilah", "genre": "UK garage", "genre_hop": 1}]}
+        {"artist": "Fred again..", "title": "Jungle", "genre": "UK garage", "genre_hop": 1}]}
     step = {"current_genre": "Urdu pop", "suggestions": [
         {"artist": "AP Dhillon", "title": "With You", "genre": "Punjabi pop", "genre_hop": 1}]}
     replies, prompts = iter([json.dumps(jump), json.dumps(step)]), []
     monkeypatch.setattr(svc, "chat_raw", lambda s, u, **k: (prompts.append(u), next(replies))[1])
     out = svc.suggest_next_tracks("Pal Pal", "Afusic", 100.0, "8A", 200.0, 0.5, "", [])
     assert [s["title"] for s in out] == ["With You"]
-    assert "REJECTED" in prompts[1] and "Delilah" in prompts[1]
+    assert "REJECTED" in prompts[1] and "Jungle" in prompts[1]
+
+
+def test_parroted_few_shot_is_retried(monkeypatch):
+    import json
+    import app.ui.autopilot_service as svc
+    copy = {"current_genre": "melodic house", "suggestions": [
+        {"artist": "Fred again..", "title": "Marea (We've Lost Dancing)", "genre": "melodic house", "genre_hop": 0},
+        {"artist": "Fred again..", "title": "Delilah (pull me out of this)", "genre": "melodic house", "genre_hop": 0}]}
+    real = {"current_genre": "dream pop", "suggestions": [
+        {"artist": "Beach House", "title": "Space Song", "genre": "dream pop", "genre_hop": 0}]}
+    replies = iter([json.dumps(copy), json.dumps(real)])
+    monkeypatch.setattr(svc, "chat_raw", lambda *a, **k: next(replies))
+    out = svc.suggest_next_tracks("Apocalypse", "Cigarettes After Sex", 94.0, "8A", 290.0, 0.3, "", [])
+    assert [s["title"] for s in out] == ["Space Song"]
+
+
+def test_indie_dance_is_a_jump_from_indie_pop():
+    from app.ui.autopilot_service import _family_jump
+    assert _family_jump("indie pop", "indie dance")
