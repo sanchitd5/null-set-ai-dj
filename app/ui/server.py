@@ -633,6 +633,47 @@ def autopilot_suggest(req: AutopilotSuggestRequest):
     return {"suggestions": suggestions, "set_position": round(set_position, 2), **meta}
 
 
+class MindPlanRequest(BaseModel):
+    track_a_id: str                 # playing song
+    track_b_id: str                 # next song, already matched
+    now: float = 0.0                # current position in A (s)
+    entry: float = 0.0              # where A came in (s)
+    window_lo: float                # exit window on A, track seconds
+    window_hi: float
+    set_mode: str = "hybrid"
+    set_position: float = 0.0
+    recent_moves: list[str] = []
+    remix_used: list[str] = []      # remix moves already played on A
+    mashup_possible: bool = False
+    subdrop_last_track: bool = False
+
+
+@app.post("/api/autopilot/plan")
+def autopilot_plan(req: MindPlanRequest):
+    """One LLM plan per song pair (candidate, exit phrase, DJ-mind moves).
+
+    The model proposes; app.ui.mind_plan.validate_plan keeps only what the
+    DJ-mind caps allow. The browser re-checks each move against live state.
+    """
+    from app.ui.mind_plan import build_facts, plan_pair
+
+    if not req.window_hi > req.window_lo:
+        raise HTTPException(status_code=400, detail="window_hi must be > window_lo")
+    track_a = analyze_track(_track_path(req.track_a_id))
+    track_b = analyze_track(_track_path(req.track_b_id))
+    candidates = [c.to_dict() for c in _matcher.match(track_a, track_b, top_n=3)]
+    if not candidates:
+        raise HTTPException(status_code=422, detail="No match candidates for this pair")
+    facts = build_facts(track_a.to_dict(), track_b.to_dict(), candidates, req.model_dump()
+                        if hasattr(req, "model_dump") else req.dict())
+    try:
+        plan = plan_pair(facts)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"LLM plan error: {exc}") from exc
+    plan["exit_options"] = facts["exit_options"]
+    return plan
+
+
 @app.post("/api/samples")
 async def upload_sample(file: UploadFile, label: Optional[str] = Form(default=None)):
     """Uploads a custom one-shot for the console's sampler pad grid."""
