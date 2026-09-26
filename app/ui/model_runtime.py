@@ -94,6 +94,39 @@ def _mlx_up() -> bool:
         return False
 
 
+def _running_mlx_model() -> tuple[Optional[int], Optional[str]]:
+    """(pid, --model) of the mlx_lm.server already listening on MLX_PORT, if any.
+
+    It outlives app restarts, so switching MLX_MODEL would otherwise keep
+    serving the old model."""
+    try:
+        pids = subprocess.run(["lsof", "-ti", f":{MLX_PORT}", "-sTCP:LISTEN"],
+                              capture_output=True, text=True, timeout=5).stdout.split()
+        for pid in pids:
+            args = subprocess.run(["ps", "-o", "args=", "-p", pid],
+                                  capture_output=True, text=True, timeout=5).stdout.split()
+            if "mlx_lm.server" in " ".join(args) and "--model" in args:
+                return int(pid), args[args.index("--model") + 1]
+    except Exception:
+        pass
+    return None, None
+
+
+def _stop_foreign_mlx() -> None:
+    """Stop a running mlx_lm.server that serves a different model than MLX_MODEL."""
+    pid, model = _running_mlx_model()
+    if pid and model and model != MLX_MODEL:
+        print(f"[model_runtime] mlx server on :{MLX_PORT} serves {model}, want {MLX_MODEL}: restarting it", flush=True)
+        try:
+            os.kill(pid, 15)
+            for _ in range(30):
+                if not _mlx_up():
+                    break
+                time.sleep(0.5)
+        except Exception:
+            pass
+
+
 def _warm_chat(base_url: str, model: str, timeout: float) -> float:
     t0 = time.time()
     _http_json(f"{base_url}/chat/completions", {
@@ -111,6 +144,7 @@ def _start_mlx() -> bool:
     if why:
         state["detail"] = f"mlx unavailable: {why}"
         return False
+    _stop_foreign_mlx()
     if not _mlx_up():
         log = open(LOG_PATH, "ab")
         _proc = subprocess.Popen(
