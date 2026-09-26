@@ -130,7 +130,7 @@ def test_tempo_target_replaces_tempo_window_without_occasion(monkeypatch):
     calls = {}
     real = svc._filter_suggestions
 
-    def spy(data, history, occasion_set=False, current_key=None):
+    def spy(data, history, occasion_set=False, current_key=None, **_kw):
         calls["occasion_set"] = occasion_set
         return real(data, history, occasion_set=occasion_set, current_key=current_key)
 

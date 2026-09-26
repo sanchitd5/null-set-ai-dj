@@ -811,6 +811,9 @@ class AutopilotSuggestRequest(BaseModel):
     tempo_note: Optional[str] = None
     # LEAD TO (user destination): "Artist - Title" / artist / genre, step k of N
     lead_to: str = ""
+    # titles rejected this round (download failed / vibe gate): never suggested
+    # again this round, but NOT played - kept out of the cross-set memory
+    avoid: list[str] = []
     lead_step: int = 0
     lead_steps: int = 0
     lead_bpm: Optional[float] = None
@@ -947,6 +950,8 @@ def _autopilot_suggest_impl(req: AutopilotSuggestRequest):
     if len(credits) > 1:
         artist_part = " & ".join(credits[:3])
     history_display = [" - ".join(clean_identity(h)).removeprefix("Unknown - ") for h in req.history]
+    # rejected titles: excluded from suggestions like played ones, never recorded as played
+    avoid_display = [" - ".join(clean_identity(h)).removeprefix("Unknown - ") for h in req.avoid]
     genre = _suggested_genres.get(_genre_key(title_part), "")
 
     # set_position: by clock when elapsed_seconds is sent (elapsed / set length);
@@ -968,7 +973,7 @@ def _autopilot_suggest_impl(req: AutopilotSuggestRequest):
         _set_memory = SetMemory(CACHE_DIR / "set_memory.json")
     if not req.lookahead:
         _set_memory.record(history_display)
-    earlier = _set_memory.earlier_sets(history_display)
+    earlier = _set_memory.earlier_sets(history_display + avoid_display)
 
     # Absolute loudness (Avg Energy is peak-normalised per song). Best-effort.
     loudness_dbfs = None
@@ -990,12 +995,12 @@ def _autopilot_suggest_impl(req: AutopilotSuggestRequest):
             avg_energy=avg_energy,
             occasion=_occasion_with_note(req.occasion, req.energy_note,
                                          _variety_note(req.variety_run, req.variety_genre)),
-            history=req.history,
+            history=req.history + req.avoid,
             set_position=set_position,
             set_mode=req.set_mode if req.set_mode in SET_MODES else "hybrid",
             meta=meta,
             genre=genre,
-            history_display=history_display,
+            history_display=history_display + avoid_display,
             lookahead=req.lookahead,
             earlier_sets=earlier,
             loudness_dbfs=loudness_dbfs,

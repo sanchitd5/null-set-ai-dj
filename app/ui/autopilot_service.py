@@ -155,7 +155,7 @@ AVOID TRACKS: The history list contains track names already played. Do NOT sugge
   title appears in that list. Same artist is fine — only the exact title is banned.
 
 OUTPUT FORMAT — return ONLY valid JSON, no markdown, no explanation:
-{{"steering":"stay|move","occasion_fit":0,"current_genre":"","current_profile":{{"energy":0,"tempo_feel":"","drums":"","vocals":"","mood":"","texture":""}},"suggestions":[{{"artist":"","title":"","reason":"2-sentence reason referencing harmonic move, energy arc, and how THIS song's sound matches","genre":"inferred genre of suggested track","expected_bpm":0,"expected_key":"","mix_moment":"exit at [section] ~bar N","energy_delta":"up|down|maintain","vibe_link":"specific sonic characteristic shared — NOT a genre label","occasion_fit":0,"track_profile":{{"energy":0,"tempo_feel":"","drums":"","vocals":"","mood":"","texture":""}}}}]}}
+{{"steering":"stay|move","occasion_fit":0,"current_genre":"","current_profile":{{"energy":0,"tempo_feel":"","drums":"","vocals":"","mood":"","texture":""}},"suggestions":[{{"artist":"","title":"","reason":"2-sentence reason referencing harmonic move, energy arc, and how THIS song's sound matches","genre":"inferred genre of suggested track","expected_bpm":0,"expected_key":"","mix_moment":"exit at [section] ~bar N","energy_delta":"up|down|maintain","vibe_link":"specific sonic characteristic shared — NOT a genre label","genre_hop":0,"occasion_fit":0,"track_profile":{{"energy":0,"tempo_feel":"","drums":"","vocals":"","mood":"","texture":""}}}}]}}
 
 {_FEW_SHOT}"""
 
@@ -321,7 +321,10 @@ _USER_TEMPLATE = (
     "Played in the listener's EARLIER sets - they have heard these recently, so prefer fresh "
     "songs over them (only reuse one if it is clearly the perfect fit): {earlier_sets}\n"
     "At least ONE of your suggestions must be a less obvious pick (a deep cut, a newer release "
-    "or a lesser-played gem that still fits every rule), not the genre's most famous anthem.\n\n"
+    "or a lesser-played gem) FROM THE SAME GENRE as the current song, not the genre's most famous anthem.\n"
+    "genre_hop for each suggestion: 0 = same subgenre, 1 = neighbouring subgenre (e.g. melodic house -> "
+    "progressive house), 2 = a different genre, 3 = unrelated (e.g. melodic house -> soft rock). "
+    "Unless the occasion or a DESTINATION asks for a change, every suggestion must be genre_hop 0 or 1.\n\n"
     "Suggest {n} tracks. Prioritise: vibe continuity → harmonic compatibility → energy arc for {arc_phase} → diversity.\n"
     "Reply ONLY with the JSON object, compact (no line breaks or indentation). Keep every "
     "reason under 20 words, vibe_link under 8 words, mix_moment under 6 words."
@@ -385,8 +388,12 @@ def _key_clash_reason(current_key: str | None, expected_key) -> str | None:
     return None
 
 
+MAX_GENRE_HOP = 1  # 0 same subgenre, 1 neighbour; 2+ only on a deliberate move
+
+
 def _filter_suggestions(
     data: dict, history: list[str], occasion_set: bool = False, current_key: str | None = None,
+    allow_genre_change: bool = False,
 ) -> list[dict]:
     """Drop sets/interviews, exact repeats, profile clashes and (unless steering)
     suggestions whose expected_key clashes with `current_key`. Never returns empty
@@ -404,7 +411,8 @@ def _filter_suggestions(
     off_theme = []
     played_bare = {_bare_title(h.split(" - ", 1)[-1]) for h in history}
     cur = data.get("current_profile")
-    ok, clashes, key_clashes = [], [], []
+    ok, clashes, key_clashes, genre_jumps = [], [], [], []
+    steering_any = str(data.get("steering", "")).lower().startswith("move")
     for s in data.get("suggestions", []) or []:
         if not isinstance(s, dict) or not s.get("title"):
             continue
@@ -413,6 +421,13 @@ def _filter_suggestions(
             continue
         if _bare_title(s["title"]) in played_bare or any(s["title"].lower() in p for p in played):
             continue  # same song again, incl. a remix / feat. variant of a played one
+        # Genre continuity (user: "it's changing genre a lot": Lane 8 -> Elton John
+        # -> A Boogie -> The Weeknd). The prompt rule alone wasn't followed.
+        hop = _num(s.get("genre_hop"))
+        if hop is not None and hop > MAX_GENRE_HOP and not (steering_any or allow_genre_change):
+            s["rejected_reason"] = f"genre jump ({hop:.0f})"
+            genre_jumps.append((hop, s))
+            continue
         fit = _num(s.get("occasion_fit"))
         if theme_floor is not None and fit is not None and fit < theme_floor:
             off_theme.append((fit, s))
@@ -431,6 +446,8 @@ def _filter_suggestions(
             s["rejected_reason"] = reason
     if ok or clashes or key_clashes:
         return ok or clashes[:1] or key_clashes[:1]
+    if genre_jumps:  # only genre jumps left: the smallest one, rather than nothing
+        return [min(genre_jumps, key=lambda t: t[0])[1]]
     # everything was off-theme: keep only the best-fitting one rather than nothing
     return [max(off_theme, key=lambda t: t[0])[1]] if off_theme else []
 
@@ -689,6 +706,7 @@ def suggest_next_tracks(
         data["steering"] = "move"  # the user's destination: no continuity / key filters against it
     suggestions = _filter_suggestions(
         data, history, occasion_set=bool((occasion or "").strip()) and not lead_to, current_key=camelot,
+        allow_genre_change=bool(lead_to) or "NEIGHBOURING subgenre" in (occasion or ""),
     )
     # Songs from EARLIER sets are dropped whenever a fresh alternative exists:
     # the soft prompt hint alone let "Lane 8 - Little By Little" follow Fred

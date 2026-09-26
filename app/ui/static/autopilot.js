@@ -662,7 +662,7 @@
     const res = await fetch("/api/autopilot/suggest", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ track_id: trackId, occasion: occasionWithBridge(opts), ...leadFields(opts), history: history.slice(-30).concat(avoid.slice(-6)), set_position: setPos, set_mode: setMode(), energy_note: energyNote, lookahead: !!opts.lookAhead,
+      body: JSON.stringify({ track_id: trackId, occasion: occasionWithBridge(opts), ...leadFields(opts), history: history.slice(-30), avoid: avoid.slice(-6), set_position: setPos, set_mode: setMode(), energy_note: energyNote, lookahead: !!opts.lookAhead,
         variety_run: varietyRun().run, variety_genre: varietyRun().genre,
         tempo_target: bridgeTarget(opts.lookAhead), tempo_note: bridgeNote(opts.lookAhead) || null,
         elapsed_seconds: setStartedAt ? (Date.now() - setStartedAt) / 1000 : null }),
