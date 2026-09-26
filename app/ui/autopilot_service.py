@@ -451,10 +451,40 @@ def _extract_json(text: str) -> dict:
     text = re.sub(r"^```[a-z]*\n?", "", text)
     text = re.sub(r"\n?```$", "", text.strip())
     start = text.find("{")
-    end = text.rfind("}") + 1
-    if start == -1 or end == 0:
+    if start == -1:
         raise ValueError(f"No JSON in response: {text[:200]}")
+    # First COMPLETE object only: models that don't stop (gemma-4 on mlx kept
+    # writing "ASSISTANT: {...}" turns) repeat the JSON, and first-{ to last-}
+    # spanned several copies -> invalid.
+    end = _balanced_end(text, start)
+    if end is None:
+        end = text.rfind("}") + 1
+        if end <= start:
+            raise ValueError(f"No JSON in response: {text[:200]}")
     return _loads_repaired(text[start:end])
+
+
+def _balanced_end(text: str, start: int) -> int | None:
+    """Index just past the } that closes the { at `start` (string-aware)."""
+    depth, in_str, esc = 0, False, False
+    for i in range(start, len(text)):
+        c = text[i]
+        if in_str:
+            if esc:
+                esc = False
+            elif c == "\\":
+                esc = True
+            elif c == '"':
+                in_str = False
+        elif c == '"':
+            in_str = True
+        elif c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return i + 1
+    return None
 
 
 def _loads_repaired(body: str, max_fixes: int = 20) -> dict:
@@ -504,6 +534,9 @@ def chat_raw(
         return _chat_call(system, user, temperature, left, model, max_tokens)
 
 
+CHAT_STOPS = ["\nUSER:", "\nASSISTANT", "ASSISTANT's RULE", "<end_of_turn>"]
+
+
 def _chat_call(system, user, temperature, timeout, model, max_tokens) -> str:
     """The HTTP call itself. Supports openai v0.x/3.x (ChatCompletion.create)
     and v1.x/v2.x (OpenAI client). response_format may be ignored by the
@@ -530,6 +563,8 @@ def _chat_call(system, user, temperature, timeout, model, max_tokens) -> str:
             messages=messages,
             temperature=temperature,
             response_format={"type": "json_object"},
+            # models without a working chat template run on into fake turns
+            stop=CHAT_STOPS,
             **({"max_tokens": max_tokens} if max_tokens else {}),
         )
         return resp.choices[0].message.content or "{}"
