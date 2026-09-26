@@ -368,12 +368,14 @@
     } catch { return null; }
   }
 
-  async function getSuggestions(trackId) {
+  async function getSuggestions(trackId, avoid = []) {
     const setPos = Math.min(history.length / 10, 1.0);
+    // `avoid` = titles rejected this round (failed download / vibe gate) so the
+    // LLM does not propose them again on retry.
     const res = await fetch("/api/autopilot/suggest", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ track_id: trackId, occasion, history: history.slice(-6), set_position: setPos }),
+      body: JSON.stringify({ track_id: trackId, occasion, history: history.slice(-6).concat(avoid.slice(-6)), set_position: setPos }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || res.statusText);
@@ -399,19 +401,28 @@
     apStatus("⏳ Loading next track — AI selecting…");
     renderQueue([]);
 
+    // Retry with fresh LLM suggestions when every candidate fails (download
+    // error, no real song found, vibe gate). Rejected titles are fed back as
+    // "avoid" so the model proposes different songs.
+    const MAX_ROUNDS = 3;
+    const rejected = [];
+    for (let round = 1; round <= MAX_ROUNDS; round++) {
+      if (!active) return;
+      if (round > 1) apStatus(`⏳ Retrying with new suggestions (${round}/${MAX_ROUNDS})…`);
+
     let suggestions;
     try {
-      suggestions = await getSuggestions(currentId);
+      suggestions = await getSuggestions(currentId, rejected);
     } catch (e) {
+      console.warn("Autopilot suggest failed:", e.message);
       apStatus(`Suggest error: ${e.message}`);
-      active = false;
-      updateButtons();
-      return;
+      continue;
     }
     renderQueue(suggestions);
 
     for (const s of suggestions) {
       if (!active) return;
+      rejected.push(`${s.artist} - ${s.title}`); // only matters if this one fails too
       try {
         const label = `${s.artist} — ${s.title}`;
 
@@ -463,9 +474,11 @@
         return;
       } catch (e) {
         console.warn("Autopilot suggestion failed:", s.title, e.message);
+        apStatus(`Skipping ${s.title}: ${e.message}`);
       }
     }
-    apStatus("All suggestions failed — autopilot stopped.");
+    }
+    apStatus(`All suggestions failed after ${MAX_ROUNDS} tries — autopilot stopped.`);
     active = false;
     updateButtons();
   }

@@ -40,7 +40,8 @@ def _is_mix(title: str) -> bool:
 _NON_MUSIC_KEYWORDS = re.compile(
     r"\b(interview|talks?\s+about|in\s+conversation|conversation\s+with|podcast|"
     r"reacts?|reaction|review|tutorial|how\s+to|lesson|masterclass|documentary|"
-    r"behind\s+the\s+scenes|making\s+of|explains?|trailer|q\s*&\s*a|vlog)\b",
+    r"behind\s+the\s+scenes|making\s+of|explains?|trailer|q\s*&\s*a|vlog|"
+    r"cover|karaoke|nightcore|slowed|sped\s+up|8d\s+audio|loop\s+version|hour\s+version)\b",
     re.IGNORECASE,
 )
 
@@ -71,7 +72,11 @@ def _search_match_filter(words: list[str]):
     """yt-dlp match_filter: accept only a real song whose title matches the query."""
 
     def _filter(info: dict, *, incomplete: bool = False):
-        title = info.get("title") or ""
+        # yt-dlp also calls this on the search-results container itself (and on
+        # half-extracted entries): never reject those, only real videos.
+        if info.get("_type") == "playlist" or not info.get("title"):
+            return None
+        title = info["title"]
         duration = info.get("duration")
         if duration is not None:
             if duration >= MAX_TRACK_SECS:
@@ -151,11 +156,17 @@ def _ytdlp(url: str, output_dir: Path) -> list[Path]:
             "FFmpegExtractAudio": ["-id3v2_version", "3"],
         },
     }
-    try:
-        with _yt_dlp.YoutubeDL(opts) as ydl:
-            ydl.download([url])
-    except _yt_dlp.utils.MaxDownloadsReached:
-        pass  # got our one matching track
+    for attempt in range(2):  # YouTube intermittently answers 403 on the first stream fetch
+        try:
+            with _yt_dlp.YoutubeDL(opts) as ydl:
+                ydl.download([url])
+            break
+        except _yt_dlp.utils.MaxDownloadsReached:
+            break  # got our one matching track
+        except _yt_dlp.utils.DownloadError as exc:
+            if attempt == 0 and "403" in str(exc):
+                continue
+            raise
 
     after = set(output_dir.glob("*.mp3"))
     new_files = sorted(after - before)
