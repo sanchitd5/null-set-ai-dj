@@ -51,14 +51,35 @@ _matcher = RecipeMatcher(_knowledge)
 # In-memory registry: track_id -> absolute file path. Rebuilt on restart
 # from UPLOAD_DIR's contents (see _load_registry_from_disk below).
 _tracks: Dict[str, Path] = {}
-# Display names for downloaded tracks (track_id -> original filename stem).
+# Display names (track_id -> original filename stem). Persisted to a sidecar so
+# a server restart doesn't collapse every track to its content hash (which then
+# leaks into the autopilot LLM prompt as "Unknown - 065028eaec446431").
+TRACK_NAMES_FILE = UPLOAD_DIR / "_names.json"
 _track_names: Dict[str, str] = {}
 
 
 def _load_registry_from_disk() -> None:
     for path in UPLOAD_DIR.glob("*"):
-        if path.is_file():
+        if path.is_file() and not path.name.startswith("_"):
             _tracks[path.stem] = path
+    if TRACK_NAMES_FILE.exists():
+        try:
+            loaded = json.loads(TRACK_NAMES_FILE.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                _track_names.update({k: v for k, v in loaded.items() if isinstance(v, str)})
+        except (json.JSONDecodeError, OSError):
+            pass
+
+
+def _remember_track_name(track_id: str, name: str) -> None:
+    name = name.strip()
+    if not name or name == track_id:
+        return
+    _track_names[track_id] = name
+    try:
+        TRACK_NAMES_FILE.write_text(json.dumps(_track_names, indent=2), encoding="utf-8")
+    except OSError:
+        pass
 
 
 _load_registry_from_disk()
@@ -181,7 +202,7 @@ async def download_from_url(req: DownloadRequest):
         else:
             path.unlink(missing_ok=True)
         _tracks[track_id] = dest
-        _track_names[track_id] = original_name
+        _remember_track_name(track_id, original_name)
         results.append({"track_id": track_id, "filename": dest.name, "display_name": original_name})
 
     return {"source": source, "tracks": results}
@@ -196,6 +217,8 @@ async def upload_track(file: UploadFile):
     dest = UPLOAD_DIR / f"{track_id}{suffix}"
     dest.write_bytes(contents)
     _tracks[track_id] = dest
+    if file.filename:
+        _remember_track_name(track_id, Path(file.filename).stem)
     return {"track_id": track_id, "filename": file.filename}
 
 
@@ -265,7 +288,18 @@ def post_match(req: MatchRequest):
     track_a = analyze_track(_track_path(req.track_a_id))
     track_b = analyze_track(_track_path(req.track_b_id))
     candidates = _matcher.match(track_a, track_b, top_n=req.top_n)
-    return {"candidates": [c.to_dict() for c in candidates]}
+    # Measured vibe continuity (loudness / brightness / onset density / energy).
+    # Best-effort: a vibe failure must never break matching.
+    vibe = None
+    try:
+        from app.music_brain.vibe import analyze_vibe, vibe_distance
+        vibe = vibe_distance(
+            analyze_vibe(_track_path(req.track_a_id)),
+            analyze_vibe(_track_path(req.track_b_id)),
+        )
+    except Exception:
+        vibe = None
+    return {"candidates": [c.to_dict() for c in candidates], "vibe": vibe}
 
 
 @app.post("/api/preview")

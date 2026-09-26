@@ -13,7 +13,6 @@
   let currentTrackId = null;
   let occasion = "";
   let history = [];           // display names of played tracks (last 5 kept)
-  let transitionTimer = null;
 
   // ── UI refs ───────────────────────────────────────────────────────────────
   const seedInput      = document.getElementById("ap-seed-input");
@@ -39,19 +38,276 @@
     return d ? d._currentPosition() : 0;
   }
 
-  function animateCrossfader(fromVal, toVal, durationSec) {
-    if (!xfader) return;
-    const steps = Math.max(30, Math.round(durationSec * 15));
-    const stepMs = (durationSec * 1000) / steps;
+  // ── transition engine ─────────────────────────────────────────────────────
+  //
+  // TECHNICAL SPEC: "Fred again.." style transitions (grounded in ./DJ/ notes)
+  //
+  // Sources: [[Fred again.. Case Study]], [[Bass Swap]], [[Double Drop]],
+  // [[Echo Out]], [[Stems Transition]], [[EQ & Frequency Management]],
+  // [[Phrasing & Structure]].
+  //
+  // 1. PHRASE GRID. Dance music moves in 8-bar (32-beat) phrases. Every move
+  //    below is expressed in BARS and lands on the grid: the recipe matcher
+  //    already snaps `a_time` / `b_time` to a real 8-bar boundary, so t0 of the
+  //    transition IS a phrase boundary. 1 bar = 4 beats = 240000 / bpm ms.
+  //    Standard blend = 16 bars, drop-based recipes = 8 bars, hard cut = 0.
+  //
+  // 2. FREQUENCY OWNERSHIP. Two kick drums / two sub-basses never play at once
+  //    (sub-bass < 120 Hz stacks into mud and phase cancellation). The low EQ
+  //    knob drives a real Web Audio BiquadFilter lowshelf (deck.lowFilter,
+  //    range -26 dB = kill .. +6 dB). Rule: outgoing low is KILLED before the
+  //    incoming low opens. Highs and mids blend freely; the crossfader only
+  //    moves once the bass has a single owner.
+  //
+  // 3. EQ ORDER (default): bars 0-4 kill outgoing LOW; bars 4-8 crossfader to
+  //    centre; bar 8 (phrase boundary) open incoming LOW; bars 8-16 crossfader
+  //    to the incoming side while outgoing HIGH shelf sweeps down (the
+  //    "high-pass the old track away" feel, done with the high shelf because
+  //    that is the filter the console exposes).
+  //
+  // 4. BASS SWAP: the Fred again.. staple. Both tracks phrase-aligned, cut A
+  //    low over 4 bars, then at the drop snap B low open within one beat so
+  //    the new sub arrives as a single event on the downbeat.
+  //
+  // 5. DOUBLE DROP: both drops land on the same downbeat and play together
+  //    for 8 bars at full level (crossfader parked centre). Used only when the
+  //    matcher scored the pair as harmonically safe (same/adjacent Camelot,
+  //    < 3% BPM delta). Even here bass has one owner: A low is killed at the
+  //    drop, B carries the sub, A contributes melody/tops. After 8 bars A is
+  //    cut hard.
+  //
+  // 6. ECHO OUT: arm the ECHO insert on the outgoing deck at the last phrase,
+  //    kill its low, then let the delay tail carry the space while B enters
+  //    clean. Used for key clashes / big BPM gaps because the tail masks the
+  //    harmonic mismatch.
+  //
+  // 7. LOOP ROLL: lock a 2-bar loop on the outgoing deck at the phrase
+  //    boundary (loopBeats = 8, loop button) so the exit point holds steady
+  //    for the bass hand-off; release once the incoming drop owns the room.
+  //
+  // 8. WEB AUDIO / DOM. deck-controller.js wires every knob to the graph:
+  //    `.eq-knob[data-deck][data-band]` -> deck.setEQ(band, dB)
+  //    `#crossfader` -> equal-power cos curve on deck.crossfaderGain
+  //    `.fx-type-btn[data-deck][data-type]` click -> fxUnits[deck].setType()
+  //    `.deck-btn[data-action="loop-toggle"]` click -> deck.toggleLoop()
+  //    Driving the DOM controls (value + `input` event / click) keeps the UI
+  //    lamps in sync and reuses the deck's own BiquadFilter nodes, so this
+  //    module needs no direct AudioContext access.
+  //
+  const LOW_KILL = -26;          // slider minimum, treated as -inf
+  const HIGH_SWEEP = -18;        // outgoing high shelf at the end of a blend
+  const runTimers = [];          // setTimeout / setInterval ids for this run
+
+  function later(ms, fn) {
+    const id = setTimeout(fn, Math.max(0, ms));
+    runTimers.push(id);
+    return id;
+  }
+
+  function clearRun() {
+    runTimers.forEach((id) => { clearTimeout(id); clearInterval(id); });
+    runTimers.length = 0;
+  }
+
+  function eqEl(deck, band) {
+    return document.querySelector(`.eq-knob[data-deck="${deck}"][data-band="${band}"]`);
+  }
+  function fxBtn(deck, type) {
+    return document.querySelector(`.fx-type-btn[data-deck="${deck}"][data-type="${type}"]`);
+  }
+  function loopBtn(deck) {
+    return document.querySelector(`.deck-btn[data-deck="${deck}"][data-action="loop-toggle"]`);
+  }
+
+  function setRange(el, v) {
+    if (!el) return;
+    el.value = String(v);
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+
+  // Linear ramp of a range input over durationMs. fromVal null = current value.
+  function rampParam(getEl, fromVal, toVal, durationMs) {
+    const steps = 20;
+    const interval = Math.max(16, durationMs / steps);
+    const first = getEl();
+    if (!first) return;
+    const from = fromVal == null ? parseFloat(first.value) : fromVal;
     let step = 0;
-    clearInterval(transitionTimer);
-    transitionTimer = setInterval(() => {
+    const t = setInterval(() => {
+      const el = getEl();
+      if (!el || step > steps) { clearInterval(t); return; }
+      const v = from + (toVal - from) * (step / steps);
+      setRange(el, v);
       step++;
-      const v = fromVal + (toVal - fromVal) * (step / steps);
-      xfader.value = v.toFixed(4);
-      xfader.dispatchEvent(new Event("input"));
-      if (step >= steps) { clearInterval(transitionTimer); transitionTimer = null; }
-    }, stepMs);
+    }, interval);
+    runTimers.push(t);
+  }
+
+  function barMs(deck) {
+    const d = window.decks && window.decks[deck];
+    const bpm = d && d.bpm > 0 ? d.bpm : 128;
+    return 240000 / bpm;
+  }
+
+  function setLoopLength(deck, beats) {
+    const d = window.decks && window.decks[deck];
+    if (d && typeof d.setLoopBeats === "function") d.setLoopBeats(beats);
+    const v = document.getElementById(`loop-value-${deck}`);
+    if (v) v.textContent = String(beats);
+  }
+
+  function setLoop(deck, on) {
+    const d = window.decks && window.decks[deck];
+    const btn = loopBtn(deck);
+    if (!d || !btn) return;
+    if (!!d.loopOn !== on) btn.click();
+  }
+
+  function setFx(deck, type, wet) {
+    const btn = fxBtn(deck, type);
+    if (btn) btn.click();
+    if (wet != null) setRange(document.querySelector(`.fx-wet[data-deck="${deck}"]`), wet);
+  }
+
+  // Put a deck back to neutral so it is clean when it becomes the staging deck.
+  function resetDeck(deck) {
+    setRange(eqEl(deck, "low"), 0);
+    setRange(eqEl(deck, "mid"), 0);
+    setRange(eqEl(deck, "high"), 0);
+    setLoop(deck, false);
+    setFx(deck, "none");
+  }
+
+  function recipeKind(recipe) {
+    const r = String(recipe || "").toLowerCase();
+    if (r.includes("double drop")) return "double";
+    if (r.includes("bass swap") || r.includes("drop swap")) return "bass";
+    if (r.includes("echo")) return "echo";
+    if (r.includes("filter")) return "filter";
+    if (r.includes("hard cut") || r.includes("quick cut") || r.includes("cut")) return "cut";
+    if (r.includes("loop")) return "loop";
+    if (r.includes("blend")) return "blend";
+    return "default";
+  }
+
+  /**
+   * Run a recipe-aware, EQ-first transition from `out` to `inn`.
+   * Assumes `inn` was cued at b_time and starts playing at t0.
+   * `xfDuration` (seconds) is the caller's budget: < 16 means an early bail,
+   * so every bar count is halved to keep the set moving.
+   * Returns total duration in ms; the outgoing deck may be stopped after that.
+   */
+  function executeTransition(recipe, out, inn, xfDuration) {
+    clearRun();
+    const kind = recipeKind(recipe);
+    const scale = xfDuration >= 16 ? 1 : 0.5;
+    const bar = barMs(out) * scale;
+    const beat = bar / 4;
+    const fromXf = out === "a" ? -1 : 1;
+    const toXf = -fromXf;
+    const xfEl = () => xfader;
+    const lowOut = () => eqEl(out, "low");
+    const lowIn = () => eqEl(inn, "low");
+    const midOut = () => eqEl(out, "mid");
+    const highOut = () => eqEl(out, "high");
+    const at = (bars, fn) => later(bars * bar, fn);
+
+    // Incoming deck always enters with its sub killed: single bass owner.
+    setRange(lowIn(), LOW_KILL);
+    setRange(eqEl(inn, "mid"), 0);
+    setRange(eqEl(inn, "high"), 0);
+    setRange(xfEl(), fromXf);
+
+    let total;
+    switch (kind) {
+      case "bass": // 8 bars: cut A low, snap B low at the drop (bar 4)
+        rampParam(lowOut, null, LOW_KILL, 4 * bar);
+        rampParam(xfEl, fromXf, 0, 4 * bar);
+        at(4, () => {
+          rampParam(lowIn, LOW_KILL, 0, beat);
+          rampParam(xfEl, 0, toXf, 4 * bar);
+          rampParam(highOut, null, HIGH_SWEEP, 4 * bar);
+        });
+        total = 8;
+        break;
+
+      case "double": // both drops together for 8 bars, then cut A
+        setRange(xfEl(), 0);
+        rampParam(lowOut, null, LOW_KILL, beat);
+        rampParam(lowIn, LOW_KILL, 0, beat);
+        at(8, () => setRange(xfEl(), toXf));
+        total = 8.5;
+        break;
+
+      case "echo": // arm ECHO on A, kill its low, tail carries B's entry
+        setFx(out, "echo", 0.7);
+        rampParam(lowOut, null, LOW_KILL, 2 * bar);
+        rampParam(xfEl, fromXf, 0, 4 * bar);
+        at(4, () => {
+          rampParam(lowIn, LOW_KILL, 0, bar);
+          rampParam(xfEl, 0, toXf, 2 * bar);
+          rampParam(highOut, null, HIGH_SWEEP, 2 * bar);
+        });
+        total = 8;
+        break;
+
+      case "filter": // sweep A low/mid down over 4 bars, swap at centre
+        rampParam(lowOut, null, LOW_KILL, 4 * bar);
+        rampParam(midOut, null, -10, 4 * bar);
+        rampParam(xfEl, fromXf, 0, 4 * bar);
+        at(4, () => {
+          rampParam(lowIn, LOW_KILL, 0, 2 * bar);
+          rampParam(xfEl, 0, toXf, 4 * bar);
+          rampParam(highOut, null, HIGH_SWEEP, 4 * bar);
+        });
+        total = 8;
+        break;
+
+      case "cut": // instant snap on the phrase boundary
+        setRange(lowOut(), LOW_KILL);
+        setRange(lowIn(), 0);
+        setRange(xfEl(), toXf);
+        total = 1;
+        break;
+
+      case "loop": // 2-bar loop roll on A holds the exit point steady
+        setLoopLength(out, 8);
+        setLoop(out, true);
+        at(2, () => {
+          rampParam(lowOut, null, LOW_KILL, 2 * bar);
+          rampParam(xfEl, fromXf, 0, 2 * bar);
+        });
+        at(4, () => {
+          rampParam(lowIn, LOW_KILL, 0, beat);
+          rampParam(xfEl, 0, toXf, 2 * bar);
+          rampParam(highOut, null, HIGH_SWEEP, 2 * bar);
+        });
+        at(6, () => setLoop(out, false));
+        total = 8;
+        break;
+
+      case "blend": // 16-bar EQ-first blend
+        rampParam(lowOut, null, LOW_KILL, 4 * bar);
+        at(4, () => rampParam(xfEl, fromXf, 0, 4 * bar));
+        at(8, () => {
+          rampParam(lowIn, LOW_KILL, 0, 2 * bar);
+          rampParam(xfEl, 0, toXf, 8 * bar);
+          rampParam(highOut, null, HIGH_SWEEP, 8 * bar);
+        });
+        total = 16;
+        break;
+
+      default: // 8-bar bass swap then 8-bar crossfader sweep
+        rampParam(lowOut, null, LOW_KILL, 4 * bar);
+        at(4, () => rampParam(lowIn, LOW_KILL, 0, 4 * bar));
+        at(8, () => {
+          rampParam(xfEl, fromXf, toXf, 8 * bar);
+          rampParam(highOut, null, HIGH_SWEEP, 8 * bar);
+        });
+        total = 16;
+        break;
+    }
+    return total * bar;
   }
 
   const ENERGY_DELTA_CLASS = { up: "ap-energy-up", down: "ap-energy-down", maintain: "ap-energy-hold" };
@@ -132,7 +388,9 @@
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || res.statusText);
-    return (data.candidates || [])[0] || null;
+    const candidate = (data.candidates || [])[0] || null;
+    if (candidate && data.vibe) candidate.vibe = data.vibe;
+    return candidate;
   }
 
   // ── core loop ─────────────────────────────────────────────────────────────
@@ -175,6 +433,15 @@
         apStatus(`Matching transition…`);
         const candidate = await matchTracks(currentId, nextId);
         if (!candidate) continue;
+
+        // Measured vibe gate: reject candidates whose loudness / brightness /
+        // onset density / energy sit too far from what is playing right now.
+        if (candidate.vibe && candidate.vibe.ok === false) {
+          const why = (candidate.vibe.reasons || []).join("; ") || `distance ${candidate.vibe.distance}`;
+          console.warn("Autopilot vibe reject:", s.title, why);
+          apStatus(`Skipping ${nextName}: ${why}`);
+          continue;
+        }
 
         // Show match score on the NEXT queue card.
         const scoreEl = document.getElementById("ap-match-score");
@@ -247,32 +514,30 @@
       const sd = window.decks && window.decks[stagingDeck()];
       if (sd) sd.play(bTime);
 
-      // Animate crossfader toward staging deck
-      const fromXf = activeDeck === "a" ? -1 : 1;
-      const toXf   = activeDeck === "a" ?  1 : -1;
-      animateCrossfader(fromXf, toXf, xfDuration);
+      // Recipe-aware EQ-first transition toward the staging deck
+      const outgoing = activeDeck;
+      const totalMs = executeTransition(recipe, outgoing, stagingDeck(), xfDuration);
 
-      // After crossfade completes, update state and continue
-      setTimeout(() => {
+      // After the transition completes, update state and continue
+      later(totalMs + 500, () => {
         if (!active) return;
 
-        // Stop the outgoing deck
-        const od = window.decks && window.decks[activeDeck];
+        // Stop the outgoing deck and put it back to neutral for its next load
+        const od = window.decks && window.decks[outgoing];
         if (od) od.stopNow();
+        resetDeck(outgoing);
 
         history.push(nextName);
         activeDeck = stagingDeck();
         currentTrackId = nextId;
 
-        // Reset crossfader fully to new active deck side before next transition
-        if (xfader) {
-          xfader.value = activeDeck === "a" ? "-1" : "1";
-          xfader.dispatchEvent(new Event("input"));
-        }
+        // Park crossfader fully on the new active deck side
+        setRange(xfader, activeDeck === "a" ? -1 : 1);
 
         prepareTransition(currentTrackId);
-      }, (xfDuration + 1) * 1000);
+      });
     }, 500);
+    runTimers.push(tick);
   }
 
   // ── start / stop ──────────────────────────────────────────────────────────
@@ -321,8 +586,7 @@
 
   function stop() {
     active = false;
-    clearInterval(transitionTimer);
-    transitionTimer = null;
+    clearRun();
     apStatus("Autopilot stopped.");
     updateButtons();
   }
