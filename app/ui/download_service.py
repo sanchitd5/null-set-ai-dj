@@ -36,6 +36,62 @@ def _is_mix(title: str) -> bool:
     return bool(_MIX_KEYWORDS.search(title))
 
 
+# Spoken / non-music videos (interviews, reactions, tutorials) — reject.
+_NON_MUSIC_KEYWORDS = re.compile(
+    r"\b(interview|talks?\s+about|in\s+conversation|conversation\s+with|podcast|"
+    r"reacts?|reaction|review|tutorial|how\s+to|lesson|masterclass|documentary|"
+    r"behind\s+the\s+scenes|making\s+of|explains?|trailer|q\s*&\s*a|vlog)\b",
+    re.IGNORECASE,
+)
+
+MIN_TRACK_SECS = 90
+MAX_TRACK_SECS = 9 * 60  # >9 min is almost certainly a mix / set / compilation
+_SEARCH_POOL = 8  # search results to consider for ytsearch queries
+_MIN_WORD_MATCH = 0.7  # fraction of query words that must appear in title+channel
+
+
+def _is_non_music(title: str) -> bool:
+    return bool(_NON_MUSIC_KEYWORDS.search(title))
+
+
+def _norm(text: str) -> str:
+    return re.sub(r"[^a-z0-9 ]+", "", text.lower().replace("-", " "))
+
+
+def _query_words(url: str) -> list[str]:
+    """Extract the positive search words from a ytsearch URL (drops -exclusions and 'audio')."""
+    q = _YTSEARCH_RE.sub("", url, count=1)
+    q = re.sub(r'-"[^"]*"', " ", q)  # -"DJ set"
+    q = re.sub(r"(^|\s)-\S+", " ", q)  # -mix
+    words = [_norm(w).strip() for w in q.split()]
+    return [w for w in words if w and w != "audio"]
+
+
+def _search_match_filter(words: list[str]):
+    """yt-dlp match_filter: accept only a real song whose title matches the query."""
+
+    def _filter(info: dict, *, incomplete: bool = False):
+        title = info.get("title") or ""
+        duration = info.get("duration")
+        if duration is not None:
+            if duration >= MAX_TRACK_SECS:
+                return f"too long ({duration}s), likely a mix/set"
+            if duration < MIN_TRACK_SECS:
+                return f"too short ({duration}s), likely a clip"
+        if _is_mix(title):
+            return "title looks like a mix/set"
+        if _is_non_music(title):
+            return "title looks like an interview/non-music video"
+        if words:
+            hay = " " + _norm(f"{title} {info.get('channel') or ''} {info.get('uploader') or ''}") + " "
+            hits = sum(1 for w in words if w in hay)
+            if hits / len(words) < _MIN_WORD_MATCH:
+                return f"title does not match query ({hits}/{len(words)} words)"
+        return None
+
+    return _filter
+
+
 def detect_source(url: str) -> str:
     """Return 'spotify', 'youtube_music', 'youtube', 'ytsearch', or 'unknown'."""
     if _SPOTIFY_RE.match(url):
@@ -64,16 +120,21 @@ def _ytdlp(url: str, output_dir: Path) -> list[Path]:
 
     before = set(output_dir.glob("*.mp3"))
 
-    # Reject videos longer than 9 minutes — anything longer is almost certainly
-    # a DJ mix, live set, or album compilation, not an individual track.
-    MAX_TRACK_SECS = 9 * 60  # 540 s
+    # Search queries: widen to a pool of results and take the FIRST one that is a real
+    # song matching the query (not an interview, mix, clip). Direct URLs: only guard
+    # length / mix / non-music.
+    is_search = bool(_YTSEARCH_RE.match(url))
+    words = _query_words(url) if is_search else []
+    if is_search:
+        url = _YTSEARCH_RE.sub(f"ytsearch{_SEARCH_POOL}:", url, count=1)
 
     opts = {
         "format": "bestaudio/best",
         "outtmpl": str(output_dir / "%(title)s.%(ext)s"),
         "windowsfilenames": True,
         "noplaylist": True,
-        "match_filter": _yt_dlp.utils.match_filter_func(f"duration < {MAX_TRACK_SECS}"),
+        "match_filter": _search_match_filter(words),
+        "max_downloads": 1,
         "writethumbnail": True,
         "quiet": True,
         "no_warnings": True,
@@ -90,15 +151,23 @@ def _ytdlp(url: str, output_dir: Path) -> list[Path]:
             "FFmpegExtractAudio": ["-id3v2_version", "3"],
         },
     }
-    with _yt_dlp.YoutubeDL(opts) as ydl:
-        ydl.download([url])
+    try:
+        with _yt_dlp.YoutubeDL(opts) as ydl:
+            ydl.download([url])
+    except _yt_dlp.utils.MaxDownloadsReached:
+        pass  # got our one matching track
 
     after = set(output_dir.glob("*.mp3"))
     new_files = sorted(after - before)
+    if not new_files:
+        raise RuntimeError(
+            "No matching studio track found (all results were mixes, interviews, "
+            "clips or title mismatches)."
+        )
     # Reject DJ mixes / live sets — only individual studio tracks allowed.
     clean = []
     for path in new_files:
-        if _is_mix(path.stem):
+        if _is_mix(path.stem) or _is_non_music(path.stem):
             path.unlink(missing_ok=True)
             raise RuntimeError(
                 f"Downloaded file looks like a DJ mix/set: \"{path.stem}\". "
