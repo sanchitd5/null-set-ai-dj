@@ -755,14 +755,16 @@
     return base ? `${base} — ${hint}` : hint;
   }
 
-  async function startLead() {
+  async function startLead(picked) {
     const input = document.getElementById("ap-lead-input");
-    const text = input ? input.value.trim() : "";
+    const text = picked ? picked.title : (input ? input.value.trim() : "");
+    hideLeadResults();
     if (!text) { leadStatus("Type a song ('Artist - Title'), an artist or a genre"); return; }
     if (!active) { leadStatus("Start a set first; LEAD steers a running set"); return; }
     const stepsEl = document.getElementById("ap-lead-steps");
     const steps = Math.max(2, Math.min(6, parseInt(stepsEl ? stepsEl.value : "4", 10) || 4));
-    const kind = / [-–—] /.test(text) ? "song" : "style";
+    // a picked YouTube result is a song; typed text is a genre / artist to steer toward
+    const kind = picked ? "song" : "style";
     leadTo = { text, kind, steps, played: 0, cand: null, bpm: 0, arrived: false };
     leadStatus(kind === "song" ? `fetching the destination "${text}"…` : `steering toward ${text} in ${steps} songs`);
     // steer the NEXT pick, not the one already booked: drop not-yet-booked
@@ -771,11 +773,16 @@
     pendingSugs = [];
     showQueue();
     if (kind === "song") {
-      const [artist, ...rest] = text.split(/ [-–—] /);
       try {
-        const c = await downloadSuggestion({ artist: artist.trim(), title: rest.join(" - ").trim(),
-                                              search_query: `ytmsearch:${text}`,
-                                              reason: "your LEAD TO destination", genre: "" });
+        // the exact video the user picked (direct URL: live-title / length checks skip
+        // what they deliberately chose, mix / interview checks still apply)
+        const tracks = window.dlJobs ? await window.dlJobs.run(picked.url, `LEAD TO: ${text}`)
+                                     : await importUrl(picked.url);
+        if (!tracks.length) throw new Error("nothing downloaded");
+        const t = tracks[0];
+        const info = t.duration && t.bpm ? t : await trackInfo(t.track_id);
+        const c = { track_id: t.track_id, name: t.display_name || text, duration: info.duration, bpm: info.bpm,
+                    suggestion: { title: t.display_name || text, reason: "your LEAD TO destination" } };
         if (!leadTo || leadTo.text !== text) return; // cancelled meanwhile
         leadTo.cand = c;
         leadTo.bpm = c.bpm || 0;
@@ -1682,10 +1689,67 @@
   };
 
   const leadGo = document.getElementById("ap-lead-go");
-  if (leadGo) leadGo.addEventListener("click", startLead);
+  if (leadGo) leadGo.addEventListener("click", () => {
+    // LEAD with the list open: selected row, else the first song result, else steer
+    if (leadRows.length) pickLead(leadSel >= 0 ? leadSel : (leadRows.length > 1 ? 1 : 0));
+    else startLead();
+  });
   if (leadCancel) leadCancel.addEventListener("click", () => cancelLead("lead cancelled — the set carries on"));
+  // LEAD TO search: YouTube results as you type (debounced); pick one = that
+  // song is the destination; the first row steers toward the typed genre/artist.
   const leadInput = document.getElementById("ap-lead-input");
-  if (leadInput) leadInput.addEventListener("keydown", (e) => { if (e.key === "Enter") startLead(); });
+  const leadResults = document.getElementById("ap-lead-results");
+  let leadSearchTimer = null, leadSearchSeq = 0, leadRows = [], leadSel = -1;
+  function hideLeadResults() { if (leadResults) { leadResults.hidden = true; leadResults.innerHTML = ""; } leadRows = []; leadSel = -1; }
+  function fmtDur(d) { return d ? `${Math.floor(d / 60)}:${String(Math.round(d % 60)).padStart(2, "0")}` : ""; }
+  function renderLeadResults(q, results, note) {
+    if (!leadResults) return;
+    leadRows = [{ style: q }, ...results];
+    leadResults.innerHTML = leadRows.map((r, i) => r.style
+      ? `<li role="option" data-i="${i}" aria-selected="${i === leadSel}"><span class="r-title r-style">Steer toward “${esc(r.style)}” (genre / artist)</span><span class="r-meta">${esc(note || "")}</span></li>`
+      : `<li role="option" data-i="${i}" aria-selected="${i === leadSel}"><span class="r-title">${esc(r.title)}</span><span class="r-meta">${esc(fmtDur(r.duration))}</span><span class="r-meta">${esc(r.channel)}</span></li>`).join("");
+    leadResults.hidden = false;
+  }
+  function pickLead(i) {
+    const r = leadRows[i];
+    if (!r) return;
+    if (r.style) { if (leadInput) leadInput.value = r.style; startLead(); }
+    else startLead(r);
+  }
+  async function searchLead() {
+    const q = leadInput ? leadInput.value.trim() : "";
+    if (q.length < 2) { hideLeadResults(); return; }
+    const seq = ++leadSearchSeq;
+    renderLeadResults(q, [], "searching YouTube…");
+    try {
+      const res = await fetch(`/api/search/youtube?q=${encodeURIComponent(q)}&limit=8`);
+      const data = await res.json();
+      if (seq !== leadSearchSeq) return; // a newer query is in flight
+      if (!res.ok) throw new Error(data.detail || res.statusText);
+      renderLeadResults(q, data.results || [], (data.results || []).length ? "" : "no songs found");
+    } catch (e) {
+      if (seq === leadSearchSeq) renderLeadResults(q, [], `search failed: ${e.message}`);
+    }
+  }
+  if (leadInput) {
+    leadInput.addEventListener("input", () => { clearTimeout(leadSearchTimer); leadSearchTimer = setTimeout(searchLead, 450); });
+    leadInput.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        if (!leadRows.length) return;
+        e.preventDefault();
+        leadSel = (leadSel + (e.key === "ArrowDown" ? 1 : -1) + leadRows.length) % leadRows.length;
+        renderLeadResults(leadRows[0].style, leadRows.slice(1));
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        if (leadSel >= 0) pickLead(leadSel);
+        else { clearTimeout(leadSearchTimer); searchLead(); }
+      } else if (e.key === "Escape") hideLeadResults();
+    });
+  }
+  if (leadResults) leadResults.addEventListener("click", (e) => {
+    const li = e.target.closest("li[data-i]");
+    if (li) pickLead(Number(li.dataset.i));
+  });
 
   startBtn.addEventListener("click", start);
   if (stopBtn) stopBtn.addEventListener("click", stop);

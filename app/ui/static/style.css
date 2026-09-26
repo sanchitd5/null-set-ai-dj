@@ -1562,6 +1562,20 @@ button.rebind-btn.is-armed {
 
 /* ── LEAD TO ─────────────────────────────────────────────────────────── */
 .ap-lead { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 6px 0; }
-.ap-lead input[type="text"] { flex: 1 1 320px; min-width: 200px; }
+.ap-lead input[type="text"], .ap-lead input[type="search"] { flex: 1 1 360px; min-width: 240px; }
 .ap-lead-status { opacity: 0.85; }
 .ap-lead.is-leading { outline: 1px solid rgba(250, 204, 21, 0.45); border-radius: 4px; padding: 4px; }
+
+.ap-lead { position: relative; }
+.ap-lead-results {
+  flex-basis: 100%; list-style: none; margin: 2px 0 0; padding: 0; max-height: 260px; overflow-y: auto;
+  border: 1px solid rgba(255,255,255,0.12); border-radius: 4px; background: rgba(10,12,18,0.97);
+}
+.ap-lead-results li {
+  display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 2px 10px; padding: 6px 8px;
+  cursor: pointer; font-size: 12px; border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+.ap-lead-results li:hover, .ap-lead-results li[aria-selected="true"] { background: rgba(250,204,21,0.12); }
+.ap-lead-results .r-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ap-lead-results .r-meta { opacity: 0.6; font-variant-numeric: tabular-nums; }
+.ap-lead-results .r-style { font-style: italic; opacity: 0.85; }

@@ -742,9 +742,9 @@
   <!-- LEAD TO: steer the running set toward a song / artist / genre over N songs -->
   <div class="ap-lead" id="ap-lead">
     <label class="hud-label" for="ap-lead-input">LEAD TO</label>
-    <input type="text" id="ap-lead-input" autocomplete="off" spellcheck="false"
-           placeholder="Where should the set go? 'Artist - Title' plays that song at the end; an artist or genre steers into its world"
-           aria-label="Lead the set to a song, artist or genre" />
+    <input type="search" id="ap-lead-input" autocomplete="off" spellcheck="false"
+           placeholder="Search YouTube for the song to lead to - or type a genre / artist to steer toward"
+           aria-label="Search YouTube for the song to lead the set to" aria-controls="ap-lead-results" />
     <label class="hud-label" for="ap-lead-steps">IN</label>
     <select id="ap-lead-steps" aria-label="Number of songs to get there">
       <option value="2">2 songs</option><option value="3">3 songs</option>
@@ -753,6 +753,7 @@
     <button class="hw-btn" id="ap-lead-go" title="Start steering the running set toward it (beat-matched steps)">LEAD</button>
     <button class="hw-btn" id="ap-lead-cancel" hidden title="Stop steering; the set carries on">✕</button>
     <span class="hud-label ap-lead-status" id="ap-lead-status" aria-live="polite"></span>
+    <ul class="ap-lead-results" id="ap-lead-results" role="listbox" aria-label="YouTube results" hidden></ul>
   </div>
 
   <!-- DJ mind: the move the AI picked on this phrase, and the last few moves -->

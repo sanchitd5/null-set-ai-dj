@@ -262,6 +262,19 @@ class DownloadJobRequest(BaseModel):
     label: str = ""
 
 
+@app.get("/api/search/youtube")
+def get_youtube_search(q: str, limit: int = 8):
+    """Song search for LEAD TO (no download); filtered like downloads."""
+    from app.ui.download_service import search_songs
+
+    if not (2 <= len(q.strip()) <= 120):
+        raise HTTPException(status_code=400, detail="query must be 2-120 characters")
+    try:
+        return {"results": search_songs(q, max(1, min(limit, 12)))}
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"search failed: {exc}") from exc
+
+
 @app.post("/api/download/jobs")
 def post_download_job(req: DownloadJobRequest):
     """Start a background download (pre-download / prefetch); poll for progress."""

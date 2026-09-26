@@ -28,7 +28,7 @@ _YTMSEARCH_RE = re.compile(r"ytmsearch:")
 # "Artist Live Song, City" (no dash before "Live", so "Oasis - Live Forever" passes).
 _LIVE_RE = re.compile(
     r"[\(\[]\s*live\b|\blive\s+(at|in|from|@|on|session|version|recording|performance)\b|"
-    r"[-–]\s*live\s*$|^[^-–]+?\s+live\s+\w",
+    r"[-–]\s*live\s*$|^[^-–]+?\s+live\s+\w|\blive\s+(19|20)\d{2}\b|\blive\s+\d{1,2}[./-]\d{1,2}",
     re.IGNORECASE,
 )
 
@@ -204,6 +204,40 @@ def _search_match_filter(words: list[str], song: Optional[tuple[list[str], list[
         return None
 
     return _filter
+
+
+SEARCH_LIMIT = 12
+
+
+def search_songs(query: str, limit: int = 8) -> list[dict]:
+    """YouTube search for songs (no download): [{id, url, title, channel,
+    duration}]. Same filters as downloads: no mixes / sets / live recordings /
+    interviews / covers, 90 s - 9 min. Used by LEAD TO to pick a destination."""
+    if _yt_dlp is None:
+        raise RuntimeError("yt-dlp not installed")
+    q = " ".join(str(query or "").split())[:120]
+    if len(q) < 2:
+        return []
+    opts = {"quiet": True, "no_warnings": True, "extract_flat": "in_playlist",
+            "skip_download": True, "playlistend": SEARCH_LIMIT}
+    with _yt_dlp.YoutubeDL(opts) as ydl:
+        info = ydl.extract_info(f"ytsearch{SEARCH_LIMIT}:{q}", download=False)
+    out = []
+    for e in (info or {}).get("entries") or []:
+        vid, title = e.get("id"), e.get("title") or ""
+        dur = e.get("duration")
+        if not vid or not title:
+            continue
+        if dur is not None and not (MIN_TRACK_SECS <= dur < MAX_TRACK_SECS):
+            continue
+        if _is_mix(title) or _is_non_music(title) or _is_live(title):
+            continue
+        out.append({"id": vid, "url": f"https://www.youtube.com/watch?v={vid}", "title": title,
+                    "channel": e.get("channel") or e.get("uploader") or "",
+                    "duration": dur})
+        if len(out) >= limit:
+            break
+    return out
 
 
 def detect_source(url: str) -> str:
