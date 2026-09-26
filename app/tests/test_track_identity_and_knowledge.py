@@ -1,0 +1,35 @@
+import pytest
+
+from app.music_brain.dj_knowledge import MAX_BRIEF_CHARS, playbook_for, selection_brief
+from app.ui.track_identity import clean_identity
+
+
+@pytest.mark.parametrize("display,expected", [
+    ("Fred again.., The Blessed Madonna - Marea (we’ve lost dancing)", ("Fred again..", "Marea (we’ve lost dancing)")),
+    ("Skrillex, Fred again.. & Flowdan - Rumble [Official Audio]", ("Skrillex", "Rumble")),
+    ("BICEP ｜ GLUE (Official Video)", ("Bicep", "Glue")),
+    ("Disclosure - Latch (feat. Sam Smith)", ("Disclosure", "Latch")),
+    ("Fred again.. & Baby Keem - leavemealone", ("Fred again..", "leavemealone")),
+    ("Jamie xx - Gosh", ("Jamie xx", "Gosh")),
+    ("Four Tet - Baby (Official Music Video)", ("Four Tet", "Baby")),
+    ("Hackney Pigeon (Sammy Virji VIP)", ("Unknown", "Hackney Pigeon (Sammy Virji VIP)")),
+    ("Daft Punk - Da Funk (Armand van Helden Remix)", ("Daft Punk", "Da Funk (Armand van Helden Remix)")),
+])
+def test_clean_identity(display, expected):
+    assert clean_identity(display) == expected
+
+
+def test_playbook_mapping():
+    assert playbook_for("melodic house") == "Melodic Electronic Playbook"
+    assert playbook_for("Drum & Bass") == "Drum & Bass (DnB) Playbook"
+    assert playbook_for("tech house") == "House & Tech House Playbook"
+    assert playbook_for("UK garage / deep house") == "House & Tech House Playbook"
+    assert playbook_for("") is None
+
+
+def test_selection_brief_grounded_and_capped():
+    b = selection_brief("drum and bass")
+    assert len(b) <= MAX_BRIEF_CHARS
+    assert "GENRE PLAYBOOK (Drum & Bass (DnB) Playbook)" in b
+    assert "Two Anchors" in b and "CONTINUITY OR CONTRAST" in b
+    assert "[[" not in b and "**" not in b  # wiki markup stripped
