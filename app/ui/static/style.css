@@ -1420,6 +1420,7 @@ button.rebind-btn.is-armed {
 .ap-energy-up   { background: rgba(0,220,120,.15); color: #00dc78; }
 .ap-energy-down { background: rgba(255,140,0,.15); color: #ff8c00; }
 .ap-energy-hold { background: rgba(80,180,255,.15); color: #50b4ff; }
+.ap-vibe { font-size: 10px; color: #a07af0; font-style: italic; }
 
 /* ------------------------------- footer --------------------------------- */
 

@@ -69,6 +69,7 @@
       const genre   = s.genre ? `<span class="ap-genre">${s.genre}</span>` : "";
       const moment  = s.mix_moment ? `<span class="ap-moment" title="Mix moment">${s.mix_moment}</span>` : "";
       const energy  = eLabel ? `<span class="ap-energy ${eClass}">${eLabel}</span>` : "";
+      const vibe    = s.vibe_link ? `<span class="ap-vibe">"${s.vibe_link}"</span>` : "";
       return `
       <div class="ap-item ${i === 0 ? "ap-next" : ""}">
         <span class="ap-pos">${i === 0 ? "NEXT" : `+${i + 1}`}</span>
@@ -76,6 +77,7 @@
           <span class="ap-name">${s.artist || "?"} — ${s.title || "?"}</span>
           <span class="ap-meta">${s.expected_key || ""}${s.expected_bpm ? "  " + s.expected_bpm + " BPM" : ""}${genre ? "  " + genre : ""}</span>
           <span class="ap-badges">${energy}${moment}</span>
+          ${vibe}
           <span class="ap-why">${s.reason || ""}</span>
         </div>
       </div>`;
@@ -95,10 +97,11 @@
   }
 
   async function getSuggestions(trackId) {
+    const setPos = Math.min(history.length / 10, 1.0);
     const res = await fetch("/api/autopilot/suggest", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ track_id: trackId, occasion, history: history.slice(-5) }),
+      body: JSON.stringify({ track_id: trackId, occasion, history: history.slice(-6), set_position: setPos }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || res.statusText);
