@@ -104,7 +104,10 @@ def plan_blend(
     # ── entry: B phrase early in the song, instrumental for the whole blend
     entries = []
     limit = b.duration * ENTRY_SEARCH_FRACTION
-    for e in [0.0] + list(b.phrase_boundaries_8bar):
+    # Only B's own phrase grid: its first boundary is its first detected
+    # downbeat (5.9 s into Lane 8 "Little By Little"), not 0:00. Entering at
+    # 0:00 put B's downbeats off A's phrase line by whatever the intro pad is.
+    for e in b.phrase_boundaries_8bar:
         if e > limit or e + b_len > b.duration:
             continue
         cov = _coverage(b_vocals, e, e + b_len) if b_vocals is not None else None

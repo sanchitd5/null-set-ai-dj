@@ -48,3 +48,10 @@ def test_tempo_gap_refuses_beat_blend():
 def test_rate_locks_b_to_effective_a_tempo():
     plan = plan_blend(_track(121), _track(123), 60.0, 150.0, a_bpm_effective=121.0 * 1.01, bars=8)
     assert plan["rate"] == pytest.approx(121.0 * 1.01 / 123, abs=1e-4)
+
+
+def test_entry_is_on_bs_beat_grid_not_zero():
+    b = _track(120)
+    b.phrase_boundaries_8bar = [5.9 + i * 16 for i in range(12)]   # first downbeat at 5.9 s
+    plan = plan_blend(_track(120), b, 60.0, 150.0, a_vocals=[], b_vocals=[], bars=16)
+    assert plan["entry"] in b.phrase_boundaries_8bar
