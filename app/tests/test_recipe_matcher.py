@@ -72,7 +72,7 @@ def test_camelot_energy_boost():
 
 def test_camelot_clash():
     score, reason = camelot_distance_score("8B", "2B")
-    assert score == pytest.approx(0.1)
+    assert score == pytest.approx(0.0)  # confident 3+ hour clash is a hard block
     assert "clash" in reason
 
 

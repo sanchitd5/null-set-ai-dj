@@ -242,8 +242,18 @@ def estimate_phrase_offset(
 
 
 def detect_camelot_key(y: np.ndarray, sr: int) -> KeyEstimate:
-    """Chroma-based Krumhansl-Schmuckler key estimation mapped to Camelot notation."""
-    chroma = librosa.feature.chroma_cqt(y=y, sr=sr)
+    """Chroma-based Krumhansl-Schmuckler key estimation mapped to Camelot notation.
+
+    Tuning is estimated first (detuned masters otherwise smear across two pitch
+    classes), and the first and last 8% are dropped from the chroma mean
+    (intros/outros are often drums-only or in a different key).
+    """
+    tuning = float(librosa.estimate_tuning(y=y, sr=sr))
+    chroma = librosa.feature.chroma_cqt(y=y, sr=sr, tuning=tuning)
+    n = chroma.shape[1]
+    trim = int(n * 0.08)
+    if n - 2 * trim >= 1:
+        chroma = chroma[:, trim:n - trim]
     chroma_mean = chroma.mean(axis=1)
 
     best_score = -np.inf
@@ -376,7 +386,8 @@ def vocal_presence_map(
 # Bump when analysis output changes so stale cached results are recomputed.
 # v2: section-consensus tempo (tempo.py).
 # v3: downbeat phase + phrase offset (grid no longer assumes beat 0 is bar 1).
-ANALYSIS_VERSION = 3
+# v4: key chroma tuning-corrected, first/last 8% trimmed.
+ANALYSIS_VERSION = 4
 
 
 def _cache_path_for(audio_path: Path) -> Path:

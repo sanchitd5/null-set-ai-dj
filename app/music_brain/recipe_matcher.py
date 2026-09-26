@@ -104,27 +104,61 @@ def _parse_camelot(camelot: str) -> Tuple[int, str]:
     return int(match.group(1)), match.group(2).upper()
 
 
-def camelot_distance_score(camelot_a: str, camelot_b: str) -> Tuple[float, str]:
-    """Score (0-1) and reason for the harmonic compatibility of two Camelot keys."""
+# Confidence below this on either key softens a clash (KeyEstimate.confidence).
+KEY_CONFIDENCE_MIN = 0.6
+UNCERTAIN_CLASH_SCORE = 0.5
+BYPASS_KEY_SCORE = 0.7  # key-agnostic recipes on a clashing pair: neutral, not a clash
+
+
+def is_key_clash(camelot_a: str, camelot_b: str) -> bool:
+    """3+ hours apart, not the relative key and not a diagonal move."""
+    hour_a, _ = _parse_camelot(camelot_a)
+    hour_b, _ = _parse_camelot(camelot_b)
+    return min((hour_a - hour_b) % 12, (hour_b - hour_a) % 12) >= 3
+
+
+def camelot_distance_score(
+    camelot_a: str, camelot_b: str,
+    confidence_a: float = 1.0, confidence_b: float = 1.0,
+) -> Tuple[float, str]:
+    """Score (0-1) and reason for moving from key A to key B on the Camelot wheel.
+
+    Direction matters: +2 hours is an energy boost (0.8), -2 an energy drop
+    (0.6). A clash (3+ hours) scores 0.0, softened to 0.5 "uncertain key"
+    when either key estimate is below KEY_CONFIDENCE_MIN.
+    """
     hour_a, letter_a = _parse_camelot(camelot_a)
     hour_b, letter_b = _parse_camelot(camelot_b)
 
     if hour_a == hour_b and letter_a == letter_b:
         return 1.0, "identical keys"
 
-    hour_delta = min((hour_a - hour_b) % 12, (hour_b - hour_a) % 12)
+    up = (hour_b - hour_a) % 12  # clockwise steps A -> B
+    hour_delta = min(up, 12 - up)
 
     if letter_a == letter_b and hour_delta == 1:
         return 0.9, "adjacent keys on the Camelot wheel (+/-1 hour)"
-    if hour_a == hour_b and letter_a != letter_b:
+    if hour_a == hour_b:
         return 0.85, "relative major/minor of the same key"
-    if letter_a == letter_b and hour_delta == 2:
+    if letter_a != letter_b and hour_delta == 1:
+        return 0.75, "diagonal move (+/-1 hour with the letter changed)"
+    if letter_a == letter_b and up == 2:
         return 0.8, "+2 energy-boost key change"
-    return 0.1, f"clashing keys ({hour_delta} hours apart on the Camelot wheel)"
+    if letter_a == letter_b and up == 10:
+        return 0.6, "-2 energy-drop key change"
+    uncertain = min(confidence_a, confidence_b) < KEY_CONFIDENCE_MIN
+    if hour_delta >= 3:
+        if uncertain:
+            return UNCERTAIN_CLASH_SCORE, f"uncertain key (would clash, {hour_delta} hours apart)"
+        return 0.0, f"clashing keys ({hour_delta} hours apart on the Camelot wheel)"
+    # 2 hours with the letter changed: distant but not a hard clash.
+    return 0.3, "distant keys (2 hours apart, letter changed)"
 
 
 def bpm_compatibility(bpm_a: float, bpm_b: float) -> Tuple[float, str]:
     """Score (0-1) and classification label for a BPM pairing."""
+    """Half/double time counts: 87 vs 174 BPM locks beat-for-beat on every other
+    beat, so it scores like a ramp and is labelled "half_time"."""
     if bpm_a <= 0 or bpm_b <= 0:
         return 0.0, "unknown"
     pct_diff = abs(bpm_a - bpm_b) / max(bpm_a, bpm_b)
@@ -246,11 +280,19 @@ class RecipeMatcher:
         track_b: TrackAnalysis,
         b_time: float,
     ) -> TransitionCandidate:
-        camelot_score, camelot_reason = 1.0, "not evaluated (key-agnostic recipe)"
-        if recipe.camelot_compatible_only and track_a.key and track_b.key:
-            camelot_score, camelot_reason = camelot_distance_score(track_a.key.camelot, track_b.key.camelot)
-        elif track_a.key and track_b.key:
-            camelot_score, camelot_reason = camelot_distance_score(track_a.key.camelot, track_b.key.camelot)
+        camelot_score, camelot_reason = 1.0, "not evaluated (no key estimate)"
+        key_blocked = False
+        if track_a.key and track_b.key:
+            camelot_score, camelot_reason = camelot_distance_score(
+                track_a.key.camelot, track_b.key.camelot,
+                track_a.key.confidence, track_b.key.confidence,
+            )
+            if camelot_score == 0.0:  # confident 3+ hour clash
+                if recipe.camelot_compatible_only:
+                    key_blocked = True
+                else:
+                    camelot_score = BYPASS_KEY_SCORE
+                    camelot_reason += "; this recipe bypasses the key clash"
 
         bpm_score, bpm_label = bpm_compatibility(track_a.bpm, track_b.bpm)
         already_compatible = bpm_score >= 0.9 and camelot_score >= 0.8
@@ -266,9 +308,9 @@ class RecipeMatcher:
             penalty *= 0.3
 
         raw = (0.35 * camelot_score) + (0.30 * bpm_score) + (0.20 * phrase_score) + (0.15 * (1 - penalty))
-        # Hard gate: a camelot-only recipe should never rank well on a clashing pair.
-        if recipe.camelot_compatible_only and camelot_score <= 0.2:
-            raw *= 0.3
+        # Hard gate: a camelot-only recipe is blocked outright on a confident clash.
+        if key_blocked:
+            raw = 0.0
         # Overkill penalty: per each bridge recipe's own "When NOT to use it"
         # section, don't reach for a big-gap tool (Echo Out, Backspin, ...)
         # when the pair already blends cleanly on key and BPM.

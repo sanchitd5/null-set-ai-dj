@@ -122,6 +122,23 @@ def tempo_lock(a_bpm: float, b_bpm: float) -> Optional[Tuple[float, float]]:
     return best if abs(best[0] - 1) <= MAX_TEMPO_DEVIATION else None
 
 
+def min_exit_floor(a: TrackAnalysis, a_entry: Optional[float], window_lo: float,
+                   window_hi: float, bars: int) -> Tuple[Optional[float], float, float]:
+    """(min_exit, window_lo, window_hi): the exit may not come before A's first
+    drop after `a_entry` has played DROP_HOLD_BARS; the window stretches to
+    allow it when `bars` more of A still fit. min_exit None = no floor."""
+    a_own_bar = 240.0 / a.bpm if a.bpm > 0 else 2.0
+    a_drops = [t for t, _, _ in drop_lines(a.phrase_boundaries_8bar, a.energy_times, a.energy_curve, a_own_bar)]
+    after = [t for t in a_drops if t >= (a_entry or 0.0) - 0.01]
+    if not after:
+        return None, window_lo, window_hi
+    min_exit = after[0] + DROP_HOLD_BARS * a_own_bar
+    if min_exit + bars * a_own_bar > a.duration:
+        return None, window_lo, window_hi
+    window_lo = max(window_lo, min_exit)
+    return min_exit, window_lo, max(window_hi, window_lo)
+
+
 def plan_blend(
     a: TrackAnalysis,
     b: TrackAnalysis,
@@ -146,17 +163,7 @@ def plan_blend(
     # where A came in) has played DROP_HOLD_BARS. The play window stretches to
     # allow it when the song is long enough. Returned even on a tempo gap so
     # the caller can respect it for echo-out exits too.
-    min_exit = None
-    a_own_bar = 240.0 / a.bpm if a.bpm > 0 else 2.0
-    a_drops = [t for t, _, _ in drop_lines(a.phrase_boundaries_8bar, a.energy_times, a.energy_curve, a_own_bar)]
-    after = [t for t in a_drops if t >= (a_entry or 0.0) - 0.01]
-    if after:
-        min_exit = after[0] + DROP_HOLD_BARS * a_own_bar
-        if min_exit + bars * a_own_bar <= a.duration:
-            window_lo = max(window_lo, min_exit)
-            window_hi = max(window_hi, window_lo)
-        else:
-            min_exit = None
+    min_exit, window_lo, window_hi = min_exit_floor(a, a_entry, window_lo, window_hi, bars)
     lock = tempo_lock(a_eff, b.bpm)
     if lock is None:
         return {"ok": False, "min_exit": min_exit,
