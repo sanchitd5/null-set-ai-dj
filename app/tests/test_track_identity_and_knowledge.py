@@ -41,3 +41,14 @@ def test_credited_artists():
     assert credited_artists("Disclosure - Latch (feat. Sam Smith)") == ["Disclosure", "Sam Smith"]
     assert credited_artists("Jamie xx - Gosh") == ["Jamie xx"]
     assert credited_artists("Hackney Pigeon (Sammy Virji VIP)") == []
+
+
+def test_steering_skips_profile_clash_filter():
+    from app.ui.autopilot_service import _filter_suggestions
+    cur = {"energy": 6, "tempo_feel": "driving", "mood": "bittersweet"}
+    bhangra = {"energy": 9, "tempo_feel": "driving", "mood": "euphoric"}
+    data = {"current_profile": {"energy": 3, "tempo_feel": "laid-back", "mood": "chill"},
+            "suggestions": [{"artist": "Diljit Dosanjh", "title": "Proper Patola", "track_profile": bhangra},
+                            {"artist": "Panjabi MC", "title": "Mundian To Bach Ke", "track_profile": bhangra}]}
+    assert len(_filter_suggestions(dict(data, steering="stay"), [])) == 1    # continuity keeps only the closest clash
+    assert len(_filter_suggestions(dict(data, steering="move"), [])) == 2    # steering: both kept

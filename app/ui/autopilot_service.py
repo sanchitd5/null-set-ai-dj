@@ -62,6 +62,23 @@ ENERGY ARC RULES:
   set_position 0.7–0.9 (peak): sustain or push harder, dramatic key changes OK with bridge recipes
   set_position 0.9–1.0 (cool-down): step energy down, gentle blends, return toward mellow keys
 
+OCCASION FIRST (overrides VIBE CONTINUITY, SAME-ARTIST and CREDITS when they conflict):
+  The occasion says who is on the floor and what music they came for. If it names a music
+  culture or event with its own canon and the current song is outside it, STEER into that
+  world as a quick journey of AT MOST 5-7 short bridge songs (each plays only 30-60 s):
+    every step shares something with the song before it (tempo, energy, a fusion / remix /
+    crossover collab, instrumentation) and is clearly closer to the target world than the
+    last; by step 5-7 you MUST be playing the occasion's own anthems. The occasion line
+    tells you which step you are on - at step N be about N/6 of the way there.
+  Once inside that world, apply VIBE CONTINUITY within it. Examples of canons:
+    "punjabi wedding" / "bhangra" -> Diljit Dosanjh, AP Dhillon, Karan Aujla, Sidhu Moose Wala,
+      Panjabi MC, Imran Khan, Yo Yo Honey Singh, Guru Randhawa, Jazzy B, Malkit Singh
+      (bridges from electronic: Panjabi MC "Mundian To Bach Ke", Diljit x Sia, bhangra remixes)
+    "bollywood night" -> Bollywood dance hits; "latin party" -> reggaeton / salsa / dembow;
+    "afrobeats" -> Burna Boy, Wizkid, Rema; "90s hip-hop" -> 90s rap classics.
+  Set top-level "steering":"move" while the current song is outside the occasion's music,
+  otherwise "stay"; "occasion_fit" 0-10 = how well the CURRENT song fits the occasion.
+
 VIBE CONTINUITY (critical rule):
   First, infer the current track's genre from artist + title + BPM + key.
   Suggestions MUST stay within 1–2 genre hops maximum.
@@ -112,7 +129,7 @@ AVOID TRACKS: The history list contains track names already played. Do NOT sugge
   title appears in that list. Same artist is fine — only the exact title is banned.
 
 OUTPUT FORMAT — return ONLY valid JSON, no markdown, no explanation:
-{{"current_genre":"","current_profile":{{"energy":0,"tempo_feel":"","drums":"","vocals":"","mood":"","texture":""}},"suggestions":[{{"artist":"","title":"","reason":"2-sentence reason referencing harmonic move, energy arc, and how THIS song's sound matches","genre":"inferred genre of suggested track","expected_bpm":0,"expected_key":"","mix_moment":"exit at [section] ~bar N","energy_delta":"up|down|maintain","vibe_link":"specific sonic characteristic shared — NOT a genre label","track_profile":{{"energy":0,"tempo_feel":"","drums":"","vocals":"","mood":"","texture":""}}}}]}}
+{{"steering":"stay|move","occasion_fit":0,"current_genre":"","current_profile":{{"energy":0,"tempo_feel":"","drums":"","vocals":"","mood":"","texture":""}},"suggestions":[{{"artist":"","title":"","reason":"2-sentence reason referencing harmonic move, energy arc, and how THIS song's sound matches","genre":"inferred genre of suggested track","expected_bpm":0,"expected_key":"","mix_moment":"exit at [section] ~bar N","energy_delta":"up|down|maintain","vibe_link":"specific sonic characteristic shared — NOT a genre label","track_profile":{{"energy":0,"tempo_feel":"","drums":"","vocals":"","mood":"","texture":""}}}}]}}
 
 {_FEW_SHOT}"""
 
@@ -137,7 +154,8 @@ _USER_TEMPLATE = (
     "Avg Energy: {energy:.2f}/1.0 | Set position: {set_pos_pct}% through set\n"
     "Occasion: {occasion}\n"
     "Set mode: {set_mode_line}\n"
-    "TEMPO WINDOW (required, so the next song can be beat-matched): {tempo_window}\n"
+    "TEMPO WINDOW (preferred, so the next song can be beat-matched; a steering move toward the "
+    "occasion may leave it): {tempo_window}\n"
     "First fill current_genre and current_profile for THIS song, then pick songs whose own "
     "track_profile stays close to it. Stay in this genre neighbourhood unless the occasion demands a shift.\n"
     "Already played titles (avoid exact titles, same artist OK): {history}\n\n"
@@ -204,7 +222,10 @@ def _filter_suggestions(data: dict, history: list[str]) -> list[dict]:
             continue
         if any(s["title"].lower() in p for p in played):
             continue
-        reason = _profile_clash(cur, s.get("track_profile"))
+        # Steering toward the occasion's music is a deliberate genre/mood move:
+        # continuity clashes with the CURRENT song are expected, not errors.
+        steer = str(data.get("steering", "")).lower().startswith("move")
+        reason = None if steer else _profile_clash(cur, s.get("track_profile"))
         (clashes if reason else ok).append(s)
         if reason:
             s["rejected_reason"] = reason
@@ -389,6 +410,11 @@ def suggest_next_tracks(
     if meta is not None:  # caller wants the model's read of the CURRENT track too
         meta["current_profile"] = data.get("current_profile") or {}
         meta["current_genre"] = data.get("current_genre") or ""
+        meta["steering"] = "move" if str(data.get("steering", "")).lower().startswith("move") else "stay"
+        try:
+            meta["occasion_fit"] = max(0.0, min(10.0, float(data.get("occasion_fit"))))
+        except (TypeError, ValueError):
+            meta["occasion_fit"] = None
 
     for s in suggestions:
         artist_s = s.get("artist", "")

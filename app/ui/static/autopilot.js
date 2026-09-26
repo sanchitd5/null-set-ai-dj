@@ -494,10 +494,17 @@
     const res = await fetch("/api/autopilot/suggest", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ track_id: trackId, occasion, history: history.slice(-6).concat(avoid.slice(-6)), set_position: setPos, set_mode: setMode(), energy_note: energyNote, lookahead: !!opts.lookAhead }),
+      body: JSON.stringify({ track_id: trackId, occasion: occasionWithStep(opts), history: history.slice(-6).concat(avoid.slice(-6)), set_position: setPos, set_mode: setMode(), energy_note: energyNote, lookahead: !!opts.lookAhead }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || res.statusText);
+    // OCCASION FIRST: the AI says the playing song is outside the occasion's
+    // music ("punjabi wedding" while Fred again.. plays) -> steer, even across
+    // a tempo gap (Echo Out), instead of holding out for a beat-matchable pick.
+    if (!opts.lookAhead) {
+      steering = data.steering === "move" && steerStep < MAX_STEER_STEPS ? "move" : "stay";
+      if (steering === "stay") steerStep = 0;
+    }
     const e = data.current_profile && parseFloat(data.current_profile.energy);
     // Look-ahead describes the booked next song: keep it for when that song plays.
     if (Number.isFinite(e)) profileById[trackId] = e <= 1 ? e * 10 : e;
@@ -578,6 +585,15 @@
     return [1, 2, 0.5].some((m) => Math.abs(aEff / (cand.bpm * m) - 1) <= 0.08);
   }
   let allowTempoJump = false; // set on the last round so the set never stalls
+  let steering = "stay";      // "move" while steering toward the occasion's music
+  let steerStep = 0;          // bridge songs played so far on the current steer (cap 7)
+  const MAX_STEER_STEPS = 7;
+  function occasionWithStep(opts = {}) {
+    if (!occasion || steering !== "move") return occasion;
+    const step = Math.min(MAX_STEER_STEPS, steerStep + (opts.lookAhead ? 2 : 1));
+    return `${occasion} — steering step ${step} of max ${MAX_STEER_STEPS} toward this occasion's music` +
+           (step >= MAX_STEER_STEPS - 1 ? " (FINAL: pick the occasion's own anthems now)" : "");
+  }
 
   async function evaluateCandidate(currentId, cand, gen) {
     if (!active || !cand) return false;
@@ -674,7 +690,7 @@
         body: JSON.stringify({
           a_id: currentId, b_id: nextId, window_lo: lo, window_hi: win.hi,
           a_bpm_effective: od.bpm * od._playbackRate(),
-          bars: setMode() === "quick" ? 8 : 16,
+          bars: setMode() === "quick" || steering === "move" ? 8 : 16,
         }),
       });
       const plan = await res.json();
@@ -817,6 +833,7 @@
       try {
         suggestions = await getSuggestions(currentId, rejected);
         aiPicking = false;
+        if (steering === "move") allowTempoJump = true; // occasion needs a genre move
       } catch (e) {
         aiPicking = false;
         console.warn("Autopilot suggest failed:", e.message);
@@ -996,6 +1013,7 @@
         resetDeck(outgoing);
 
         history.push(nextName);
+        if (steering === "move") steerStep++;
         scheduledNext = null;
         activeDeck = stagingDeck();
         currentTrackId = nextId;
@@ -1035,9 +1053,12 @@
     medium: { min: 120, max: 240, xf: 16, label: "MID" },
     quick:  { min: 60,  max: 120, xf: 8,  label: "QUICK" }, // user: "1-2 min"; 45 s felt rushed
     bail:   { min: 30,  max: 60,  xf: 8,  label: "QUICK·bail" },
+    // steering toward the occasion's music: short bridge songs (user: 30-60 s each)
+    bridge: { min: 30,  max: 60,  xf: 8,  label: "BRIDGE" },
   };
 
   function playWindow(score) {
+    if (steering === "move") return WINDOWS.bridge;
     const mode = setMode();
     const weak = score < 65;
     if (mode === "long") return WINDOWS.long;
@@ -1101,6 +1122,8 @@
     if (!url) { apStatus("Paste a seed URL first."); return; }
     occasion = occasionInput ? occasionInput.value.trim() : "";
     history = [];
+    steering = "stay";
+    steerStep = 0;
     active = true;
     activeDeck = "a";
     updateButtons();
