@@ -8,7 +8,7 @@ At server startup (background thread, never blocks the app):
   2. If MLX is unavailable (not Apple Silicon, mlx-lm missing, model not
      downloaded, server fails to come up) fall back to Ollama: preload
      OLLAMA_MODEL with keep_alive so it stays resident between songs (Ollama
-     otherwise unloads after 5 idle minutes, and LONG-mode songs run 3-6 min).
+     re-pinned every 4 min: each chat call resets keep_alive to 5 min).
 
 The chosen endpoint is published through the same env vars the LLM client
 already reads at call time (OLLAMA_BASE_URL / AUTOPILOT_MODEL), so callers need
@@ -51,10 +51,14 @@ _proc: Optional[subprocess.Popen] = None
 _lock = threading.Lock()
 
 
+# Local servers only: never route through an HTTP(S)_PROXY from the environment.
+_opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
 def _http_json(url: str, payload: Optional[dict] = None, timeout: float = 5.0) -> dict:
     data = json.dumps(payload).encode() if payload is not None else None
     req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
+    with _opener.open(req, timeout=timeout) as resp:
         return json.loads(resp.read() or b"{}")
 
 
@@ -152,9 +156,14 @@ def _start_ollama() -> bool:
     return True
 
 
+OLLAMA_REFRESH_S = 4 * 60
+
+
 def _ollama_keepalive_loop() -> None:
+    # Every OpenAI-compatible chat call resets the model's keep_alive to Ollama's
+    # default (5 min), so re-pin it more often than that.
     while state.get("backend") == "ollama":
-        time.sleep(30 * 60)
+        time.sleep(OLLAMA_REFRESH_S)
         try:
             _http_json(f"{OLLAMA_URL}/api/generate",
                        {"model": OLLAMA_MODEL, "keep_alive": OLLAMA_KEEP_ALIVE}, timeout=600)
