@@ -577,7 +577,13 @@ def suggest_next_tracks(
             print(f"[suggest] bad JSON, retrying once: {exc}", flush=True)
     suggestions = _filter_suggestions(
         data, history, occasion_set=bool((occasion or "").strip()), current_key=camelot,
-    )[:n]
+    )
+    # Songs from EARLIER sets are dropped whenever a fresh alternative exists:
+    # the soft prompt hint alone let "Lane 8 - Little By Little" follow Fred
+    # again.. in every set.
+    heard = {_bare_title(str(x).split(" - ", 1)[-1]) for x in (earlier_sets or [])}
+    fresh = [x for x in suggestions if _bare_title(x.get("title", "")) not in heard]
+    suggestions = (fresh or suggestions)[:n]
     if meta is not None:  # caller wants the model's read of the CURRENT track too
         meta["current_profile"] = data.get("current_profile") or {}
         meta["current_genre"] = data.get("current_genre") or ""
