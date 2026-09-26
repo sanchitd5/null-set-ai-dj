@@ -16,6 +16,8 @@
     const u = String(url);
     if (u.includes("/api/download")) return 300000;
     if (u.includes("/api/blend/plan") || u.includes("/api/mashup/plan")) return 180000;
+    if (u.includes("/api/layer/plan")) return 60000;   // vocal maps already cached by the blend plan
+    if (u.includes("/api/bridge/plan")) return 10000;
     if (u.includes("/api/autopilot/suggest")) return 150000;
     if (u.includes("/api/audio/")) return 120000;
     if (u.includes("/api/match") || u.includes("/analysis")) return 90000;
@@ -40,6 +42,13 @@
   let mashupTag = "";         // status suffix while a vocal layer is booked
   let entryPos = 0;           // track time where the current song came in
   let currentEnergy = null;   // LLM's 1-10 energy read of the current song
+  let playedIds = [];         // track ids played this set (LAYER callbacks: an earlier vocal)
+  let setStartedAt = 0;       // Date.now() when the set started (elapsed_seconds for suggest)
+  let beatMutedByLayer = false; // a LAYER paused the live beat layer (restore after / on stop)
+  function unmuteBeatLayer() {
+    if (beatMutedByLayer && window.beatLayer) window.beatLayer.setEnabled(true);
+    beatMutedByLayer = false;
+  }
 
   // ── UI refs ───────────────────────────────────────────────────────────────
   const seedInput      = document.getElementById("ap-seed-input");
@@ -349,6 +358,62 @@
         break;
     }
     return total * bar;
+  }
+
+  /**
+   * LAYER transition ([[3-Deck Layering]], set study item 4): B rides under A
+   * as a texture (lows killed, highs trimmed, crossfader just off A) for
+   * `hold_bars`, the bass goes to B on the phrase line (A's sub is out one beat
+   * before, B's comes in on the line: one sub owner at any time), then A
+   * unwinds over `unwind_bars`: highs, then mids, then the fader.
+   * `layer.third` (optional) is a cached vocal stem riding B's clean phrase.
+   * Bars are A's live (pitch-locked) bars: a 64-bar hold drifts otherwise.
+   * Returns total duration in ms.
+   */
+  function executeLayer(out, inn, layer) {
+    clearRun();
+    const oa = window.decks && window.decks[out];
+    const bpm = oa && oa.bpm > 0 ? oa.bpm * oa._playbackRate() : 128;
+    const bar = 240000 / bpm;
+    const beat = bar / 4;
+    const H = layer.hold_bars, U = layer.unwind_bars;
+    const fromXf = out === "a" ? -1 : 1;
+    const toXf = -fromXf;
+    const xfEl = () => xfader;
+    const band = (d, b) => () => eqEl(d, b);
+    const at = (bars, fn) => later(bars * bar, fn);
+
+    // 1) texture: B's sub killed, highs trimmed, fader eases to ~-7 dB for B
+    setRange(eqEl(inn, "low"), LOW_KILL);
+    setRange(eqEl(inn, "mid"), -3);
+    setRange(eqEl(inn, "high"), -8);
+    setRange(xfEl(), fromXf);
+    rampParam(xfEl, fromXf, fromXf * 0.4, 4 * bar);
+    // 2) hold H bars; 3) bass hand-off on the phrase line
+    later(H * bar - beat, () => rampParam(band(out, "low"), null, LOW_KILL, beat * 0.9));
+    at(H, () => {
+      rampParam(band(inn, "low"), LOW_KILL, 0, beat);
+      rampParam(band(inn, "mid"), null, 0, 2 * bar);
+      rampParam(band(inn, "high"), null, 0, 2 * bar);
+      rampParam(xfEl, null, 0, 2 * bar);
+      // 4) unwind A slowly: highs, then mids, then the fader
+      rampParam(band(out, "high"), null, LOW_KILL, (U / 3) * bar);
+    });
+    at(H + U / 3, () => rampParam(band(out, "mid"), null, LOW_KILL, (U / 3) * bar));
+    at(H + (2 * U) / 3, () => rampParam(xfEl, null, toXf, (U / 3) * bar));
+
+    // third element: an earlier / next-next vocal over B's clean phrase
+    if (layer.third && window.mashup) {
+      later(400, async () => {
+        try {
+          const t = layer.third;
+          if (await window.mashup.play(inn, t.plan, t.host_entry)) {
+            mashupTag = ` | ✖ 3rd layer: vocal ${t.name || "callback"}`;
+          }
+        } catch (e) { console.warn("LAYER third layer failed:", e.message); }
+      });
+    }
+    return (H + U) * bar;
   }
 
   const ENERGY_DELTA_CLASS = { up: "ap-energy-up", down: "ap-energy-down", maintain: "ap-energy-hold" };
@@ -687,10 +752,16 @@
     const minExit = plan0 && plan0.min_exit != null ? plan0.min_exit : null;
     if (!active || currentTrackId !== currentId) return false;
 
+    // LAYER (set study item 4): hold both records, then unwind A. Tempo-locked
+    // pairs only; the DJ mind's rules decide and keep the veto over the AI.
+    let layer = blend ? await requestLayer(currentId, nextId, candidate, plan, cand) : null;
+    if (!active || currentTrackId !== currentId) return false;
+    if (layer && !(layer.start >= deckPosition(activeDeck) + 16)) layer = null; // start slipped past
+
     if (gen !== undefined && gen !== prepGen) return false; // superseded by a restarted search
-    const fireAt = scheduleTransition(currentId, nextId, nextName, candidate, blend, minExit);
+    const fireAt = scheduleTransition(currentId, nextId, nextName, candidate, blend, minExit, layer);
     scheduledFireAt = fireAt;
-    tryMashup(currentId, nextId, nextName, fireAt); // fire-and-forget
+    if (!layer) tryMashup(currentId, nextId, nextName, fireAt); // fire-and-forget; B itself enters under a LAYER
     scheduledNext = cand;
     pendingSugs = []; // leftovers show up as READY when their download lands
     showQueue();
@@ -752,6 +823,60 @@
       return plan;
     } catch (e) {
       console.warn("Blend plan failed:", e.message);
+      return null;
+    }
+  }
+
+  // LAYER plan for a tempo-locked pair, or null. The DJ mind checks its cap
+  // (one LAYER every few songs) before the server call and the full rules
+  // (key, groove, vocal clash, steering, peak floor) after it.
+  async function requestLayer(currentId, nextId, candidate, aiPlan, cand) {
+    const mind = window.djMind;
+    if (!mind || !mind.planLayer || !mind.core || !mind.core.layerBars) return null;
+    const aiProposed = !!(aiPlan && aiPlan.layer);
+    const base = { steering: steering === "move", peak: false, energy: currentEnergy,
+                   aiProposed, aiWhy: aiPlan && aiPlan.layer_reason };
+    const pre = mind.planLayer(Object.assign({ ok: true, keyScore: 1, vocalClash: 0, groove: true }, base));
+    if (!pre.layer) {
+      if (aiProposed) console.info("LAYER (AI) vetoed:", pre.why);
+      return null;
+    }
+    const win = exitWindow(candidate.score || 50);
+    const od = window.decks && window.decks[activeDeck];
+    const lo = Math.max(win.lo, deckPosition(activeDeck) + 20);
+    if (!od || !(win.hi > lo)) return null;
+    const { maxHold, unwind } = mind.core.layerBars(setMode());
+    // third element: next-next songs first, then earlier songs (callbacks)
+    const thirdIds = ready.map((c) => c.track_id)
+      .concat(playedIds.slice(0, -1).reverse())
+      .filter((id, i, all) => id !== currentId && id !== nextId && all.indexOf(id) === i).slice(0, 6);
+    const names = {};
+    ready.forEach((c) => { names[c.track_id] = c.name; });
+    try {
+      apStatus("Checking a LAYER (both records together)…");
+      const res = await fetch("/api/layer/plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          a_id: currentId, b_id: nextId, window_lo: lo, window_hi: win.hi,
+          a_bpm_effective: od.bpm * od._playbackRate(), a_entry: entryPos,
+          max_hold_bars: maxHold, unwind_bars: unwind, third_ids: thirdIds,
+        }),
+      });
+      const plan = await res.json();
+      if (!res.ok) { console.info("Layer plan unavailable:", plan.detail); return null; }
+      const dec = mind.planLayer(Object.assign({
+        ok: plan.ok, why: (plan.reasons || []).join("; "), keyScore: plan.key_score,
+        vocalClash: plan.vocal_clash, groove: plan.groove,
+      }, base));
+      if (!dec.layer) {
+        console.info(`LAYER off for ${cand ? cand.name : nextId}:`, dec.why);
+        return null;
+      }
+      if (plan.third) plan.third.name = names[plan.third.guest_id] || "callback";
+      return Object.assign(plan, { source: dec.source, why: dec.why });
+    } catch (e) {
+      console.warn("Layer plan failed:", e.message);
       return null;
     }
   }
@@ -904,7 +1029,7 @@
     setTimeout(() => { if (active && gen === prepGen) prepareTransition(currentId); }, 20000);
   }
 
-  function scheduleTransition(currentId, nextId, nextName, candidate, blend = null, minExit = null) {
+  function scheduleTransition(currentId, nextId, nextName, candidate, blend = null, minExit = null, layer = null) {
     if (!active) return;
     let bTime = candidate.b_time || 0;
     let recipe = candidate.recipe || "Blend";
@@ -928,9 +1053,11 @@
       // phrase - the wiki's tempo-gap move ([[Echo Out]], What Do I Play Next).
       recipe = "Echo Out";
     }
+    if (layer) { bTime = layer.entry; recipe = `LAYER ${layer.hold_bars}+${layer.unwind_bars} bars`; }
     jumpPending = !blend;
-    const overlapStyle = blend ? (candidate.overlap_style || "standard")
-                               : "standard"; // never "instant" across a tempo gap
+    const overlapStyle = layer ? "layer"
+      : blend ? (candidate.overlap_style || "standard")
+              : "standard"; // never "instant" across a tempo gap
     const score  = candidate.score  || 50;
 
     // Play-time window from the set mode, counted from when this song came in.
@@ -941,13 +1068,13 @@
     const trackEnd = (od && od.buffer ? od.buffer.duration : Infinity) - w.xf - 2;
     const lo = Math.min(entryPos + w.min, trackEnd);
     const hi = Math.min(entryPos + w.max, trackEnd);
-    let exitAt = blend ? blend.exit : candidate.a_time;
+    let exitAt = layer ? layer.start : blend ? blend.exit : candidate.a_time;
     if (!blend && !(exitAt >= lo && exitAt <= hi)) exitAt = Math.max(lo, Math.min(hi, exitAt || hi));
     // never leave before the playing song's first drop has played (server floor)
     if (!blend && minExit != null && exitAt < minExit && minExit < trackEnd) exitAt = minExit;
     // PEAK mode (dj-mind.js peakTransition): tempo-locked pairs only, land B's
     // drop on A's drop downbeat - Double Drop or Drop Swap. null -> blend.
-    const peakT = blend && blend.drop && window.djMind && window.djMind.planPeak
+    const peakT = !layer && blend && blend.drop && window.djMind && window.djMind.planPeak
       ? window.djMind.planPeak({ drop: blend.drop, lo: Math.max(lo, nowPos + 15), hi,
                                  plannedExit: exitAt, entryPos, inDeck: stagingDeck() })
       : null;
@@ -970,7 +1097,7 @@
       window.djMind.setPlan({
         fireAt,
         // a vocal-free blend window is exact: the mind must not hold past it
-        maxFireAt: peakT || (blend && blend.instrumental) ? fireAt : Math.max(fireAt, Math.min(trackEnd, hi + 16 * barS)),
+        maxFireAt: peakT || layer || (blend && blend.instrumental) ? fireAt : Math.max(fireAt, Math.min(trackEnd, hi + 16 * barS)),
         style: peakT ? "peak" : overlapStyle,
         peakKind: peakT ? peakT.kind : null, peakWhy: peakT ? peakT.why : null, brake: !!(peakT && peakT.brake),
         preClearBars: Number.isFinite(candidate.pre_clear_bars) ? candidate.pre_clear_bars : 8,
@@ -987,14 +1114,15 @@
       // rationed by the mind (study rule 8: FX stay the exception).
       const od0 = window.decks && window.decks[activeDeck];
       const barSecs = (60 / ((od0 && od0.bpm) || 128)) * 4;
-      if (!filled && left > 0 && left <= 2 * barSecs && window.beatLayer) {
+      if (!filled && !layer && left > 0 && left <= 2 * barSecs && window.beatLayer) {
         filled = true;
         if (!window.djMind || window.djMind.fxAllowed("fill")) window.beatLayer.fill(2);
       }
 
       if (left > 0.8) {
         const scoreTag = score >= 65 ? `⭐${score}` : `⚡${score} (early exit)`;
-        const bl = blend ? ` · beat blend ${blend.pitch_percent >= 0 ? "+" : ""}${blend.pitch_percent.toFixed(1)}%${blend.clean ? "" : " (short: both vocal)"}` : "";
+        const bl = layer ? ` · ${layer.source} LAYER, bass to B at bar ${layer.hold_bars}${layer.third ? " + 3rd vocal" : ""}`
+          : blend ? ` · beat blend ${blend.pitch_percent >= 0 ? "+" : ""}${blend.pitch_percent.toFixed(1)}%${blend.clean ? "" : " (short: both vocal)"}` : "";
         playPlanTag = ` | ${w.label} ${fmtTime(fireAt - entryPos)}${bl}`;
         apStatus(`Next: ${nextName} | ${recipe} | ${scoreTag}${playPlanTag} | in ${left.toFixed(0)}s${mashupTag}`);
         return;
@@ -1024,7 +1152,8 @@
       const leadS = Math.max(0.05, (fireAt - deckPosition(activeDeck)) / rateA);
       const t0 = audioCtx.currentTime + leadS;
       if (sd) sd.play(bTime, false, t0);
-      const nextEntry = bTime;
+      // LAYER: B "arrives" at the bass hand-off; its play window counts from there
+      const nextEntry = layer ? layer.b_swap : bTime;
       // Drop Swap + [[Backspin (Spinback)]]: A's build winds down (deck brake,
       // 0.8 s) into the downbeat where B's drop cuts in.
       if (peakT && peakT.brake && oa && typeof oa.brake === "function") {
@@ -1034,8 +1163,23 @@
       // Recipe-aware EQ-first transition, started on the same downbeat.
       const outgoing = activeDeck;
       const incoming = stagingDeck();
+      // LAYER: the beat layer (live drums on A) and the mind's phrase moves pause
+      // while two records ride, so no third drum line doubles up.
       later(leadS * 1000, () => {
-        const totalMs = executeTransition(recipe, outgoing, incoming, xfDuration);
+        let totalMs;
+        if (layer) {
+          if (window.beatLayer && window.beatLayer.isEnabled()) {
+            window.beatLayer.setEnabled(false);
+            beatMutedByLayer = true;
+          }
+          totalMs = executeLayer(outgoing, incoming, layer);
+          if (window.djMind && window.djMind.layering) {
+            window.djMind.layering(totalMs / 1000, { source: layer.source,
+              why: `${layer.why} - ${layer.hold_bars} bars together, bass to B on the line, A unwinds ${layer.unwind_bars} bars` });
+          }
+        } else {
+          totalMs = executeTransition(recipe, outgoing, incoming, xfDuration);
+        }
         later(totalMs + 500, afterBlend);
       });
 
@@ -1049,6 +1193,8 @@
         resetDeck(outgoing);
 
         history.push(nextName);
+        playedIds.push(nextId);
+        unmuteBeatLayer();
         genreLog.push(currentGenre || "");
         currentGenre = (scheduledNext && scheduledNext.suggestion && scheduledNext.suggestion.genre) || "";
         songsSinceJump = jumpPending ? 0 : songsSinceJump + 1;
@@ -1208,6 +1354,8 @@
       if (window.djMind) { window.djMind.reset(); window.djMind.follow("a"); }
 
       history = [seedName];
+      playedIds = [currentTrackId];
+      setStartedAt = Date.now();
       apStatus(`▶ Playing: ${seedName} — finding next track in background…`);
       startWatchdog();
       prepareTransition(currentTrackId); // fire-and-forget: seed already playing
@@ -1244,6 +1392,7 @@
     if (window.mashup) window.mashup.cancel();
     mashupTag = "";
     clearRun();
+    unmuteBeatLayer();
     if (window.beatLayer) window.beatLayer.stop();
     if (window.djMind) window.djMind.stop();
     apStatus("Autopilot stopped.");
@@ -1264,6 +1413,7 @@
     get entryPos() { return entryPos; },
     get energy() { return currentEnergy; },
     get fireAt() { return scheduledNext ? scheduledFireAt : null; },
+    get layering() { return !!(window.djMind && window.djMind.layerActive); },
   };
 
   startBtn.addEventListener("click", start);
