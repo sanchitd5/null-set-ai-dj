@@ -107,3 +107,49 @@ def test_api_match_without_cached_stem_keeps_zero_penalty(monkeypatch):
     monkeypatch.setattr(server, "_vocal_regions", {})
     out = server.post_match(server.MatchRequest(track_a_id="a", track_b_id="b", top_n=5))
     assert all(c["vocal_penalty"] == 0.0 for c in out["candidates"])
+
+
+# --- item 5: per-recipe candidate points -------------------------------------
+
+def _sectioned():
+    """A: intro 0-20, drop 20-80, breakdown 80-120, drop 120-180, outro 180-240."""
+    return _track(
+        sections=[
+            StructureSection("intro", 0.0, 20.0, 0.2),
+            StructureSection("drop", 20.0, 80.0, 0.9),
+            StructureSection("breakdown", 80.0, 120.0, 0.3),
+            StructureSection("drop", 120.0, 180.0, 0.9),
+            StructureSection("outro", 180.0, 240.0, 0.3),
+        ],
+        phrases=[0.0, 30.0, 60.0, 90.0, 150.0, 195.0, 225.0],
+    )
+
+
+def test_exit_points_follow_recipe_class(matcher):
+    a, b = _sectioned(), _track(bpm=129.0)
+    res = {c.recipe.name: c for c in matcher.match(a, b, top_n=100)}
+    assert res["Drop Swap"].exit_section == "drop"
+    assert res["Echo Out"].exit_section in ("breakdown", "outro")
+    assert res["Basic Blend"].exit_section in ("outro", "breakdown")
+    d = res["Drop Swap"].to_dict()
+    assert {"exit_section", "entry_section", "recipe_class"} <= set(d)
+    assert d["recipe_class"] == "drop"
+
+
+def test_phrase_score_is_real(matcher):
+    a, b = _sectioned(), _track(bpm=129.0)
+    good = matcher.score_pair("Drop Swap", a, 150.0, b, 0.0, snap_to_phrase=False)
+    assert good.phrase_score == 1.0  # drop exit, intro entry, both on-grid
+    role_miss = matcher.score_pair("Drop Swap", a, 195.0, b, 0.0, snap_to_phrase=False)
+    assert role_miss.phrase_score == 0.5  # outro isn't a drop exit
+    off = matcher.score_pair("Drop Swap", a, 151.0, b, 0.0, snap_to_phrase=False)
+    assert off.phrase_score == 0.0
+
+
+def test_runway_keeps_the_overlap_inside_track_a(matcher):
+    # 128 BPM: slow overlap = 32 bars = 60 s; an exit at 225 s would run past 240 s.
+    a, b = _sectioned(), _track(bpm=129.0)
+    for c in matcher.match(a, b, top_n=100):
+        from app.music_brain.recipe_matcher import overlap_style
+        bars = OVERLAP_BARS[overlap_style(c.recipe.name)]
+        assert c.a_time + bars * 4 * 60.0 / a.bpm <= a.duration + 1e-6

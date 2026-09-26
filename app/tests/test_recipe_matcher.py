@@ -168,8 +168,9 @@ def test_clashing_key_and_huge_bpm_gap_favors_echo_out(matcher: RecipeMatcher):
 
 
 def test_vocal_collision_is_penalized_unless_recipe_uses_stems(matcher: RecipeMatcher):
-    a = _track(bpm=128.0, camelot="8B", vocal_regions=[(200.0, 240.0)])
-    b = _track(bpm=129.0, camelot="8B", vocal_regions=[(0.0, 40.0)])
+    # Vocals everywhere: per-recipe point search can't route around the clash.
+    a = _track(bpm=128.0, camelot="8B", vocal_regions=[(0.0, 240.0)])
+    b = _track(bpm=129.0, camelot="8B", vocal_regions=[(0.0, 240.0)])
     results = {c.recipe.name: c for c in matcher.match(a, b, top_n=28)}
     assert results["Bass Swap"].vocal_penalty > 0.5  # Bass Swap doesn't use stems
     assert results["Stems Transition"].vocal_penalty < results["Bass Swap"].vocal_penalty

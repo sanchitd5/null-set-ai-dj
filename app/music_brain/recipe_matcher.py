@@ -68,6 +68,35 @@ def overlap_style(recipe_name: str) -> str:
     return "standard"
 
 
+# Where each recipe class leaves Track A (cookbook "Setup" sections): drop
+# recipes swap on the drop, breakdown/echo moves leave from a breakdown or the
+# outro, everything else blends out of the outro or a breakdown.
+_DROP_RECIPES = {
+    "Drop Swap", "Double Drop", "Build-to-Drop Transition", "Vocal Punchline Drop Snap",
+}
+_BREAKDOWN_ECHO_RECIPES = {
+    "Breakdown Transition", "Echo Out", "Reverb Transition", "Filter Transition",
+}
+_EXIT_ROLES = {
+    "drop": {"drop"},
+    "breakdown_echo": {"breakdown", "outro"},
+    "blend": {"outro", "breakdown"},
+}
+
+
+# Candidate points per side per recipe (keeps match() at <= 28 x 8 x 8 scorings).
+MAX_POINTS_PER_SIDE = 8
+
+
+def recipe_class(recipe_name: str) -> str:
+    """'drop' | 'breakdown_echo' | 'blend' — which exit sections suit a recipe."""
+    if recipe_name in _DROP_RECIPES:
+        return "drop"
+    if recipe_name in _BREAKDOWN_ECHO_RECIPES:
+        return "breakdown_echo"
+    return "blend"
+
+
 @dataclass
 class TransitionCandidate:
     recipe: TransitionRecipe
@@ -79,6 +108,8 @@ class TransitionCandidate:
     phrase_score: float
     vocal_penalty: float
     explanation: str
+    exit_section: Optional[str] = None  # A's section at a_time
+    entry_section: Optional[str] = None  # B's section at b_time
 
     def to_dict(self) -> dict:
         style = overlap_style(self.recipe.name)
@@ -94,6 +125,9 @@ class TransitionCandidate:
             "phrase_score": round(self.phrase_score, 2),
             "vocal_penalty": round(self.vocal_penalty, 2),
             "explanation": self.explanation,
+            "exit_section": self.exit_section,
+            "entry_section": self.entry_section,
+            "recipe_class": recipe_class(self.recipe.name),
         }
 
 
@@ -217,6 +251,49 @@ def nearest_phrase_boundary(track: TrackAnalysis, time: float) -> float:
     return min(boundaries, key=lambda b: abs(b - time))
 
 
+def _on_grid(track: TrackAnalysis, time: float, tol: float = 0.05) -> bool:
+    """On an 8-bar phrase line (a track with no grid can't be judged: True)."""
+    boundaries = track.phrase_boundaries_8bar
+    return not boundaries or min(abs(b - time) for b in boundaries) <= tol
+
+
+def _is_entry_role(track: TrackAnalysis, time: float) -> bool:
+    section = _section_at(track, time)
+    if section in _ENTRY_SECTIONS:
+        return True
+    return section == "verse" and any(
+        s.label == "verse" and abs(s.start - time) < 1e-6 for s in track.sections
+    )
+
+
+def phrase_fit(
+    recipe_name: str, track_a: TrackAnalysis, a_time: float,
+    track_b: TrackAnalysis, b_time: float,
+) -> float:
+    """1.0 on-grid with matching section roles, 0.5 on-grid only, 0.0 off-grid."""
+    if not (_on_grid(track_a, a_time) and _on_grid(track_b, b_time)):
+        return 0.0
+    exit_ok = _section_at(track_a, a_time) in _EXIT_ROLES[recipe_class(recipe_name)]
+    return 1.0 if exit_ok and _is_entry_role(track_b, b_time) else 0.5
+
+
+def recipe_exit_candidates(track: TrackAnalysis, recipe_name: str) -> List[float]:
+    """Exit points on A for one recipe: phrase lines in the recipe class's
+    sections that leave room for the recipe's overlap before A ends (runway).
+    Falls back to any good exit section, then any phrase line, that fits."""
+    window = _phrase_transition_window(track, bars=OVERLAP_BARS[overlap_style(recipe_name)])
+    fits = [t for t in track.phrase_boundaries_8bar if t + window <= track.duration + 1e-6]
+    roles = _EXIT_ROLES[recipe_class(recipe_name)]
+    for pool in (
+        [t for t in fits if _section_at(track, t) in roles],
+        [t for t in fits if _section_at(track, t) in _EXIT_SECTIONS],
+        fits,
+    ):
+        if pool:
+            return pool
+    return [max(track.duration - window, 0.0)]
+
+
 def _phrase_transition_window(track: TrackAnalysis, bars: int = 16) -> float:
     """Seconds spanned by `bars` bars at the track's BPM."""
     if track.bpm <= 0:
@@ -312,7 +389,7 @@ class RecipeMatcher:
             # Bridge/cut/echo recipes are designed for large BPM/key gaps.
             bpm_score = max(bpm_score, 0.8)
 
-        phrase_score = 1.0  # both times were drawn from phrase-boundary candidates by construction
+        phrase_score = phrase_fit(recipe.name, track_a, a_time, track_b, b_time)
 
         penalty = vocal_overlap_penalty(
             track_a, a_time, track_b, b_time,
@@ -343,6 +420,8 @@ class RecipeMatcher:
             camelot_score=camelot_score, bpm_score=bpm_score,
             phrase_score=phrase_score, vocal_penalty=penalty,
             explanation=explanation,
+            exit_section=_section_at(track_a, a_time),
+            entry_section=_section_at(track_b, b_time),
         )
 
     def match(
@@ -352,34 +431,34 @@ class RecipeMatcher:
         top_n: int = 3,
         energy_hint: str = "maintain",
     ) -> List[TransitionCandidate]:
-        exit_points = find_exit_candidates(track_a) or (
-            [track_a.phrase_boundaries_8bar[-1]] if track_a.phrase_boundaries_8bar else [max(track_a.duration - 30, 0.0)]
-        )
         entry_points = find_entry_candidates(track_b) or (
             [track_b.phrase_boundaries_8bar[0]] if track_b.phrase_boundaries_8bar else [0.0]
         )
+        entry_points = entry_points[:MAX_POINTS_PER_SIDE]  # earliest good entries
 
-        # One representative (exit, entry) pair per recipe evaluation: the
-        # latest good exit on A paired with the earliest good entry on B,
-        # which is what a DJ would actually reach for first.
-        a_time = exit_points[-1]
-        b_time = entry_points[0]
-
+        # Every recipe is scored at its own exits (by recipe class, with
+        # runway) x B's entries; the best pair per recipe is kept. Ties keep
+        # the latest exit + earliest entry, what a DJ reaches for first.
         best_per_recipe: dict[str, TransitionCandidate] = {}
         for recipe in self.knowledge.get_all():
-            candidate = self._score_one(recipe, track_a, a_time, track_b, b_time)
+            exits = recipe_exit_candidates(track_a, recipe.name)[-MAX_POINTS_PER_SIDE:]
+            for a_time in reversed(exits):
+                for b_time in entry_points:
+                    candidate = self._score_one(recipe, track_a, a_time, track_b, b_time)
+                    existing = best_per_recipe.get(recipe.name)
+                    if existing is None or candidate.score > existing.score:
+                        best_per_recipe[recipe.name] = candidate
+
+        for name, candidate in best_per_recipe.items():
             # Apply energy_hint nudge: ±5 points to steer recipe selection.
-            if energy_hint == "up" and recipe.name in _HIGH_ENERGY_RECIPES:
+            if energy_hint == "up" and name in _HIGH_ENERGY_RECIPES:
                 candidate.score = min(100.0, candidate.score + 5.0)
-            elif energy_hint == "down" and recipe.name in _LOW_ENERGY_RECIPES:
+            elif energy_hint == "down" and name in _LOW_ENERGY_RECIPES:
                 candidate.score = min(100.0, candidate.score + 5.0)
-            elif energy_hint == "up" and recipe.name in _LOW_ENERGY_RECIPES:
+            elif energy_hint == "up" and name in _LOW_ENERGY_RECIPES:
                 candidate.score = max(0.0, candidate.score - 5.0)
-            elif energy_hint == "down" and recipe.name in _HIGH_ENERGY_RECIPES:
+            elif energy_hint == "down" and name in _HIGH_ENERGY_RECIPES:
                 candidate.score = max(0.0, candidate.score - 5.0)
-            existing = best_per_recipe.get(recipe.name)
-            if existing is None or candidate.score > existing.score:
-                best_per_recipe[recipe.name] = candidate
 
         ranked = sorted(best_per_recipe.values(), key=lambda c: c.score, reverse=True)
         return ranked[:top_n]
@@ -442,7 +521,12 @@ class RecipeMatcher:
 
         # Need the AI's own best-guess points as defaults for whichever of
         # a_time/b_time (and whichever recipe) wasn't explicitly given.
-        default_candidates = self.match(track_a, track_b, top_n=top_n_for_default)
+        # Points differ per recipe, so a named recipe must find its own entry
+        # even when it isn't in the top few.
+        default_candidates = self.match(
+            track_a, track_b,
+            top_n=top_n_for_default if recipe_name is None else len(self.knowledge.get_all()),
+        )
         if recipe_name is None:
             if not default_candidates:
                 raise ValueError("No transition candidates found for this track pair")
