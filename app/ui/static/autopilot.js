@@ -585,6 +585,18 @@
     return [1, 2, 0.5].some((m) => Math.abs(aEff / (cand.bpm * m) - 1) <= 0.08);
   }
   let allowTempoJump = false; // set on the last round so the set never stalls
+  // Tempo-jump budget (user: "genre switch once in a while is fine, or in the
+  // middle of high-BPM songs where people are dancing, switch with echo"):
+  // beat-matched by default; one tempo jump after JUMP_EVERY songs, or after
+  // PEAK_JUMP_EVERY while the floor is at peak energy; never back to back.
+  const JUMP_EVERY = 4;
+  const PEAK_JUMP_EVERY = 2;
+  let songsSinceJump = JUMP_EVERY; // the first jump of a set is allowed
+  let jumpPending = false;         // the booked transition is a tempo jump
+  function tempoJumpBudget() {
+    const peak = currentEnergy != null && currentEnergy >= 8;
+    return songsSinceJump >= (peak ? PEAK_JUMP_EVERY : JUMP_EVERY);
+  }
   let steering = "stay";      // "move" while steering toward the occasion's music
   let steerStep = 0;          // bridge songs played so far on the current steer (cap 7)
   const HIGH_ENERGY_OCCASION = /\b(wedding|shaadi|sangeet|baraat|mehndi|reception|party|club\s*night|peak|festival|rave|birthday|bachelor(ette)?|new\s*year)\b/i;
@@ -804,7 +816,7 @@
     const MAX_ROUNDS = 3;
     const rejected = [];
     for (let round = 1; round <= MAX_ROUNDS; round++) {
-      allowTempoJump = round === MAX_ROUNDS;
+      allowTempoJump = round === MAX_ROUNDS || tempoJumpBudget();
       // Nothing beat-matchable after a strict round: don't burn more AI rounds
       // hunting for a tempo that may barely exist (a 96 BPM dembow seed has
       // almost no house / UK dance peers). Take the best song already waiting
@@ -895,6 +907,7 @@
       // phrase - the wiki's tempo-gap move ([[Echo Out]], What Do I Play Next).
       recipe = "Echo Out";
     }
+    jumpPending = !blend;
     const overlapStyle = blend ? (candidate.overlap_style || "standard")
                                : "standard"; // never "instant" across a tempo gap
     const score  = candidate.score  || 50;
@@ -1013,6 +1026,8 @@
         resetDeck(outgoing);
 
         history.push(nextName);
+        songsSinceJump = jumpPending ? 0 : songsSinceJump + 1;
+        jumpPending = false;
         if (steering === "move") steerStep++;
         scheduledNext = null;
         activeDeck = stagingDeck();
@@ -1130,6 +1145,8 @@
     history = [];
     steering = "stay";
     steerStep = 0;
+    songsSinceJump = JUMP_EVERY;
+    jumpPending = false;
     active = true;
     activeDeck = "a";
     updateButtons();
