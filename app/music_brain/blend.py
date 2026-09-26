@@ -28,7 +28,8 @@ Regions = List[Tuple[float, float]]
 
 MAX_TEMPO_DEVIATION = 0.08     # beyond this a pitch-locked blend sounds wrong
 MAX_VOCAL_COVERAGE = 0.15      # "instrumental" = at most 15% of the blend has vocal
-ENTRY_SEARCH_FRACTION = 0.45   # look for B's entry in its first 45%
+ENTRY_SEARCH_FRACTION = 0.45   # B's entry must leave >= 55% of the song to play
+ENERGY_MATCH_WEIGHT = 1.5      # |A exit energy - B entry energy| penalty (both 0-1, own-peak normalised)
 ALLOWED_BARS = (8, 16, 32)
 
 _EXIT_LABEL_BONUS = {"outro": 0.25, "breakdown": 0.2, "intro": 0.1, "build": 0.05}
@@ -51,6 +52,14 @@ def _label_at(t: TrackAnalysis, x: float) -> str:
         if s.start <= x < s.end:
             return s.label
     return "verse"
+
+
+def _mean_energy(t: TrackAnalysis, start: float, end: float) -> Optional[float]:
+    """Mean of the track's own peak-normalised energy curve over [start, end)."""
+    if not t.energy_curve or not t.energy_times:
+        return None
+    vals = [e for x, e in zip(t.energy_times, t.energy_curve) if start <= x < end]
+    return sum(vals) / len(vals) if vals else None
 
 
 def tempo_lock(a_bpm: float, b_bpm: float) -> Optional[Tuple[float, float]]:
@@ -101,7 +110,12 @@ def plan_blend(
     if not exits:
         return {"ok": False, "reasons": ["no phrase boundary inside the play window"]}
 
-    # ── entry: B phrase early in the song, instrumental for the whole blend
+    ex_score, exit_t, a_cov = max(exits)
+    a_energy = _mean_energy(a, exit_t, exit_t + a_len)
+
+    # ── entry: B phrase that MATCHES the energy A leaves at (may be well past
+    # B's intro: coming out of a peak into a quiet intro killed the vibe),
+    # instrumental for the whole blend, leaving enough of B to play.
     entries = []
     limit = b.duration * ENTRY_SEARCH_FRACTION
     # Only B's own phrase grid: its first boundary is its first detected
@@ -111,15 +125,19 @@ def plan_blend(
         if e > limit or e + b_len > b.duration:
             continue
         cov = _coverage(b_vocals, e, e + b_len) if b_vocals is not None else None
-        score = _ENTRY_LABEL_BONUS.get(_label_at(b, e), 0.0) - 0.2 * (e / max(1.0, limit))
+        score = -0.15 * (e / max(1.0, limit))            # mild: more of B left to play
+        b_energy = _mean_energy(b, e, e + b_len)
+        if a_energy is not None and b_energy is not None:
+            score -= ENERGY_MATCH_WEIGHT * abs(a_energy - b_energy)
+        else:
+            score += _ENTRY_LABEL_BONUS.get(_label_at(b, e), 0.0)
         if cov is not None:
             score -= 2.0 * cov
-        entries.append((score, e, cov))
+        entries.append((score, e, cov, b_energy))
     if not entries:
         return {"ok": False, "reasons": ["incoming song too short for this blend"]}
 
-    ex_score, exit_t, a_cov = max(exits)
-    en_score, entry_t, b_cov = max(entries)
+    en_score, entry_t, b_cov, b_energy = max(entries)
     reasons = []
     instrumental = True
     if a_cov is not None and a_cov > MAX_VOCAL_COVERAGE:
@@ -142,6 +160,8 @@ def plan_blend(
         "semitones": round(12 * math.log2(rate), 3),
         "a_vocal_coverage": None if a_cov is None else round(a_cov, 3),
         "b_vocal_coverage": None if b_cov is None else round(b_cov, 3),
+        "exit_energy": None if a_energy is None else round(a_energy, 3),
+        "entry_energy": None if b_energy is None else round(b_energy, 3),
         "exit_label": _label_at(a, exit_t),
         "entry_label": _label_at(b, entry_t),
     }

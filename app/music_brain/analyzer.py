@@ -95,11 +95,14 @@ def _file_hash(path: Path) -> str:
 
 
 def analyze_tempo_and_beats(y: np.ndarray, sr: int) -> Tuple[float, np.ndarray]:
-    """Returns (bpm, beat_times). Beat 0 is treated as the downbeat anchor."""
-    tempo, beat_frames = librosa.beat.beat_track(y=y, sr=sr, units="frames")
-    beat_times = librosa.frames_to_time(beat_frames, sr=sr)
-    bpm = float(tempo if np.ndim(tempo) == 0 else tempo[0])
-    return bpm, beat_times
+    """Returns (bpm, beat_times). Beat 0 is treated as the downbeat anchor.
+
+    Section-consensus tempo (music_brain/tempo.py): a whole-song beat_track
+    read "Cola" (122 BPM) as 80.7 because most of the song sits on a 2/3 pulse.
+    """
+    from app.music_brain.tempo import robust_tempo
+
+    return robust_tempo(y, sr)
 
 
 def compute_downbeats(beat_times: np.ndarray, beats_per_bar: int = BEATS_PER_BAR) -> np.ndarray:
@@ -247,8 +250,13 @@ def vocal_presence_map(
     return regions
 
 
+# Bump when analysis output changes so stale cached results are recomputed.
+# v2: section-consensus tempo (tempo.py).
+ANALYSIS_VERSION = 2
+
+
 def _cache_path_for(audio_path: Path) -> Path:
-    return ANALYSIS_CACHE_DIR / f"{_file_hash(audio_path)}.json"
+    return ANALYSIS_CACHE_DIR / f"{_file_hash(audio_path)}.v{ANALYSIS_VERSION}.json"
 
 
 def analyze(

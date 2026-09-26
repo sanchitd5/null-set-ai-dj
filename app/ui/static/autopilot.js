@@ -801,7 +801,15 @@
       if (!bClean) recipe = "Bass Swap";
       else if (!["bass", "blend", "default"].includes(k)) recipe = "Long Blend";
       blend.clean = bClean;
+    } else if (!["echo", "filter"].includes(recipeKind(recipe))) {
+      // No tempo lock possible: beats cannot be layered, so don't hard-swap
+      // (instant swaps between unrelated tempos changed the whole vibe in the
+      // live set). Echo the outgoing song away while the new one enters on its
+      // phrase - the wiki's tempo-gap move ([[Echo Out]], What Do I Play Next).
+      recipe = "Echo Out";
     }
+    const overlapStyle = blend ? (candidate.overlap_style || "standard")
+                               : "standard"; // never "instant" across a tempo gap
     const score  = candidate.score  || 50;
 
     // Play-time window from the set mode, counted from when this song came in.
@@ -833,7 +841,7 @@
         fireAt,
         // a vocal-free blend window is exact: the mind must not hold past it
         maxFireAt: blend && blend.instrumental ? fireAt : Math.max(fireAt, Math.min(trackEnd, hi + 16 * barS)),
-        style: candidate.overlap_style || "standard",
+        style: overlapStyle,
         preClearBars: Number.isFinite(candidate.pre_clear_bars) ? candidate.pre_clear_bars : 8,
       });
     }

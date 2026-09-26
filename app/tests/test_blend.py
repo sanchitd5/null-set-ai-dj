@@ -55,3 +55,14 @@ def test_entry_is_on_bs_beat_grid_not_zero():
     b.phrase_boundaries_8bar = [5.9 + i * 16 for i in range(12)]   # first downbeat at 5.9 s
     plan = plan_blend(_track(120), b, 60.0, 150.0, a_vocals=[], b_vocals=[], bars=16)
     assert plan["entry"] in b.phrase_boundaries_8bar
+
+
+def test_entry_matches_exit_energy_not_just_intro():
+    a, b = _track(120), _track(120)
+    a.energy_times = [float(t) for t in range(240)]
+    a.energy_curve = [0.9] * 240                       # A leaves at its peak
+    b.energy_times = [float(t) for t in range(240)]
+    b.energy_curve = [0.2 if t < 64 else 0.9 for t in range(240)]  # quiet intro, peak from 64 s
+    plan = plan_blend(a, b, 80.0, 170.0, a_vocals=[], b_vocals=[], bars=16)
+    assert plan["entry"] >= 64.0                        # enters at B's matching peak, not its quiet intro
+    assert plan["entry_energy"] == pytest.approx(0.9)
