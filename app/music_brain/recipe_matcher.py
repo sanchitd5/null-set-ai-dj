@@ -225,14 +225,22 @@ def _phrase_transition_window(track: TrackAnalysis, bars: int = 16) -> float:
     return bars * BEATS_PER_BAR * seconds_per_beat
 
 
+# How long both records actually play together, per overlap style: the vocal
+# collision window (instant swaps barely overlap, slow blends ride 4 phrases).
+OVERLAP_BARS = {"instant": 4, "standard": 2 * BARS_PER_PHRASE, "slow": 4 * BARS_PER_PHRASE}
+# A non-stems recipe whose vocals collide this much is halved (decisive, not a nudge).
+VOCAL_CLASH_CUTOFF = 0.5
+
+
 def vocal_overlap_penalty(
     track_a: TrackAnalysis, a_time: float,
     track_b: TrackAnalysis, b_time: float,
+    bars: int = 2 * BARS_PER_PHRASE,
 ) -> float:
-    """0.0 (no clash) to 1.0 (full overlap) vocal-collision penalty."""
+    """0.0 (no clash) to 1.0 (full overlap) vocal-collision penalty over `bars` bars."""
     window = min(
-        _phrase_transition_window(track_a, bars=2 * BARS_PER_PHRASE),
-        _phrase_transition_window(track_b, bars=2 * BARS_PER_PHRASE),
+        _phrase_transition_window(track_a, bars=bars),
+        _phrase_transition_window(track_b, bars=bars),
     )
     a_window = (a_time, a_time + window)
     b_window = (b_time, b_time + window)
@@ -306,12 +314,18 @@ class RecipeMatcher:
 
         phrase_score = 1.0  # both times were drawn from phrase-boundary candidates by construction
 
-        penalty = vocal_overlap_penalty(track_a, a_time, track_b, b_time)
+        penalty = vocal_overlap_penalty(
+            track_a, a_time, track_b, b_time,
+            bars=OVERLAP_BARS[overlap_style(recipe.name)],
+        )
         if recipe.requires_stems:
             # Stems surgically isolate vocals; penalty drops more aggressively.
             penalty *= 0.3
 
         raw = (0.35 * camelot_score) + (0.30 * bpm_score) + (0.20 * phrase_score) + (0.15 * (1 - penalty))
+        # Two vocals talking over each other is a train wreck, not a -15% nudge.
+        if penalty > VOCAL_CLASH_CUTOFF and not recipe.requires_stems:
+            raw *= 0.5
         # Hard gate: a camelot-only recipe is blocked outright on a confident clash.
         if key_blocked:
             raw = 0.0

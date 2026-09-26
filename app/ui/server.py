@@ -373,8 +373,47 @@ def get_recipes():
 
 @app.post("/api/match")
 def post_match(req: MatchRequest):
-    track_a = analyze_track(_track_path(req.track_a_id))
-    track_b = analyze_track(_track_path(req.track_b_id))
+    import dataclasses
+
+    from app.music_brain import stem_service
+    from app.music_brain.config import DEMUCS_MODEL
+    from app.music_brain.mashup import MASHUP_DEMUCS_MODEL
+
+    def cached_vocals(track_id: str) -> Optional[list]:
+        """Vocal regions only when a Demucs vocal stem is already cached:
+        matching must never start a separation."""
+        if track_id in _vocal_regions:
+            return _vocal_regions[track_id]
+        audio_hash = stem_service.file_hash(_track_path(track_id))
+        for model, two in ((MASHUP_DEMUCS_MODEL, "vocals"), (DEMUCS_MODEL, "vocals"), (DEMUCS_MODEL, None)):
+            stems = stem_service._load_from_cache(stem_service._cache_dir_for(audio_hash, model, two))
+            if not stems or not stems.get("vocals"):
+                continue
+            if (model, two) == (MASHUP_DEMUCS_MODEL, "vocals"):
+                return _vocal_regions_for(track_id)  # hits the same stem cache
+            try:
+                from app.music_brain.analyzer import vocal_presence_map
+
+                regions = [list(r) for r in vocal_presence_map(Path(stems["vocals"]))]
+            except Exception as exc:
+                print(f"[match] vocal map unavailable for {track_id}: {exc}", flush=True)
+                return None
+            _vocal_regions[track_id] = regions
+            return regions
+        return None
+
+    tracks = []
+    for track_id in (req.track_a_id, req.track_b_id):
+        track = analyze_track(_track_path(track_id))
+        try:
+            regions = cached_vocals(track_id)
+        except Exception as exc:  # best-effort: never break matching
+            print(f"[match] vocal lookup failed for {track_id}: {exc}", flush=True)
+            regions = None
+        if regions:
+            track = dataclasses.replace(track, vocal_active_regions=[tuple(r) for r in regions])
+        tracks.append(track)
+    track_a, track_b = tracks
     candidates = _matcher.match(track_a, track_b, top_n=req.top_n)
     # Measured vibe continuity (loudness / brightness / onset density / energy).
     # Best-effort: a vibe failure must never break matching.
