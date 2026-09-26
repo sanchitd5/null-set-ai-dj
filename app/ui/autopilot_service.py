@@ -535,7 +535,8 @@ SET_MODE_LINES = {
 
 def _extract_json(text: str) -> dict:
     """Robustly pull the first {...} block from LLM output."""
-    text = text.strip()
+    # Qwen3 emits a (possibly empty) <think>...</think> block before the answer
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.S).strip()
     text = re.sub(r"^```[a-z]*\n?", "", text)
     text = re.sub(r"\n?```$", "", text.strip())
     start = text.find("{")
@@ -639,6 +640,8 @@ def _chat_call(system, user, temperature, timeout, model, max_tokens) -> str:
     base_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
     model = model or os.environ.get("AUTOPILOT_MODEL", "gemma3:4b")
     api_key = os.environ.get("OPENAI_API_KEY", "ollama")
+    if "qwen3" in model.lower():
+        user += "\n/no_think"  # Qwen3 soft switch: reasoning would eat max_tokens
     messages = [
         {"role": "system", "content": system},
         {"role": "user", "content": user},

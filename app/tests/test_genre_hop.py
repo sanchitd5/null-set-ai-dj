@@ -103,3 +103,9 @@ def test_double_time_counts_as_locked():
     from app.ui.autopilot_service import _tempo_locks
     assert _tempo_locks(96, 190) and _tempo_locks(174, 87) and _tempo_locks(96, None) is None
     assert _tempo_locks(96, 117) is False
+
+
+def test_qwen3_think_block_is_stripped():
+    from app.ui.autopilot_service import _extract_json
+    raw = '<think>\nmaybe {"a": 1}?\n</think>\n\n{"suggestions": []}'
+    assert _extract_json(raw) == {"suggestions": []}
