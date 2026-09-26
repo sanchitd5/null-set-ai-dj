@@ -36,17 +36,17 @@ _FEW_SHOT = """\
 EXAMPLE 1 — melodic house, early set (set_position 0.15), building vibe before branching out:
 Current: "Alvaro" by Fred again.. | 122 BPM | 11A | Energy 0.55 | Genre: melodic house
 History: [] (nothing played yet — safe to stay in same artist world)
-{"suggestions":[
-  {"artist":"Fred again..","title":"Marea (We've Lost Dancing)","reason":"11A identical key, 123 BPM seamless, same granular vocal-sample construction and 4-bar melodic drop — deepens the Fred again.. vibe before branching out later.","genre":"melodic house","expected_bpm":123,"expected_key":"11A","mix_moment":"exit at vocal breakdown ~bar 48","energy_delta":"maintain","vibe_link":"same granular vocal chops and melodic 4-bar drops"},
-  {"artist":"Fred again..","title":"Delilah (pull me out of this)","reason":"12A (+1 hour) gentle key lift, 118 BPM keeps the tempo pocket tight, Fred again..'s signature layered field-recording textures make back-to-back tracks feel like chapters in one story.","genre":"melodic house","expected_bpm":118,"expected_key":"12A","mix_moment":"exit at outro pad wash ~bar 64","energy_delta":"maintain","vibe_link":"layered field-recording texture and slow-burn emotional build"}
+{"current_genre":"melodic house","current_profile":{"energy":6,"tempo_feel":"driving","drums":"steady","vocals":"chopped","mood":"bittersweet","texture":"raw"},"suggestions":[
+  {"artist":"Fred again..","title":"Marea (We've Lost Dancing)","reason":"11A identical key, 123 BPM seamless; same chopped vocal loop over a steady four-to-the-floor kick, same bittersweet lift, so the floor keeps moving.","genre":"melodic house","expected_bpm":123,"expected_key":"11A","mix_moment":"exit at vocal breakdown ~bar 48","energy_delta":"maintain","vibe_link":"same granular vocal chops and melodic 4-bar drops","track_profile":{"energy":7,"tempo_feel":"driving","drums":"steady","vocals":"chopped","mood":"bittersweet","texture":"raw"}},
+  {"artist":"Fred again..","title":"Delilah (pull me out of this)","reason":"12A (+1 hour) gentle key lift, 118 BPM keeps the pocket tight; layered field-recording textures and a driving kick keep the same raw, bittersweet feel.","genre":"melodic house","expected_bpm":118,"expected_key":"12A","mix_moment":"exit at outro pad wash ~bar 64","energy_delta":"maintain","vibe_link":"layered field-recording texture and slow-burn emotional build","track_profile":{"energy":6,"tempo_feel":"driving","drums":"steady","vocals":"chopped","mood":"bittersweet","texture":"raw"}}
 ]}
 
 EXAMPLE 2 — UK garage/deep house, peak (set_position 0.72):
 Current: "Latch" by Disclosure | 120 BPM | 4B | Energy 0.78 | Genre: UK garage / deep house
 History: ["Disclosure - When A Fire Starts To Burn", "Disclosure - Latch"]
-{"suggestions":[
-  {"artist":"Jamie xx","title":"I Know There's Gonna Be (Good Times)","reason":"4B identical key, 118 BPM seamless — shares the punchy UK bass drum pattern and pitched vocal-chop sensibility that defines Disclosure's sound.","genre":"UK bass / house","expected_bpm":118,"expected_key":"4B","mix_moment":"exit at second chorus ~bar 96","energy_delta":"maintain","vibe_link":"punchy UK bass kick and pitched vocal chop cadence"},
-  {"artist":"Duke Dumont","title":"Won't Look Back","reason":"5B (+1 hour) smooth harmonic lift, 122 BPM slight tempo push, warm soulful house keeps the UK flavour while nudging the dancefloor energy forward.","genre":"deep house","expected_bpm":122,"expected_key":"5B","mix_moment":"exit at breakdown ~bar 48","energy_delta":"up","vibe_link":"soulful vocal stabs and swung hi-hat groove"}
+{"current_genre":"UK garage / deep house","current_profile":{"energy":8,"tempo_feel":"driving","drums":"busy","vocals":"sung","mood":"euphoric","texture":"polished"},"suggestions":[
+  {"artist":"Jamie xx","title":"I Know There's Gonna Be (Good Times)","reason":"4B identical key, 118 BPM seamless; punchy UK bass drum pattern and pitched vocal chops keep the same euphoric, busy groove.","genre":"UK bass / house","expected_bpm":118,"expected_key":"4B","mix_moment":"exit at second chorus ~bar 96","energy_delta":"maintain","vibe_link":"punchy UK bass kick and pitched vocal chop cadence","track_profile":{"energy":8,"tempo_feel":"driving","drums":"busy","vocals":"chopped","mood":"euphoric","texture":"polished"}},
+  {"artist":"Duke Dumont","title":"Won't Look Back","reason":"5B (+1 hour) smooth harmonic lift, 122 BPM slight tempo push; soulful sung hook and swung hats keep the euphoric floor while nudging energy forward.","genre":"deep house","expected_bpm":122,"expected_key":"5B","mix_moment":"exit at breakdown ~bar 48","energy_delta":"up","vibe_link":"soulful vocal stabs and swung hi-hat groove","track_profile":{"energy":8,"tempo_feel":"driving","drums":"steady","vocals":"sung","mood":"euphoric","texture":"polished"}}
 ]}"""
 
 _SYSTEM = f"""\
@@ -70,6 +70,25 @@ VIBE CONTINUITY (critical rule):
     Good: "punchy UK bass kick and pitched vocal chop cadence"
     Bad: "same genre", "similar style", "UK bass DNA"
 
+TRACK PROFILE (judge the SONG, not the artist):
+  Artist reputation is NOT enough. The same artist has chill tracks and peak tracks.
+  First describe the CURRENT track in "current_profile", then give every suggestion its own "track_profile":
+    energy: integer 1-10 (how hard THIS song hits on a dancefloor; NOT the 0-1 Avg Energy number)
+    tempo_feel: driving | mid | laid-back
+    drums: none | sparse | steady | busy
+    vocals: none | chopped | sung
+    mood: euphoric | bittersweet | dark | chill
+    texture: raw | polished
+  A suggestion MUST stay close to the current profile:
+    energy within 2 points, tempo_feel not flipped (driving <-> laid-back is forbidden),
+    mood not flipped (euphoric <-> dark, euphoric <-> chill, dark <-> chill are forbidden).
+  Pick songs you actually know the sound of. If unsure how a song sounds, do not suggest it.
+
+FORBIDDEN SUGGESTIONS (never, regardless of any other rule):
+  DJ sets, live sets, Boiler Room / Essential Mix / Fabric / radio shows, podcasts, mixes, megamixes,
+  compilations, albums, EPs, interviews, remix packs, anything longer than 9 minutes.
+  Suggest ONLY individual released songs, using the song's real title.
+
 SAME-ARTIST RULE (important):
   Suggesting the same ARTIST as the current track is valid and often preferred early in a set to
   build a consistent vibe — back-to-back tracks by the same artist feel like chapters in one story.
@@ -83,7 +102,7 @@ AVOID TRACKS: The history list contains track names already played. Do NOT sugge
   title appears in that list. Same artist is fine — only the exact title is banned.
 
 OUTPUT FORMAT — return ONLY valid JSON, no markdown, no explanation:
-{{"suggestions":[{{"artist":"","title":"","reason":"2-sentence reason referencing harmonic move, energy arc, and vibe continuity","genre":"inferred genre of suggested track","expected_bpm":0,"expected_key":"","mix_moment":"exit at [section] ~bar N","energy_delta":"up|down|maintain","vibe_link":"specific sonic characteristic shared — NOT a genre label"}}]}}
+{{"current_genre":"","current_profile":{{"energy":0,"tempo_feel":"","drums":"","vocals":"","mood":"","texture":""}},"suggestions":[{{"artist":"","title":"","reason":"2-sentence reason referencing harmonic move, energy arc, and how THIS song's sound matches","genre":"inferred genre of suggested track","expected_bpm":0,"expected_key":"","mix_moment":"exit at [section] ~bar N","energy_delta":"up|down|maintain","vibe_link":"specific sonic characteristic shared — NOT a genre label","track_profile":{{"energy":0,"tempo_feel":"","drums":"","vocals":"","mood":"","texture":""}}}}]}}
 
 {_FEW_SHOT}"""
 
@@ -92,8 +111,8 @@ _USER_TEMPLATE = (
     "BPM: {bpm:.1f} | Camelot Key: {camelot} | Duration: {duration:.0f}s | "
     "Avg Energy: {energy:.2f}/1.0 | Set position: {set_pos_pct}% through set\n"
     "Occasion: {occasion}\n"
-    "Current track genre (infer from artist+title+BPM+key): [fill this before selecting]\n"
-    "Suggestions MUST stay within this genre neighbourhood unless the occasion demands a shift.\n"
+    "First fill current_genre and current_profile for THIS song, then pick songs whose own "
+    "track_profile stays close to it. Stay in this genre neighbourhood unless the occasion demands a shift.\n"
     "Already played titles (avoid exact titles, same artist OK): {history}\n\n"
     "Suggest {n} tracks. Prioritise: vibe continuity → harmonic compatibility → energy arc for {arc_phase} → diversity.\n"
     "Reply ONLY with the JSON object."
@@ -108,6 +127,60 @@ def _set_arc_phase(set_position: float) -> str:
     if set_position < 0.9:
         return "peak (sustain or escalate)"
     return "cool-down (wind down)"
+
+
+_MOOD_CLASH = {
+    frozenset({"euphoric", "dark"}),
+    frozenset({"euphoric", "chill"}),
+    frozenset({"dark", "chill"}),
+}
+_MAX_ENERGY_GAP = 2
+
+
+def _profile_clash(cur: dict, sug: dict) -> str | None:
+    """Return a reason string if the suggestion's profile clashes with the current track's."""
+    if not isinstance(cur, dict) or not isinstance(sug, dict):
+        return None  # model skipped profiles: can't judge, audio vibe gate still applies
+    def _e(v) -> float:
+        v = float(v)
+        return v * 10 if v <= 1.0 else v  # small models often answer on a 0-1 scale
+
+    try:
+        gap = abs(_e(sug.get("energy")) - _e(cur.get("energy")))
+        if gap > _MAX_ENERGY_GAP:
+            return f"energy gap {gap:.0f}"
+    except (TypeError, ValueError):
+        pass
+    tf = {str(cur.get("tempo_feel", "")).lower(), str(sug.get("tempo_feel", "")).lower()}
+    if tf == {"driving", "laid-back"}:
+        return "tempo feel flip"
+    moods = frozenset({str(cur.get("mood", "")).lower(), str(sug.get("mood", "")).lower()})
+    if moods in _MOOD_CLASH:
+        return "mood flip"
+    return None
+
+
+def _filter_suggestions(data: dict, history: list[str]) -> list[dict]:
+    """Drop sets/interviews, exact repeats and profile clashes. Never returns empty if the
+    model gave at least one allowed song: the closest clash is kept as a last resort."""
+    from app.ui.download_service import _is_mix, _is_non_music
+
+    played = {h.lower() for h in history}
+    cur = data.get("current_profile")
+    ok, clashes = [], []
+    for s in data.get("suggestions", []) or []:
+        if not isinstance(s, dict) or not s.get("title"):
+            continue
+        label = f"{s.get('artist', '')} {s['title']}"
+        if _is_mix(label) or _is_non_music(label):
+            continue
+        if any(s["title"].lower() in p for p in played):
+            continue
+        reason = _profile_clash(cur, s.get("track_profile"))
+        (clashes if reason else ok).append(s)
+        if reason:
+            s["rejected_reason"] = reason
+    return ok or clashes[:1]
 
 
 def _extract_json(text: str) -> dict:
@@ -176,7 +249,7 @@ def suggest_next_tracks(
         resp = client.chat.completions.create(
             model=model,
             messages=messages,
-            temperature=0.8,
+            temperature=0.5,
             response_format={"type": "json_object"},
         )
         raw = resp.choices[0].message.content or "{}"
@@ -186,12 +259,12 @@ def suggest_next_tracks(
         resp = openai.ChatCompletion.create(
             model=model,
             messages=messages,
-            temperature=0.8,
+            temperature=0.5,
         )
         raw = resp["choices"][0]["message"]["content"] or "{}"
 
     data = _extract_json(raw)
-    suggestions = data.get("suggestions", [])[:n]
+    suggestions = _filter_suggestions(data, history)[:n]
 
     for s in suggestions:
         artist_s = s.get("artist", "")
@@ -206,5 +279,6 @@ def suggest_next_tracks(
         s.setdefault("mix_moment", "")
         s.setdefault("energy_delta", "maintain")
         s.setdefault("vibe_link", "")
+        s.setdefault("track_profile", {})
 
     return suggestions
