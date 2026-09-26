@@ -72,3 +72,34 @@ def test_parroted_few_shot_is_retried(monkeypatch):
 def test_indie_dance_is_a_jump_from_indie_pop():
     from app.ui.autopilot_service import _family_jump
     assert _family_jump("indie pop", "indie dance")
+
+
+def _pick(title, bpm):
+    return {"artist": "A", "title": title, "genre": "dream pop", "genre_hop": 0, "expected_bpm": bpm}
+
+
+def test_off_tempo_picks_are_dropped(monkeypatch):
+    import json
+    import app.ui.autopilot_service as svc
+    reply = {"current_genre": "dream pop", "suggestions": [_pick("Fast", 120), _pick("Slow", 94)]}
+    monkeypatch.setattr(svc, "chat_raw", lambda *a, **k: json.dumps(reply))
+    out = svc.suggest_next_tracks("Apocalypse", "Cigarettes After Sex", 96.0, "8A", 290.0, 0.3, "", [])
+    assert [s["title"] for s in out] == ["Slow"]
+
+
+def test_all_off_tempo_retries_once(monkeypatch):
+    import json
+    import app.ui.autopilot_service as svc
+    far = {"current_genre": "dream pop", "suggestions": [_pick("Cirrus", 117)]}
+    near = {"current_genre": "dream pop", "suggestions": [_pick("Space Song", 95)]}
+    replies, prompts = iter([json.dumps(far), json.dumps(near)]), []
+    monkeypatch.setattr(svc, "chat_raw", lambda s, u, **k: (prompts.append(u), next(replies))[1])
+    out = svc.suggest_next_tracks("Apocalypse", "Cigarettes After Sex", 96.0, "8A", 290.0, 0.3, "", [])
+    assert [s["title"] for s in out] == ["Space Song"]
+    assert "wrong tempo" in prompts[1] and "Cirrus" in prompts[1]
+
+
+def test_double_time_counts_as_locked():
+    from app.ui.autopilot_service import _tempo_locks
+    assert _tempo_locks(96, 190) and _tempo_locks(174, 87) and _tempo_locks(96, None) is None
+    assert _tempo_locks(96, 117) is False

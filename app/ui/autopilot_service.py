@@ -413,6 +413,23 @@ GENRE_FAMILIES = {
 }
 
 
+def _tempo_locks(target: float, bpm) -> bool | None:
+    """True when `bpm` beat-matches `target` (straight, double or half time,
+    within TEMPO_LOCK_PCT + 2% slack). None when either tempo is unknown."""
+    b = _num_bpm(bpm)
+    if not target or target <= 0 or b is None:
+        return None
+    return any(abs(target / (b * m) - 1) <= TEMPO_LOCK_PCT + 0.02 for m in (1, 2, 0.5))
+
+
+def _num_bpm(v) -> float | None:
+    try:
+        b = float(v)
+    except (TypeError, ValueError):
+        return None
+    return b if b > 0 else None
+
+
 def _few_shot_titles() -> set:
     """Bare titles of the few-shot ANSWERS. gemma-4 sometimes returns an example
     verbatim (Cigarettes After Sex -> "Marea"/"Delilah", current_genre copied too)."""
@@ -784,6 +801,35 @@ def suggest_next_tracks(
                 data, suggestions = data2, retry
         except ValueError as exc:
             print(f"[suggest] genre retry failed: {exc}", flush=True)
+    # Tempo holds unless the set is deliberately moving (user: Cigarettes After Sex
+    # "Apocalypse" at 96 BPM -> Bonobo "Cirrus" at 117). Every pick sat outside the
+    # TEMPO WINDOW, and the client then laddered the set up toward it.
+    moving = bool(lead_to) or (bool((occasion or "").strip())
+                               and str(data.get("steering", "")).lower().startswith("move"))
+    target = tempo_target or bpm
+    if suggestions and not moving:
+        locked = [x for x in suggestions if _tempo_locks(target, x.get("expected_bpm")) is not False]
+        if not locked:
+            far = "; ".join(f"{x.get('artist', '')} - {x.get('title', '')} ({x.get('expected_bpm')} BPM)"
+                            for x in suggestions)[:400]
+            print(f"[suggest] tempo: all picks off {target:.0f} BPM: {far}", flush=True)
+            retry_msg = (user_msg + f"\n\nREJECTED - wrong tempo for {target:.0f} BPM: {far}. "
+                         f"Every song MUST be inside the TEMPO WINDOW ({tempo_window(target)}). "
+                         "Keep the same mood, vocals and energy as the current song.")
+            try:
+                data2 = _extract_json(chat_raw(system_msg, retry_msg, temperature=0.4,
+                                               max_tokens=1100 if lead_to else 700, priority=prio))
+                data2.setdefault("current_genre", data.get("current_genre"))
+                retry = _filter_suggestions(
+                    data2, history, occasion_set=bool((occasion or "").strip()) and not lead_to,
+                    current_key=camelot, allow_genre_change=bool(lead_to))
+                retry = [x for x in retry if _tempo_locks(target, x.get("expected_bpm")) is not False]
+                if retry:
+                    data, suggestions = data2, retry
+            except ValueError as exc:
+                print(f"[suggest] tempo retry failed: {exc}", flush=True)
+        else:
+            suggestions = locked
     # Songs from EARLIER sets are dropped whenever a fresh alternative exists:
     # the soft prompt hint alone let "Lane 8 - Little By Little" follow Fred
     # again.. in every set.
