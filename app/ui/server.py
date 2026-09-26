@@ -45,6 +45,22 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 app = FastAPI(title="AI Music Brain", version="0.1.0")
 
+
+@app.on_event("startup")
+def _boot_llm() -> None:
+    """Load the DJ's LLM (MLX on Apple Silicon, Ollama fallback) in the
+    background at startup, so the first suggestion does not pay model load."""
+    from app.ui import model_runtime
+
+    model_runtime.start_background()
+
+
+@app.get("/api/llm/status")
+def get_llm_status():
+    from app.ui import model_runtime
+
+    return model_runtime.status()
+
 _knowledge = KnowledgeParser()
 _matcher = RecipeMatcher(_knowledge)
 
