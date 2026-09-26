@@ -413,11 +413,16 @@ def suggest_next_tracks(
     if meta is not None:  # caller wants the model's read of the CURRENT track too
         meta["current_profile"] = data.get("current_profile") or {}
         meta["current_genre"] = data.get("current_genre") or ""
-        meta["steering"] = "move" if str(data.get("steering", "")).lower().startswith("move") else "stay"
         try:
             meta["occasion_fit"] = max(0.0, min(10.0, float(data.get("occasion_fit"))))
         except (TypeError, ValueError):
             meta["occasion_fit"] = None
+        # "move" only counts when the playing song does NOT fit the occasion: the
+        # model also said "move" for Diljit's "Lover" at a Punjabi wedding
+        # (meaning more energy, not another genre).
+        wants_move = str(data.get("steering", "")).lower().startswith("move")
+        fit = meta["occasion_fit"]
+        meta["steering"] = "move" if wants_move and (fit is None or fit < 6) else "stay"
 
     for s in suggestions:
         artist_s = s.get("artist", "")

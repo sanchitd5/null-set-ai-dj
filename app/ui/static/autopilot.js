@@ -591,7 +591,7 @@
   // PEAK_JUMP_EVERY while the floor is at peak energy; never back to back.
   const JUMP_EVERY = 4;
   const PEAK_JUMP_EVERY = 2;
-  let songsSinceJump = JUMP_EVERY; // the first jump of a set is allowed
+  let songsSinceJump = 0;          // a set starts beat-matched; first jump after JUMP_EVERY songs
   let jumpPending = false;         // the booked transition is a tempo jump
   function tempoJumpBudget() {
     const peak = currentEnergy != null && currentEnergy >= 8;
@@ -1145,7 +1145,7 @@
     history = [];
     steering = "stay";
     steerStep = 0;
-    songsSinceJump = JUMP_EVERY;
+    songsSinceJump = 0;
     jumpPending = false;
     active = true;
     activeDeck = "a";
