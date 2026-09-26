@@ -390,6 +390,36 @@ def _key_clash_reason(current_key: str | None, expected_key) -> str | None:
 
 MAX_GENRE_HOP = 1  # 0 same subgenre, 1 neighbour; 2+ only on a deliberate move
 
+# Broad genre families, matched as substrings of the model's genre labels. The
+# model's own genre_hop is not trusted alone: it rated Afusic "Pal Pal" (Urdu
+# pop) -> Fred again.. "Delilah" (UK electronic) as a small hop.
+GENRE_FAMILIES = {
+    "south_asian": ("punjabi", "bhangra", "desi", "bollywood", "hindi", "urdu", "pakistani",
+                    "indian", "filmi", "sufi", "qawwali", "haryanvi", "tamil", "telugu"),
+    "electronic": ("house", "techno", "garage", "trance", "edm", "electronic", "electronica",
+                   "dubstep", "drum & bass", "drum and bass", "dnb", "bass music", "breakbeat",
+                   "downtempo", "ambient", "future bass", "electro", "idm", "jungle"),
+    "hiphop": ("hip-hop", "hip hop", "rap", "trap", "drill", "grime"),
+    "rnb": ("r&b", "rnb", "soul"),
+    "latin": ("reggaeton", "latin", "dembow", "cumbia", "bachata", "salsa", "urbano"),
+    "afro": ("afrobeat", "afro", "amapiano", "afropop"),
+    "rock": ("rock", "punk", "metal", "grunge"),
+    "pop": ("pop",),
+    "country": ("country", "folk", "americana"),
+    "jazz": ("jazz", "funk", "disco"),
+}
+
+
+def _genre_families(label) -> set:
+    g = str(label or "").lower()
+    return {fam for fam, keys in GENRE_FAMILIES.items() if any(k in g for k in keys)}
+
+
+def _family_jump(current_genre, genre) -> bool:
+    """True when both labels are known and share no family (e.g. Urdu pop -> UK garage)."""
+    a, b = _genre_families(current_genre), _genre_families(genre)
+    return bool(a and b) and not (a & b)
+
 
 def _filter_suggestions(
     data: dict, history: list[str], occasion_set: bool = False, current_key: str | None = None,
@@ -412,7 +442,10 @@ def _filter_suggestions(
     played_bare = {_bare_title(h.split(" - ", 1)[-1]) for h in history}
     cur = data.get("current_profile")
     ok, clashes, key_clashes, genre_jumps = [], [], [], []
-    steering_any = str(data.get("steering", "")).lower().startswith("move")
+    # "move" only licenses a genre jump inside an occasion: with no occasion the
+    # model says "move" freely (it let Pal Pal -> Delilah through).
+    steering_any = occasion_set and steering_move
+    cur_genre = data.get("current_genre")
     for s in data.get("suggestions", []) or []:
         if not isinstance(s, dict) or not s.get("title"):
             continue
@@ -424,6 +457,9 @@ def _filter_suggestions(
         # Genre continuity (user: "it's changing genre a lot": Lane 8 -> Elton John
         # -> A Boogie -> The Weeknd). The prompt rule alone wasn't followed.
         hop = _num(s.get("genre_hop"))
+        if _family_jump(cur_genre, s.get("genre")):
+            hop = max(hop or 0.0, 2.0)
+        print(f"[suggest] {label[:60]!r} genre={s.get('genre')!r} hop={hop} (cur={cur_genre!r})", flush=True)
         if hop is not None and hop > MAX_GENRE_HOP and not (steering_any or allow_genre_change):
             s["rejected_reason"] = f"genre jump ({hop:.0f})"
             genre_jumps.append((hop, s))
