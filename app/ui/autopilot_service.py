@@ -79,6 +79,10 @@ OCCASION FIRST (overrides VIBE CONTINUITY, SAME-ARTIST and CREDITS when they con
       (bridges from electronic: Panjabi MC "Mundian To Bach Ke", Diljit x Sia, bhangra remixes)
     "bollywood night" -> Bollywood dance hits; "latin party" -> reggaeton / salsa / dembow;
     "afrobeats" -> Burna Boy, Wizkid, Rema; "90s hip-hop" -> 90s rap classics.
+  THEME LOCK: once inside the occasion's world, EVERY suggestion must itself fit the occasion
+  (its own "occasion_fit" >= 7). Variety / subgenre changes happen WITHIN the theme - for a
+  Punjabi wedding: bhangra, Punjabi pop, Punjabi hip-hop, bhangra-house, Punjabi Bollywood
+  dance numbers; NOT generic Indian hip-hop, chill Indian electronica or unrelated EDM.
   Set top-level "steering":"move" while the current song is outside the occasion's music,
   otherwise "stay"; "occasion_fit" 0-10 = how well the CURRENT song fits the occasion.
 
@@ -132,16 +136,27 @@ AVOID TRACKS: The history list contains track names already played. Do NOT sugge
   title appears in that list. Same artist is fine — only the exact title is banned.
 
 OUTPUT FORMAT — return ONLY valid JSON, no markdown, no explanation:
-{{"steering":"stay|move","occasion_fit":0,"current_genre":"","current_profile":{{"energy":0,"tempo_feel":"","drums":"","vocals":"","mood":"","texture":""}},"suggestions":[{{"artist":"","title":"","reason":"2-sentence reason referencing harmonic move, energy arc, and how THIS song's sound matches","genre":"inferred genre of suggested track","expected_bpm":0,"expected_key":"","mix_moment":"exit at [section] ~bar N","energy_delta":"up|down|maintain","vibe_link":"specific sonic characteristic shared — NOT a genre label","track_profile":{{"energy":0,"tempo_feel":"","drums":"","vocals":"","mood":"","texture":""}}}}]}}
+{{"steering":"stay|move","occasion_fit":0,"current_genre":"","current_profile":{{"energy":0,"tempo_feel":"","drums":"","vocals":"","mood":"","texture":""}},"suggestions":[{{"artist":"","title":"","reason":"2-sentence reason referencing harmonic move, energy arc, and how THIS song's sound matches","genre":"inferred genre of suggested track","expected_bpm":0,"expected_key":"","mix_moment":"exit at [section] ~bar N","energy_delta":"up|down|maintain","vibe_link":"specific sonic characteristic shared — NOT a genre label","occasion_fit":0,"track_profile":{{"energy":0,"tempo_feel":"","drums":"","vocals":"","mood":"","texture":""}}}}]}}
 
 {_FEW_SHOT}"""
 
 TEMPO_LOCK_PCT = 0.06  # the autopilot pitch-locks the next song within +/-8%; aim inside 6%
 
 
+MIN_THEME_FIT = 6.0
+
+
+def _num(v):
+    try:
+        return max(0.0, min(10.0, float(v)))
+    except (TypeError, ValueError):
+        return None
+
+
 def _bare_title(title: str) -> str:
     """Song identity for repeat checks: no (...)/[...] tags, feat. credits, punctuation."""
     t = re.sub(r"[\(\[][^\)\]]*[\)\]]", " ", str(title).lower())
+    t = re.split(r"\s+[-–—|]\s+", t, maxsplit=1)[0]   # "Excuses (Remix) - DJ Cut" -> "excuses"
     t = re.sub(r"\s+(feat\.?|ft\.?|featuring)\s+.*$", "", t)
     return " ".join(re.sub(r"[^a-z0-9 ]+", " ", t).split())
 
@@ -228,12 +243,19 @@ def _profile_clash(cur: dict, sug: dict) -> str | None:
     return None
 
 
-def _filter_suggestions(data: dict, history: list[str]) -> list[dict]:
+def _filter_suggestions(data: dict, history: list[str], occasion_set: bool = False) -> list[dict]:
     """Drop sets/interviews, exact repeats and profile clashes. Never returns empty if the
     model gave at least one allowed song: the closest clash is kept as a last resort."""
     from app.ui.download_service import _is_mix, _is_non_music
 
     played = {h.lower() for h in history}
+    # THEME LOCK (occasion): inside the occasion's world drop suggestions whose
+    # own occasion_fit < MIN_THEME_FIT; while steering in, a bridge may not fit
+    # worse than the playing song. Unrated suggestions are kept.
+    steering_move = str(data.get("steering", "")).lower().startswith("move")
+    cur_fit = _num(data.get("occasion_fit"))
+    theme_floor = (cur_fit if steering_move else MIN_THEME_FIT) if occasion_set else None
+    off_theme = []
     played_bare = {_bare_title(h.split(" - ", 1)[-1]) for h in history}
     cur = data.get("current_profile")
     ok, clashes = [], []
@@ -245,6 +267,10 @@ def _filter_suggestions(data: dict, history: list[str]) -> list[dict]:
             continue
         if _bare_title(s["title"]) in played_bare or any(s["title"].lower() in p for p in played):
             continue  # same song again, incl. a remix / feat. variant of a played one
+        fit = _num(s.get("occasion_fit"))
+        if theme_floor is not None and fit is not None and fit < theme_floor:
+            off_theme.append((fit, s))
+            continue
         # Steering toward the occasion's music is a deliberate genre/mood move:
         # continuity clashes with the CURRENT song are expected, not errors.
         steer = str(data.get("steering", "")).lower().startswith("move")
@@ -252,7 +278,10 @@ def _filter_suggestions(data: dict, history: list[str]) -> list[dict]:
         (clashes if reason else ok).append(s)
         if reason:
             s["rejected_reason"] = reason
-    return ok or clashes[:1]
+    if ok or clashes:
+        return ok or clashes[:1]
+    # everything was off-theme: keep only the best-fitting one rather than nothing
+    return [max(off_theme, key=lambda t: t[0])[1]] if off_theme else []
 
 
 SET_MODES = ("long", "quick", "hybrid")
@@ -430,7 +459,7 @@ def suggest_next_tracks(
             if attempt:
                 raise
             print(f"[suggest] bad JSON, retrying once: {exc}", flush=True)
-    suggestions = _filter_suggestions(data, history)[:n]
+    suggestions = _filter_suggestions(data, history, occasion_set=bool((occasion or "").strip()))[:n]
     if meta is not None:  # caller wants the model's read of the CURRENT track too
         meta["current_profile"] = data.get("current_profile") or {}
         meta["current_genre"] = data.get("current_genre") or ""

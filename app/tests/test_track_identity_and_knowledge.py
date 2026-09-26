@@ -59,7 +59,25 @@ def test_repeat_filter_catches_remix_and_feat_variants():
     data = {"suggestions": [
         {"artist": "Badshah", "title": "Proper Patola (Remix) [feat. Diljit Dosanjh]"},
         {"artist": "Panjabi MC", "title": "Mundian To Bach Ke (Bhangra Remix)"},
+        {"artist": "AP Dhillon", "title": "Excuses (Remix) - DJ Cut"},
         {"artist": "Divine", "title": "Bombay Slums"},
     ]}
-    played = ["Diljit Dosanjh - Proper Patola", "Panjabi MC - Mundian To Bach Ke"]
+    played = ["Diljit Dosanjh - Proper Patola", "Panjabi MC - Mundian To Bach Ke", "AP Dhillon - Excuses"]
     assert [s["title"] for s in _filter_suggestions(data, played)] == ["Bombay Slums"]
+
+
+def test_theme_lock_drops_off_theme_suggestions():
+    from app.ui.autopilot_service import _filter_suggestions
+    data = {"steering": "stay", "occasion_fit": 9, "suggestions": [
+        {"artist": "Divine", "title": "Bombay Slums", "occasion_fit": 4},
+        {"artist": "Ritviz", "title": "Udd Gaye", "occasion_fit": 3},
+        {"artist": "Karan Aujla", "title": "Tauba Tauba", "occasion_fit": 9},
+    ]}
+    assert [s["artist"] for s in _filter_suggestions(data, [], occasion_set=True)] == ["Karan Aujla"]
+    assert len(_filter_suggestions(data, [], occasion_set=False)) == 3      # no occasion: no theme lock
+    all_off = {"steering": "stay", "suggestions": data["suggestions"][:2]}
+    assert [s["artist"] for s in _filter_suggestions(all_off, [], occasion_set=True)] == ["Divine"]  # best of the rest
+    steer = {"steering": "move", "occasion_fit": 3, "suggestions": [
+        {"artist": "X", "title": "Worse Bridge", "occasion_fit": 2},
+        {"artist": "Y", "title": "Closer Bridge", "occasion_fit": 5}]}
+    assert [s["title"] for s in _filter_suggestions(steer, [], occasion_set=True)] == ["Closer Bridge"]
