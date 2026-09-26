@@ -829,7 +829,7 @@ def _variety_note(run: int, genre: str) -> str:
     if run < VARIETY_RUN_MAX or not genre:
         return ""
     return (f"the last {run} songs were all {genre[:40]} and the floor is getting bored - "
-            f"switch to a NEIGHBOURING subgenre now that still fits the occasion (e.g. bhangra -> "
+            f"take ONE step to a NEIGHBOURING subgenre (a crossover song that shares the current genre) that still fits the occasion (e.g. bhangra -> "
             f"Punjabi hip-hop / Punjabi pop / bhangra-house / Bollywood dance; melodic house -> "
             f"afro house / tech house / UK garage), entered through a beat-matched remix or bridge, "
             f"energy kept up; do NOT suggest another {genre[:40]} song")

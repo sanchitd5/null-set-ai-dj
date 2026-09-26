@@ -39,3 +39,17 @@ def test_family_jump_overrides_low_self_rating():
     near = dict(_s("Near", 1), genre="Urdu pop")
     data = {"steering": "stay", "current_genre": "Pakistani pop / Urdu pop", "suggestions": [delilah, near]}
     assert [s["title"] for s in _filter_suggestions(data, [])] == ["Near"]
+
+
+def test_all_jumps_triggers_one_retry(monkeypatch):
+    import json
+    import app.ui.autopilot_service as svc
+    jump = {"current_genre": "Urdu pop", "steering": "move", "suggestions": [
+        {"artist": "Fred again..", "title": "Delilah", "genre": "UK garage", "genre_hop": 1}]}
+    step = {"current_genre": "Urdu pop", "suggestions": [
+        {"artist": "AP Dhillon", "title": "With You", "genre": "Punjabi pop", "genre_hop": 1}]}
+    replies, prompts = iter([json.dumps(jump), json.dumps(step)]), []
+    monkeypatch.setattr(svc, "chat_raw", lambda s, u, **k: (prompts.append(u), next(replies))[1])
+    out = svc.suggest_next_tracks("Pal Pal", "Afusic", 100.0, "8A", 200.0, 0.5, "", [])
+    assert [s["title"] for s in out] == ["With You"]
+    assert "REJECTED" in prompts[1] and "Delilah" in prompts[1]

@@ -324,7 +324,10 @@ _USER_TEMPLATE = (
     "or a lesser-played gem) FROM THE SAME GENRE as the current song, not the genre's most famous anthem.\n"
     "genre_hop for each suggestion: 0 = same subgenre, 1 = neighbouring subgenre (e.g. melodic house -> "
     "progressive house), 2 = a different genre, 3 = unrelated (e.g. melodic house -> soft rock). "
-    "Unless the occasion or a DESTINATION asks for a change, every suggestion must be genre_hop 0 or 1.\n\n"
+    "Every suggestion must be genre_hop 0 or 1. Genre TRANSITIONS, it never jumps: to change genre, "
+    "move ONE step per song through a crossover song that belongs to both worlds (e.g. Urdu pop -> "
+    "Punjabi pop -> Punjabi hip-hop -> hip-hop; melodic house -> organic house -> afro house -> afrobeats), "
+    "so each song shares its genre with the one before it. This holds even when heading to a DESTINATION.\n\n"
     "Suggest {n} tracks. Prioritise: vibe continuity → harmonic compatibility → energy arc for {arc_phase} → diversity.\n"
     "Reply ONLY with the JSON object, compact (no line breaks or indentation). Keep every "
     "reason under 20 words, vibe_link under 8 words, mix_moment under 6 words."
@@ -742,8 +745,28 @@ def suggest_next_tracks(
         data["steering"] = "move"  # the user's destination: no continuity / key filters against it
     suggestions = _filter_suggestions(
         data, history, occasion_set=bool((occasion or "").strip()) and not lead_to, current_key=camelot,
-        allow_genre_change=bool(lead_to) or "NEIGHBOURING subgenre" in (occasion or ""),
+        allow_genre_change=bool(lead_to),
     )
+    # Genre transitions, it never jumps (user: Pal Pal -> Delilah). When every pick
+    # jumped, ask once more with the rejected picks named, rather than play a jump.
+    if suggestions and str(suggestions[0].get("rejected_reason", "")).startswith("genre jump"):
+        cur_genre = data.get("current_genre") or "the current song's genre"
+        jumped = "; ".join(f"{x.get('artist', '')} - {x.get('title', '')} ({x.get('genre', '')})"
+                           for x in data.get("suggestions", []) if isinstance(x, dict))[:400]
+        retry_msg = (user_msg + f"\n\nREJECTED - these jumped genre away from {cur_genre}: {jumped}. "
+                     f"Suggest songs IN {cur_genre}, or a crossover song one step away that still "
+                     f"belongs to {cur_genre}.")
+        try:
+            data2 = _extract_json(chat_raw(system_msg, retry_msg, temperature=0.4,
+                                           max_tokens=1100 if lead_to else 700, priority=prio))
+            data2.setdefault("current_genre", data.get("current_genre"))
+            retry = _filter_suggestions(
+                data2, history, occasion_set=bool((occasion or "").strip()) and not lead_to,
+                current_key=camelot, allow_genre_change=bool(lead_to))
+            if retry and not str(retry[0].get("rejected_reason", "")).startswith("genre jump"):
+                data, suggestions = data2, retry
+        except ValueError as exc:
+            print(f"[suggest] genre retry failed: {exc}", flush=True)
     # Songs from EARLIER sets are dropped whenever a fresh alternative exists:
     # the soft prompt hint alone let "Lane 8 - Little By Little" follow Fred
     # again.. in every set.
