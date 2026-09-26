@@ -71,11 +71,11 @@
       const energy  = eLabel ? `<span class="ap-energy ${eClass}">${eLabel}</span>` : "";
       const vibe    = s.vibe_link ? `<span class="ap-vibe">"${s.vibe_link}"</span>` : "";
       return `
-      <div class="ap-item ${i === 0 ? "ap-next" : ""}">
+      <div class="ap-item ${i === 0 ? "ap-next" : ""}" id="${i === 0 ? "ap-next-item" : ""}">
         <span class="ap-pos">${i === 0 ? "NEXT" : `+${i + 1}`}</span>
         <div class="ap-item-main">
           <span class="ap-name">${s.artist || "?"} — ${s.title || "?"}</span>
-          <span class="ap-meta">${s.expected_key || ""}${s.expected_bpm ? "  " + s.expected_bpm + " BPM" : ""}${genre ? "  " + genre : ""}</span>
+          <span class="ap-meta">${s.expected_key || ""}${s.expected_bpm ? "  " + s.expected_bpm + " BPM" : ""}${genre ? "  " + genre : ""}${i === 0 ? '  <span id="ap-match-score" style="display:none"></span>' : ""}</span>
           <span class="ap-badges">${energy}${moment}</span>
           ${vibe}
           <span class="ap-why">${s.reason || ""}</span>
@@ -94,6 +94,22 @@
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || res.statusText);
     return data.tracks || [];
+  }
+
+  // Return existing track if artist+title already cached; null otherwise.
+  async function findCached(artist, title) {
+    try {
+      const res = await fetch("/api/tracks");
+      if (!res.ok) return null;
+      const data = await res.json();
+      const tracks = data.tracks || data || [];
+      const a = artist.toLowerCase();
+      const t = title.toLowerCase();
+      return tracks.find(tr => {
+        const dn = (tr.display_name || tr.filename || "").toLowerCase();
+        return dn.includes(a) && dn.includes(t);
+      }) || null;
+    } catch { return null; }
   }
 
   async function getSuggestions(trackId) {
@@ -140,16 +156,34 @@
       if (!active) return;
       try {
         const label = `${s.artist} — ${s.title}`;
-        apStatus(`Downloading: ${label}…`);
-        const tracks = await importUrl(s.search_query);
-        if (!tracks.length) continue;
 
-        const nextId = tracks[0].track_id;
-        const nextName = tracks[0].display_name || label;
+        // Check cache before downloading — skip yt-dlp if already on server.
+        let nextId, nextName;
+        const cached = await findCached(s.artist, s.title);
+        if (cached) {
+          apStatus(`Using cached: ${label}`);
+          nextId   = cached.track_id;
+          nextName = cached.display_name || cached.filename || label;
+        } else {
+          apStatus(`Downloading: ${label}…`);
+          const tracks = await importUrl(s.search_query);
+          if (!tracks.length) continue;
+          nextId   = tracks[0].track_id;
+          nextName = tracks[0].display_name || label;
+        }
 
         apStatus(`Matching transition…`);
         const candidate = await matchTracks(currentId, nextId);
         if (!candidate) continue;
+
+        // Show match score on the NEXT queue card.
+        const scoreEl = document.getElementById("ap-match-score");
+        if (scoreEl) {
+          const sc = Math.round(candidate.score || 0);
+          const good = sc >= 65;
+          scoreEl.textContent = `${good ? "⭐" : "⚡"} ${sc}/100${good ? "" : " · early exit"}`;
+          scoreEl.style.cssText = `display:inline;font-weight:700;color:${good ? "#4ade80" : "#f97316"};margin-left:6px`;
+        }
 
         // Preload next track into staging deck
         apStatus(`Loading ${nextName} into deck ${stagingDeck().toUpperCase()}…`);
