@@ -64,11 +64,16 @@ def _ytdlp(url: str, output_dir: Path) -> list[Path]:
 
     before = set(output_dir.glob("*.mp3"))
 
+    # Reject videos longer than 9 minutes — anything longer is almost certainly
+    # a DJ mix, live set, or album compilation, not an individual track.
+    MAX_TRACK_SECS = 9 * 60  # 540 s
+
     opts = {
         "format": "bestaudio/best",
         "outtmpl": str(output_dir / "%(title)s.%(ext)s"),
         "windowsfilenames": True,
         "noplaylist": True,
+        "match_filter": _yt_dlp.utils.match_filter_func(f"duration < {MAX_TRACK_SECS}"),
         "writethumbnail": True,
         "quiet": True,
         "no_warnings": True,
@@ -98,6 +103,15 @@ def _ytdlp(url: str, output_dir: Path) -> list[Path]:
             raise RuntimeError(
                 f"Downloaded file looks like a DJ mix/set: \"{path.stem}\". "
                 "Try a more specific search query."
+            )
+        # Secondary duration guard using file size heuristic (320 kbps MP3).
+        # 9 min × 60 s × 320 000 bit/s / 8 = ~21.6 MB. Anything bigger → reject.
+        size_mb = path.stat().st_size / (1024 * 1024)
+        if size_mb > 22:
+            path.unlink(missing_ok=True)
+            raise RuntimeError(
+                f"Track too long (>{size_mb:.0f} MB — likely a mix/set): \"{path.stem}\". "
+                "Only individual tracks under 9 minutes are allowed."
             )
         clean.append(path)
     return clean
