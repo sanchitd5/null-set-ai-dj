@@ -27,7 +27,10 @@ CAMELOT WHEEL — compatible moves from any position X:
   ±1 hour same letter (e.g. 8A→7A or 8A→9A): smooth, score 0.9
   Same hour opposite letter (e.g. 8A→8B): relative major/minor, score 0.85
   +2 hours same letter (e.g. 8A→10A): energy boost key change, score 0.8
-  All other moves: harmonic clash — avoid unless using Echo Out or Breakdown recipe.
+  ±1 hour opposite letter (e.g. 8A→9B or 8A→7B): diagonal move, score 0.75
+  -2 hours same letter (e.g. 8A→6A): energy drop, score 0.6
+  3+ hours apart: harmonic clash — avoid unless using Echo Out or Breakdown recipe.
+  The ALLOWED KEYS line below lists the clean moves already worked out for you.
 
 12 positions: 1A/1B, 2A/2B, 3A/3B, 4A/4B, 5A/5B, 6A/6B,
               7A/7B, 8A/8B, 9A/9B, 10A/10B, 11A/11B, 12A/12B
@@ -200,14 +203,62 @@ def tempo_window(bpm: float) -> str:
     return " ".join(parts) + " (songs outside this cannot be blended beat to beat)"
 
 
+def _camelot_at(hour: int, letter: str) -> str:
+    return f"{(hour - 1) % 12 + 1}{letter}"
+
+
+def allowed_keys(camelot: str) -> str:
+    """The clean key moves from `camelot`, pre-computed for the prompt:
+    "8A, 7A, 9A, 8B, 10A (+2 boost), 7B/9B (diagonal)"."""
+    m = re.match(r"^\s*(\d{1,2})([AB])\s*$", str(camelot or ""), re.IGNORECASE)
+    if not m or not 1 <= int(m.group(1)) <= 12:
+        return "unknown - stay harmonically close"
+    h, letter = int(m.group(1)), m.group(2).upper()
+    other = "B" if letter == "A" else "A"
+    return (
+        f"{_camelot_at(h, letter)}, {_camelot_at(h - 1, letter)}, {_camelot_at(h + 1, letter)}, "
+        f"{_camelot_at(h, other)}, {_camelot_at(h + 2, letter)} (+2 boost), "
+        f"{_camelot_at(h - 1, other)}/{_camelot_at(h + 1, other)} (diagonal)"
+    )
+
+
+def loudness_label(dbfs: float | None) -> str:
+    """Absolute whole-track RMS loudness, comparable across songs (Avg Energy is
+    peak-normalised per song, so a quiet ballad and a club banger both read ~0.5)."""
+    if dbfs is None:
+        return "unknown"
+    try:
+        db = float(dbfs)
+    except (TypeError, ValueError):
+        return "unknown"
+    label = "loud" if db > -10 else "medium" if db > -14 else "quiet"
+    return f"{db:.0f} dBFS ({label})"
+
+
+def tempo_bridge_line(tempo_target: float, tempo_note: str = "") -> str:
+    """A bridge ladder step: the next song aims at a new tempo, not the current one."""
+    lo, hi = tempo_target * 0.96, tempo_target * 1.04
+    note = f"; {tempo_note}" if tempo_note else ""
+    return (
+        f"TEMPO BRIDGE: pick songs natively near {tempo_target:.0f} BPM (±4%: {lo:.0f}-{hi:.0f}), "
+        f"or half/double time{note}\n"
+    )
+
+
+_TEMPO_WINDOW_LINE = (
+    "TEMPO WINDOW (required, so the next song can be beat-matched - also while steering; "
+    "choose a remix / edit that fits rather than leaving it): {tempo_window}\n"
+)
+
 _USER_TEMPLATE = (
     'NOW PLAYING: "{title}" by {artist}\n'
     "BPM: {bpm:.1f} | Camelot Key: {camelot} | Duration: {duration:.0f}s | "
-    "Avg Energy: {energy:.2f}/1.0 | Set position: {set_pos_pct}% through set\n"
+    "Avg Energy: {energy:.2f}/1.0 (relative to this song's own peak) | Loudness: {loudness} | "
+    "Set position: {set_pos_pct}% through set\n"
     "Occasion: {occasion}\n"
     "Set mode: {set_mode_line}\n"
-    "TEMPO WINDOW (required, so the next song can be beat-matched - also while steering; "
-    "choose a remix / edit that fits rather than leaving it): {tempo_window}\n"
+    "{tempo_line}"
+    "ALLOWED KEYS (expected_key must be one of these unless steering): {allowed_keys}\n"
     "First fill current_genre and current_profile for THIS song, then pick songs whose own "
     "track_profile stays close to it. Stay in this genre neighbourhood unless the occasion demands a shift.\n"
     "Already played this set - NEVER suggest these again: {history}\n"
@@ -264,9 +315,28 @@ def _profile_clash(cur: dict, sug: dict) -> str | None:
     return None
 
 
-def _filter_suggestions(data: dict, history: list[str], occasion_set: bool = False) -> list[dict]:
-    """Drop sets/interviews, exact repeats and profile clashes. Never returns empty if the
-    model gave at least one allowed song: the closest clash is kept as a last resort."""
+def _key_clash_reason(current_key: str | None, expected_key) -> str | None:
+    """A reason when expected_key is clearly outside ALLOWED KEYS (3+ hours on the
+    wheel). Unknown / unparseable keys are kept: the check is soft."""
+    from app.music_brain.recipe_matcher import is_key_clash
+
+    if not current_key or not expected_key:
+        return None
+    try:
+        if is_key_clash(str(current_key), str(expected_key)):
+            return f"key clash {current_key} -> {str(expected_key).strip().upper()}"
+    except ValueError:
+        return None
+    return None
+
+
+def _filter_suggestions(
+    data: dict, history: list[str], occasion_set: bool = False, current_key: str | None = None,
+) -> list[dict]:
+    """Drop sets/interviews, exact repeats, profile clashes and (unless steering)
+    suggestions whose expected_key clashes with `current_key`. Never returns empty
+    if the model gave at least one allowed song: the closest clash is kept as a
+    last resort."""
     from app.ui.download_service import _is_mix, _is_non_music
 
     played = {h.lower() for h in history}
@@ -279,7 +349,7 @@ def _filter_suggestions(data: dict, history: list[str], occasion_set: bool = Fal
     off_theme = []
     played_bare = {_bare_title(h.split(" - ", 1)[-1]) for h in history}
     cur = data.get("current_profile")
-    ok, clashes = [], []
+    ok, clashes, key_clashes = [], [], []
     for s in data.get("suggestions", []) or []:
         if not isinstance(s, dict) or not s.get("title"):
             continue
@@ -295,12 +365,17 @@ def _filter_suggestions(data: dict, history: list[str], occasion_set: bool = Fal
         # Steering toward the occasion's music is a deliberate genre/mood move:
         # continuity clashes with the CURRENT song are expected, not errors.
         steer = str(data.get("steering", "")).lower().startswith("move")
+        key_reason = None if steer else _key_clash_reason(current_key, s.get("expected_key"))
+        if key_reason:
+            s["rejected_reason"] = key_reason
+            key_clashes.append(s)
+            continue
         reason = None if steer else _profile_clash(cur, s.get("track_profile"))
         (clashes if reason else ok).append(s)
         if reason:
             s["rejected_reason"] = reason
-    if ok or clashes:
-        return ok or clashes[:1]
+    if ok or clashes or key_clashes:
+        return ok or clashes[:1] or key_clashes[:1]
     # everything was off-theme: keep only the best-fitting one rather than nothing
     return [max(off_theme, key=lambda t: t[0])[1]] if off_theme else []
 
@@ -431,6 +506,9 @@ def suggest_next_tracks(
     history_display: list[str] | None = None,
     lookahead: bool = False,
     earlier_sets: list[str] | None = None,
+    loudness_dbfs: float | None = None,
+    tempo_target: float | None = None,
+    tempo_note: str = "",
 ) -> list[dict]:
     """
     Call local Ollama (gemma3:4b) to suggest next n tracks.
@@ -443,10 +521,23 @@ def suggest_next_tracks(
     history_display: cleaned history names for the prompt; `history` (raw names)
     still drives the repeat filter.
     lookahead: songs for AFTER the booked next one; lowest LLM priority.
+    loudness_dbfs: whole-track RMS loudness (vibe.analyze_vibe), comparable across songs.
+    tempo_target / tempo_note: a bridge-ladder step; replaces the TEMPO WINDOW line.
+      Tempo only: never sets occasion_set, theme lock or steering.
     Compatible with both openai v0.x/3.x (ChatCompletion.create) and v1.x/v2.x (OpenAI client).
     """
+    try:
+        target = float(tempo_target) if tempo_target is not None else 0.0
+    except (TypeError, ValueError):
+        target = 0.0
+    tempo_line = (
+        tempo_bridge_line(target, str(tempo_note or "").strip()) if target > 0
+        else _TEMPO_WINDOW_LINE.format(tempo_window=tempo_window(bpm))
+    )
     user_msg = _USER_TEMPLATE.format(
-        tempo_window=tempo_window(bpm),
+        tempo_line=tempo_line,
+        allowed_keys=allowed_keys(camelot),
+        loudness=loudness_label(loudness_dbfs),
         title=title,
         artist=artist,
         bpm=bpm,
@@ -484,7 +575,9 @@ def suggest_next_tracks(
             if attempt:
                 raise
             print(f"[suggest] bad JSON, retrying once: {exc}", flush=True)
-    suggestions = _filter_suggestions(data, history, occasion_set=bool((occasion or "").strip()))[:n]
+    suggestions = _filter_suggestions(
+        data, history, occasion_set=bool((occasion or "").strip()), current_key=camelot,
+    )[:n]
     if meta is not None:  # caller wants the model's read of the CURRENT track too
         meta["current_profile"] = data.get("current_profile") or {}
         meta["current_genre"] = data.get("current_genre") or ""
@@ -511,5 +604,16 @@ def suggest_next_tracks(
         s.setdefault("energy_delta", "maintain")
         s.setdefault("vibe_link", "")
         s.setdefault("track_profile", {})
+        s["expected_bpm"] = _bpm_or_none(s.get("expected_bpm"))
 
     return suggestions
+
+
+def _bpm_or_none(v) -> float | None:
+    """expected_bpm as a float: small models send 124, "124", "124 BPM" or "~124"."""
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, (int, float)):
+        return float(v) if v > 0 else None
+    m = re.search(r"\d+(?:\.\d+)?", str(v or ""))
+    return float(m.group()) if m and float(m.group()) > 0 else None

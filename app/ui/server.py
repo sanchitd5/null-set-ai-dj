@@ -788,6 +788,17 @@ class AutopilotSuggestRequest(BaseModel):
     # Variety: how many songs in a row were the same subgenre, and which one.
     variety_run: int = 0
     variety_genre: str = ""
+    # Set position by clock: elapsed / length when elapsed is sent (length
+    # defaults to DEFAULT_SET_LENGTH_S); otherwise set_position / history length.
+    elapsed_seconds: Optional[float] = None
+    set_length_seconds: Optional[float] = None
+    # Bridge ladder step (bridge.py): aim the next song at this tempo instead of
+    # the current one. Tempo only - never an occasion, theme lock or steering.
+    tempo_target: Optional[float] = None
+    tempo_note: Optional[str] = None
+
+
+DEFAULT_SET_LENGTH_S = 3600.0
 
 
 VARIETY_RUN_MAX = 6  # wiki "What Do I Play Next": contrast once a style plateaus
@@ -867,8 +878,13 @@ def autopilot_suggest(req: AutopilotSuggestRequest):
     history_display = [" - ".join(clean_identity(h)).removeprefix("Unknown - ") for h in req.history]
     genre = _suggested_genres.get(_genre_key(title_part), "")
 
-    # set_position: caller can supply it; if not, derive from history length (0→10 tracks = 0→1.0)
-    if req.set_position is not None:
+    # set_position: by clock when elapsed_seconds is sent (elapsed / set length);
+    # else caller-supplied; else from history length (0→10 tracks = 0→1.0).
+    length = req.set_length_seconds if req.set_length_seconds and req.set_length_seconds > 0 \
+        else DEFAULT_SET_LENGTH_S
+    if req.elapsed_seconds is not None and req.elapsed_seconds >= 0:
+        set_position = max(0.0, min(1.0, req.elapsed_seconds / length))
+    elif req.set_position is not None:
         set_position = max(0.0, min(1.0, req.set_position))
     else:
         set_position = min(len(req.history) / 10.0, 1.0)
@@ -882,6 +898,15 @@ def autopilot_suggest(req: AutopilotSuggestRequest):
     if not req.lookahead:
         _set_memory.record(history_display)
     earlier = _set_memory.earlier_sets(history_display)
+
+    # Absolute loudness (Avg Energy is peak-normalised per song). Best-effort.
+    loudness_dbfs = None
+    try:
+        from app.music_brain.vibe import analyze_vibe
+
+        loudness_dbfs = analyze_vibe(path).loudness_dbfs
+    except Exception as exc:
+        print(f"[suggest] loudness unavailable: {exc}", flush=True)
 
     meta: dict = {}
     try:
@@ -902,6 +927,9 @@ def autopilot_suggest(req: AutopilotSuggestRequest):
             history_display=history_display,
             lookahead=req.lookahead,
             earlier_sets=earlier,
+            loudness_dbfs=loudness_dbfs,
+            tempo_target=req.tempo_target,
+            tempo_note=req.tempo_note or "",
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"LLM suggest error: {exc}") from exc
