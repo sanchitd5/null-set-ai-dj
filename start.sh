@@ -10,9 +10,13 @@
 # stops all three together, and if one crashes it is restarted while the other
 # two keep running.
 #
-#   ./start.sh            start (replacing any earlier copies), open the browser
-#   ./start.sh --no-open  same, without opening a browser tab
-#   PORT=8010 ./start.sh  use another port
+#   ./start.sh                start (replacing any earlier copies), open the browser
+#   ./start.sh --no-open      same, without opening a browser tab
+#   ./start.sh --single-omni  ONE model for everything: the live ear's Qwen3-Omni
+#                             also makes the autopilot's text decisions (no separate
+#                             text model: ~17 GB less RAM; the picks come from the
+#                             omni model, and ear + picks share one server)
+#   PORT=8010 ./start.sh      use another port (flags combine: --single-omni --no-open)
 #
 # Settings live in .env (LLM_BACKEND, MLX_MODEL, MLX_PORT, OLLAMA_MODEL,
 # OMNI_MODEL, OMNI_PORT). The ear is optional: without its venv the hold loop
@@ -33,7 +37,15 @@ fi
 
 PORT="${PORT:-8000}"
 OPEN=1
-[[ "${1:-}" == "--no-open" ]] && OPEN=0
+SINGLE_OMNI=0
+for arg in "$@"; do
+  case "$arg" in
+    --no-open) OPEN=0 ;;
+    --single-omni) SINGLE_OMNI=1 ;;
+    -h|--help) sed -n '2,23p' "$0"; exit 0 ;;
+    *) echo "unknown option: $arg (see ./start.sh --help)" >&2; exit 2 ;;
+  esac
+done
 PY="${PYTHON:-python3}"
 MLX_MODEL="${MLX_MODEL:-mlx-community/Qwen3-30B-A3B-Instruct-2507-4bit}"
 MLX_PORT="${MLX_PORT:-8081}"
@@ -63,6 +75,13 @@ if [[ "${LLM_BACKEND:-auto}" != "ollama" && "$(uname -m)" == "arm64" ]] && "$PY"
 fi
 RUN_EAR=0
 [[ -x "$OMNI_PY" ]] && RUN_EAR=1
+if (( SINGLE_OMNI )); then
+  if (( ! RUN_EAR )); then
+    echo "--single-omni needs the mlx-vlm venv at $OMNI_PY (or set OMNI_PY)" >&2
+    exit 1
+  fi
+  RUN_LLM=0   # the omni server makes the decisions too
+fi
 
 # ---- replace earlier copies (detached ones from older start.sh runs) ----------
 free_port() {
@@ -75,7 +94,8 @@ free_port() {
   kill -9 $(lsof -ti "tcp:$port" -sTCP:LISTEN 2>/dev/null) 2>/dev/null || true
 }
 free_port "$PORT"
-(( RUN_LLM )) && free_port "$MLX_PORT"
+# --single-omni: also stop an old text model, that RAM is the point of the flag
+(( RUN_LLM || SINGLE_OMNI )) && free_port "$MLX_PORT"
 (( RUN_EAR )) && free_port "$OMNI_PORT"
 
 # ---- children ----------------------------------------------------------------
@@ -96,7 +116,16 @@ start_ear() {
   say "ear  pid $PID_EAR  $OMNI_MODEL on :$OMNI_PORT"
 }
 start_app() {
-  MLX_SUPERVISED="$RUN_LLM" "$PY" -m uvicorn app.ui.server:app --port "$PORT" >>"$LOG_APP" 2>&1 &
+  # The ear always follows this script's omni server. With --single-omni the
+  # app's decision LLM points at that same server and model.
+  if (( SINGLE_OMNI )); then
+    MLX_SUPERVISED=1 MLX_PORT="$OMNI_PORT" MLX_MODEL="$OMNI_MODEL" \
+      OMNI_BASE_URL="http://127.0.0.1:$OMNI_PORT/v1" OMNI_MODEL="$OMNI_MODEL" \
+      "$PY" -m uvicorn app.ui.server:app --port "$PORT" >>"$LOG_APP" 2>&1 &
+  else
+    MLX_SUPERVISED="$RUN_LLM" OMNI_BASE_URL="http://127.0.0.1:$OMNI_PORT/v1" OMNI_MODEL="$OMNI_MODEL" \
+      "$PY" -m uvicorn app.ui.server:app --port "$PORT" >>"$LOG_APP" 2>&1 &
+  fi
   PID_APP=$!
   say "app  pid $PID_APP  http://localhost:$PORT"
 }
@@ -132,7 +161,11 @@ stream app "$LOG_APP" "32"
 (( RUN_LLM )) && stream llm "$LOG_LLM" "36"
 (( RUN_EAR )) && stream ear "$LOG_EAR" "35"
 
-(( RUN_LLM )) && start_llm || say "llm: not started (not Apple Silicon / no mlx_lm / LLM_BACKEND=ollama) - the app falls back to Ollama"
+if (( SINGLE_OMNI )); then
+  say "single model: $OMNI_MODEL makes the decisions AND runs the live ear (no separate text model)"
+else
+  (( RUN_LLM )) && start_llm || say "llm: not started (not Apple Silicon / no mlx_lm / LLM_BACKEND=ollama) - the app falls back to Ollama"
+fi
 (( RUN_EAR )) && start_ear || say "ear: not started (no $OMNI_PY) - the hold loop uses the DSP rules"
 start_app
 
@@ -142,7 +175,7 @@ for _ in $(seq 1 60); do
   kill -0 "$PID_APP" 2>/dev/null || break
   sleep 1
 done
-say "console up: http://localhost:$PORT   (Ctrl+C here stops llm, ear and app together)"
+say "console up: http://localhost:$PORT   (Ctrl+C here stops everything together)"
 if (( OPEN )) && command -v open >/dev/null 2>&1; then open "http://localhost:$PORT"; fi
 
 # ---- supervise: a crashed service restarts, the others keep running ----------

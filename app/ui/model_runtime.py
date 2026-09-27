@@ -74,6 +74,11 @@ def _publish(backend: str, base_url: str, model: str, warm: float) -> None:
 
 
 def _mlx_possible() -> Optional[str]:
+    if SUPERVISED:
+        # start.sh already runs the model server (mlx_lm, or mlx_vlm with
+        # --single-omni); this process never loads mlx itself, so don't check
+        # for mlx_lm or a local copy of the weights.
+        return None
     if sys.platform != "darwin" or platform.machine() != "arm64":
         return "not Apple Silicon"
     try:
