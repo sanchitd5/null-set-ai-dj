@@ -4,17 +4,63 @@ A local, browser-based AI DJ. It analyses your tracks, separates them into stems
 
 Everything runs on your machine: FastAPI backend, a local LLM (MLX on Apple Silicon, Ollama as fallback), Demucs for stems, and a vanilla-JS console in the browser that does the actual audio playback and mixing.
 
-## What it does
+## Features
 
-- **Two-deck console** (`app/ui/static/`): jog wheels, transport, hot cues, beat loops, 3-band EQ, pitch/volume faders, crossfader, per-deck FX rack, stem-shaded waveforms, sampler pads with a 16-step beat grid, and mix recording (MediaRecorder).
-- **AI autopilot** (`autopilot.js`, `app/ui/autopilot_service.py`): seed track → LLM suggests next song → download → analyse → transition → repeat. Suggestions are checked against YouTube, filtered by tempo window and Camelot key, and remembered across sets (`app/ui/set_memory.py`) so the next set from the same seed is not a replay.
-- **Stems-first mixing**: every track is separated into 4 stems (drums, bass, vocals, other) by a persistent background Demucs worker (`app/music_brain/stem_worker.py`, default model `htdemucs`). Library tracks are backfilled while the LLM is idle. With stems on both decks, transitions become long stem blends, vocal hand-offs, mashups and layered transitions.
-- **Transition planners** (`app/music_brain/`): beat-to-beat blend, mashup ("A x B"), layer, BPM-ladder bridge for large tempo gaps, "riff over rap", and a library of learned techniques, each explaining why it fits or does not.
-- **Key-locked tempo stems** (`keylock.py`): for pairs up to 25 % apart in tempo, stems are re-rendered at the target tempo with Rubber Band so pitch does not drift.
-- **DJ mind** (`dj-mind.js`, `app/ui/mind_plan.py`): one LLM plan per song pair (candidate, exit phrase, phrase-level moves such as hold, pre-clear, sub drop, layer), validated against hard rules before and during playback.
-- **Live ear** (`live-ear.js`, `app/ui/live_ear.py`): during a hold loop, a DSP watchdog measures loop seams, clipping and low-end clash; an optional audio model (Qwen3-Omni via mlx-vlm) proposes one of a few safe moves. Rules answer if the model is not running.
-- **Downloads**: YouTube / YouTube Music search and download to FLAC via yt-dlp, with filters that skip mixes, live sets and interviews.
-- **Set logs**: export a played set as a validated `djset-v1` log and an Obsidian note for `DJ/17 - Set Logs`.
+### AI automix: the whole set plays as one song
+
+The autopilot picks the transition for every pair itself, in this order of preference, and every move lands on the 8-bar phrase grid:
+
+| Move | When | What you hear |
+|---|---|---|
+| **Riff over rap** | A has a groove running into its own breakdown, B raps, tempos 3-15 % apart | A key-locked to B's tempo, the first half of A's drop clean, then looped under B's rap (entering after its opening hook), rap "hold on" moments, A drops out, B slams in, 8-bar crossfade. Learned from Fred again.. & Thomas Bangalter's USB002 set (1:06:00, Aerodynamic x Victory Lap). |
+| **Mashup, then transition** | B has a vocal phrase, keys agree or B raps, tempos within 25 % | A drops to its instrumental, B's vocal rides over it, hold vox, A's beat drops out for 2 bars, B's drums and bass take over on the line, 8-bar crossfade. |
+| **Stem blend** | Tempos lock (up to 25 % on key-locked tempo stems) | 16 or 32 bars: B's synths first, kick and bass change hands together on one line, one singer at a time, one tonal owner when the keys clash, the crossfader sweeps smoothly across. |
+| **Stem bridge** | Tempos can't lock | A's drums then bass fall away, A's voice (held) and synths carry a beatless stretch, B starts beatless at its own tempo, the tonal layers swap in one crossfade, B's beat drops on its own line. No two beats ever overlap. |
+| **Echo out** | Only when stems are missing | An 8-bar echo with one continuous crossfader sweep. |
+
+Inside a song the AI also plays with its stems:
+
+- **Strip & rebuild** for famous songs (20M+ YouTube views, played in full): drums out, bass out, voice alone, bass back, build, drop on the line (the USB002 leavemealone move).
+- **Stem remix on the go** in 16-bar sections: hold on (vocal's last bar looped), acapella, drum break, bass out, synth hold. Max 3 per song, 32 bars apart.
+- **Stem holds inside mashups** and a drums-and-bass drop for a mashup's last quarter.
+- **Hold loop** when the next song isn't ready: up to 32 bars, seams checked silently on the buffer first, loops over vocals play the instrumental, never a shrinking 4-bar stutter.
+- **Auto sampler**: riser, snare roll, clap and open hat into drops, a riser into transitions. Own high-passed bus that follows the music's level; rationed.
+
+### Stems everywhere
+
+- Every track is separated into 4 stems (drums, bass, vocals, other) as soon as it is uploaded or downloaded; the rest of the library backfills in the background while the LLM is idle. One persistent Demucs worker, next song decoded while the current one separates: about 8-12 s per song.
+- **Key-locked tempo stems**: any song's stems rendered at another BPM with Rubber Band (cached per song and tempo), so pairs up to 25 % apart are beatmatched at their original key.
+- Decks play the stems sample-locked beside the mix; a stem move is inaudible until a layer actually changes.
+
+### Song selection
+
+- Local LLM (Qwen3-30B-A3B on MLX by default) with a 15 s decision budget.
+- Every suggested song is checked against YouTube before download (invented titles are dropped); sequel titles ("Victory Lap Five" for "Victory Lap") and other uploads of a song already played are refused.
+- Real-tempo gate after download, then a library fallback (songs you already have that lock in tempo and key) before any tempo jump.
+- Remixes are welcome when they fit the vibe; a remix of a played song only after 8 other songs.
+- Start a set from a seed URL, or **from the song playing now**: the songs already played this session steer the suggestions.
+- Genre continuity, Camelot key rules, occasion steering, set memory across sessions.
+
+### AI ACTIONS (on demand)
+
+Buttons that run any move now, on the next phrase line: **AUTO MIX, AUTO MASHUP, AUTO SAMPLE, STRIP & REBUILD, STEM REMIX, HOLD VOX, VOCAL SWAP, RIFF x RAP**. Each says why when it can't go. Toggles let you switch any automatic behaviour off (SET MIND, AI ASSIST, PEAK MOVES, MASHUPS, RIFF x RAP, AUTO SAMPLER, STEM REMIX, LIVE EAR).
+
+### Console and overlays
+
+- Two decks: jog wheels, hot cues, beat loops and jumps, 3-band EQ, pitch and volume faders, crossfader, per-deck FX rack, sampler pads with a 16-step beat grid, mix recording.
+- **Stem rail** per deck: mute or solo drums, bass, vocals, synths, each with a live mini player.
+- **Stem-shaded waveforms**: each stem in its own shade of the deck colour; a muted stem dims live.
+- **NULL AT WORK** panel: every AI job with a live timer (song picks, downloads, stems, planning, listening), plus background separation progress.
+- Controls the AI moves glow with a tag naming the move; markers on the track overviews show the planned exit, the hold loop and vocal regions.
+- **TRACK ID** strip: now playing and next, with BPM, key and view count.
+- NULL, an animated mascot that reacts to what the AI is doing.
+- Master brick-wall limiter; the heavy DSP runs in a web worker.
+
+### Analysis and listening
+
+- Tempo, beat grid, downbeats, 8/16-bar phrases, Camelot key, sections, energy curve, vocal regions. The BPM is the tempo at which an 8-bar loop actually repeats, not a rounded tempogram bin.
+- **Live ear** (optional): Qwen3-Omni listens to hold loops through mlx-vlm; a DSP watchdog measures seams, clipping and low-end clash, and rules answer when the model is off.
+- **Technique library** (`app/music_brain/techniques.py`): every learned move with the conditions it needs; `GET /api/techniques?a=&b=` explains which fit a pair and why.
 
 ## Requirements
 
