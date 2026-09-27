@@ -353,6 +353,23 @@
       at(bars, () => rampParam(lowIn, LOW_KILL, 0, beat));
     };
 
+    // Tempo gap, both songs have stems: STEM BRIDGE instead of an echo-out (user:
+    // "Echo Out is painful"). Strip A, hold its voice, B's pads in beatless, the
+    // crossfader sweeps across the beatless stretch, B's beat drops on its own line.
+    {
+      const sm0 = window.stemMoves, od0 = window.decks && window.decks[out], id0 = window.decks && window.decks[inn];
+      if (sm0 && (kind === "echo" || recipe === "Stem Bridge") && od0 && id0 && od0.stemsReady && id0.stems) {
+        ["low", "mid", "high"].forEach((b) => { setRange(eqEl(out, b), 0); setRange(eqEl(inn, b), 0); });
+        const secs = sm0.stemBridge(out, inn, xT0, id0.startOffset || 0);
+        if (secs > 0) {
+          const barA = 240 / (od0.bpm || 128) / od0._playbackRate(), barB = 240 / (id0.bpm || 128);
+          const sweepMs = 4 * barB * 1000;                    // across the beatless stretch
+          later(Math.max(0, (xT0 + 4 * barA - audioCtx.currentTime) * 1000), () => rampParam(xfEl, fromXf, toXf, sweepMs));
+          return secs * 1000;
+        }
+      }
+    }
+
     // Both decks have live stems: the transition is done with stems, not EQ
     // (user: the automixer should lean on stems). Every layer gets one owner:
     // B's synths first, kick + bass swap together on the line, one singer.
@@ -1545,6 +1562,9 @@
     } else if (oneSong) {
       // tempo gap up to 15 %: key-locked tempo stems make it a real blend
       recipe = "Long Blend";
+    } else if (stemsBoth) {
+      // tempo can't lock: a stem bridge, never an echo-out (user)
+      recipe = "Stem Bridge";
     } else if (!["echo", "filter"].includes(recipeKind(recipe))) {
       // No tempo lock possible: beats cannot be layered, so don't hard-swap
       // (instant swaps between unrelated tempos changed the whole vibe in the

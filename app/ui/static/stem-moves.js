@@ -95,6 +95,34 @@
   }
   const STEM_BLEND_KINDS = new Set(["bass", "blend", "filter", "loop", "double"]);
 
+  // Stem bridge: across ANY tempo gap, no echo-out (user: "Echo Out is painful").
+  // No two beats ever overlap, so the tempos never meet:
+  //   A bar 0   A's drums out            (strip)
+  //   A bar 2   A's bass out: voice + synths, beatless
+  //   A bar 4   HOLD VOX: A's last vocal bar held; B starts, beatless (pads, no drums,
+  //             no bass; its own voice only if the keys agree), crossfader sweeps A->B
+  //   B entry   B's bass back 2 B-bars before its line, B's drums ON its line: the
+  //             rebuild lands on B's own grid; A has faded out just before
+  // Times in seconds from A's bar 0. barA / barB = seconds per bar of each song.
+  function stemBridgePlan(barA, barB, keyClash, aSings) {
+    const bStart = 4 * barA, bEntry = bStart + 4 * barB;
+    const LIFT = 1.25;                 // ~+2 dB on A's voice + synths once its beat is gone (no sag)
+    const swapAt = bEntry - 3 * barB;  // tonal layers change hands here, equal power over 2 B-bars
+    const ev = [
+      { t: 0, deck: "out", stems: { drums: 0, vocals: LIFT, other: LIFT }, ramp: barA },
+      { t: 2 * barA, deck: "out", stems: { bass: 0 }, ramp: barA },
+      { t: bStart, deck: "in", start: true, stems: { drums: 0, bass: 0, vocals: 0, other: 0 }, ramp: 0 },
+      // keys agree: B's pads rise under A from the start of the beatless stretch
+      { t: bStart + 0.01, deck: "in", stems: { other: keyClash ? 0 : 0.7, vocals: 0 }, ramp: 2 * barB },
+      // the swap: A's tones out while B's bass + tones come in (one crossfade, no gap)
+      { t: Math.max(bStart, swapAt), deck: "out", stems: { vocals: 0, other: 0 }, ramp: 2 * barB },
+      { t: Math.max(bStart, swapAt), deck: "in", stems: { bass: 1, other: 1 }, ramp: 2 * barB },
+      { t: bEntry, deck: "in", stems: null, ramp: 0.03 },   // B's beat, on its own line
+    ];
+    if (aSings) ev.push({ t: bStart, deck: "out", hold: { stem: "vocals", fromBar: 3, bars: 1 }, until: Math.max(bStart, swapAt) + 2 * barB });
+    return { events: ev.sort((x, y) => x.t - y.t), bStart, bEntry, total: bEntry + barB };
+  }
+
   // ---- remix on the go: stem on/offs and holds inside 16 / 32-bar sections ----
   // Each move lives in the last quarter of its section and resolves on the next
   // line with everything back (the drop). Bars are from the section start.
@@ -126,7 +154,7 @@
       : ctx.vocal >= 0.15 ? ["bass_out", "drum_break", "synth_hold"] : ["drum_break", "synth_hold", "bass_out"];
     return menu.find((k) => !used.has(k)) || null;
   }
-  const core = { BREAKDOWN, breakdownFits, handoffFits, vocalShare, stemBlendPlan, STEM_BLEND_KINDS, remixEvents, remixPick };
+  const core = { BREAKDOWN, breakdownFits, handoffFits, vocalShare, stemBlendPlan, STEM_BLEND_KINDS, remixEvents, remixPick, stemBridgePlan };
   if (typeof module !== "undefined" && module.exports) module.exports = core;
   if (typeof root.document === "undefined" || typeof audioCtx === "undefined") return;
 
@@ -251,7 +279,42 @@
     return true;
   }
 
-  root.stemMoves = { core, breakdown, handoff, instrumental, reset, audioAt, vocalShare, stemBlend, remix, REMIX_LABEL, mashupBreak };
+  // Run a stem bridge: A's bar 0 at audio time t0; B starts at its track time
+  // bFrom (4 B-bars before its entry line) at native tempo. Returns seconds.
+  function stemBridge(outId, innId, t0, bEntryTrack, why) {
+    const out = root.decks[outId], inn = root.decks[innId];
+    if (!out || !inn || !out.stemsReady || !inn.stems) return 0;
+    cancel(outId); cancel(innId);
+    const rA = (out._playbackRate && out._playbackRate()) || 1;
+    const barA = 240 / (out.bpm || 128) / rA, barB = 240 / (inn.bpm || 128);
+    const ka = out.analysis && out.analysis.key && out.analysis.key.camelot, kb = inn.analysis && inn.analysis.key && inn.analysis.key.camelot;
+    const cs = root.djMind && root.djMind.core && root.djMind.core.camelotScore;
+    const keyClash = !!(cs && ka && kb && cs(ka, kb) < 0.8);
+    const pA = out._positionAt ? out._positionAt(t0) : out._currentPosition();
+    const aSings = vocalShare(out.analysis && out.analysis.vocal_active_regions, pA, pA + 4 * barA * rA) >= 0.3;
+    const plan = stemBridgePlan(barA, barB, keyClash, aSings);
+    const bFrom = Math.max(0, bEntryTrack - 4 * barB);
+    for (const e of plan.events) {
+      const d = e.deck === "out" ? out : inn, at = t0 + e.t;
+      if (e.start) {
+        timers[innId].push(setTimeout(() => {
+          inn.setPitchPercent(0);                              // B at its own tempo: no beat ever overlaps
+          inn.play(bFrom, false, at);
+          setTimeout(() => inn.stemMix(e.stems, at - 0.005, 0.005), 150);
+        }, Math.max(0, (at - audioCtx.currentTime) * 1000 - 600)));
+      } else if (e.hold) {
+        timers[outId].push(setTimeout(() => { if (out.playing) out.holdStem(e.hold.stem, pA + e.hold.fromBar * barA * rA, e.hold.bars, at, t0 + e.until); },
+          Math.max(0, (at - audioCtx.currentTime) * 1000 - 250)));
+      } else book(d, at, e.stems, Math.max(0.005, e.ramp));
+    }
+    root.dispatchEvent(new CustomEvent("ai-cue", { detail: { at: t0 + plan.bEntry, kind: "drop", deck: innId, bar: barB,
+      why: "B's beat lands after the stem bridge" } }));
+    note(outId, `STEM BRIDGE ${outId.toUpperCase()} → ${innId.toUpperCase()}`, why ||
+      `any tempo: strip A, ${aSings ? "hold its voice, " : ""}B's pads in beatless, B's beat drops on its own line`);
+    return plan.total;
+  }
+
+  root.stemMoves = { core, breakdown, handoff, instrumental, reset, audioAt, vocalShare, stemBlend, remix, REMIX_LABEL, mashupBreak, stemBridge };
 
   // ------------------------------------------------------ stem rail UI --
   // Per deck, under the loop rail: separation status + one toggle per stem.

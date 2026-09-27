@@ -84,3 +84,28 @@ console.log("stem moves core ok");
   assert.ok(aOther.bar + aOther.ramp <= 24 + 1e-9);
   console.log("key clash blend ok");
 }
+
+// ---- stem bridge: any tempo, no two beats ever overlap ------------------------
+{
+  const { stemBridgePlan } = require("../ui/static/stem-moves.js");
+  for (const [barA, barB, clash, sings] of [[1.95, 1.38, false, true], [1.38, 1.95, true, false], [2.0, 2.0, false, false]]) {
+    const p = stemBridgePlan(barA, barB, clash, sings);
+    const aDrumsOut = p.events.find((e) => e.deck === "out" && e.stems && e.stems.drums === 0);
+    const aBassOut = p.events.find((e) => e.deck === "out" && e.stems && e.stems.bass === 0);
+    const bBeat = p.events.find((e) => e.deck === "in" && e.stems === null);
+    // A's beat is gone (drums + bass faded) before B even starts
+    assert.ok(aDrumsOut.t + aDrumsOut.ramp <= p.bStart + 1e-9 && aBassOut.t + aBassOut.ramp <= p.bStart + 1e-9);
+    // B has no drums until its entry line (its own grid)
+    assert.ok(p.events.filter((e) => e.deck === "in" && e.stems && e.t < p.bEntry).every((e) => !e.stems.drums));
+    assert.ok(Math.abs(bBeat.t - p.bEntry) < 1e-9);
+    // A's tones are gone by B's entry
+    const aOut = p.events.find((e) => e.deck === "out" && e.stems && e.stems.vocals === 0);
+    assert.ok(aOut.t + aOut.ramp <= p.bEntry + 1e-9);
+    if (clash) assert.ok(p.events.filter((e) => e.deck === "in" && e.stems && e.stems.other > 0).every((e) => e.t >= aOut.t));
+    // no gap: B's tones rise exactly while A's fade (same start, same ramp)
+    const bIn = p.events.find((e) => e.deck === "in" && e.stems && e.stems.bass === 1);
+    assert.ok(Math.abs(bIn.t - aOut.t) < 1e-9 && Math.abs(bIn.ramp - aOut.ramp) < 1e-9);
+    if (sings) assert.ok(p.events.some((e) => e.hold));
+  }
+  console.log("stem bridge ok");
+}
