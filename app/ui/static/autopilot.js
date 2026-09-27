@@ -6,7 +6,54 @@
 //
 // Requires: window.decks, window.loadIntoDeck, setStatus (app.js + deck-controller.js).
 
+// Pure transition maths, no DOM / audio (node-checked: app/tests/autopilot_check.js).
+var autopilotCore = (function () {
+  const MASHUP_KINDS = new Set(["blend", "filter", "loop"]);
+  // Stem blend length in real bars. barS = seconds per bar at A's live tempo,
+  // roomBars = A's remaining bars, scale = 1 or 0.5 (short window).
+  // Mashup kinds: >= 30 s together, rounded UP to 16 so stemBlendPlan's
+  // kick/bass swap (bar L/2) sits on an 8-bar phrase line; 32 when A has the
+  // room; capped by A's room (16-bar multiple, 8 when 16 doesn't fit).
+  // Bass / double-drop stay short and percussive (16 / 8).
+  // scale is applied once and wins over the 30 s floor: the short window
+  // exists to end the overlap before B's voice lands.
+  function stemBlendBars(kind, barS, roomBars, scale) {
+    let unscaled;
+    if (MASHUP_KINDS.has(kind)) {
+      const want = Math.max(roomBars >= 34 ? 32 : 16, Math.ceil(30 / barS / 16) * 16);
+      const room = roomBars - 1 >= 16 ? Math.floor((roomBars - 1) / 16) * 16 : 8;
+      unscaled = Math.min(want, room);
+    } else {
+      unscaled = kind === "bass" ? 16 : 8;
+    }
+    return Math.max(4, unscaled * scale);
+  }
+  // Crossfader moves for a stem blend of `bars`, as [{bar, from, to, bars}]
+  // (fader -1..1 from A's side, `dir` = +1 when B is on the right).
+  // Mashup body rises gently to the centre while B's synths come in
+  // (0..L/2), both decks ride together, then one equal-power crossfade over
+  // the last 8 bars (from the swap line when shorter). Double drop: one sweep.
+  function stemBlendFader(kind, bars, dir) {
+    const from = -dir, to = dir;
+    if (kind === "double") return [{ bar: 0, from, to, bars }];
+    const swap = bars / 2, fadeAt = Math.max(swap, bars - 8);
+    return [{ bar: 0, from, to: 0, bars: swap }, { bar: fadeAt, from: 0, to, bars: bars - fadeAt }];
+  }
+  // Song seconds from `pos` to the next 8-bar phrase line of a grid anchored
+  // at `entry` (0 when on the line).
+  function phraseWaitS(pos, entry, phraseS) {
+    const since = pos - entry;
+    if (since < 0) return -since;
+    const r = since % phraseS;
+    return r < 1e-6 || phraseS - r < 1e-6 ? 0 : phraseS - r;
+  }
+  const api = { stemBlendBars, stemBlendFader, phraseWaitS };
+  if (typeof module !== "undefined" && module.exports) module.exports = api;
+  return api;
+})();
+
 (function () {
+  if (typeof window === "undefined") return;   // node: only the pure core above
   // Every request the autopilot makes has a deadline. Without one, a request
   // lost in a server restart never settled and the set sat in HOLD LOOP
   // forever ("Matching transition..." stuck). Budgets match the work behind
@@ -424,29 +471,33 @@
     const sm = window.stemMoves;
     const od = window.decks && window.decks[out], idk = window.decks && window.decks[inn];
     if (sm && sm.core.STEM_BLEND_KINDS.has(kind) && od && idk && od.stemsReady && idk.stemsReady) {
-      // one song: 32-bar blends when A has the room left, else 16 (bass / double: 8-16)
-      const aLeft = od.buffer ? (od.buffer.duration - (od._positionAt ? od._positionAt(xT0) : od._currentPosition())) : 0;
-      const roomBars = aLeft / (bar / 1000);
-      const long = roomBars >= 34;
+      // Bars here are real bars at A's live tempo (B is locked to it), computed
+      // unscaled and scaled exactly once: `bar` above already carries `scale`
+      // and barMs() ignores the pitch fader.
+      const rateO = od._playbackRate ? od._playbackRate() : 1;
+      const barU = 240000 / ((od.bpm || 128) * rateO);
+      const barS = barU / 1000;
+      const aLeft = od.buffer ? (od.buffer.duration - (od._positionAt ? od._positionAt(xT0) : od._currentPosition())) / rateO : 0;
       // A stem blend is a real mashup (both tracks layered), not a quick swap:
-      // it should run a genuine ~30s together before the crossfade lands, not
-      // whatever a bar-count guess happens to work out to (user). Only widens
-      // "blend"/"filter"/"loop" (the actual mashup kinds); bass/double-drop
-      // stay short and percussive by design. Never runs past the track's own
-      // remaining room.
-      const minMashupBars = Math.ceil(30000 / bar);
-      const bars = (kind === "blend" || kind === "filter" || kind === "loop"
-        ? Math.min(Math.max(long ? 32 : 16, minMashupBars), Math.max(8, Math.floor(roomBars) - 1))
-        : kind === "bass" ? 16 : 8) * scale;
-      const barS = bar / 1000;
+      // >= 30 s together before the crossfade lands (user), phrase-snapped;
+      // the short window (scale 0.5) still wins. See autopilotCore.stemBlendBars.
+      const bars = autopilotCore.stemBlendBars(kind, barS, aLeft / barS, scale);
       ["low", "mid", "high"].forEach((b) => { setRange(eqEl(out, b), 0); setRange(eqEl(inn, b), 0); });
-      // The crossfader sweeps A -> B across the whole blend (equal power, on the
-      // audio clock): never a jump to the centre or to the far side (user:
-      // "putting the crossfader in centre sounds really odd"). The stems still
-      // decide which layer plays; the fader just carries the level across.
+      // Crossfader shape follows stemBlendPlan, never a jump to the centre or
+      // the far side (user: "putting the crossfader in centre sounds really
+      // odd"): a gentle rise through the mashup body, both decks riding, then
+      // one smooth crossfade over the last 8 bars while A's synths and voice
+      // leave. The stems decide which layer plays; the fader carries the level.
       if (sm.stemBlend(kind, out, inn, xT0, bars, barS)) {
-        rampParam(xfEl, fromXf, toXf, bars * bar);
-        return bars * bar;
+        for (const m of autopilotCore.stemBlendFader(kind, bars, toXf)) {
+          const run = () => rampParam(xfEl, m.from, m.to, m.bars * barU);
+          if (m.bar === 0) { run(); continue; }
+          later(Math.max(0, m.bar * barU - XF_LOOKAHEAD_MS), () => {
+            xOffsetMs = m.bar * barU;
+            try { run(); } finally { xOffsetMs = 0; }
+          });
+        }
+        return bars * barU;
       }
     }
 
@@ -573,11 +624,15 @@
    * unwinds over `unwind_bars`: highs, then mids, then the fader.
    * `layer.third` (optional) is a cached vocal stem riding B's clean phrase.
    * Bars are A's live (pitch-locked) bars: a 64-bar hold drifts otherwise.
+   * Every move is an AudioParam ramp on the audio clock at an exact bar offset
+   * from `t0Audio` (B's first downbeat), like executeTransition: the old
+   * timer-driven path stepped setRange 20 times per ramp (a zipper on the
+   * crossfader / EQ, one step every ~375 ms on a 4-bar ramp at 128 BPM).
    * Returns total duration in ms.
    */
-  function executeLayer(out, inn, layer) {
-    xT0 = null; // LAYER keeps timer-driven automation
+  function executeLayer(out, inn, layer, t0Audio) {
     clearRun();
+    xT0 = Number.isFinite(t0Audio) ? t0Audio : audioCtx.currentTime;
     const oa = window.decks && window.decks[out];
     const bpm = oa && oa.bpm > 0 ? oa.bpm * oa._playbackRate() : 128;
     const bar = 240000 / bpm;
@@ -587,16 +642,21 @@
     const toXf = -fromXf;
     const xfEl = () => xfader;
     const band = (d, b) => () => eqEl(d, b);
-    const at = (bars, fn) => later(bars * bar, fn);
+    // timers fire XF_LOOKAHEAD_MS early; the ramp lands on the exact bar
+    const at = (bars, fn) => later(Math.max(0, bars * bar - XF_LOOKAHEAD_MS), () => {
+      xOffsetMs = bars * bar;
+      try { fn(); } finally { xOffsetMs = 0; }
+    });
 
     // 1) texture: B's sub killed, highs trimmed, fader eases to ~-7 dB for B
+    // (instant sets before any ramp books the knob; B is still silent here)
     setRange(eqEl(inn, "low"), LOW_KILL);
     setRange(eqEl(inn, "mid"), -3);
     setRange(eqEl(inn, "high"), -8);
     setRange(xfEl(), fromXf);
     rampParam(xfEl, fromXf, fromXf * 0.4, 4 * bar);
     // 2) hold H bars; 3) bass hand-off on the phrase line
-    later(H * bar - beat, () => rampParam(band(out, "low"), null, LOW_KILL, beat * 0.9));
+    at(H - 0.25, () => rampParam(band(out, "low"), null, LOW_KILL, beat * 0.9));
     at(H, () => {
       rampParam(band(inn, "low"), LOW_KILL, 0, beat);
       rampParam(band(inn, "mid"), null, 0, 2 * bar);
@@ -1392,21 +1452,43 @@
     if (readout) readout.textContent = `${v > 0 ? "+" : ""}${v.toFixed(1)}%`;
   }
 
-  // After a tempo-locked handover, drift the new song back to its own tempo
-  // over ~32 bars (inaudible steps), so pitch shift never accumulates.
+  // After a tempo-locked handover, glide the new song back to its own tempo
+  // over 32 bars, starting on its next 8-bar phrase line, so pitch shift never
+  // accumulates across the set. setPitchPercent writes playbackRate directly
+  // (no AudioParam ramp), so the glide is 16 moves per bar: ~0.01 % each for a
+  // 6 % lock, far below a stair step (the old 1-per-bar steps were audible).
+  const EASE_BARS = 32, EASE_STEPS_PER_BAR = 16;
+  // Key-locked tempo stems play the song's real key at the locked tempo; the
+  // pitched mix is the only way home, and swapping to it shifts the key by the
+  // lock ratio at that instant. Up to 4 % (~2/3 semitone) that shift lands on a
+  // phrase downbeat and then glides out; beyond it the deck holds its locked
+  // tempo (a key jump is worse than a tempo that stays).
+  const KEYLOCK_HOME_MAX_PCT = 4;
   function easePitchHome(deckId) {
     const d = window.decks && window.decks[deckId];
-    // key-locked tempo stems: the set stays at this tempo, the key never moved
-    if (!d || !d._pitchPercent || d.tempoStems) return;
-    const steps = 32;
-    const barMsNow = 240000 / ((d.bpm || 128) * d._playbackRate());
-    const start = d._pitchPercent;
-    for (let i = 1; i <= steps; i++) {
-      later(i * barMsNow, () => {
-        if (activeDeck !== deckId) return;
-        setDeckPitch(deckId, start * (1 - i / steps));
-      });
+    if (!d || !d._pitchPercent) return;
+    if (d.tempoStems && Math.abs(d._pitchPercent) > KEYLOCK_HOME_MAX_PCT) {
+      console.info(`tempo home: key-locked ${d._pitchPercent.toFixed(1)}% off native, holding (key would jump)`);
+      return;
     }
+    const bpm = d.bpm || 128;
+    const rate = d._playbackRate();
+    const phraseS = 8 * 240 / bpm;                          // one 8-bar phrase, song seconds
+    // entryPos sits on B's grid, so its 8-bar lines are the song's phrase lines
+    const toLine = autopilotCore.phraseWaitS(deckPosition(deckId), entryPos, phraseS);
+    later((toLine / rate) * 1000, () => {
+      if (!active || activeDeck !== deckId) return;
+      if (d.tempoStems && typeof d.dropTempoStems === "function") d.dropTempoStems();
+      const start = d._pitchPercent;
+      const steps = EASE_BARS * EASE_STEPS_PER_BAR;
+      const stepMs = 240000 / (bpm * d._playbackRate()) / EASE_STEPS_PER_BAR;
+      let i = 0;
+      const t = setInterval(() => {
+        if (!active || activeDeck !== deckId || ++i > steps) { clearInterval(t); return; }
+        setDeckPitch(deckId, start * (1 - i / steps), 26);
+      }, stepMs);
+      runTimers.push(t);
+    });
   }
 
   async function requestMindPlan(currentId, nextId, candidate) {
@@ -1703,12 +1785,17 @@
     if (!layer && !peakT && riffOn() && window.riffOverRap) {
       const notBefore = deckPosition(activeDeck) + 25;
       window.riffOverRap.prepare(currentId, nextId, notBefore).then((r) => {
-        if (!r.ok) { console.info("riff over rap: no -", (r.reasons || []).join("; ")); return; }
+        // why no riff: console for detail, the status line for a glance
+        const riffNo = (why) => {
+          console.info("riff over rap: no -", why);
+          if (!executed && active && currentTrackId === currentId) apStatus(`Riff over rap: no - ${why}`);
+        };
+        if (!r.ok) { riffNo((r.reasons || []).join("; ") || "no plan"); return; }
         if (executed || !active || currentTrackId !== currentId) return;
         const g0 = r.plan.a_groove[0], pos = deckPosition(activeDeck);
         const sdB = window.decks && window.decks[stagingDeck()];
         if (g0 < pos + 6 || g0 > hi + 60 || !(sdB && sdB.stems)) {
-          console.info("riff over rap: ready but", g0 < pos + 6 ? "A is past its groove" : g0 > hi + 60 ? "the groove comes too late" : "B's stems aren't loaded");
+          riffNo(g0 < pos + 6 ? "A is past its groove" : g0 > hi + 60 ? "the groove comes too late" : "B's stems aren't loaded");
           return;
         }
         riff = r;
@@ -1803,16 +1890,16 @@
       const incoming = stagingDeck();
       // LAYER: the beat layer (live drums on A) and the mind's phrase moves pause
       // while two records ride, so no third drum line doubles up.
-      // Non-layer transitions start XF_LOOKAHEAD_MS early and schedule their
-      // automation on the audio clock at exactly t0 (B's first downbeat).
-      later(layer ? leadS * 1000 : Math.max(0, leadS * 1000 - XF_LOOKAHEAD_MS), () => {
+      // Both paths start XF_LOOKAHEAD_MS early and schedule their automation
+      // on the audio clock at exactly t0 (B's first downbeat).
+      later(Math.max(0, leadS * 1000 - XF_LOOKAHEAD_MS), () => {
         let totalMs;
         if (layer) {
           if (window.beatLayer && window.beatLayer.isEnabled()) {
             window.beatLayer.setEnabled(false);
             beatMutedByLayer = true;
           }
-          totalMs = executeLayer(outgoing, incoming, layer);
+          totalMs = executeLayer(outgoing, incoming, layer, t0) + XF_LOOKAHEAD_MS;
           if (window.djMind && window.djMind.layering) {
             window.djMind.layering(totalMs / 1000, { source: layer.source,
               why: `${layer.why} - ${layer.hold_bars} bars together, bass to B on the line, A unwinds ${layer.unwind_bars} bars` });
