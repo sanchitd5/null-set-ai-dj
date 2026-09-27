@@ -1343,6 +1343,8 @@ class AutopilotSuggestRequest(BaseModel):
     history: list[str] = []
     set_position: Optional[float] = None  # 0.0=start, 1.0=end; computed from history if omitted
     set_mode: str = "hybrid"  # long | quick | hybrid
+    # Relaxed session (autopilot.js RELAXED_OCCASION): picks never lift the energy.
+    relaxed: bool = False
     # "dip": the set has sat near its loudness peak for a while, so ask for a
     # track that lets energy fall back before building again (set study rule 9).
     energy_note: Optional[str] = None
@@ -1603,6 +1605,7 @@ def _autopilot_suggest_impl(req: AutopilotSuggestRequest):
             history=req.history + req.avoid,
             set_position=set_position,
             set_mode=req.set_mode if req.set_mode in SET_MODES else "hybrid",
+            relaxed=bool(req.relaxed),
             meta=meta,
             genre=genre,
             history_display=history_display + avoid_display,

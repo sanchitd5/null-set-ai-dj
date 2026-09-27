@@ -377,6 +377,47 @@ _USER_TEMPLATE = (
 _KNOWLEDGE_TEMPLATE = "\n\nDJ KNOWLEDGE (from the ./DJ wiki):\n{brief}"
 
 
+# Relaxed session (user: "in relax sessions it should not go upbeat, maintain
+# relaxed session"): the arc never builds, and a pick that lifts the energy is
+# dropped even if the model offers it.
+RELAXED_ARC = "a RELAXED session (hold the calm the whole way: no build, no peak)"
+RELAXED_LINE = (
+    "\n\nRELAXED SESSION (overrides the ENERGY ARC and SET MODE energy rules): the listener wants "
+    "to stay relaxed from start to end. energy_delta must be \"maintain\" or \"down\", never \"up\"; "
+    "every track_profile.energy must be at or below the current song's energy; tempo_feel laid-back "
+    "or mid, never driving; mood chill or bittersweet, never euphoric; no drops, club bangers, "
+    "festival anthems or peak-time remixes. A slightly slower song is fine."
+)
+
+
+def _relaxed_only(suggestions: list, cur_profile) -> list:
+    """Drop picks that would lift a relaxed set. Never empty: if every pick lifts,
+    keep the calmest one."""
+    cur = cur_profile if isinstance(cur_profile, dict) else {}
+    cur_e = _num(cur.get("energy"))
+    cap = cur_e if cur_e is not None else 5.0
+    cur_drive = str(cur.get("tempo_feel", "")).lower() == "driving"
+
+    def lifts(s):
+        tp = s.get("track_profile") if isinstance(s.get("track_profile"), dict) else {}
+        e = _num(tp.get("energy"))
+        return (str(s.get("energy_delta", "")).lower() == "up"
+                or (e is not None and e > cap)
+                or (str(tp.get("tempo_feel", "")).lower() == "driving" and not cur_drive)
+                or str(tp.get("mood", "")).lower() == "euphoric")
+
+    calm = [s for s in suggestions if not lifts(s)]
+    if calm or not suggestions:
+        return calm
+    def energy_of(s):
+        tp = s.get("track_profile") if isinstance(s.get("track_profile"), dict) else {}
+        e = _num(tp.get("energy"))
+        return e if e is not None else 10.0
+    keep = min(suggestions, key=energy_of)
+    keep["rejected_reason"] = "relaxed: the calmest of picks that all lift the energy"
+    return [keep]
+
+
 def _set_arc_phase(set_position: float) -> str:
     if set_position < 0.3:
         return "warm-up (build slowly)"
@@ -732,6 +773,7 @@ def suggest_next_tracks(
     set_position: float = 0.0,
     n: int = 3,
     set_mode: str = "hybrid",
+    relaxed: bool = False,
     meta: dict | None = None,
     genre: str = "",
     history_display: list[str] | None = None,
@@ -788,7 +830,7 @@ def suggest_next_tracks(
         earlier_sets=", ".join(earlier_sets or []) or "none",
         favourite_artists=", ".join(favourite_artists or []) or "none",
         set_pos_pct=round(set_position * 100),
-        arc_phase=_set_arc_phase(set_position),
+        arc_phase=RELAXED_ARC if relaxed else _set_arc_phase(set_position),
         n=n + EXTRA_CANDIDATES,  # spares: invented / off-tempo picks are dropped below
     )
 
@@ -799,6 +841,8 @@ def suggest_next_tracks(
         brief = ""
     if brief:
         user_msg += _KNOWLEDGE_TEMPLATE.format(brief=brief)
+    if relaxed:
+        user_msg += RELAXED_LINE
 
     system_msg = _SYSTEM
     if lead_to and lead_steps:
@@ -940,6 +984,8 @@ def suggest_next_tracks(
     def _is_fav(x):
         names = [x.get("artist", "")] + credited_artists(f"{x.get('artist', '')} - {x.get('title', '')}")
         return bool(fav) and any(artist_key(n) in fav for n in names if n)
+    if relaxed:
+        suggestions = _relaxed_only(suggestions, data.get("current_profile"))
     heard = {_bare_title(str(x).split(" - ", 1)[-1]) for x in (earlier_sets or [])}
     fresh = [x for x in suggestions if _is_fav(x) or _bare_title(x.get("title", "")) not in heard]
     suggestions = (fresh or suggestions)[:n]

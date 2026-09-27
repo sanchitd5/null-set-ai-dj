@@ -68,7 +68,11 @@
     bus.gain.setTargetAtTime(Math.max(0.06, Math.min(0.5, programRms * 1.1)), audioCtx.currentTime, 0.5);
   }
 
-  function enabled() { const t = document.getElementById("ap-sampler-toggle"); return !t || t.checked; }
+  // relaxed session (autopilot.js window.djSession): no sampler hits at all (user)
+  function enabled() {
+    if (window.djSession && window.djSession.relaxed) return false;
+    const t = document.getElementById("ap-sampler-toggle"); return !t || t.checked;
+  }
   const ledger = [];
   const booked = [];                    // {at} lines already covered
   function songOf(d) { return d && d.analysis ? d.analysis.path : ""; }

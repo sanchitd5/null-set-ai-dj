@@ -943,7 +943,7 @@ var autopilotCore = (function () {
     const res = await fetch("/api/autopilot/suggest", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ set_id: setId, track_id: trackId, occasion: occasionWithBridge(opts), ...leadFields(opts), history: history.slice(-30), avoid: avoid.slice(-6), set_position: setPos, set_mode: setMode(), energy_note: energyNote, energy_hook: energyHook, lookahead: !!opts.lookAhead,
+      body: JSON.stringify({ set_id: setId, track_id: trackId, occasion: occasionWithBridge(opts), ...leadFields(opts), history: history.slice(-30), avoid: avoid.slice(-6), set_position: setPos, set_mode: setMode(), relaxed: !!window.djSession.relaxed, energy_note: energyNote, energy_hook: energyHook, lookahead: !!opts.lookAhead,
         variety_run: varietyRun().run, variety_genre: varietyRun().genre,
         tempo_target: bridgeTarget(opts.lookAhead), tempo_note: bridgeNote(opts.lookAhead) || null,
         elapsed_seconds: setStartedAt ? (Date.now() - setStartedAt) / 1000 : null }),
@@ -1084,6 +1084,20 @@ var autopilotCore = (function () {
     return { run, genre: fam };
   }
   let steerStep = 0;          // bridge songs played so far on the current steer (cap 7)
+  // Relaxed sessions (user: "in relax sessions it should not go upbeat,
+  // maintain relaxed session, no need to sampler mix"): energy never steps up,
+  // no sampler / fills / peak or remix moves / riff over rap, LONG set mode.
+  const RELAXED_OCCASION = /\b(relax(ed|ing)?|chill(ed|out|ing)?|calm|lounge|dinner|study(ing)?|focus|sleep(y|ing)?|sunday|morning|coffee|caf[eé]|spa|yoga|meditat\w*|ambient|wind(ing)?\s*down|background|mellow|sunset|laid[\s-]*back|easy\s*listening|low[\s-]*key|unwind\w*)\b/i;
+  function isRelaxedOccasion(o) { return !!o && RELAXED_OCCASION.test(o) && !HIGH_ENERGY_OCCASION.test(o); }
+  window.djSession = window.djSession || { relaxed: false };
+  function applySessionMood() {
+    const relaxed = isRelaxedOccasion(occasion);
+    window.djSession.relaxed = relaxed;
+    const modeEl = document.getElementById("ap-mode");
+    if (relaxed && modeEl && modeEl.value === "hybrid") modeEl.value = "long";
+    if (relaxed) apStatus(`"${occasion}" is a relaxed session → LONG mode, energy held, no sampler / fills / peak moves`);
+    return relaxed;
+  }
   const HIGH_ENERGY_OCCASION = /\b(wedding|shaadi|sangeet|baraat|mehndi|reception|party|club\s*night|peak|festival|rave|birthday|bachelor(ette)?|new\s*year)\b/i;
   const MAX_STEER_STEPS = 7;
   function occasionWithStep(opts = {}) {
@@ -2185,6 +2199,7 @@ var autopilotCore = (function () {
   // next record's voice over this beat, then bring the record itself in).
   // Restraint: at most one layer per track; skipped unless key and tempo fit.
   function riffOn() {
+    if (window.djSession && window.djSession.relaxed) return false;
     const t = document.getElementById("ap-riff-toggle");
     return !t || t.checked;
   }
@@ -2311,6 +2326,7 @@ var autopilotCore = (function () {
     const cur = currentDeck();
     if (!cur) { apStatus("Nothing loaded: load or play a song, or paste a seed URL."); return; }
     occasion = occasionInput ? occasionInput.value.trim() : "";
+    applySessionMood();
     resetSetState();
     active = true;
     activeDeck = cur.deck;
@@ -2336,6 +2352,7 @@ var autopilotCore = (function () {
     const url = seedInput ? seedInput.value.trim() : "";
     if (!url) return startFromCurrent();              // no seed: continue from what's playing
     occasion = occasionInput ? occasionInput.value.trim() : "";
+    applySessionMood();
     // High-energy occasions run in QUICK mode unless the user picked a mode.
     const modeEl = document.getElementById("ap-mode");
     if (modeEl && modeEl.value === "hybrid" && HIGH_ENERGY_OCCASION.test(occasion)) {
@@ -2420,6 +2437,7 @@ var autopilotCore = (function () {
   }
 
   function stop() {
+    if (window.djSession) window.djSession.relaxed = false;   // manual play: sampler etc. back
     if (watchdog) { clearInterval(watchdog); watchdog = null; }
     active = false;
     ready.length = 0;

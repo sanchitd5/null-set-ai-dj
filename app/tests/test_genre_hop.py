@@ -203,3 +203,28 @@ def test_era_jump_dropped_unless_moving():
     kept = _filter_suggestions(only_jump, [])
     assert [s["title"] for s in kept] == ["Glue"] and kept[0]["rejected_reason"].startswith("era jump")
     assert [s["title"] for s in _filter_suggestions(data, [], allow_genre_change=True)] == ["Glue", "Boom, Boom, Boom, Boom!!"]
+
+
+def test_relaxed_session_drops_upbeat_picks(monkeypatch):
+    import app.ui.autopilot_service as ap
+    fake = ('{"current_profile":{"energy":4,"tempo_feel":"laid-back","mood":"chill"},"suggestions":['
+            '{"artist":"A","title":"Banger","energy_delta":"up","track_profile":{"energy":8,"tempo_feel":"driving","mood":"euphoric"}},'
+            '{"artist":"B","title":"Calm One","energy_delta":"maintain","track_profile":{"energy":4,"tempo_feel":"laid-back","mood":"chill"}}]}')
+    seen = {}
+    def chat(system, user, **kw):
+        seen["user"] = user
+        return fake
+    monkeypatch.setattr(ap, "chat_raw", chat)
+    out = ap.suggest_next_tracks("Song", "Artist", 110, "8A", 240, 0.5, "chill sunday", [], relaxed=True)
+    assert [s["title"] for s in out] == ["Calm One"]
+    assert "RELAXED SESSION" in seen["user"] and ap.RELAXED_ARC in seen["user"]
+    out = ap.suggest_next_tracks("Song", "Artist", 110, "8A", 240, 0.5, "", [])
+    assert "RELAXED SESSION" not in seen["user"]
+
+
+def test_relaxed_only_never_empty():
+    from app.ui.autopilot_service import _relaxed_only
+    picks = [{"title": "Loud", "energy_delta": "up", "track_profile": {"energy": 9}},
+             {"title": "Less Loud", "energy_delta": "up", "track_profile": {"energy": 6}}]
+    kept = _relaxed_only(picks, {"energy": 3})
+    assert [s["title"] for s in kept] == ["Less Loud"] and kept[0]["rejected_reason"].startswith("relaxed")

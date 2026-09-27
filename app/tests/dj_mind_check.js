@@ -348,3 +348,17 @@ console.log("dj-mind core ok");
   assert.ok(cs.every((x) => x.jumpOut === 192));
 }
 console.log("hold loop picker ok");
+
+// Relaxed session: peak / sub-drop / remix moves turn into a ride; smooth moves stay.
+{
+  const peak = s({ barsToExit: 4, overlapStyle: "peak", peakKind: "double_drop" });
+  assert.notStrictEqual(decide(peak).action, "ride");
+  const relaxedPeak = decide(Object.assign({}, peak, { relaxed: true }));
+  assert.strictEqual(relaxedPeak.action, "ride");
+  assert.ok(/relaxed session/.test(relaxedPeak.why));
+  assert.strictEqual(decide(s({ section: "build", barsToExit: 6, holdRoomBars: 16, relaxed: true })).action, "hold");
+  assert.strictEqual(decide(s({ barsToExit: 4, overlapStyle: "instant", relaxed: true })).action, "instant");
+  const vox = s({ section: "verse", vocalAhead: 0.9, sectionEnergy: 0.3, sectionBarsLeft: 32, barsOnTrack: 40 });
+  if (decide(vox).action === "subdrop") assert.strictEqual(decide(Object.assign({}, vox, { relaxed: true })).action, "ride");
+}
+console.log("dj-mind relaxed ok");

@@ -445,7 +445,20 @@
   }
 
   // state -> { action, why, rule, source }. One move per phrase; order is priority.
+  // Relaxed session (user: "in relax sessions it should not go upbeat"): only
+  // the smooth moves survive. Peak transitions, sub drops and remix moves all
+  // lift or jolt the energy, so they turn into a ride.
+  const RELAXED_MOVES = new Set(["ride", "hold", "preclear", "layer", "instant"]);
   function decide(s) {
+    const dec = decideAny(s);
+    if (s.relaxed && dec && !RELAXED_MOVES.has(dec.action)) {
+      return { action: "ride", rule: "R", source: dec.source || "RULE",
+               why: `relaxed session: no ${dec.action} - the record rides` };
+    }
+    return dec;
+  }
+
+  function decideAny(s) {
     const exitNear = s.barsToExit != null;
     // A LAYER transition is running: both records ride, no phrase moves.
     if (s.layerActive) return { action: "layer", rule: "L", source: s.layerSource, why: s.layerWhy || "two records layered" };
@@ -845,6 +858,7 @@
       preDrop: isPreDrop(pLab, nLab),
       skipHitsDrop: { 8: dropIn(8), 16: dropIn(16) },
       remixUsed, remixCount: remixUsed.length, lastRemixPhrase,
+      relaxed: !!(root.djSession && root.djSession.relaxed),
       aiMove,
       rate,
       // PEAK mode
@@ -1313,6 +1327,7 @@
   // Rule 8: a pre-crossfade drum fill every other transition at most, never on
   // an instant swap (the swap itself is the event).
   function fxAllowed(kind) {
+    if (root.djSession && root.djSession.relaxed) return false;   // relaxed: no fills, no FX
     if (kind !== "fill") return true;
     if (plan && (plan.style === "instant" || plan.style === "peak")) return false;
     if (transitions - lastFillTransition < 2) return false;
@@ -1336,6 +1351,7 @@
   // Peak transition for the booked pair (autopilot.js scheduleTransition hook).
   // ctx: {drop (blend plan, entry_mode "drop"), lo, hi, plannedExit, entryPos, inDeck}
   function planPeak(ctx) {
+    if (root.djSession && root.djSession.relaxed) return null;       // relaxed: never a peak swap
     const d = deck();
     if (!d || !ctx || !ctx.drop) return null;
     const a = d.analysis || {}, bar = barSecsOf(d);
