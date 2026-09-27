@@ -67,7 +67,7 @@
   // Stem blend: a transition done with stems instead of EQ. Each layer has one
   // owner at a time. bars = 8 or 16. aSings / bSings: vocals in the window.
   // Returns [{bar, deck: "out"|"in", stems, ramp (bars)}], bars from B's entry.
-  function stemBlendPlan(kind, bars, aSings, bSings) {
+  function stemBlendPlan(kind, bars, aSings, bSings, keyClash = false) {
     const L = bars, swap = L / 2, ev = [];
     if (kind === "double") {
       // both drops together: B owns drums + bass, A keeps its tops (and its voice
@@ -77,17 +77,19 @@
       ev.push({ bar: L - 1, deck: "out", stems: { drums: 0, bass: 0, vocals: 0, other: 0 }, ramp: 1 });
       return ev;
     }
-    // 0..swap   B's synths/pads fade in under A (no kick, no bass, no voice)
+    // 0..swap   B's synths/pads fade in under A (no kick, no bass, no voice).
+    // Keys clash: one tonal owner, B's synths wait until A's have faded.
     ev.push({ bar: 0, deck: "in", stems: { drums: 0, bass: 0, vocals: 0, other: 0 }, ramp: 0 });
-    ev.push({ bar: 0.01, deck: "in", stems: { drums: 0, bass: 0, vocals: 0, other: 0.8 }, ramp: swap });
+    if (!keyClash) ev.push({ bar: 0.01, deck: "in", stems: { drums: 0, bass: 0, vocals: 0, other: 0.8 }, ramp: swap });
     // swap line  kick + bass change hands together, in one beat
     ev.push({ bar: swap - 0.25, deck: "out", stems: { drums: 0, bass: 0 }, ramp: 0.25 });
     ev.push({ bar: swap, deck: "in", stems: { drums: 1, bass: 1 }, ramp: 0.05 });
     // swap..L   A's synths fade; one singer: A finishes its line, then B's voice
-    ev.push({ bar: swap, deck: "out", stems: { other: 0 }, ramp: L - swap });
+    ev.push({ bar: swap, deck: "out", stems: { other: 0 }, ramp: keyClash ? (L - swap) / 2 : L - swap });
+    if (keyClash) ev.push({ bar: swap + (L - swap) / 2, deck: "in", stems: { other: 1 }, ramp: (L - swap) / 2 });
     const aVoxOut = aSings ? L - 2 : swap;
     ev.push({ bar: aVoxOut, deck: "out", stems: { vocals: 0 }, ramp: aSings ? 2 : 1 });
-    ev.push({ bar: aSings ? L - 0.5 : swap, deck: "in", stems: { vocals: 1, other: 1 }, ramp: aSings ? 0.5 : 2 });
+    ev.push({ bar: aSings ? L - 0.5 : swap, deck: "in", stems: keyClash ? { vocals: 1 } : { vocals: 1, other: 1 }, ramp: aSings ? 0.5 : 2 });
     ev.push({ bar: L, deck: "in", stems: null, ramp: 0.05 });
     return ev;
   }
@@ -199,7 +201,10 @@
     const aSings = vocalShare(out.analysis && out.analysis.vocal_active_regions, pA, pA + bars * barS) >= 0.3;
     const pB = (inn.cuePoint || 0);
     const bSings = vocalShare(inn.analysis && inn.analysis.vocal_active_regions, pB, pB + bars * barS) >= 0.3;
-    for (const e of stemBlendPlan(kind, bars, aSings, bSings)) {
+    const ka = out.analysis && out.analysis.key && out.analysis.key.camelot, kb = inn.analysis && inn.analysis.key && inn.analysis.key.camelot;
+    const cs = root.djMind && root.djMind.core && root.djMind.core.camelotScore;
+    const keyClash = !!(cs && ka && kb && cs(ka, kb) < 0.8);
+    for (const e of stemBlendPlan(kind, bars, aSings, bSings, keyClash)) {
       const d = e.deck === "out" ? out : inn, at = t0 + e.bar * barS;
       if (e.bar === 0 && e.deck === "in") {
         // B must be silent-in-stems from its very first sample

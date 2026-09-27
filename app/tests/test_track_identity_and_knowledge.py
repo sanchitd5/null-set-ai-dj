@@ -81,3 +81,22 @@ def test_theme_lock_drops_off_theme_suggestions():
         {"artist": "X", "title": "Worse Bridge", "occasion_fit": 2},
         {"artist": "Y", "title": "Closer Bridge", "occasion_fit": 5}]}
     assert [s["title"] for s in _filter_suggestions(steer, [], occasion_set=True)] == ["Closer Bridge"]
+
+
+def test_bullet_and_colon_separators_split_artist_and_title():
+    from app.ui.track_identity import clean_identity
+    a, ti = clean_identity("RÜFÜS DU SOL ●● Treat You Better (Official Single Edit Video)")
+    assert (a.lower(), ti) == ("rüfüs du sol", "Treat You Better")
+    assert clean_identity("SIDHU MOOSE WALA ： DOLLAR ｜ BYG BYRD")[0].lower() == "sidhu moose wala"
+
+
+def test_other_uploads_and_remixes_of_a_played_song_are_dropped(monkeypatch):
+    import json
+    import app.ui.autopilot_service as svc
+    reply = {"current_genre": "melodic house", "suggestions": [
+        {"artist": "RÜFÜS DU SOL", "title": "Treat You Better (Purple Disco Machine Remix)", "genre": "melodic house", "genre_hop": 0, "expected_bpm": 120},
+        {"artist": "Lane 8", "title": "Brightest Lights", "genre": "melodic house", "genre_hop": 0, "expected_bpm": 120}]}
+    monkeypatch.setattr(svc, "chat_raw", lambda *a, **k: json.dumps(reply))
+    out = svc.suggest_next_tracks("After Earth", "Ben Böhmer", 120.0, "8A", 300.0, 0.5, "",
+                                  ["RÜFÜS DU SOL ●● Treat You Better (Official Single Edit Video)"])
+    assert [s["title"] for s in out] == ["Brightest Lights"]

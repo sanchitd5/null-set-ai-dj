@@ -490,7 +490,11 @@ def _filter_suggestions(
     cur_fit = _num(data.get("occasion_fit"))
     theme_floor = (cur_fit if steering_move else MIN_THEME_FIT) if occasion_set else None
     off_theme = []
-    played_bare = {_bare_title(h.split(" - ", 1)[-1]) for h in history}
+    # by the song, not the upload: "RÜFÜS DU SOL ●● Treat You Better (Official
+    # Single Edit Video)" and "... (Purple Disco Machine Remix)" are the same song
+    from app.ui.track_identity import clean_identity
+    played_bare = {_bare_title(h.split(" - ", 1)[-1]) for h in history} | {
+        _bare_title(clean_identity(h)[1]) for h in history}
     cur = data.get("current_profile")
     ok, clashes, key_clashes, genre_jumps = [], [], [], []
     # "move" only licenses a genre jump inside an occasion: with no occasion the

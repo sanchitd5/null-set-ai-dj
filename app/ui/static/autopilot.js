@@ -359,7 +359,10 @@
     const sm = window.stemMoves;
     const od = window.decks && window.decks[out], idk = window.decks && window.decks[inn];
     if (sm && sm.core.STEM_BLEND_KINDS.has(kind) && od && idk && od.stemsReady && idk.stemsReady) {
-      const bars = (kind === "blend" || kind === "filter" || kind === "loop" ? 16 : 8) * scale;
+      // one song: 32-bar blends when A has the room left, else 16 (bass / double: 8-16)
+      const aLeft = od.buffer ? (od.buffer.duration - (od._positionAt ? od._positionAt(xT0) : od._currentPosition())) : 0;
+      const long = aLeft / (bar / 1000) >= 34;
+      const bars = (kind === "blend" || kind === "filter" || kind === "loop" ? (long ? 32 : 16) : kind === "bass" ? 16 : 8) * scale;
       const barS = bar / 1000;
       ["low", "mid", "high"].forEach((b) => { setRange(eqEl(out, b), 0); setRange(eqEl(inn, b), 0); });
       setRange(xfEl(), 0);                                   // both channels open; stems do the mixing
@@ -1443,6 +1446,15 @@
     let bTime = candidate.b_time || 0;
     let vocalShort = false, vocalCut = "";
     let recipe = candidate.recipe || "Blend";
+    // Stems on both decks: the set plays as ONE song (user). Every transition is
+    // a long stem blend: one owner per layer, one singer, kick + bass swapped on
+    // a line. No vocal-driven shortening, no cuts or spinbacks (those were only
+    // there to stop two vocals or two beats clashing, which stems already solve).
+    const odS = window.decks && window.decks[activeDeck], sdS = window.decks && window.decks[stagingDeck()];
+    const stemsBoth = !!(odS && odS.stemsReady && sdS && sdS.stems);
+    const aEffS = odS ? odS.bpm * odS._playbackRate() : 0;
+    const gapS = sdS && sdS.bpm ? Math.min(...[1, 2, 0.5].map((m) => Math.abs(aEffS / (sdS.bpm * m) - 1))) : 1;
+    const oneSong = stemsBoth && gapS <= 0.15;
     const od0bpm = (window.decks && window.decks[activeDeck] && window.decks[activeDeck].bpm) || 128;
     // Beat-to-beat: when the tempos lock, hand beat to beat. Echo-outs and cuts
     // are for tempo gaps; they turned "vocal -> beat" when used between
@@ -1459,12 +1471,16 @@
       // Two vocals must never sing together: the overlap has to END before B's
       // vocal first comes in (user: "vocals are overlapping"). Pick the
       // transition length by how many bars that is.
-      const vIn = blend.b_vocal_in_bars;
+      const vIn = oneSong ? null : blend.b_vocal_in_bars;   // stems: one singer, no shortening
+      if (oneSong) { recipe = "Long Blend"; blend.clean = true; }
       if (vIn != null) {
         if (vIn < 4) { recipe = "Quick Cut"; vocalCut = "cut on the downbeat before B's vocal"; }
         else if (vIn < 8) { recipe = "Bass Swap"; vocalShort = true; vocalCut = `4-bar swap: B sings in ${Math.round(vIn)} bars`; }
         else if (vIn < 16) { recipe = "Bass Swap"; vocalCut = `8-bar swap: B sings in ${Math.round(vIn)} bars`; }
       }
+    } else if (oneSong) {
+      // tempo gap up to 15 %: key-locked tempo stems make it a real blend
+      recipe = "Long Blend";
     } else if (!["echo", "filter"].includes(recipeKind(recipe))) {
       // No tempo lock possible: beats cannot be layered, so don't hard-swap
       // (instant swaps between unrelated tempos changed the whole vibe in the
@@ -1473,7 +1489,7 @@
       recipe = "Echo Out";
     }
     if (layer) { bTime = layer.entry; recipe = `LAYER ${layer.hold_bars}+${layer.unwind_bars} bars`; }
-    jumpPending = !blend;
+    jumpPending = !blend && !oneSong;
     const overlapStyle = layer ? "layer"
       : blend ? (candidate.overlap_style || "standard")
               : "standard"; // never "instant" across a tempo gap
@@ -1504,7 +1520,7 @@
     while (effectiveATime < nowPos + 15) effectiveATime += phraseS;
     // vocalShort: xfDuration < 16 halves every bar count in executeTransition
     // (Bass Swap 8 -> 4 bars) so the overlap ends before B's vocal.
-    const xfDuration = vocalShort ? Math.min(8, w.xf) : peakT ? Math.max(16, w.xf) : w.xf;
+    const xfDuration = oneSong ? Math.max(16, w.xf) : vocalShort ? Math.min(8, w.xf) : peakT ? Math.max(16, w.xf) : w.xf;
     playPlanTag = ` | ${w.label} ${fmtTime(effectiveATime - entryPos)}`;
 
     let executed = false;

@@ -73,3 +73,14 @@ console.log("stem moves core ok");
   assert.strictEqual(remixPick({ ...base, count: 3 }), null);                   // 3 per song
   console.log("stem remix ok");
 }
+
+// keys clash: one tonal owner, B's synths only after A's are half-faded
+{
+  const { stemBlendPlan } = require("../ui/static/stem-moves.js");
+  const ev = stemBlendPlan("blend", 32, false, false, true);
+  const bOtherUp = ev.filter((e) => e.deck === "in" && e.stems && e.stems.other > 0);
+  assert.ok(bOtherUp.every((e) => e.bar >= 24), `B synths wait for A's to fade: ${bOtherUp.map((e) => e.bar)}`);
+  const aOther = ev.find((e) => e.deck === "out" && e.stems && e.stems.other === 0);
+  assert.ok(aOther.bar + aOther.ramp <= 24 + 1e-9);
+  console.log("key clash blend ok");
+}

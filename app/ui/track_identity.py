@@ -17,13 +17,13 @@ from __future__ import annotations
 import re
 from typing import List, Tuple
 
-_SEPARATORS = re.compile(r"\s+[-–—|｜]\s+|\s[｜|]\s?")
+_SEPARATORS = re.compile(r"\s+[-–—|｜•·]\s+|\s[｜|]\s?|\s*●+\s*|\s+[：:]\s+|\s*：\s*")
 _ARTIST_SPLIT = re.compile(
     r"\s*(?:,|&|\+|\bx\b|\band\b|\bfeat\.?|\bft\.?|\bfeaturing\b|\bwith\b|\bvs\.?)\s*",
     re.IGNORECASE,
 )
 _NOISE = re.compile(
-    r"\s*[\(\[]\s*(?:official(?:\s+(?:music|lyric|audio|hd))?\s*(?:video|audio|visuali[sz]er)?|"
+    r"\s*[\(\[]\s*(?:official\b[^)\]]*|"
     r"(?:lyric|lyrics|music)\s+video|audio(?:\s+hq)?|hq|hd|4k|lyrics?|visuali[sz]er|"
     r"(?:feat|ft|featuring|with)\b[^)\]]*|explicit|clean|out now|premiere)\s*[\)\]]",
     re.IGNORECASE,
