@@ -968,7 +968,9 @@ def post_match(req: MatchRequest):
             track = dataclasses.replace(track, vocal_active_regions=[tuple(r) for r in regions])
         tracks.append(track)
     track_a, track_b = tracks
-    candidates = _matcher.match(track_a, track_b, top_n=req.top_n)
+    candidates = _matcher.match(
+        track_a, track_b, top_n=req.top_n, **_pair_vibe(req.track_a_id, req.track_b_id),
+    )
     # Measured vibe continuity (loudness / brightness / onset density / energy).
     # Best-effort: a vibe failure must never break matching.
     vibe = None
@@ -1252,6 +1254,7 @@ def post_preview(req: PreviewRequest):
         candidate = _matcher.resolve_candidate(
             track_a, track_b,
             recipe_name=req.recipe, a_time=req.a_time, b_time=req.b_time,
+            **_pair_vibe(req.track_a_id, req.track_b_id),
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -1299,6 +1302,7 @@ def post_render(req: RenderRequest):
         candidate = _matcher.resolve_candidate(
             track_a, track_b,
             recipe_name=req.recipe, a_time=req.a_time, b_time=req.b_time,
+            **_pair_vibe(req.track_a_id, req.track_b_id),
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -1439,6 +1443,26 @@ def _clean_set_id(raw) -> str:
 def _genre_key(title: str) -> str:
     from app.ui.track_identity import clean_title
     return " ".join(clean_title(title).lower().split())
+
+
+def _track_vibe(track_id: str) -> Dict[str, Optional[str]]:
+    """track_id -> {"genre", "era"} labels the model already gave this title
+    (suggestions / current_genre), same keying as the library fallback.
+    Unknown -> None, which RecipeMatcher treats as no penalty."""
+    from app.ui.track_identity import clean_identity
+
+    path = _tracks.get(track_id)
+    name = _track_names.get(track_id) or (path.stem if path else "")
+    if not name:
+        return {"genre": None, "era": None}
+    key = _genre_key(clean_identity(name)[1])
+    return {"genre": _suggested_genres.get(key) or None, "era": _suggested_eras.get(key) or None}
+
+
+def _pair_vibe(track_a_id: str, track_b_id: str) -> Dict[str, Optional[str]]:
+    """Genre/era kwargs for RecipeMatcher.match / resolve_candidate."""
+    a, b = _track_vibe(track_a_id), _track_vibe(track_b_id)
+    return {"genre_a": a["genre"], "genre_b": b["genre"], "era_a": a["era"], "era_b": b["era"]}
 
 
 # Identical suggest requests share ONE LLM call. A browser whose request timed
@@ -1638,7 +1662,9 @@ def autopilot_plan(req: MindPlanRequest):
         raise HTTPException(status_code=400, detail="window_hi must be > window_lo")
     track_a = analyze_track(_track_path(req.track_a_id))
     track_b = analyze_track(_track_path(req.track_b_id))
-    candidates = [c.to_dict() for c in _matcher.match(track_a, track_b, top_n=3)]
+    candidates = [c.to_dict() for c in _matcher.match(
+        track_a, track_b, top_n=3, **_pair_vibe(req.track_a_id, req.track_b_id),
+    )]
     if not candidates:
         raise HTTPException(status_code=422, detail="No match candidates for this pair")
     facts = build_facts(track_a.to_dict(), track_b.to_dict(), candidates, req.model_dump()

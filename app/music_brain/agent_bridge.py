@@ -48,12 +48,24 @@ def separate(audio_path: str, stems: int = 4) -> dict:
     return result.to_dict()
 
 
-def match(track_a_path: str, track_b_path: str, top_n: int = 3) -> dict:
-    """Top-N recommended transition blueprints for a track pair."""
+def match(
+    track_a_path: str,
+    track_b_path: str,
+    top_n: int = 3,
+    genre_a: Optional[str] = None,
+    genre_b: Optional[str] = None,
+    era_a: Optional[str] = None,
+    era_b: Optional[str] = None,
+) -> dict:
+    """Top-N recommended transition blueprints for a track pair. Optional
+    genre/era labels penalise an unrelated-genre or multi-decade jump."""
     track_a = _analyze(track_a_path)
     track_b = _analyze(track_b_path)
     matcher = RecipeMatcher(_get_knowledge())
-    candidates = matcher.match(track_a, track_b, top_n=top_n)
+    candidates = matcher.match(
+        track_a, track_b, top_n=top_n,
+        genre_a=genre_a, genre_b=genre_b, era_a=era_a, era_b=era_b,
+    )
     return {
         "track_a": track_a_path,
         "track_b": track_b_path,
@@ -69,6 +81,10 @@ def preview(
     preview_seconds: float = 20.0,
     a_time: Optional[float] = None,
     b_time: Optional[float] = None,
+    genre_a: Optional[str] = None,
+    genre_b: Optional[str] = None,
+    era_a: Optional[str] = None,
+    era_b: Optional[str] = None,
 ) -> dict:
     """Renders a preview snippet.
 
@@ -83,6 +99,7 @@ def preview(
     matcher = RecipeMatcher(_get_knowledge())
     candidate = matcher.resolve_candidate(
         track_a, track_b, recipe_name=recipe_name, a_time=a_time, b_time=b_time,
+        genre_a=genre_a, genre_b=genre_b, era_a=era_a, era_b=era_b,
     )
 
     result = render_preview(
@@ -139,6 +156,12 @@ def _build_parser() -> argparse.ArgumentParser:
     p_preview.add_argument("--a-time", type=float, default=None, help="Manual exit point on track_a (seconds); overrides the AI's own point.")
     p_preview.add_argument("--b-time", type=float, default=None, help="Manual entry point on track_b (seconds); overrides the AI's own point.")
 
+    for p in (p_match, p_preview):
+        p.add_argument("--genre-a", default=None, help="Genre label for track_a (e.g. 'melodic house'); penalises an unrelated-genre jump.")
+        p.add_argument("--genre-b", default=None, help="Genre label for track_b.")
+        p.add_argument("--era-a", default=None, help="Release era for track_a (e.g. '1990s'); penalises a multi-decade jump.")
+        p.add_argument("--era-b", default=None, help="Release era for track_b.")
+
     sub.add_parser("list-recipes", help="List all 28 parsed transition recipes.")
 
     return parser
@@ -154,12 +177,16 @@ def main(argv: Optional[list[str]] = None) -> int:
         elif args.command == "separate":
             payload = separate(args.audio_path, stems=args.stems)
         elif args.command == "match":
-            payload = match(args.track_a, args.track_b, top_n=args.top_n)
+            payload = match(
+                args.track_a, args.track_b, top_n=args.top_n,
+                genre_a=args.genre_a, genre_b=args.genre_b, era_a=args.era_a, era_b=args.era_b,
+            )
         elif args.command == "preview":
             payload = preview(
                 args.track_a, args.track_b,
                 recipe_name=args.recipe, out=args.out, preview_seconds=args.seconds,
                 a_time=args.a_time, b_time=args.b_time,
+                genre_a=args.genre_a, genre_b=args.genre_b, era_a=args.era_a, era_b=args.era_b,
             )
         elif args.command == "list-recipes":
             payload = list_recipes()

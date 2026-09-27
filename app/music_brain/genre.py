@@ -109,3 +109,22 @@ GENRE_JUMP_PENALTY = 0.6  # unrelated-family jump knocks the transition score do
 def genre_score(genre_a, genre_b) -> float:
     """1.0 when either genre is unknown or they share a family; penalized on a clean jump."""
     return GENRE_JUMP_PENALTY if family_jump(genre_a, genre_b) else 1.0
+
+
+# Softer than a genre jump: a 90s house classic into a 2020s house record is a
+# stock DJ move, so a big era gap alone only trims the score (0.85 → a 90-point
+# pair lands ~77, still playable but no longer tops a same-era option). Stacked
+# with a family jump (0.6 x 0.85 ≈ 0.51) it sinks the pair, which is the
+# Aqua 1997 -> Bicep 2017 / house -> metal case the user flagged.
+ERA_JUMP_PENALTY = 0.85
+
+
+def era_score(era_a, era_b) -> float:
+    """1.0 when either era is unknown or within MAX_ERA_GAP decades; penalized beyond."""
+    gap = era_gap(era_a, era_b)
+    return ERA_JUMP_PENALTY if gap is not None and gap > MAX_ERA_GAP else 1.0
+
+
+def vibe_score(genre_a=None, genre_b=None, era_a=None, era_b=None) -> float:
+    """Combined genre x era multiplier for transition scoring; 1.0 when all unknown."""
+    return genre_score(genre_a, genre_b) * era_score(era_a, era_b)

@@ -21,7 +21,7 @@ from typing import List, Optional, Tuple
 
 from app.music_brain.analyzer import TrackAnalysis
 from app.music_brain.config import BARS_PER_PHRASE, BEATS_PER_BAR
-from app.music_brain.genre import genre_score
+from app.music_brain.genre import vibe_score
 from app.music_brain.knowledge_parser import KnowledgeParser, TransitionRecipe
 
 _CAMELOT_RE = re.compile(r"^(\d{1,2})([AB])$", re.IGNORECASE)
@@ -371,6 +371,8 @@ class RecipeMatcher:
         b_time: float,
         genre_a: Optional[str] = None,
         genre_b: Optional[str] = None,
+        era_a: Optional[str] = None,
+        era_b: Optional[str] = None,
     ) -> TransitionCandidate:
         camelot_score, camelot_reason = 1.0, "not evaluated (no key estimate)"
         key_blocked = False
@@ -417,7 +419,8 @@ class RecipeMatcher:
 
         # Unrelated-genre jump (e.g. melodic house -> industrial metal): key/BPM/
         # phrase math can still line up, so this is a hard multiplier, not a nudge.
-        raw *= genre_score(genre_a, genre_b)
+        # A multi-decade era gap trims it further (genre.ERA_JUMP_PENALTY).
+        raw *= vibe_score(genre_a, genre_b, era_a, era_b)
 
         score = max(0.0, min(100.0, raw * 100.0))
         explanation = _explain(recipe, camelot_reason, bpm_label, a_time, b_time, penalty)
@@ -439,6 +442,8 @@ class RecipeMatcher:
         energy_hint: str = "maintain",
         genre_a: Optional[str] = None,
         genre_b: Optional[str] = None,
+        era_a: Optional[str] = None,
+        era_b: Optional[str] = None,
     ) -> List[TransitionCandidate]:
         entry_points = find_entry_candidates(track_b) or (
             [track_b.phrase_boundaries_8bar[0]] if track_b.phrase_boundaries_8bar else [0.0]
@@ -455,6 +460,7 @@ class RecipeMatcher:
                 for b_time in entry_points:
                     candidate = self._score_one(
                         recipe, track_a, a_time, track_b, b_time, genre_a, genre_b,
+                        era_a, era_b,
                     )
                     existing = best_per_recipe.get(recipe.name)
                     if existing is None or candidate.score > existing.score:
@@ -484,6 +490,8 @@ class RecipeMatcher:
         snap_to_phrase: bool = True,
         genre_a: Optional[str] = None,
         genre_b: Optional[str] = None,
+        era_a: Optional[str] = None,
+        era_b: Optional[str] = None,
     ) -> TransitionCandidate:
         """Scores one specific recipe at explicit, user-chosen times — the
         manual-override path (as opposed to `match`, which picks its own
@@ -499,7 +507,9 @@ class RecipeMatcher:
             a_time = nearest_phrase_boundary(track_a, a_time)
             b_time = nearest_phrase_boundary(track_b, b_time)
 
-        return self._score_one(recipe, track_a, a_time, track_b, b_time, genre_a, genre_b)
+        return self._score_one(
+            recipe, track_a, a_time, track_b, b_time, genre_a, genre_b, era_a, era_b,
+        )
 
     def resolve_candidate(
         self,
@@ -509,6 +519,10 @@ class RecipeMatcher:
         a_time: Optional[float] = None,
         b_time: Optional[float] = None,
         top_n_for_default: int = 3,
+        genre_a: Optional[str] = None,
+        genre_b: Optional[str] = None,
+        era_a: Optional[str] = None,
+        era_b: Optional[str] = None,
     ) -> TransitionCandidate:
         """The single entry point both the CLI/agent bridge and the web API
         use to decide what to actually render:
@@ -525,9 +539,10 @@ class RecipeMatcher:
         among the AI's own scored candidates.
         """
         manual_override = a_time is not None or b_time is not None
+        vibe = dict(genre_a=genre_a, genre_b=genre_b, era_a=era_a, era_b=era_b)
 
         if not manual_override and recipe_name is None:
-            candidates = self.match(track_a, track_b, top_n=1)
+            candidates = self.match(track_a, track_b, top_n=1, **vibe)
             if not candidates:
                 raise ValueError("No transition candidates found for this track pair")
             return candidates[0]
@@ -539,6 +554,7 @@ class RecipeMatcher:
         default_candidates = self.match(
             track_a, track_b,
             top_n=top_n_for_default if recipe_name is None else len(self.knowledge.get_all()),
+            **vibe,
         )
         if recipe_name is None:
             if not default_candidates:
@@ -552,7 +568,10 @@ class RecipeMatcher:
         final_a = a_time if a_time is not None else default_a
         final_b = b_time if b_time is not None else default_b
 
-        return self.score_pair(recipe_name, track_a, final_a, track_b, final_b, snap_to_phrase=manual_override)
+        return self.score_pair(
+            recipe_name, track_a, final_a, track_b, final_b,
+            snap_to_phrase=manual_override, **vibe,
+        )
 
 
 if __name__ == "__main__":
