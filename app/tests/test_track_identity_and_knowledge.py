@@ -90,7 +90,7 @@ def test_bullet_and_colon_separators_split_artist_and_title():
     assert clean_identity("SIDHU MOOSE WALA ： DOLLAR ｜ BYG BYRD")[0].lower() == "sidhu moose wala"
 
 
-def test_other_uploads_and_remixes_of_a_played_song_are_dropped(monkeypatch):
+def test_other_uploads_and_early_remixes_of_a_played_song_are_dropped(monkeypatch):
     import json
     import app.ui.autopilot_service as svc
     reply = {"current_genre": "melodic house", "suggestions": [
@@ -100,3 +100,22 @@ def test_other_uploads_and_remixes_of_a_played_song_are_dropped(monkeypatch):
     out = svc.suggest_next_tracks("After Earth", "Ben Böhmer", 120.0, "8A", 300.0, 0.5, "",
                                   ["RÜFÜS DU SOL ●● Treat You Better (Official Single Edit Video)"])
     assert [s["title"] for s in out] == ["Brightest Lights"]
+
+
+def test_remix_of_a_song_played_long_ago_is_welcome(monkeypatch):
+    import json
+    import app.ui.autopilot_service as svc
+    reply = {"current_genre": "melodic house", "suggestions": [
+        {"artist": "RÜFÜS DU SOL", "title": "Treat You Better (Purple Disco Machine Remix)", "genre": "melodic house", "genre_hop": 0, "expected_bpm": 120},
+        {"artist": "RÜFÜS DU SOL", "title": "Treat You Better", "genre": "melodic house", "genre_hop": 0, "expected_bpm": 120}]}
+    monkeypatch.setattr(svc, "chat_raw", lambda *a, **k: json.dumps(reply))
+    history = ["RÜFÜS DU SOL ●● Treat You Better (Official Single Edit Video)"] + [f"Artist {i} - Song {i}" for i in range(9)]
+    out = svc.suggest_next_tracks("After Earth", "Ben Böhmer", 120.0, "8A", 300.0, 0.5, "", history)
+    assert [s["title"] for s in out] == ["Treat You Better (Purple Disco Machine Remix)"]   # the original never again
+
+
+def test_unplayed_remixes_pass():
+    import app.ui.autopilot_service as svc
+    data = {"current_genre": "house", "suggestions": [
+        {"artist": "Lane 8", "title": "Brightest Lights (Yotto Remix)", "genre": "house", "genre_hop": 0}]}
+    assert [s["title"] for s in svc._filter_suggestions(data, [])] == ["Brightest Lights (Yotto Remix)"]

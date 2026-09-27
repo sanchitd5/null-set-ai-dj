@@ -133,6 +133,10 @@ MIX MOMENT: For each suggestion specify WHERE in the outgoing track to begin the
 AVOID TRACKS: The history list contains track names already played. Do NOT suggest any track whose
   title appears in that list. Same artist is fine — only the exact title is banned.
 
+REMIXES: remixes, edits and reworks are welcome when they keep the vibe (a club remix of a
+  vocal song is often the better fit on a dancefloor). Give the remixer in the title, e.g.
+  "Treat You Better (Purple Disco Machine Remix)". Never the same version of a song twice.
+
 FACTS (critical):
   Suggest only songs that really exist, credited to their real artist. Every pick is
   checked against YouTube; invented titles are thrown away.
@@ -144,6 +148,9 @@ OUTPUT FORMAT — return ONLY valid JSON, no markdown, no explanation:
 {{"steering":"stay|move","occasion_fit":0,"current_genre":"","current_profile":{{"energy":0,"tempo_feel":"","drums":"","vocals":"","mood":"","texture":""}},"suggestions":[{{"artist":"","title":"","reason":"one sentence: harmonic move + how THIS song's sound matches","genre":"inferred genre of suggested track","expected_bpm":0,"expected_key":"","mix_moment":"exit at [section] ~bar N","energy_delta":"up|down|maintain","vibe_link":"specific sonic characteristic shared — NOT a genre label","genre_hop":0,"occasion_fit":0,"track_profile":{{"energy":0,"tempo_feel":"","drums":"","vocals":"","mood":"","texture":""}}}}]}}
 
 {_FEW_SHOT}"""
+
+REMIX_REPLAY_GAP = 8   # songs between a song and a remix of it
+_VERSION_WORDS = re.compile(r"\b(remix|re-?edit|edit|rework|bootleg|vip|flip|refix|dub|mix)\b", re.IGNORECASE)
 
 TEMPO_LOCK_PCT = 0.06  # the autopilot pitch-locks the next song within +/-8%; aim inside 6%
 
@@ -493,8 +500,13 @@ def _filter_suggestions(
     # by the song, not the upload: "RÜFÜS DU SOL ●● Treat You Better (Official
     # Single Edit Video)" and "... (Purple Disco Machine Remix)" are the same song
     from app.ui.track_identity import clean_identity
-    played_bare = {_bare_title(h.split(" - ", 1)[-1]) for h in history} | {
-        _bare_title(clean_identity(h)[1]) for h in history}
+    def _song(h):
+        return {_bare_title(h.split(" - ", 1)[-1]), _bare_title(clean_identity(h)[1])}
+    played_bare = set().union(*[_song(h) for h in history]) if history else set()
+    # Remixes are welcome (user) when they match the vibe; a remix of a song
+    # already played only after REMIX_REPLAY_GAP other songs.
+    recent_bare = set().union(*[_song(h) for h in history[-REMIX_REPLAY_GAP:]]) if history else set()
+    played_versions = {" ".join(str(h).lower().split()) for h in history}
     cur = data.get("current_profile")
     ok, clashes, key_clashes, genre_jumps = [], [], [], []
     # "move" only licenses a genre jump inside an occasion: with no occasion the
@@ -507,8 +519,14 @@ def _filter_suggestions(
         label = f"{s.get('artist', '')} {s['title']}"
         if _is_mix(label) or _is_non_music(label):
             continue
-        if _bare_title(s["title"]) in played_bare or any(s["title"].lower() in p for p in played):
-            continue  # same song again, incl. a remix / feat. variant of a played one
+        bare = _bare_title(s["title"])
+        is_version = bool(_VERSION_WORDS.search(s["title"]))
+        if bare in played_bare:
+            same_version = any(s["title"].lower() in p for p in played_versions) or not is_version
+            if same_version or bare in recent_bare:
+                continue  # the same song again, or a remix too soon after its original
+        elif any(s["title"].lower() in p for p in played):
+            continue
         # Genre continuity (user: "it's changing genre a lot": Lane 8 -> Elton John
         # -> A Boogie -> The Weeknd). The prompt rule alone wasn't followed.
         hop = _num(s.get("genre_hop"))
