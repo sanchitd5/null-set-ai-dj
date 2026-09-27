@@ -1,23 +1,41 @@
 """LLM runtime for the AI DJ: MLX on Apple Silicon, Ollama as fallback.
 
+One MLX model now serves BOTH the text-only autopilot suggestion calls and
+live_ear's audio-in calls (mlx-community/Qwen3-Omni-30B-A3B-Captioner, ~18GB):
+running Instruct (text) and Omni (audio) as two separate processes used to
+eat ~36GB RAM. The Captioner is Omni-shaped, so it is served via
+`mlx_vlm.server`, not `mlx_lm.server` (`mlx_lm.server` cannot load an Omni
+checkpoint). It is served from its own venv when present
+(~/.venvs/mlx-vlm/bin/python: mlx-vlm needs starlette>=1.0, the app's fastapi
+pins <0.28), falling back to this process's interpreter otherwise.
+
 At server startup (background thread, never blocks the app):
-  1. MLX: start `mlx_lm.server` for MLX_MODEL (default
-     mlx-community/Qwen3-30B-A3B-Instruct-2507-4bit) on MLX_PORT unless one is already
-     answering, then send one tiny warm-up chat so the weights are loaded and
-     the first real suggestion does not pay the model-load cost.
-  2. If MLX is unavailable (not Apple Silicon, mlx-lm missing, model not
+  1. MLX: start `mlx_vlm.server` for MLX_MODEL (default
+     mlx-community/Qwen3-Omni-30B-A3B-Captioner) on MLX_PORT unless one is
+     already answering, then send one tiny text-only warm-up chat (no
+     audio/image field) so the weights are loaded and the first real
+     suggestion does not pay the model-load cost.
+  2. If MLX is unavailable (not Apple Silicon, mlx-vlm missing, model not
      downloaded, server fails to come up) fall back to Ollama: preload
      OLLAMA_MODEL with keep_alive so it stays resident between songs (Ollama
      re-pinned every 4 min: each chat call resets keep_alive to 5 min).
 
 The chosen endpoint is published through the same env vars the LLM client
 already reads at call time (OLLAMA_BASE_URL / AUTOPILOT_MODEL), so callers need
-no change. Only publishes once the backend has actually answered.
+no change. Only publishes once the backend has actually answered. live_ear.py
+reuses this same published base_url/model (see its OMNI_BASE_URL/OMNI_MODEL
+env fallback) instead of running a second model.
+
+Known tradeoff (accepted): the Captioner is fine-tuned for audio description,
+not general structured-JSON instruction-following, so autopilot's strict-JSON
+suggestion prompts may come back worse-formed than they did against the
+Instruct model. That is expected, not a bug to silently work around here.
 
 Env:
   LLM_BACKEND   auto (default) | mlx | ollama
-  MLX_MODEL     mlx-community/Qwen3-30B-A3B-Instruct-2507-4bit
-  MLX_PORT      8081
+  MLX_MODEL     mlx-community/Qwen3-Omni-30B-A3B-Captioner
+  MLX_PORT      8901            (shared with live_ear.py's OMNI default port)
+  MLX_VLM_VENV  ~/.venvs/mlx-vlm/bin/python if present, else this interpreter
   OLLAMA_MODEL  gemma3:27b      (fallback model)
   OLLAMA_URL    http://localhost:11434
 """
@@ -36,9 +54,12 @@ import urllib.request
 from pathlib import Path
 from typing import Optional
 
-MLX_MODEL = os.environ.get("MLX_MODEL", "mlx-community/Qwen3-30B-A3B-Instruct-2507-4bit")
-MLX_PORT = int(os.environ.get("MLX_PORT", "8081"))
+MLX_MODEL = os.environ.get("MLX_MODEL", "mlx-community/Qwen3-Omni-30B-A3B-Captioner")
+MLX_PORT = int(os.environ.get("MLX_PORT", "8901"))
 MLX_URL = f"http://127.0.0.1:{MLX_PORT}"
+_DEFAULT_VLM_VENV = Path.home() / ".venvs" / "mlx-vlm" / "bin" / "python"
+MLX_VLM_PYTHON = os.environ.get("MLX_VLM_VENV") or (
+    str(_DEFAULT_VLM_VENV) if _DEFAULT_VLM_VENV.exists() else sys.executable)
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "gemma3:27b")
 OLLAMA_KEEP_ALIVE = "2h"
@@ -73,10 +94,12 @@ def _publish(backend: str, base_url: str, model: str, warm: float) -> None:
 def _mlx_possible() -> Optional[str]:
     if sys.platform != "darwin" or platform.machine() != "arm64":
         return "not Apple Silicon"
-    try:
-        import mlx_lm  # noqa: F401
-    except ImportError:
-        return "mlx-lm not installed"
+    if MLX_VLM_PYTHON == sys.executable:
+        # No dedicated venv: mlx_vlm must be importable in this interpreter.
+        try:
+            import mlx_vlm  # noqa: F401
+        except ImportError:
+            return "mlx-vlm not installed"
     try:
         from huggingface_hub import snapshot_download
 
@@ -95,7 +118,7 @@ def _mlx_up() -> bool:
 
 
 def _running_mlx_model() -> tuple[Optional[int], Optional[str]]:
-    """(pid, --model) of the mlx_lm.server already listening on MLX_PORT, if any.
+    """(pid, --model) of the mlx_vlm.server already listening on MLX_PORT, if any.
 
     It outlives app restarts, so switching MLX_MODEL would otherwise keep
     serving the old model."""
@@ -105,7 +128,7 @@ def _running_mlx_model() -> tuple[Optional[int], Optional[str]]:
         for pid in pids:
             args = subprocess.run(["ps", "-o", "args=", "-p", pid],
                                   capture_output=True, text=True, timeout=5).stdout.split()
-            if "mlx_lm.server" in " ".join(args) and "--model" in args:
+            if "mlx_vlm.server" in " ".join(args) and "--model" in args:
                 return int(pid), args[args.index("--model") + 1]
     except Exception:
         pass
@@ -113,7 +136,7 @@ def _running_mlx_model() -> tuple[Optional[int], Optional[str]]:
 
 
 def _stop_foreign_mlx() -> None:
-    """Stop a running mlx_lm.server that serves a different model than MLX_MODEL."""
+    """Stop a running mlx_vlm.server that serves a different model than MLX_MODEL."""
     pid, model = _running_mlx_model()
     if pid and model and model != MLX_MODEL:
         print(f"[model_runtime] mlx server on :{MLX_PORT} serves {model}, want {MLX_MODEL}: restarting it", flush=True)
@@ -148,26 +171,26 @@ def _start_mlx() -> bool:
     if not _mlx_up():
         log = open(LOG_PATH, "ab")
         _proc = subprocess.Popen(
-            [sys.executable, "-m", "mlx_lm.server", "--model", MLX_MODEL,
+            [MLX_VLM_PYTHON, "-m", "mlx_vlm.server", "--model", MLX_MODEL,
              "--host", "127.0.0.1", "--port", str(MLX_PORT)],
             stdout=log, stderr=subprocess.STDOUT,
             # its own session: the model server outlives app restarts on purpose
-            # (a restart must not reload 15 GB). It used to be stopped at exit,
+            # (a restart must not reload 18 GB). It used to be stopped at exit,
             # and a restart racing the old app's shutdown killed the model the
-            # NEW app had just adopted (ECONNREFUSED on :8081).
+            # NEW app had just adopted (ECONNREFUSED on :8901).
             start_new_session=True,
         )
         deadline = time.time() + MLX_START_TIMEOUT_S
-        state["detail"] = "starting mlx_lm.server"
+        state["detail"] = "starting mlx_vlm.server"
         while time.time() < deadline:
             if _proc.poll() is not None:
-                state["detail"] = f"mlx_lm.server exited ({_proc.returncode}); see {LOG_PATH}"
+                state["detail"] = f"mlx_vlm.server exited ({_proc.returncode}); see {LOG_PATH}"
                 return False
             if _mlx_up():
                 break
             time.sleep(1)
         else:
-            state["detail"] = "mlx_lm.server did not come up in time"
+            state["detail"] = "mlx_vlm.server did not come up in time"
             stop()
             return False
     state["detail"] = "loading mlx model"

@@ -1,0 +1,1982 @@
+{
+ "version": 1,
+ "chunks": [
+  {
+   "tags": [
+    "camelot",
+    "core"
+   ],
+   "source": "02 - Music Theory/Harmonic Mixing & Camelot System.md",
+   "text": "CAMELOT SCORE: same key = perfect (1.0); +-1 hour same letter = smooth (0.9); same hour other letter = relative major/minor (0.85); +2 hours same letter = energy boost (0.8); 3+ hours apart = harmonic clash, avoid unless bridging with an Echo Out or a Breakdown Transition."
+  },
+  {
+   "tags": [
+    "phrase",
+    "core"
+   ],
+   "source": "02 - Music Theory/Phrasing & Structure.md",
+   "text": "PHRASING: dance music is built in 8-bar (32-beat) phrases. Snap every transition entry/exit to the nearest 8-bar boundary so both tracks start a new phrase on the same Beat 1; never mix mid-phrase."
+  },
+  {
+   "tags": [
+    "bpm_gap",
+    "core"
+   ],
+   "source": "08 - Open Format/Genre Bridge Playbook.md",
+   "text": "BPM GAPS: <=6% tempo delta blends beat-to-beat (32-micro-step pitch ramp). Bigger gaps (e.g. 128 -> 174) are never stretched: bridge via a half/double-time ratio, an Echo Out, or a Breakdown Transition, or climb a <=6%-per-step ladder of songs."
+  },
+  {
+   "tags": [
+    "genre_bridge",
+    "core"
+   ],
+   "source": "08 - Open Format/Open-Format DJing Guide.md",
+   "text": "GENRE BRIDGES: cross distant genres through a bridge track that already belongs to both (a remix, a mash-up, a song whose tempo/energy sits between them). Change genre, tempo or key, but never all three at once without an auditory bridge."
+  },
+  {
+   "tags": [
+    "eq",
+    "core"
+   ],
+   "source": "04 - Core Techniques/EQ & Frequency Management.md",
+   "text": "EQ OWNERSHIP: sub-bass below 120 Hz never plays from two tracks at once; one deck owns the low end during a transition and hands it off on a downbeat (Bass Swap), never stacks it."
+  },
+  {
+   "tags": [
+    "energy",
+    "core"
+   ],
+   "source": "06 - Energy & Crowd/Energy Management & Dynamics.md",
+   "text": "ENERGY ARC: a set reads as a deliberate curve, not a flat line - warm-up builds slowly, the build pushes, the peak sustains or escalates, the close steps down gently. Constant maximum energy causes fatigue; contrast is what makes a drop land."
+  },
+  {
+   "tags": [
+    "camelot"
+   ],
+   "source": "02 - Music Theory/Harmonic Mixing & Camelot System.md",
+   "text": "CAMELOT Same Key (None (0), e.g. `8A` -> `8A`): Perfect harmonic glue; tracks sound like a single studio production. Ideal for long blends and mashups."
+  },
+  {
+   "tags": [
+    "camelot"
+   ],
+   "source": "02 - Music Theory/Harmonic Mixing & Camelot System.md",
+   "text": "CAMELOT Adjacent (+1) (+1 Hour (Clockwise), e.g. `8A` -> `9A`): Subtle, euphoric uplift; moves up a fifth (dominant modulation). Feels like positive forward momentum."
+  },
+  {
+   "tags": [
+    "camelot"
+   ],
+   "source": "02 - Music Theory/Harmonic Mixing & Camelot System.md",
+   "text": "CAMELOT Adjacent (-1) (-1 Hour (Counter-clockwise), e.g. `8A` -> `7A`): Deepening, introspective mood; moves to the subdominant. Feels grounding, darker, or heavier."
+  },
+  {
+   "tags": [
+    "camelot"
+   ],
+   "source": "02 - Music Theory/Harmonic Mixing & Camelot System.md",
+   "text": "CAMELOT Relative Flip (A leftrightarrow B, e.g. `8A` <-> `8B`): Drastic emotional transformation without clashing. Flips from moody introspection to bright sunshine."
+  },
+  {
+   "tags": [
+    "camelot"
+   ],
+   "source": "02 - Music Theory/Harmonic Mixing & Camelot System.md",
+   "text": "CAMELOT The Energy Boost (+2 Hours, e.g. `8A` -> `10A`): The Truck Driver's Gear Shift: Modulates up by a whole tone (+2 semitones). Creates an undeniable rush of adrenaline on the drop!"
+  },
+  {
+   "tags": [
+    "camelot"
+   ],
+   "source": "02 - Music Theory/Harmonic Mixing & Camelot System.md",
+   "text": "CAMELOT The Dark Descent (-2 Hours, e.g. `8A` -> `6A`): Descends by a whole tone; introduces heavy, menacing weight."
+  },
+  {
+   "tags": [
+    "camelot"
+   ],
+   "source": "02 - Music Theory/Harmonic Mixing & Camelot System.md",
+   "text": "CAMELOT The Semi-Tone Clash (+7 Hours, e.g. `8A` -> `3A`): Modulates up +1 semitone (half-step). Extreme tension; must be executed on a drop cut, not a blend."
+  },
+  {
+   "tags": [
+    "camelot"
+   ],
+   "source": "02 - Music Theory/Harmonic Mixing & Camelot System.md",
+   "text": "KEY IS NON-NEGOTIABLE: Vocals & Acapellas: Playing a vocal in `4A` over an instrumental in `11A` sounds disastrous. The singer will sound out of tune. (See Acapella Overlay)."
+  },
+  {
+   "tags": [
+    "camelot"
+   ],
+   "source": "02 - Music Theory/Harmonic Mixing & Camelot System.md",
+   "text": "KEY IS NON-NEGOTIABLE: Melodic Drops & Progressive House: If two tracks have prominent melodic synth leads, blending them out-of-key will cause ugly dissonance."
+  },
+  {
+   "tags": [
+    "camelot",
+    "camelot_bypass"
+   ],
+   "source": "02 - Music Theory/Harmonic Mixing & Camelot System.md",
+   "text": "KEY CAN BE IGNORED: Drums & Percussion: Kick drums, claps, hi-hats, and percussion loops have unpitched or broadband frequency distributions. A 130 BPM Tech House drum loop in `2A` can be mixed into a `9B` track effortlessly."
+  },
+  {
+   "tags": [
+    "camelot",
+    "camelot_bypass"
+   ],
+   "source": "02 - Music Theory/Harmonic Mixing & Camelot System.md",
+   "text": "KEY CAN BE IGNORED: The \"Drop Swap\" / Cut on the \"1\": When you cut instantly from Track A's build-up into Track B's drop, there is zero harmonic overlap. The sudden key shift acts as a thrilling acoustic shock rather than a clash. (See Drop Swap)."
+  },
+  {
+   "tags": [
+    "camelot",
+    "camelot_bypass"
+   ],
+   "source": "02 - Music Theory/Harmonic Mixing & Camelot System.md",
+   "text": "KEY CAN BE IGNORED: Echo Out / Filter Sweeps: High-pass filtering Track A while echoing it out strips the fundamental tonal frequencies, clearing the harmonic spectrum for Track B to enter in any key."
+  },
+  {
+   "tags": [
+    "phrase"
+   ],
+   "source": "02 - Music Theory/Phrasing & Structure.md",
+   "text": "PHRASING (The Anatomy of Musical Phrases): Words: Beats (1, 2, 3, 4)"
+  },
+  {
+   "tags": [
+    "phrase"
+   ],
+   "source": "02 - Music Theory/Phrasing & Structure.md",
+   "text": "PHRASING (The Anatomy of Musical Phrases): Sentences: Bars (4 beats)"
+  },
+  {
+   "tags": [
+    "phrase"
+   ],
+   "source": "02 - Music Theory/Phrasing & Structure.md",
+   "text": "PHRASING (The Anatomy of Musical Phrases): Paragraphs: 8-Bar Phrases (32 beats)"
+  },
+  {
+   "tags": [
+    "phrase"
+   ],
+   "source": "02 - Music Theory/Phrasing & Structure.md",
+   "text": "PHRASING (The Anatomy of Musical Phrases): Chapters: 16-Bar and 32-Bar Sections (64 to 128 beats)"
+  },
+  {
+   "tags": [
+    "phrase"
+   ],
+   "source": "02 - Music Theory/Phrasing & Structure.md",
+   "text": "PHRASING (The Anatomy of Musical Phrases): Bars 1–4: Statement (Theme introduced)."
+  },
+  {
+   "tags": [
+    "phrase"
+   ],
+   "source": "02 - Music Theory/Phrasing & Structure.md",
+   "text": "PHRASING (The Anatomy of Musical Phrases): Bars 5–7: Development or variation."
+  },
+  {
+   "tags": [
+    "phrase"
+   ],
+   "source": "02 - Music Theory/Phrasing & Structure.md",
+   "text": "PHRASING (The Anatomy of Musical Phrases): Bar 8: The Resolution & Fill (Drum roll, vocal pickup, cymbal crash, white noise sweep signaling a transition)."
+  },
+  {
+   "tags": [
+    "phrase"
+   ],
+   "source": "02 - Music Theory/Phrasing & Structure.md",
+   "text": "PHRASING (Why Beatmatched Transitions Sound \"Wrong\" Without Phrase Alignment): The Dropped Drop: Track A is reaching the climax of its build-up (ready to drop on Bar 1). You drop Track B 4 bars too late. When Track A drops its monster kick drum, Track B is still playing a weak riser. The impact is totally deflated."
+  },
+  {
+   "tags": [
+    "phrase"
+   ],
+   "source": "02 - Music Theory/Phrasing & Structure.md",
+   "text": "PHRASING (Why Beatmatched Transitions Sound \"Wrong\" Without Phrase Alignment): Double Fills / Cacophony: If both tracks execute a complex drum fill at different bars, the drums stumble over each other, making the mix sound cluttered."
+  },
+  {
+   "tags": [
+    "phrase"
+   ],
+   "source": "02 - Music Theory/Phrasing & Structure.md",
+   "text": "PHRASING (Why Beatmatched Transitions Sound \"Wrong\" Without Phrase Alignment): Premature Vocal Entry: Track A's vocal is finishing its emotional chorus, but Track B's vocal suddenly barges in 8 bars early, causing overlapping lyrical clashes."
+  },
+  {
+   "tags": [
+    "phrase"
+   ],
+   "source": "02 - Music Theory/Phrasing & Structure.md",
+   "text": "PHRASING (Perfect Phrase Alignment in Practice): Both tracks build tension synchronously."
+  },
+  {
+   "tags": [
+    "phrase"
+   ],
+   "source": "02 - Music Theory/Phrasing & Structure.md",
+   "text": "PHRASING (Perfect Phrase Alignment in Practice): The risers in Track A and Track B swell together."
+  },
+  {
+   "tags": [
+    "phrase"
+   ],
+   "source": "02 - Music Theory/Phrasing & Structure.md",
+   "text": "PHRASING (Perfect Phrase Alignment in Practice): On Bar 16, beat 4, both tracks cut their low-end or drop into silence simultaneously."
+  },
+  {
+   "tags": [
+    "phrase"
+   ],
+   "source": "02 - Music Theory/Phrasing & Structure.md",
+   "text": "PHRASING (Perfect Phrase Alignment in Practice): On Bar 17, Beat 1: You execute a Bass Swap or drop swap, and the new drop hits with colossal, unified impact!"
+  },
+  {
+   "tags": [
+    "eq"
+   ],
+   "source": "04 - Core Techniques/EQ & Frequency Management.md",
+   "text": "EQ (Gain / Trim (Input Pre-Amplification)): What it is: The control knob at the very top of each channel strip that normalizes the raw input volume of the audio file."
+  },
+  {
+   "tags": [
+    "eq"
+   ],
+   "source": "04 - Core Techniques/EQ & Frequency Management.md",
+   "text": "EQ (Gain / Trim (Input Pre-Amplification)): Why it matters: Tracks produced in different eras, studios, or master formats have vastly different volume levels. A 1990s house track will sound quiet; a 2024 hyper-compressed EDM track will blast your ears."
+  },
+  {
+   "tags": [
+    "eq"
+   ],
+   "source": "04 - Core Techniques/EQ & Frequency Management.md",
+   "text": "EQ (Channel Fader (Performance Balance)): What it is: The linear upfader that controls how much of the pre-amplified, EQ'd audio feeds the master summing bus."
+  },
+  {
+   "tags": [
+    "eq"
+   ],
+   "source": "04 - Core Techniques/EQ & Frequency Management.md",
+   "text": "EQ (Headroom & Clipping (The \"Redline\" Myth)): Headroom: The dynamic safety buffer between your highest audio peak and the point where the digital/analog circuits distort."
+  },
+  {
+   "tags": [
+    "eq"
+   ],
+   "source": "04 - Core Techniques/EQ & Frequency Management.md",
+   "text": "EQ (Headroom & Clipping (The \"Redline\" Myth)): The \"Redline\" Myth: Amateur DJs believe turning gains into the flashing red lights makes the sound louder. It does not. On digital club mixers (Pioneer DJM-900NXS2, DJM-A9), redlining triggers hard digital limiting and harmonic distortion...."
+  },
+  {
+   "tags": [
+    "eq"
+   ],
+   "source": "04 - Core Techniques/EQ & Frequency Management.md",
+   "text": "EQ (The Sub/Kick Conflict (30 --120 Hz)): The Law: Zero Sub-Bass Overlap. During any transition, one track's Low EQ must be dialed down (typically to 7 o'clock / kill, or 9 o'clock) until the exact downbeat where you execute the Bass Swap."
+  },
+  {
+   "tags": [
+    "eq"
+   ],
+   "source": "04 - Core Techniques/EQ & Frequency Management.md",
+   "text": "EQ (The Mid-Range Vocal Conflict (300 Hz --3 kHz)): The Law: If Track B has a vocal, Track A's Mid EQ must be carved back to 10 or 9 o'clock to create a clear \"acoustic pocket.\""
+  },
+  {
+   "tags": [
+    "eq"
+   ],
+   "source": "04 - Core Techniques/EQ & Frequency Management.md",
+   "text": "EQ (The High-End Clatter (5 --16 kHz)): The Law: Bring Track B's High EQ in at 9 or 10 o'clock. As you transition, gradually swap the Highs to transfer the top-end groove energy cleanly."
+  },
+  {
+   "tags": [
+    "eq"
+   ],
+   "source": "04 - Core Techniques/EQ & Frequency Management.md",
+   "text": "EQ (Pop Vocal Over a Tech House Groove): Tech House (Track A): Owns the LOW (100% kick and sub) and HIGH (crisp percussion). Mid EQ turned to 9 o'clock."
+  },
+  {
+   "tags": [
+    "eq"
+   ],
+   "source": "04 - Core Techniques/EQ & Frequency Management.md",
+   "text": "EQ (Pop Vocal Over a Tech House Groove): Pop Track (Track B): Low EQ at zero (kill). High EQ at 9 o'clock. Mid EQ at 12 o'clock (center)."
+  },
+  {
+   "tags": [
+    "eq"
+   ],
+   "source": "04 - Core Techniques/EQ & Frequency Management.md",
+   "text": "EQ (The Clean Bassline Swap): Track A is rolling."
+  },
+  {
+   "tags": [
+    "eq"
+   ],
+   "source": "04 - Core Techniques/EQ & Frequency Management.md",
+   "text": "EQ (The Clean Bassline Swap): Bring in Track B with Low EQ at 7 o'clock (completely muted), Mids at 10 o'clock, Highs at 11 o'clock."
+  },
+  {
+   "tags": [
+    "energy"
+   ],
+   "source": "06 - Energy & Crowd/Energy Management & Dynamics.md",
+   "text": "ENERGY DIMENSION: BPM & Subdivisions: A 174 BPM DnB roller carries inherently higher kinetic step frequency than a 118 BPM Deep House groove."
+  },
+  {
+   "tags": [
+    "energy"
+   ],
+   "source": "06 - Energy & Crowd/Energy Management & Dynamics.md",
+   "text": "ENERGY DIMENSION: Spectral Density: How many frequencies are firing at once? A sparse sub-bass and a hi-hat = Energy 3. A massive wall of distorted supersaws, screaming vocal chops, and white noise = Energy 10."
+  },
+  {
+   "tags": [
+    "energy"
+   ],
+   "source": "06 - Energy & Crowd/Energy Management & Dynamics.md",
+   "text": "ENERGY DIMENSION: Low-End Punch (RMS Power): How loud and aggressive is the sub-bass transient?"
+  },
+  {
+   "tags": [
+    "energy"
+   ],
+   "source": "06 - Energy & Crowd/Energy Management & Dynamics.md",
+   "text": "ENERGY DIMENSION: Vocal Familiarity: When 2,000 people sing every lyric together, emotional and psychological energy spikes even if the music is soft."
+  },
+  {
+   "tags": [
+    "energy"
+   ],
+   "source": "06 - Energy & Crowd/Energy Management & Dynamics.md",
+   "text": "ENERGY DIMENSION: Dynamic Tension: Snare rolls, rising pitch, and high-pass sweeps tighten the room's collective nervous system."
+  },
+  {
+   "tags": [
+    "energy"
+   ],
+   "source": "06 - Energy & Crowd/Energy Management & Dynamics.md",
+   "text": "ENERGY DIMENSION: Release & Physical Catharsis: The instantaneous return of the kick drum."
+  },
+  {
+   "tags": [
+    "energy"
+   ],
+   "source": "06 - Energy & Crowd/Energy Management & Dynamics.md",
+   "text": "ENERGY DIMENSION: The Power of Silence: Complete cessation of sound right before a drop amplifies perceived loudness by +3 --6 dB due to the ear's acoustic reflex."
+  },
+  {
+   "tags": [
+    "energy"
+   ],
+   "source": "06 - Energy & Crowd/Energy Management & Dynamics.md",
+   "text": "ENERGY DIMENSION: Rhythmic Contrast: Shifting from a straight four-on-the-floor kick into a broken half-time trap or dubstep beat shocks the body into a new physical dance mode."
+  },
+  {
+   "tags": [
+    "energy"
+   ],
+   "source": "06 - Energy & Crowd/Energy Management & Dynamics.md",
+   "text": "SET CURVE (The 60-Minute Club / Headline Set Curve (The Three-Peak Journey)): A classic 60-minute headline journey: establishes identity, builds to a mid-set peak, provides an emotional valley reset, and charges toward an explosive double-climax finale."
+  },
+  {
+   "tags": [
+    "energy",
+    "warmup"
+   ],
+   "source": "06 - Energy & Crowd/Energy Management & Dynamics.md",
+   "text": "SET CURVE (The 60-Minute Club / Headline Set Curve (The Three-Peak Journey)): 00–10m (Establish Identity): Open at Energy 4–6. Establish the groove, let people finish their drinks and move onto the floor."
+  },
+  {
+   "tags": [
+    "build",
+    "energy",
+    "peak"
+   ],
+   "source": "06 - Energy & Crowd/Energy Management & Dynamics.md",
+   "text": "SET CURVE (The 60-Minute Club / Headline Set Curve (The Three-Peak Journey)): 10–25m (First Major Peak): Build steadily to Energy 8.5 with recognizable anthems and tight transitions."
+  },
+  {
+   "tags": [
+    "energy",
+    "peak"
+   ],
+   "source": "06 - Energy & Crowd/Energy Management & Dynamics.md",
+   "text": "SET CURVE (The 60-Minute Club / Headline Set Curve (The Three-Peak Journey)): 25–35m (The Reset Valley): Drop the energy back to 5–6 with an emotional vocal breakdown or deeper groove. Dancers breathe, hydrate, and look around."
+  },
+  {
+   "tags": [
+    "build",
+    "energy"
+   ],
+   "source": "06 - Energy & Crowd/Energy Management & Dynamics.md",
+   "text": "SET CURVE (The 60-Minute Club / Headline Set Curve (The Three-Peak Journey)): 35–50m (The Mountain Climb): Ramp up through aggressive genre transitions and builds (Energy 7 -> 9)."
+  },
+  {
+   "tags": [
+    "cooldown",
+    "energy"
+   ],
+   "source": "06 - Energy & Crowd/Energy Management & Dynamics.md",
+   "text": "SET CURVE (The 60-Minute Club / Headline Set Curve (The Three-Peak Journey)): 50–60m (The Grand Finale): Deliver the ultimate climax (Energy 10), dropping your signature mashup, double drop, or heaviest unreleased track, followed by an emotional sing-along outro."
+  },
+  {
+   "tags": [
+    "energy"
+   ],
+   "source": "06 - Energy & Crowd/Energy Management & Dynamics.md",
+   "text": "SET CURVE (The 30-Minute Festival Showcase Curve (High-Density Shock)): In a 30-minute competition or festival showcase, there is zero time to waste on long extended intros."
+  },
+  {
+   "tags": [
+    "energy",
+    "genre:house-tech-house-playbook",
+    "genre:melodic-electronic-playbook"
+   ],
+   "source": "06 - Energy & Crowd/Energy Management & Dynamics.md",
+   "text": "SET CURVE (The House / Techno Set Curve (The Wave-Like Rolling Groove)): House music does not rely on massive mountain peaks and cliff drops; it relies on a steady, hypnotic, undulating tide where energy rises and falls subtly through groove modulation."
+  },
+  {
+   "tags": [
+    "energy",
+    "genre:drum-bass-dnb-playbook"
+   ],
+   "source": "06 - Energy & Crowd/Energy Management & Dynamics.md",
+   "text": "SET CURVE (The Drum & Bass (DnB) High-Velocity Roller Curve): DnB operates at 174 BPM with rapid double-dropping. Valleys are short, atmospheric breaks that suddenly explode into intense kinetic sprints."
+  },
+  {
+   "tags": [
+    "energy"
+   ],
+   "source": "06 - Energy & Crowd/Energy Management & Dynamics.md",
+   "text": "SET CURVE (The Open-Format Dynamic Contrast Curve (Genre-Hopping Rollercoaster)): Open-format DJing uses drastic tempo shifts, cultural nostalgia, and sudden genre bridges to create an exhilarating rollercoaster where energy fluctuates wildly between high-tension drops and communal pop sing-alongs."
+  },
+  {
+   "tags": [
+    "energy",
+    "warmup"
+   ],
+   "source": "12 - Set Construction/Set Construction & Architecture.md",
+   "text": "SET STAGE 1 (The Opening (The Atmosphere Setter)): Purpose: Clears the room's psychological slate from the previous DJ or background silence. Establishes the acoustic world you are inviting them into...."
+  },
+  {
+   "tags": [
+    "energy",
+    "warmup"
+   ],
+   "source": "12 - Set Construction/Set Construction & Architecture.md",
+   "text": "SET STAGE 2 (Establishing Sonic Identity (The Statement)): Purpose: Declares your taste, groove, and authority within the first 3 tracks. Tactic: A distinctive, signature record that announces: -\"You are in good hands tonight.\"-"
+  },
+  {
+   "tags": [
+    "build",
+    "energy"
+   ],
+   "source": "12 - Set Construction/Set Construction & Architecture.md",
+   "text": "SET STAGE 3 (The First Peak (Proof of Concept)): Purpose: Proves to the audience that you know how to make them dance. Gives them their first communal adrenaline rush. Tactic: A high-energy banger or familiar vocal anthem to pack the floor tightly."
+  },
+  {
+   "tags": [
+    "build",
+    "energy"
+   ],
+   "source": "12 - Set Construction/Set Construction & Architecture.md",
+   "text": "SET STAGE 4 (Development & The Hypnotic Pocket): Purpose: Deepens the dancefloor groove. Rather than exhausting the crowd with constant build-ups, let the music roll for 10–15 minutes. Tactic: Extended bassline mixing, subtle percussion layering, and groove continuity."
+  },
+  {
+   "tags": [
+    "build",
+    "energy"
+   ],
+   "source": "12 - Set Construction/Set Construction & Architecture.md",
+   "text": "SET STAGE 5 (Contrast & Stylistic Shock): Purpose: Subverts expectations right when the crowd assumes they have your style figured out. Tactic: A bold Genre Bridge—e.g., dropping from 126 BPM House into 140 BPM Trap, or introducing an unexpected classic rock or hip-hop vocal."
+  },
+  {
+   "tags": [
+    "energy",
+    "peak"
+   ],
+   "source": "12 - Set Construction/Set Construction & Architecture.md",
+   "text": "SET STAGE 6 (The Reset Valley (Emotional Catharsis)): Purpose: The vital breath before the summit. Strips the sub-bass away, reduces density, and lets dancers connect human-to-human. Tactic: A beautiful, drumless vocal breakdown or acoustic piano chords. (See Breakdown Transition)."
+  },
+  {
+   "tags": [
+    "energy",
+    "peak"
+   ],
+   "source": "12 - Set Construction/Set Construction & Architecture.md",
+   "text": "SET STAGE 7 (The Main Peak (The Climax)): Purpose: The highest energy peak of the entire set. Tactic: Your most devastating Drop Swap, a thunderous Double Drop, or an exclusive live mashup."
+  },
+  {
+   "tags": [
+    "cooldown",
+    "energy"
+   ],
+   "source": "12 - Set Construction/Set Construction & Architecture.md",
+   "text": "SET STAGE 8 (The Finale (The Emotional Anchor)): Purpose: Leaves the audience with an indelible emotional memory as they walk out of the venue. Tactic: A transcendent, uplifting anthem where the entire venue sings in unison."
+  },
+  {
+   "tags": [
+    "crowd",
+    "energy"
+   ],
+   "source": "06 - Energy & Crowd/Reading the Room & Crowd Psychology.md",
+   "text": "CROWD (Knowing When to Stay with a Vibe vs. When to Switch): Track 1: The Breakthrough (Ignites the dancefloor with a fresh sound)."
+  },
+  {
+   "tags": [
+    "crowd",
+    "energy"
+   ],
+   "source": "06 - Energy & Crowd/Reading the Room & Crowd Psychology.md",
+   "text": "CROWD (Knowing When to Stay with a Vibe vs. When to Switch): Track 2: The Reinforcement (Keeps the same groove, BPM, and feel to solidify the vibe)."
+  },
+  {
+   "tags": [
+    "crowd",
+    "energy"
+   ],
+   "source": "06 - Energy & Crowd/Reading the Room & Crowd Psychology.md",
+   "text": "CROWD (Knowing When to Stay with a Vibe vs. When to Switch): Track 3: The Peak (The highest-energy iteration of that specific genre)."
+  },
+  {
+   "tags": [
+    "crowd",
+    "energy"
+   ],
+   "source": "06 - Energy & Crowd/Reading the Room & Crowd Psychology.md",
+   "text": "CROWD (Knowing When to Stay with a Vibe vs. When to Switch): -After Track 3:- Prepare an exit or bridge. Staying in the same pocket for 5+ songs without variation causes unconscious habituation."
+  },
+  {
+   "tags": [
+    "crowd",
+    "energy"
+   ],
+   "source": "06 - Energy & Crowd/Reading the Room & Crowd Psychology.md",
+   "text": "CROWD (Knowing When to Stay with a Vibe vs. When to Switch): The Tease: Loop an iconic vocal or tease a hi-hat pattern from the upcoming genre for 8 bars over the current beat."
+  },
+  {
+   "tags": [
+    "crowd",
+    "energy"
+   ],
+   "source": "06 - Energy & Crowd/Reading the Room & Crowd Psychology.md",
+   "text": "CROWD (Knowing When to Stay with a Vibe vs. When to Switch): Watch the Reaction: If heads snap up and cheers erupt, you have permission to drop the hammer. If people look confused, disengage the loop and stay in the safe zone."
+  },
+  {
+   "tags": [
+    "crowd",
+    "energy"
+   ],
+   "source": "06 - Energy & Crowd/Reading the Room & Crowd Psychology.md",
+   "text": "CROWD (The Psychology of Familiarity vs. Surprise): The Need for Security (Familiarity): Recognizable pop hooks, classic anthems, sing-along vocals. Makes people feel safe, included, and uninhibited."
+  },
+  {
+   "tags": [
+    "crowd",
+    "energy"
+   ],
+   "source": "06 - Energy & Crowd/Reading the Room & Crowd Psychology.md",
+   "text": "CROWD (The Psychology of Familiarity vs. Surprise): The Need for Adventure (Novelty / Surprise): Unreleased edits, unexpected drops, genre shocks, underground basslines. Produces excitement and unforgettable thrills."
+  },
+  {
+   "tags": [
+    "crowd",
+    "energy"
+   ],
+   "source": "06 - Energy & Crowd/Reading the Room & Crowd Psychology.md",
+   "text": "CROWD (The Psychology of Familiarity vs. Surprise): The Magic Formula: The Familiar Inside the Novel. Take a vocal that 100% of the room knows, and drop it over an underground bassline that nobody saw coming. (See Live Mashup)."
+  },
+  {
+   "tags": [
+    "bpm_gap",
+    "genre:edm-progressive-house-playbook",
+    "genre:pop-playbook",
+    "genre_bridge"
+   ],
+   "source": "08 - Open Format/Genre Bridge Playbook.md",
+   "text": "BRIDGE Pop -> EDM (120–124 BPM -> 126–128 BPM): Pop tracks often have loose acoustic drums, quiet mixdowns, and short outros; EDM tracks hit with compressed supersaws and massive 4-on-the-floor kicks. Fix (The Vocal Build Layer): "
+  },
+  {
+   "tags": [
+    "bpm_gap",
+    "genre:house-tech-house-playbook",
+    "genre:pop-playbook",
+    "genre_bridge"
+   ],
+   "source": "08 - Open Format/Genre Bridge Playbook.md",
+   "text": "BRIDGE Pop -> House (118–122 BPM -> 124–126 BPM): Pop vocals are dense; House grooves need space for rolling basslines and shuffling hi-hats. Fix (The Stems Groove Steal): "
+  },
+  {
+   "tags": [
+    "bpm_gap",
+    "genre:drum-bass-dnb-playbook",
+    "genre:pop-playbook",
+    "genre_bridge"
+   ],
+   "source": "08 - Open Format/Genre Bridge Playbook.md",
+   "text": "BRIDGE Pop -> Drum & Bass (124 BPM -> 174 BPM): A massive 50 BPM tempo gap. Direct beatmatching will produce hideous audio distortion. Fix (The Breakdown Acapella Bridge): "
+  },
+  {
+   "tags": [
+    "bpm_gap",
+    "genre:edm-progressive-house-playbook",
+    "genre:hip-hop-r-b-playbook",
+    "genre_bridge"
+   ],
+   "source": "08 - Open Format/Genre Bridge Playbook.md",
+   "text": "BRIDGE Hip-Hop -> EDM (75–85 BPM -> 126–128 BPM): Hip-hop's swing and laid-back groove clashes with EDM's rigid four-on-the-floor kick. Fix (The Word-Play Echo Throw): "
+  },
+  {
+   "tags": [
+    "bpm_gap",
+    "genre:drum-bass-dnb-playbook",
+    "genre:hip-hop-r-b-playbook",
+    "genre_bridge"
+   ],
+   "source": "08 - Open Format/Genre Bridge Playbook.md",
+   "text": "BRIDGE Hip-Hop -> Drum & Bass (87 BPM <-> 174 BPM: The Double-Time Miracle):  Fix (The Halftime/Doubletime Lock): "
+  },
+  {
+   "tags": [
+    "bpm_gap",
+    "genre:drum-bass-dnb-playbook",
+    "genre:house-tech-house-playbook",
+    "genre_bridge"
+   ],
+   "source": "08 - Open Format/Genre Bridge Playbook.md",
+   "text": "BRIDGE House -> Drum & Bass (128 BPM -> 174 BPM): 128 and 174 are not direct mathematical multiples (128 x 1.5 = 192, not 174). Fix (The Build-Up Snare Acceleration): "
+  },
+  {
+   "tags": [
+    "bpm_gap",
+    "genre:drum-bass-dnb-playbook",
+    "genre:edm-progressive-house-playbook",
+    "genre_bridge"
+   ],
+   "source": "08 - Open Format/Genre Bridge Playbook.md",
+   "text": "BRIDGE EDM -> Drum & Bass (128 BPM -> 174 BPM):  Fix (The Fake-Out Drop Swap): "
+  },
+  {
+   "tags": [
+    "bpm_gap",
+    "genre:drum-bass-dnb-playbook",
+    "genre:pop-playbook",
+    "genre_bridge"
+   ],
+   "source": "08 - Open Format/Genre Bridge Playbook.md",
+   "text": "BRIDGE Drum & Bass -> Pop (174 BPM -> 120–124 BPM): Dropping from 174 BPM down to 124 BPM can feel like slamming on the car brakes if done poorly. Fix (The Reverb Dissolve & Vocal Intro): "
+  },
+  {
+   "tags": [
+    "genre_bridge"
+   ],
+   "source": "08 - Open Format/Open-Format DJing Guide.md",
+   "text": "SHARED ANCHOR: If changing Tempo & Genre (e.g., Pop 124 BPM -> DnB 174 BPM): Keep the Harmonic Key or the Vocal Hook identical! If changing Harmonic Key & Genre (e.g., Hip-Hop in 4A -> EDM in 10B): Strip away the pitch using an unpitched Drum Bridge or an Echo Out!"
+  },
+  {
+   "tags": [
+    "bpm_gap",
+    "genre_bridge"
+   ],
+   "source": "08 - Open Format/Open-Format DJing Guide.md",
+   "text": "BRIDGE MECHANISM (The Breakdown-Based Bridge): How it works: Every electronic and pop genre has ambient breakdowns where the kick drum disappears. The Execution: When Track A hits its drumless breakdown, the crowd is floating without a rhythmic clock. Launch Track B's drumless intro or melody...."
+  },
+  {
+   "tags": [
+    "bpm_gap",
+    "genre_bridge"
+   ],
+   "source": "08 - Open Format/Open-Format DJing Guide.md",
+   "text": "BRIDGE MECHANISM (Half-Time / Double-Time Mathematical Ratios): The Mathematics:; 70 BPM leftrightarrow 140 BPM: Slow Trap / R&B <-> Heavy Dubstep / Bass Music.; 75 BPM leftrightarrow 150 BPM: Hip-Hop <-> Hard Trap / Future Bass.; 87 BPM leftrightarrow 174 BPM: Modern Pop / R&B <-> Drum & Bass / Jungle...."
+  },
+  {
+   "tags": [
+    "bpm_gap",
+    "genre_bridge"
+   ],
+   "source": "08 - Open Format/Open-Format DJing Guide.md",
+   "text": "BRIDGE MECHANISM (The Acapella / Vocal Bridge): How it works: The human brain latches onto words more intensely than instruments. The Execution: Take an iconic vocal (e.g., Dua Lipa, Billie Eilish, Eminem). Isolate it using Stems or an acapella track...."
+  },
+  {
+   "tags": [
+    "bpm_gap",
+    "genre_bridge"
+   ],
+   "source": "08 - Open Format/Open-Format DJing Guide.md",
+   "text": "BRIDGE MECHANISM (The Drum Bridge (Atonal Reset)): How it works: Percussion lacks sustained musical pitch. The Execution: Loop an 8-bar percussive break (congas, bongos, drum fills) on Deck 3. Fade out the melodies of Track A...."
+  },
+  {
+   "tags": [
+    "bpm_gap",
+    "genre_bridge"
+   ],
+   "source": "08 - Open Format/Open-Format DJing Guide.md",
+   "text": "BRIDGE MECHANISM (The Echo Throw & Space Dissolution): How it works: The cleanest hard-reset available. The Execution: On the final vocal syllable or downbeat of Track A, engage a 1/2-beat post-fader Echo and snap the fader down. The room is filled with rhythmic delay. Drop Track B on Beat 1 of the new tempo...."
+  },
+  {
+   "tags": [
+    "bpm_gap",
+    "genre_bridge"
+   ],
+   "source": "08 - Open Format/Open-Format DJing Guide.md",
+   "text": "BRIDGE MECHANISM (The Pre-Drop Tempo Ramp): How it works: In a 16-bar build-up, the rhythm is already accelerating (1/4 to 1/8 to 1/16 notes). The Execution: Gradually slide your pitch fader up from 124 BPM to 132 BPM during the build...."
+  },
+  {
+   "tags": [
+    "genre:drum-bass-dnb-playbook",
+    "home:drum-bass-dnb-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Drum & Bass (DnB) Playbook.md",
+   "text": "DRUM & BASS (DNB): Typical BPM: 170–176 BPM (Club Standard: 174.0 BPM)."
+  },
+  {
+   "tags": [
+    "genre:drum-bass-dnb-playbook",
+    "home:drum-bass-dnb-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Drum & Bass (DnB) Playbook.md",
+   "text": "DRUM & BASS (DNB): Common Structures: 32-bar or 64-bar phrases; 16-bar fast build-ups; drops lasting 32 or 64 bars."
+  },
+  {
+   "tags": [
+    "genre:drum-bass-dnb-playbook",
+    "home:drum-bass-dnb-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Drum & Bass (DnB) Playbook.md",
+   "text": "DRUM & BASS (DNB): Common Transition Points: Rapid cuts and swaps occurring every 32 to 64 bars (DnB DJs mix at 2x to 3x the speed of House DJs!)."
+  },
+  {
+   "tags": [
+    "genre:drum-bass-dnb-playbook",
+    "home:drum-bass-dnb-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Drum & Bass (DnB) Playbook.md",
+   "text": "DRUM & BASS (DNB): Typical Energy Curves: Constant high-voltage kinetic drive (Energy 7–10)."
+  },
+  {
+   "tags": [
+    "genre:drum-bass-dnb-playbook",
+    "home:drum-bass-dnb-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Drum & Bass (DnB) Playbook.md",
+   "text": "DRUM & BASS (DNB) The High-Velocity Trainwreck: Problem: At 174 BPM, a 50-millisecond phase error doesn't sound like a slight nudge—it sounds like an explosion of falling pots and pans. Tactical Solution: Master transient alignment on the snare drum. In your headphones, listen to the crack of the snare on Beat 2...."
+  },
+  {
+   "tags": [
+    "genre:drum-bass-dnb-playbook",
+    "home:drum-bass-dnb-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Drum & Bass (DnB) Playbook.md",
+   "text": "DRUM & BASS (DNB) Phrasing at High Speed: Problem: Because the music moves so quickly (174 BPM = ~2.9 beats per second), an 8-bar phrase passes in just 11 seconds! Tactical Solution: Plan cue points obsessively. Use Hot Cues to launch builds and drops without manual needle scrolling."
+  },
+  {
+   "tags": [
+    "genre:drum-bass-dnb-playbook",
+    "genre:hip-hop-r-b-playbook",
+    "genre_bridge",
+    "home:drum-bass-dnb-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Drum & Bass (DnB) Playbook.md",
+   "text": "DRUM & BASS (DNB) TRANSITION IN: From Hip-Hop / R&B (87 BPM): Mathematical double-time lock (87 x 2 = 174). Layer DnB breakbeats over the rap verse and drop into DnB on the chorus. (See Genre Bridge Playbook)."
+  },
+  {
+   "tags": [
+    "genre:drum-bass-dnb-playbook",
+    "genre:house-tech-house-playbook",
+    "genre:pop-playbook",
+    "genre_bridge",
+    "home:drum-bass-dnb-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Drum & Bass (DnB) Playbook.md",
+   "text": "DRUM & BASS (DNB) TRANSITION IN: From Pop / House (124–128 BPM): Take an emotional vocal breakdown; bring in high-speed 174 BPM shakers; drop into a vocal Dancefloor DnB anthem."
+  },
+  {
+   "tags": [
+    "genre:drum-bass-dnb-playbook",
+    "genre:hip-hop-r-b-playbook",
+    "genre:pop-playbook",
+    "genre_bridge",
+    "home:drum-bass-dnb-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Drum & Bass (DnB) Playbook.md",
+   "text": "DRUM & BASS (DNB) TRANSITION OUT: Into Pop / R&B: Reverb wash the DnB track on the final drop downbeat, cut the fader, and let a 120 BPM pop vocal enter out of the ambient space."
+  },
+  {
+   "tags": [
+    "genre:drum-bass-dnb-playbook",
+    "genre:dubstep-playbook",
+    "genre_bridge",
+    "home:drum-bass-dnb-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Drum & Bass (DnB) Playbook.md",
+   "text": "DRUM & BASS (DNB) TRANSITION OUT: Into Dubstep (140 BPM): Execute a dramatic tempo transition or echo out on the final snare."
+  },
+  {
+   "tags": [
+    "genre:dubstep-playbook",
+    "home:dubstep-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Dubstep Playbook.md",
+   "text": "DUBSTEP: Typical BPM: 138–145 BPM (Industry Benchmark: 140.0 BPM, felt in half-time at 70 BPM)."
+  },
+  {
+   "tags": [
+    "genre:dubstep-playbook",
+    "home:dubstep-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Dubstep Playbook.md",
+   "text": "DUBSTEP: Common Structures: 16-bar intro -> 16-bar build -> 16 or 32-bar drop -> breakdown -> drop 2."
+  },
+  {
+   "tags": [
+    "genre:dubstep-playbook",
+    "home:dubstep-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Dubstep Playbook.md",
+   "text": "DUBSTEP: Common Transition Points:; Instant drop swaps on Beat 1.; 8-bar build-to-drop swaps.; 1-bar fake drops into silence."
+  },
+  {
+   "tags": [
+    "genre:dubstep-playbook",
+    "home:dubstep-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Dubstep Playbook.md",
+   "text": "DUBSTEP: Typical Energy Curves: Peak festival adrenaline (Energy 8.5–10)."
+  },
+  {
+   "tags": [
+    "genre:dubstep-playbook",
+    "home:dubstep-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Dubstep Playbook.md",
+   "text": "DUBSTEP The Sonic Collision of Mid-Range Growls: Problem: Dubstep growls and screeches take up virtually 100% of the mid-range and high frequency spectrum. Overlapping two dubstep drops produces an unbearable screech that hurts ears. Tactical Solution: Never blend two dubstep drops...."
+  },
+  {
+   "tags": [
+    "genre:dubstep-playbook",
+    "home:dubstep-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Dubstep Playbook.md",
+   "text": "DUBSTEP Headroom and Limiter Pumping: Problem: Dubstep is pushed to the absolute digital limit in mastering (often -4 to -2 LUFS). Tactical Solution: Keep gains strictly in the green/amber. Do not push upfaders past 100%."
+  },
+  {
+   "tags": [
+    "genre:dubstep-playbook",
+    "genre:house-tech-house-playbook",
+    "genre_bridge",
+    "home:dubstep-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Dubstep Playbook.md",
+   "text": "DUBSTEP TRANSITION IN: From House (128 BPM): During an EDM build-up, use the pitch fader to ramp tempo from 128 to 140 BPM, engage a 1/2-beat Loop Roll on the snare, and drop a heavy 140 BPM dubstep drop on Beat 1! (See Skrillex Case Study)."
+  },
+  {
+   "tags": [
+    "genre:dubstep-playbook",
+    "genre:trap-bass-music-playbook",
+    "genre_bridge",
+    "home:dubstep-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Dubstep Playbook.md",
+   "text": "DUBSTEP TRANSITION IN: From Trap (145–150 BPM): Match tempo or nudge pitch fader; execute an instantaneous drop swap on the downbeat."
+  },
+  {
+   "tags": [
+    "genre:drum-bass-dnb-playbook",
+    "genre:dubstep-playbook",
+    "genre_bridge",
+    "home:dubstep-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Dubstep Playbook.md",
+   "text": "DUBSTEP TRANSITION OUT: Into Drum & Bass (174 BPM): Let the dubstep drop finish; on the breakdown, use an acapella bridge or drum ramp to launch directly into 174 BPM DnB."
+  },
+  {
+   "tags": [
+    "genre:dubstep-playbook",
+    "genre:hip-hop-r-b-playbook",
+    "genre_bridge",
+    "home:dubstep-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Dubstep Playbook.md",
+   "text": "DUBSTEP TRANSITION OUT: Into Hip-Hop (70 BPM): Because 140 BPM is mathematically double 70 BPM, you can drop a 70 BPM Hip-Hop rap verse directly on Beat 1 of the phrase!"
+  },
+  {
+   "tags": [
+    "genre:future-bass-melodic-bass-playbook",
+    "home:future-bass-melodic-bass-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Future Bass & Melodic Bass Playbook.md",
+   "text": "FUTURE BASS & MELODIC BASS: Typical BPM: 135–160 BPM (Standard: 140–150 BPM, felt in half-time at 70–75 BPM)."
+  },
+  {
+   "tags": [
+    "genre:future-bass-melodic-bass-playbook",
+    "home:future-bass-melodic-bass-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Future Bass & Melodic Bass Playbook.md",
+   "text": "FUTURE BASS & MELODIC BASS: Common Structures: Pop/EDM hybrid: Emotional vocal intro (16 bars) -> Pre-Chorus -> Build-Up -> Melodic Supersaw Drop (16–32 bars) -> Breakdown."
+  },
+  {
+   "tags": [
+    "genre:future-bass-melodic-bass-playbook",
+    "home:future-bass-melodic-bass-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Future Bass & Melodic Bass Playbook.md",
+   "text": "FUTURE BASS & MELODIC BASS: Common Transition Points:; Build-to-Drop swaps.; Breakdown chord blends.; Acapella vocal transitions."
+  },
+  {
+   "tags": [
+    "genre:future-bass-melodic-bass-playbook",
+    "home:future-bass-melodic-bass-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Future Bass & Melodic Bass Playbook.md",
+   "text": "FUTURE BASS & MELODIC BASS: Typical Energy Curves: Dramatic emotional swings (intimate heartbreak -> soaring festival euphoria)."
+  },
+  {
+   "tags": [
+    "genre:future-bass-melodic-bass-playbook",
+    "home:future-bass-melodic-bass-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Future Bass & Melodic Bass Playbook.md",
+   "text": "FUTURE BASS & MELODIC BASS Heavy Harmonic Chord Clashes: Problem: Future Bass drops are dominated by 7th, 9th, and suspended jazz chords. Blending two different Future Bass drops will cause intense, unlistenable harmonic clashes. Tactical Solution: Harmonic compatibility is mandatory...."
+  },
+  {
+   "tags": [
+    "genre:future-bass-melodic-bass-playbook",
+    "home:future-bass-melodic-bass-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Future Bass & Melodic Bass Playbook.md",
+   "text": "FUTURE BASS & MELODIC BASS Long Reverb Washes: Problem: Supersaws and vocals are soaked in massive hall reverbs, which can muddy the mix if left unmanaged. Tactical Solution: Use the High-Pass Filter aggressively on the outgoing track to clear space for the incoming chords."
+  },
+  {
+   "tags": [
+    "genre:future-bass-melodic-bass-playbook",
+    "genre:pop-playbook",
+    "genre_bridge",
+    "home:future-bass-melodic-bass-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Future Bass & Melodic Bass Playbook.md",
+   "text": "FUTURE BASS & MELODIC BASS TRANSITION IN: From Pop (100–120 BPM): Transition during an emotional breakdown, using the shared vocal sentiment to slide the tempo up to 140–150 BPM before the Future Bass build."
+  },
+  {
+   "tags": [
+    "genre:future-bass-melodic-bass-playbook",
+    "genre:trap-bass-music-playbook",
+    "genre_bridge",
+    "home:future-bass-melodic-bass-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Future Bass & Melodic Bass Playbook.md",
+   "text": "FUTURE BASS & MELODIC BASS TRANSITION IN: From Trap: Drop Swap directly from a grimy trap drop into an uplifting melodic future bass drop on Beat 1!"
+  },
+  {
+   "tags": [
+    "genre:drum-bass-dnb-playbook",
+    "genre:future-bass-melodic-bass-playbook",
+    "genre_bridge",
+    "home:future-bass-melodic-bass-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Future Bass & Melodic Bass Playbook.md",
+   "text": "FUTURE BASS & MELODIC BASS TRANSITION OUT: Into Drum & Bass (174 BPM): Gradually ramp the 150 BPM build-up to 160 BPM, then slam into an emotional Dancefloor DnB vocal anthem (e.g., Sub Focus)."
+  },
+  {
+   "tags": [
+    "genre:future-bass-melodic-bass-playbook",
+    "genre:house-tech-house-playbook",
+    "genre_bridge",
+    "home:future-bass-melodic-bass-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Future Bass & Melodic Bass Playbook.md",
+   "text": "FUTURE BASS & MELODIC BASS TRANSITION OUT: Into House (128 BPM): Use an ambient breakdown to strip away the half-time beat, then introduce a four-on-the-floor House kick."
+  },
+  {
+   "tags": [
+    "genre:trap-bass-music-playbook",
+    "home:trap-bass-music-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Trap & Bass Music Playbook.md",
+   "text": "TRAP & BASS MUSIC: Typical BPM: 140–160 BPM (Standard Festival Trap: 150.0 BPM, felt in half-time at 75 BPM)."
+  },
+  {
+   "tags": [
+    "genre:trap-bass-music-playbook",
+    "home:trap-bass-music-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Trap & Bass Music Playbook.md",
+   "text": "TRAP & BASS MUSIC: Common Structures: 8-bar rap verse -> 8-bar rising snare build -> 16-bar devastating horn or vocal chop drop -> Breakdown."
+  },
+  {
+   "tags": [
+    "genre:trap-bass-music-playbook",
+    "home:trap-bass-music-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Trap & Bass Music Playbook.md",
+   "text": "TRAP & BASS MUSIC: Common Transition Points:; Drop Swaps on Beat 1.; Quick cuts at the end of an 8-bar drop cycle.; Half-time to double-time transitions."
+  },
+  {
+   "tags": [
+    "genre:trap-bass-music-playbook",
+    "home:trap-bass-music-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Trap & Bass Music Playbook.md",
+   "text": "TRAP & BASS MUSIC: Typical Energy Curves: High-voltage peak festival energy (Energy 8–10)."
+  },
+  {
+   "tags": [
+    "genre:trap-bass-music-playbook",
+    "home:trap-bass-music-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Trap & Bass Music Playbook.md",
+   "text": "TRAP & BASS MUSIC The 808 Mud Disaster: Problem: 808 sub-bass kicks have extremely long decay envelopes. If Track A's 808 is still ringing out while Track B's 808 drops, the two low frequencies will cause immediate clipping and acoustic mud...."
+  },
+  {
+   "tags": [
+    "genre:trap-bass-music-playbook",
+    "home:trap-bass-music-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Trap & Bass Music Playbook.md",
+   "text": "TRAP & BASS MUSIC Managing Tempo Perceptions (75 vs. 150 BPM): Problem: Some software analyzes Trap as 75 BPM, while other tracks are tagged as 150 BPM. Tactical Solution: Standardize your library! Use Rekordbox / Serato to set all Trap to 150 BPM (or double all 75 BPM tracks) so beat grids and sync functions..."
+  },
+  {
+   "tags": [
+    "genre:hip-hop-r-b-playbook",
+    "genre:trap-bass-music-playbook",
+    "genre_bridge",
+    "home:trap-bass-music-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Trap & Bass Music Playbook.md",
+   "text": "TRAP & BASS MUSIC TRANSITION IN: From Hip-Hop (75 BPM): Double the BPM to 150 BPM; lock downbeats; drop into the Trap build-up."
+  },
+  {
+   "tags": [
+    "genre:dubstep-playbook",
+    "genre:trap-bass-music-playbook",
+    "genre_bridge",
+    "home:trap-bass-music-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Trap & Bass Music Playbook.md",
+   "text": "TRAP & BASS MUSIC TRANSITION IN: From Dubstep (140 BPM): Nudge tempo from 140 to 145–150 BPM during a build; execute an explosive Drop Swap."
+  },
+  {
+   "tags": [
+    "genre:drum-bass-dnb-playbook",
+    "genre:trap-bass-music-playbook",
+    "genre_bridge",
+    "home:trap-bass-music-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Trap & Bass Music Playbook.md",
+   "text": "TRAP & BASS MUSIC TRANSITION OUT: Into Drum & Bass (174 BPM): Gradually ramp from 150 to 160 BPM during a high-energy build; engage a Loop Roll; slam into a 174 BPM DnB drop. (See Genre Bridge Playbook)."
+  },
+  {
+   "tags": [
+    "genre:house-tech-house-playbook",
+    "genre:trap-bass-music-playbook",
+    "genre_bridge",
+    "home:trap-bass-music-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Trap & Bass Music Playbook.md",
+   "text": "TRAP & BASS MUSIC TRANSITION OUT: Into House (128 BPM): Wait for a drumless breakdown, slow the tempo fader down to 128 BPM, and drop a four-on-the-floor kick!"
+  },
+  {
+   "tags": [
+    "genre:hip-hop-r-b-playbook",
+    "home:hip-hop-r-b-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Hip-Hop & R&B Playbook.md",
+   "text": "HIP-HOP & R&B: Typical BPM: Highly diverse:; Golden Era Boombap / 90s: ~88–96 BPM; Modern Trap & Drill: ~130–150 BPM (felt in half-time at 65–75 BPM); R&B / Slow Jam: ~65–85 BPM"
+  },
+  {
+   "tags": [
+    "genre:hip-hop-r-b-playbook",
+    "home:hip-hop-r-b-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Hip-Hop & R&B Playbook.md",
+   "text": "HIP-HOP & R&B: Common Structures: Strict 8-bar and 16-bar rap verses, 8-bar choruses, cold vocal entrances."
+  },
+  {
+   "tags": [
+    "genre:hip-hop-r-b-playbook",
+    "home:hip-hop-r-b-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Hip-Hop & R&B Playbook.md",
+   "text": "HIP-HOP & R&B: Common Transition Points: ; After Chorus 1 (Beat 1).; On a punchy vocal rhyme at the end of an 8-bar verse.; Cold cuts on the downbeat."
+  },
+  {
+   "tags": [
+    "genre:hip-hop-r-b-playbook",
+    "home:hip-hop-r-b-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Hip-Hop & R&B Playbook.md",
+   "text": "HIP-HOP & R&B The Laid-Back Human Swing: Problem: Hip-hop beats (especially J Dilla, 90s boombap, or acoustic funk breaks) feature heavy swing. Quantized computer beat grids often misread the pocket. Tactical Solution: Trust your ears over the computer beat grid...."
+  },
+  {
+   "tags": [
+    "genre:hip-hop-r-b-playbook",
+    "home:hip-hop-r-b-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Hip-Hop & R&B Playbook.md",
+   "text": "HIP-HOP & R&B Incompatible Vocal Cadences: Problem: Blending two rappers simultaneously sounds like a chaotic shouting match. Tactical Solution: Use Cuts, Word Play, or Scratch Introductions rather than long 32-bar blends."
+  },
+  {
+   "tags": [
+    "genre:edm-progressive-house-playbook",
+    "genre:hip-hop-r-b-playbook",
+    "genre:house-tech-house-playbook",
+    "genre_bridge",
+    "home:hip-hop-r-b-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Hip-Hop & R&B Playbook.md",
+   "text": "HIP-HOP & R&B TRANSITION IN: From House / EDM: Bring the house track to a drumless outro; hit a 1-beat Echo on the final kick; slam the crossfader open on the iconic opening line of the rap track."
+  },
+  {
+   "tags": [
+    "genre:drum-bass-dnb-playbook",
+    "genre:hip-hop-r-b-playbook",
+    "genre_bridge",
+    "home:hip-hop-r-b-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Hip-Hop & R&B Playbook.md",
+   "text": "HIP-HOP & R&B TRANSITION IN: From Drum & Bass: Use the half-time metric relationship: an 87 BPM Hip-Hop track locks mathematically into 174 BPM DnB! (See Genre Bridge Playbook)."
+  },
+  {
+   "tags": [
+    "genre:edm-progressive-house-playbook",
+    "genre:hip-hop-r-b-playbook",
+    "genre:house-tech-house-playbook",
+    "genre_bridge",
+    "home:hip-hop-r-b-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Hip-Hop & R&B Playbook.md",
+   "text": "HIP-HOP & R&B TRANSITION OUT: Into EDM / House: Catch a 2-bar vocal loop of the rap hook; start ramping tempo from 95 to 120 BPM; drop a four-on-the-floor House kick underneath."
+  },
+  {
+   "tags": [
+    "genre:hip-hop-r-b-playbook",
+    "genre:trap-bass-music-playbook",
+    "genre_bridge",
+    "home:hip-hop-r-b-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Hip-Hop & R&B Playbook.md",
+   "text": "HIP-HOP & R&B TRANSITION OUT: Into Trap: Jump directly from 75 BPM Hip-Hop into 150 BPM Trap by doubling the tempo and dropping an 808 snare roll."
+  },
+  {
+   "tags": [
+    "genre:melodic-electronic-playbook",
+    "home:melodic-electronic-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Melodic Electronic Playbook.md",
+   "text": "MELODIC ELECTRONIC: Typical BPM: 122–134 BPM (UK Garage: ~130–134 BPM; Melodic House / Indie Dance: ~122–126 BPM)."
+  },
+  {
+   "tags": [
+    "genre:melodic-electronic-playbook",
+    "home:melodic-electronic-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Melodic Electronic Playbook.md",
+   "text": "MELODIC ELECTRONIC: Common Structures: Organic and modular:; Found-sound intro (spoken-word phone voice notes, ambient room noise) -> Subtle groove entry -> Emotional vocal hook -> Driving bass drop -> Stripped breakdown -> Euphoric climax."
+  },
+  {
+   "tags": [
+    "genre:melodic-electronic-playbook",
+    "home:melodic-electronic-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Melodic Electronic Playbook.md",
+   "text": "MELODIC ELECTRONIC: Common Transition Points: Extended harmonic blends, breakdown voice-note overlays, and rapid drop cuts."
+  },
+  {
+   "tags": [
+    "genre:melodic-electronic-playbook",
+    "home:melodic-electronic-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Melodic Electronic Playbook.md",
+   "text": "MELODIC ELECTRONIC: Typical Energy Curves: Dynamic, deeply emotional wave (Energy 4–8.5); prioritizing communal tears and goosebumps over aggressive festival violence."
+  },
+  {
+   "tags": [
+    "genre:melodic-electronic-playbook",
+    "home:melodic-electronic-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Melodic Electronic Playbook.md",
+   "text": "MELODIC ELECTRONIC Unquantized Swing and Organic Percussion: Problem: Tracks by Four Tet, Fred again.., and Jamie xx often feature human swing, analog synthesizer drift, or live acoustic drums. A rigid, unadjusted digital beat grid will cause phase clashing...."
+  },
+  {
+   "tags": [
+    "genre:melodic-electronic-playbook",
+    "home:melodic-electronic-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Melodic Electronic Playbook.md",
+   "text": "MELODIC ELECTRONIC Preserving Emotional Spoken-Word Intelligibility: Problem: Voice memos and conversational samples are delicate; overlapping them with synth chords ruins the emotional magic. Tactical Solution: Cut all other melodic instrumentation during voice note passages...."
+  },
+  {
+   "tags": [
+    "genre:house-tech-house-playbook",
+    "genre:melodic-electronic-playbook",
+    "genre_bridge",
+    "home:melodic-electronic-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Melodic Electronic Playbook.md",
+   "text": "MELODIC ELECTRONIC TRANSITION IN: From House / Tech House: Strip the tech house track down to its kick; drop the emotional piano chords or voice note of a Fred again.. track over it; swap the bassline into a warm UK garage swing."
+  },
+  {
+   "tags": [
+    "genre:melodic-electronic-playbook",
+    "genre:pop-playbook",
+    "genre_bridge",
+    "home:melodic-electronic-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Melodic Electronic Playbook.md",
+   "text": "MELODIC ELECTRONIC TRANSITION IN: From Pop: Isolate the pop vocal and blend it smoothly over an atmospheric breakbeat."
+  },
+  {
+   "tags": [
+    "genre:drum-bass-dnb-playbook",
+    "genre:melodic-electronic-playbook",
+    "genre_bridge",
+    "home:melodic-electronic-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Melodic Electronic Playbook.md",
+   "text": "MELODIC ELECTRONIC TRANSITION OUT: Into Drum & Bass (174 BPM): The syncopated breakbeat DNA of UK Garage naturally bridges into Drum & Bass. Accelerate tempo during an atmospheric riser, or use an acapella bridge."
+  },
+  {
+   "tags": [
+    "genre:dubstep-playbook",
+    "genre:melodic-electronic-playbook",
+    "genre:trap-bass-music-playbook",
+    "genre_bridge",
+    "home:melodic-electronic-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Melodic Electronic Playbook.md",
+   "text": "MELODIC ELECTRONIC TRANSITION OUT: Into Heavy Bass Music / Dubstep: Use an ambient breakdown to create total silence, then slam cut into a heavy bass drop."
+  },
+  {
+   "tags": [
+    "genre:edm-progressive-house-playbook",
+    "home:edm-progressive-house-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/EDM & Progressive House Playbook.md",
+   "text": "EDM & PROGRESSIVE HOUSE: Typical BPM: 126–130 BPM (Club Standard: 128.0 BPM)."
+  },
+  {
+   "tags": [
+    "genre:edm-progressive-house-playbook",
+    "home:edm-progressive-house-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/EDM & Progressive House Playbook.md",
+   "text": "EDM & PROGRESSIVE HOUSE: Common Structures: Strict 16/32-bar festival architecture:; Intro (16 bars) -> Melodic Breakdown / Vocal (16–32 bars) -> Extended Build-Up (16 bars) -> Massive Drop (16–32 bars) -> Breakdown 2 -> Drop 2 -> Outro (16 bars)."
+  },
+  {
+   "tags": [
+    "genre:edm-progressive-house-playbook",
+    "home:edm-progressive-house-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/EDM & Progressive House Playbook.md",
+   "text": "EDM & PROGRESSIVE HOUSE: Common Transition Points:; Build-to-Drop swap (Bar 16 of build).; Direct Drop Swap (cutting on Beat 1 of the drop).; Outro to Intro 16-bar percussive blend."
+  },
+  {
+   "tags": [
+    "genre:edm-progressive-house-playbook",
+    "home:edm-progressive-house-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/EDM & Progressive House Playbook.md",
+   "text": "EDM & PROGRESSIVE HOUSE: Typical Energy Curves: Extreme dynamic swings (Energy 4 during piano breakdowns -> Energy 10 on the drop)."
+  },
+  {
+   "tags": [
+    "genre:edm-progressive-house-playbook",
+    "home:edm-progressive-house-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/EDM & Progressive House Playbook.md",
+   "text": "EDM & PROGRESSIVE HOUSE Massive Wall-of-Sound Drop Mud: Problem: EDM drops feature stacked supersaws, sub-bass, and multiple lead synths. Playing two EDM drops simultaneously will immediately distort the mixer bus and sound like harsh static. Tactical Solution: Never blend two full EDM drops...."
+  },
+  {
+   "tags": [
+    "genre:edm-progressive-house-playbook",
+    "home:edm-progressive-house-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/EDM & Progressive House Playbook.md",
+   "text": "EDM & PROGRESSIVE HOUSE Long, Predictable Build-Ups: Problem: Modern crowds lose patience if forced to listen to four 60-second build-ups in a row. Tactical Solution: Shorten builds using Beat Jump (+8 or +16 Bars) or tease incoming vocal stems during the build to maintain high novelty."
+  },
+  {
+   "tags": [
+    "genre:edm-progressive-house-playbook",
+    "genre:pop-playbook",
+    "genre_bridge",
+    "home:edm-progressive-house-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/EDM & Progressive House Playbook.md",
+   "text": "EDM & PROGRESSIVE HOUSE TRANSITION IN: From Pop: Take the Pop chorus vocal, loop it over the 16-bar EDM build-up, and drop the EDM drop on Beat 1. (See Live Mashup)."
+  },
+  {
+   "tags": [
+    "genre:edm-progressive-house-playbook",
+    "genre:house-tech-house-playbook",
+    "genre_bridge",
+    "home:edm-progressive-house-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/EDM & Progressive House Playbook.md",
+   "text": "EDM & PROGRESSIVE HOUSE TRANSITION IN: From House: Gradually increase tempo from 124 to 128 BPM during an emotional breakdown, then launch the EDM riser."
+  },
+  {
+   "tags": [
+    "genre:drum-bass-dnb-playbook",
+    "genre:edm-progressive-house-playbook",
+    "genre_bridge",
+    "home:edm-progressive-house-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/EDM & Progressive House Playbook.md",
+   "text": "EDM & PROGRESSIVE HOUSE TRANSITION OUT: Into Drum & Bass: Execute a Fake Drop at 128 BPM, but on Beat 1, drop an explosive 174 BPM DnB roller!"
+  },
+  {
+   "tags": [
+    "genre:edm-progressive-house-playbook",
+    "genre:hip-hop-r-b-playbook",
+    "genre_bridge",
+    "home:edm-progressive-house-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/EDM & Progressive House Playbook.md",
+   "text": "EDM & PROGRESSIVE HOUSE TRANSITION OUT: Into Hip-Hop: Let the EDM drop finish; hit a 1-beat Echo on the final kick; drop an 85 BPM rap classic dry on Beat 1."
+  },
+  {
+   "tags": [
+    "genre:house-tech-house-playbook",
+    "home:house-tech-house-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/House & Tech House Playbook.md",
+   "text": "HOUSE & TECH HOUSE: Typical BPM: 124–128 BPM (Deep House: 120–124; Tech House: 126–128)."
+  },
+  {
+   "tags": [
+    "genre:house-tech-house-playbook",
+    "home:house-tech-house-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/House & Tech House Playbook.md",
+   "text": "HOUSE & TECH HOUSE: Common Structures: Extended, DJ-friendly arrangements:; Intro (32–64 bars of clean drums/bass) -> Breakdown 1 (16 bars) -> Main Groove (32–64 bars) -> Breakdown 2 -> Groove -> Outro (32–64 bars of stripped drums)."
+  },
+  {
+   "tags": [
+    "genre:house-tech-house-playbook",
+    "home:house-tech-house-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/House & Tech House Playbook.md",
+   "text": "HOUSE & TECH HOUSE: Common Transition Points: Extended 32-bar and 64-bar blends across Outro -> Intro or Groove -> Groove."
+  },
+  {
+   "tags": [
+    "genre:house-tech-house-playbook",
+    "home:house-tech-house-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/House & Tech House Playbook.md",
+   "text": "HOUSE & TECH HOUSE: Typical Energy Curves: Wave-like undulating energy (Scale 6–8.5); steady physical momentum rather than massive cliff drops."
+  },
+  {
+   "tags": [
+    "eq",
+    "genre:house-tech-house-playbook",
+    "home:house-tech-house-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/House & Tech House Playbook.md",
+   "text": "HOUSE & TECH HOUSE Competing Bassline Mud: Problem: Tech House basslines are thick and prominent (50 --200 Hz). Leaving both basslines in the mix turns the club into a boomy, unintelligible soup. Tactical Solution: Master the surgical Bass Swap...."
+  },
+  {
+   "tags": [
+    "genre:house-tech-house-playbook",
+    "home:house-tech-house-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/House & Tech House Playbook.md",
+   "text": "HOUSE & TECH HOUSE Phasing Hi-Hats: Problem: Two tracks with slightly different swing settings or phase timing will cause high-frequency flanging / phasing on the hi-hats. Tactical Solution: Use the High EQ or High-Pass Filter to ensure only one track dominates the top-end percussion at a time."
+  },
+  {
+   "tags": [
+    "genre:house-tech-house-playbook",
+    "genre:pop-playbook",
+    "genre_bridge",
+    "home:house-tech-house-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/House & Tech House Playbook.md",
+   "text": "HOUSE & TECH HOUSE TRANSITION IN: From Pop: Mute the pop drums using Stems; bring the House kick drum underneath the pop vocal; swap to the house bassline on phrase."
+  },
+  {
+   "tags": [
+    "genre:house-tech-house-playbook",
+    "genre:melodic-electronic-playbook",
+    "genre_bridge",
+    "home:house-tech-house-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/House & Tech House Playbook.md",
+   "text": "HOUSE & TECH HOUSE TRANSITION IN: From Techno / Minimal: Use an EQ Blend across 32 bars, gradually replacing the dark industrial techno top-end with house swing."
+  },
+  {
+   "tags": [
+    "genre:drum-bass-dnb-playbook",
+    "genre:house-tech-house-playbook",
+    "genre_bridge",
+    "home:house-tech-house-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/House & Tech House Playbook.md",
+   "text": "HOUSE & TECH HOUSE TRANSITION OUT: Into Drum & Bass: Ramp tempo from 128 to 134 BPM during a snare build, engage a 1/2-beat Loop Roll on the snare, and drop into 174 BPM DnB!"
+  },
+  {
+   "tags": [
+    "genre:hip-hop-r-b-playbook",
+    "genre:house-tech-house-playbook",
+    "genre_bridge",
+    "home:house-tech-house-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/House & Tech House Playbook.md",
+   "text": "HOUSE & TECH HOUSE TRANSITION OUT: Into Hip-Hop: Let the house groove roll into a drum-only outro; hit an Echo Out on the final kick; drop a 90 BPM classic rap beat on the downbeat."
+  },
+  {
+   "tags": [
+    "genre:pop-playbook",
+    "home:pop-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Pop Playbook.md",
+   "text": "POP: Typical BPM: Highly variable, but clusters around:; Slow Pop / R&B: ~80–100 BPM; Disco / Nu-Disco Pop (Dua Lipa, The Weeknd): ~118–124 BPM; Fast Dance-Pop / Synthwave: ~124–130 BPM"
+  },
+  {
+   "tags": [
+    "genre:pop-playbook",
+    "home:pop-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Pop Playbook.md",
+   "text": "POP: Common Structures: Strict radio arrangement (Verse 1 [16 bars] -> Pre-Chorus [8 bars] -> Chorus [16 bars] -> Verse 2 -> Chorus -> Bridge [8 bars] -> Final Chorus -> Cold Fade). Zero DJ-friendly intro or outro."
+  },
+  {
+   "tags": [
+    "genre:pop-playbook",
+    "home:pop-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Pop Playbook.md",
+   "text": "POP: Common Transition Points: ; Immediately after Chorus 1 (Beat 1).; During the Bridge/Breakdown.; Cold cut on the final word of the song."
+  },
+  {
+   "tags": [
+    "genre:pop-playbook",
+    "home:pop-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Pop Playbook.md",
+   "text": "POP: Typical Energy Curves: Moderate energy (6–8); peaks occur purely through vocal sing-along catharsis rather than bass drops."
+  },
+  {
+   "tags": [
+    "genre:pop-playbook",
+    "home:pop-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Pop Playbook.md",
+   "text": "POP No Extended Intros or Outros: Problem: Radio edits start immediately with singing and end in 3 seconds. Tactical Solution: Use Auto-Looping (4 or 8 bars) on an instrumental segment, use Stems to mute vocals on intro bars, or use an Echo Out on the final chorus word. (See Adapting Non-DJ Tracks)."
+  },
+  {
+   "tags": [
+    "genre:pop-playbook",
+    "home:pop-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Pop Playbook.md",
+   "text": "POP Dense Vocal Clashing: Problem: Blending two pop songs almost always results in competing singers yelling over each other. Tactical Solution: Never blend two pop vocals. Execute a crisp Vocal Transition, drop into an instrumental bridge, or use Acapella Overlay over a drum-only section."
+  },
+  {
+   "tags": [
+    "genre:edm-progressive-house-playbook",
+    "genre:house-tech-house-playbook",
+    "genre:pop-playbook",
+    "genre_bridge",
+    "home:pop-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Pop Playbook.md",
+   "text": "POP TRANSITION IN: From House/EDM: Loop the outgoing house drums for 8 bars; drop the pop vocal directly over the house drums using Stems or an intro edit, then cut the house track on the pop chorus downbeat."
+  },
+  {
+   "tags": [
+    "genre:hip-hop-r-b-playbook",
+    "genre:pop-playbook",
+    "genre_bridge",
+    "home:pop-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Pop Playbook.md",
+   "text": "POP TRANSITION IN: From Hip-Hop: Match tempo (or use 1/2-beat echo throw) on the last bar of the rap verse, slamming directly into the iconic first line of the pop chorus."
+  },
+  {
+   "tags": [
+    "genre:edm-progressive-house-playbook",
+    "genre:house-tech-house-playbook",
+    "genre:pop-playbook",
+    "genre_bridge",
+    "home:pop-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Pop Playbook.md",
+   "text": "POP TRANSITION OUT: Into House / EDM: On the final sing-along chorus, bring in the incoming EDM build-up directly underneath the pop vocal. On the drop, slam into the EDM kick and kill the pop track completely. (See Build-to-Drop Transition)."
+  },
+  {
+   "tags": [
+    "genre:drum-bass-dnb-playbook",
+    "genre:pop-playbook",
+    "genre_bridge",
+    "home:pop-playbook",
+    "playbook"
+   ],
+   "source": "09 - Genre Playbooks/Pop Playbook.md",
+   "text": "POP TRANSITION OUT: Into Drum & Bass: Wait for the pop bridge/breakdown; layer 174 BPM atmospheric rolling breaks under the vocal; drop into heavy DnB. (See Genre Bridge Playbook)."
+  },
+  {
+   "tags": [
+    "genre:drum-bass-dnb-playbook",
+    "genre:edm-progressive-house-playbook",
+    "genre:house-tech-house-playbook",
+    "genre:melodic-electronic-playbook",
+    "recipe",
+    "recipe:3-deck-layering"
+   ],
+   "source": "05 - Transition Cookbook/3-Deck Layering.md",
+   "text": "RECIPE 3-Deck Layering [advanced]: Use when Mainstage festival sets, peak-hour techno, rolling drum & bass. Creating unique live soundscapes that other DJs cannot duplicate. Avoid when When you are already struggling to keep two decks in phrase (adding a 3rd deck will cause a total trainwreck)."
+  },
+  {
+   "tags": [
+    "genre:drum-bass-dnb-playbook",
+    "genre:hip-hop-r-b-playbook",
+    "genre:house-tech-house-playbook",
+    "genre:melodic-electronic-playbook",
+    "genre:pop-playbook",
+    "recipe",
+    "recipe:acapella-overlay"
+   ],
+   "source": "05 - Transition Cookbook/Acapella Overlay.md",
+   "text": "RECIPE Acapella Overlay [advanced, needs stems]: Use when Open-Format, Festival EDM, Tech House, Drum & Bass sets. Transforming an underground house instrumental into a massive festival anthem. Avoid when When the instrumental track already has its own lead vocal (never layer two distinct vocals!)."
+  },
+  {
+   "tags": [
+    "bpm_gap",
+    "camelot_bypass",
+    "genre:drum-bass-dnb-playbook",
+    "genre:dubstep-playbook",
+    "genre:hip-hop-r-b-playbook",
+    "recipe",
+    "recipe:backspin-spinback"
+   ],
+   "source": "05 - Transition Cookbook/Backspin (Spinback).md",
+   "text": "RECIPE Backspin (Spinback) [intermediate, crosses any tempo gap, any key]: Use when UK Garage, Drum & Bass, Dubstep, Bass House, Hip-Hop. When an unreleased \"ID\" or massive crowd favorite gets such an overwhelming reaction that you \"pull it back\" or slam into an even bigger anthem...."
+  },
+  {
+   "tags": [
+    "genre:house-tech-house-playbook",
+    "genre:melodic-electronic-playbook",
+    "recipe",
+    "recipe:basic-blend"
+   ],
+   "source": "05 - Transition Cookbook/Basic Blend.md",
+   "text": "RECIPE Basic Blend [beginner]: Use when House, Deep House, Tech House, and Techno sets where hypnotic continuity is the primary aesthetic. Warming up a room or during steady-state daytime/club sets. Avoid when High-energy festival EDM, Dubstep, or fast-paced Pop sets where extended drum blends feel sluggish and boring."
+  },
+  {
+   "tags": [
+    "genre:drum-bass-dnb-playbook",
+    "genre:edm-progressive-house-playbook",
+    "genre:house-tech-house-playbook",
+    "genre:melodic-electronic-playbook",
+    "recipe",
+    "recipe:bass-swap"
+   ],
+   "source": "05 - Transition Cookbook/Bass Swap.md",
+   "text": "RECIPE Bass Swap [beginner]: Use when Virtually 90% of House, Tech House, EDM, Drum & Bass, and Pop-Dance transitions. Whenever swapping between two active drum grooves without a breakdown. Avoid when During ambient, drumless breakdowns where no kick drums exist."
+  },
+  {
+   "tags": [
+    "genre:drum-bass-dnb-playbook",
+    "genre:edm-progressive-house-playbook",
+    "genre:house-tech-house-playbook",
+    "genre:pop-playbook",
+    "recipe",
+    "recipe:beat-jump-transition"
+   ],
+   "source": "05 - Transition Cookbook/Beat Jump Transition.md",
+   "text": "RECIPE Beat Jump Transition [intermediate]: Use when Correcting phrase misalignments live without stopping the music. Skipping long, tedious second verses in pop or hip-hop songs to get straight to the chorus...."
+  },
+  {
+   "tags": [
+    "bpm_gap",
+    "camelot_bypass",
+    "genre:edm-progressive-house-playbook",
+    "genre:future-bass-melodic-bass-playbook",
+    "genre:house-tech-house-playbook",
+    "genre:melodic-electronic-playbook",
+    "genre:pop-playbook",
+    "recipe",
+    "recipe:breakdown-transition"
+   ],
+   "source": "05 - Transition Cookbook/Breakdown Transition.md",
+   "text": "RECIPE Breakdown Transition [intermediate, crosses any tempo gap, any key]: Use when Shifting genres (e.g., House to Trance, Pop to EDM, Hip-Hop to Future Bass). Adjusting BPM by 5–15 BPM without pitch distortion...."
+  },
+  {
+   "tags": [
+    "genre:dubstep-playbook",
+    "genre:edm-progressive-house-playbook",
+    "genre:future-bass-melodic-bass-playbook",
+    "genre:house-tech-house-playbook",
+    "genre:melodic-electronic-playbook",
+    "recipe",
+    "recipe:build-to-drop-transition"
+   ],
+   "source": "05 - Transition Cookbook/Build-to-Drop Transition.md",
+   "text": "RECIPE Build-to-Drop Transition [intermediate]: Use when Festival EDM, Big Room, Progressive House, Future Bass, Melodic Bass. Shifting from a pop vocal verse into a heavy electronic drop. Avoid when Deep minimal house or techno where synthetic build-ups are absent."
+  },
+  {
+   "tags": [
+    "genre:drum-bass-dnb-playbook",
+    "genre:dubstep-playbook",
+    "genre:house-tech-house-playbook",
+    "genre:trap-bass-music-playbook",
+    "recipe",
+    "recipe:double-drop"
+   ],
+   "source": "05 - Transition Cookbook/Double Drop.md",
+   "text": "RECIPE Double Drop [advanced]: Use when Drum & Bass, Dubstep, Jump-Up, Neurofunk, Bass House festival sets. Peak-energy climax moments to send the crowd into a frenzy. Avoid when When tracks are in clashing musical keys (a double drop with clashing keys sounds like an industrial factory accident)."
+  },
+  {
+   "tags": [
+    "genre:drum-bass-dnb-playbook",
+    "genre:dubstep-playbook",
+    "genre:edm-progressive-house-playbook",
+    "genre:house-tech-house-playbook",
+    "genre:trap-bass-music-playbook",
+    "recipe",
+    "recipe:drop-swap"
+   ],
+   "source": "05 - Transition Cookbook/Drop Swap.md",
+   "text": "RECIPE Drop Swap [intermediate]: Use when Festival EDM, Bass House, Dubstep, Drum & Bass, Trap. Peak-time festival or headline club sets to create memorable signature moments. Avoid when Progressive House, Deep House, or Minimal Techno where continuous, hypnotic evolution is desired."
+  },
+  {
+   "tags": [
+    "genre:drum-bass-dnb-playbook",
+    "genre:hip-hop-r-b-playbook",
+    "genre:house-tech-house-playbook",
+    "recipe",
+    "recipe:drum-bridge"
+   ],
+   "source": "05 - Transition Cookbook/Drum Bridge.md",
+   "text": "RECIPE Drum Bridge [intermediate, needs stems]: Use when Jumping between completely clashing keys without using an echo out. Shifting between House and Latin/Afro genres, or moving from Hip-Hop into EDM...."
+  },
+  {
+   "tags": [
+    "genre:house-tech-house-playbook",
+    "genre:melodic-electronic-playbook",
+    "recipe",
+    "recipe:eq-blend"
+   ],
+   "source": "05 - Transition Cookbook/EQ Blend.md",
+   "text": "RECIPE EQ Blend [beginner]: Use when Deep House, Tech House, Nu-Disco, Melodic EDM. Any time two tracks have high energy and you want an undetectable, transparent handoff. Avoid when Fast-paced Hip-Hop, Trap, or Dubstep where sudden dynamic contrast is required."
+  },
+  {
+   "tags": [
+    "bpm_gap",
+    "camelot_bypass",
+    "genre:drum-bass-dnb-playbook",
+    "genre:dubstep-playbook",
+    "genre:edm-progressive-house-playbook",
+    "genre:hip-hop-r-b-playbook",
+    "genre:pop-playbook",
+    "recipe",
+    "recipe:echo-out"
+   ],
+   "source": "05 - Transition Cookbook/Echo Out.md",
+   "text": "RECIPE Echo Out [beginner, crosses any tempo gap, any key]: Use when Radical genre transitions (e.g., Pop to Drum & Bass, Hip-Hop to House). Changing tempo dramatically (e.g., jumping from 128 BPM to 174 BPM or 100 BPM to 128 BPM)...."
+  },
+  {
+   "tags": [
+    "bpm_gap",
+    "camelot_bypass",
+    "genre:drum-bass-dnb-playbook",
+    "genre:dubstep-playbook",
+    "genre:edm-progressive-house-playbook",
+    "genre:house-tech-house-playbook",
+    "genre:trap-bass-music-playbook",
+    "recipe",
+    "recipe:fake-drop"
+   ],
+   "source": "05 - Transition Cookbook/Fake Drop.md",
+   "text": "RECIPE Fake Drop [advanced, crosses any tempo gap, any key]: Use when Peak-time festival sets, bass music, dubstep, trap, and open-format headline moments. A trademark weapon of Skrillex Case Study and Martin Garrix Case Study. Avoid when Early in the night when building trust with a hesitant, conservative crowd."
+  },
+  {
+   "tags": [
+    "genre:edm-progressive-house-playbook",
+    "genre:future-bass-melodic-bass-playbook",
+    "genre:house-tech-house-playbook",
+    "genre:melodic-electronic-playbook",
+    "genre:pop-playbook",
+    "recipe",
+    "recipe:filter-transition"
+   ],
+   "source": "05 - Transition Cookbook/Filter Transition.md",
+   "text": "RECIPE Filter Transition [beginner]: Use when EDM, Progressive House, Future Bass, Pop-to-House switches. Transitioning out of a busy vocal chorus into an instrumental drop. Avoid when Raw, authentic Hip-Hop, Disco, or Funk sets where resonant electronic digital filters sound artificial."
+  },
+  {
+   "tags": [
+    "bpm_gap",
+    "camelot_bypass",
+    "genre:drum-bass-dnb-playbook",
+    "genre:dubstep-playbook",
+    "genre:edm-progressive-house-playbook",
+    "genre:hip-hop-r-b-playbook",
+    "genre:house-tech-house-playbook",
+    "genre:pop-playbook",
+    "genre:trap-bass-music-playbook",
+    "recipe",
+    "recipe:genre-bridge"
+   ],
+   "source": "05 - Transition Cookbook/Genre Bridge.md",
+   "text": "RECIPE Genre Bridge [advanced, crosses any tempo gap, any key]: Use when Open-Format headline sets, festival multi-genre slots, energetic college parties. When the room's energy has plateaued and you need a high-voltage genre shock to awaken the crowd...."
+  },
+  {
+   "tags": [
+    "bpm_gap",
+    "camelot_bypass",
+    "genre:edm-progressive-house-playbook",
+    "genre:hip-hop-r-b-playbook",
+    "genre:house-tech-house-playbook",
+    "genre:pop-playbook",
+    "recipe",
+    "recipe:hard-cut"
+   ],
+   "source": "05 - Transition Cookbook/Hard Cut.md",
+   "text": "RECIPE Hard Cut [intermediate, crosses any tempo gap, any key]: Use when Cutting from an acoustic or hip-hop track straight into a 128 BPM house anthem. Dropping an unexpected nostalgic classic (e.g., cutting from a techno track directly into ABBA or Queen)...."
+  },
+  {
+   "tags": [
+    "genre:drum-bass-dnb-playbook",
+    "genre:house-tech-house-playbook",
+    "genre:melodic-electronic-playbook",
+    "genre:pop-playbook",
+    "recipe",
+    "recipe:instrumental-overlay"
+   ],
+   "source": "05 - Transition Cookbook/Instrumental Overlay.md",
+   "text": "RECIPE Instrumental Overlay [intermediate, needs stems]: Use when Pop into House transitions, Hip-Hop into EDM, Drum & Bass sets. Keeping dancers locked in a physical rhythm during slow emotional vocal breakdowns. Avoid when If the instrumental has loud, distracting lead synths that clash with the vocal melody."
+  },
+  {
+   "tags": [
+    "genre:drum-bass-dnb-playbook",
+    "genre:edm-progressive-house-playbook",
+    "genre:hip-hop-r-b-playbook",
+    "genre:house-tech-house-playbook",
+    "genre:pop-playbook",
+    "recipe",
+    "recipe:live-mashup"
+   ],
+   "source": "05 - Transition Cookbook/Live Mashup.md",
+   "text": "RECIPE Live Mashup [advanced, needs stems]: Use when Peak-time festival slots, open-format club sets, closing party anthems. Creating signature \"viral moments\" that the crowd has never heard anywhere else. Avoid when In purist underground clubs where mashups are viewed as cheesy."
+  },
+  {
+   "tags": [
+    "genre:edm-progressive-house-playbook",
+    "genre:house-tech-house-playbook",
+    "genre:melodic-electronic-playbook",
+    "recipe",
+    "recipe:long-blend"
+   ],
+   "source": "05 - Transition Cookbook/Long Blend.md",
+   "text": "RECIPE Long Blend [intermediate]: Use when Progressive House, Deep Techno, Melodic House, Trance, Organic House. Midnight festival sets where an immersive groove trance is desired. Avoid when Pop, Hip-Hop, Drum & Bass, or Dubstep where track structures demand rapid impact."
+  },
+  {
+   "tags": [
+    "camelot_bypass",
+    "genre:drum-bass-dnb-playbook",
+    "genre:dubstep-playbook",
+    "genre:house-tech-house-playbook",
+    "genre:pop-playbook",
+    "genre:trap-bass-music-playbook",
+    "recipe",
+    "recipe:loop-roll"
+   ],
+   "source": "05 - Transition Cookbook/Loop Roll.md",
+   "text": "RECIPE Loop Roll [intermediate, any key]: Use when Dubstep, Bass Music, Drum & Bass, Trap, Festival EDM. Creating an impromptu build-up where none existed in the original recording. Avoid when Deep melodic house or organic electronic music where digital stuttering sounds jarring and out of place."
+  },
+  {
+   "tags": [
+    "genre:house-tech-house-playbook",
+    "genre:melodic-electronic-playbook",
+    "genre:pop-playbook",
+    "recipe",
+    "recipe:loop-transition"
+   ],
+   "source": "05 - Transition Cookbook/Loop Transition.md",
+   "text": "RECIPE Loop Transition [intermediate]: Use when Mixing short radio edits or tracks without extended DJ intros/outros. When you need extra time to read the crowd, find the next track, or troubleshoot gear...."
+  },
+  {
+   "tags": [
+    "bpm_gap",
+    "camelot_bypass",
+    "genre:drum-bass-dnb-playbook",
+    "genre:dubstep-playbook",
+    "genre:hip-hop-r-b-playbook",
+    "genre:trap-bass-music-playbook",
+    "recipe",
+    "recipe:quick-cut"
+   ],
+   "source": "05 - Transition Cookbook/Quick Cut.md",
+   "text": "RECIPE Quick Cut [intermediate, crosses any tempo gap, any key]: Use when Hip-Hop, Trap, R&B, UK Drill, Bass Music, and fast Open-Format sets. Cutting directly from a high-energy build-up into a legendary, instantly recognizable vocal hook...."
+  },
+  {
+   "tags": [
+    "genre:future-bass-melodic-bass-playbook",
+    "genre:house-tech-house-playbook",
+    "genre:melodic-electronic-playbook",
+    "genre:pop-playbook",
+    "recipe",
+    "recipe:reverb-transition"
+   ],
+   "source": "05 - Transition Cookbook/Reverb Transition.md",
+   "text": "RECIPE Reverb Transition [intermediate]: Use when Emotional electronic music, Melodic House, Future Bass, ambient pop transitions. Transitioning out of an emotional ballad into a dance groove. Avoid when Fast, aggressive Dubstep, Hard Techno, or Drum & Bass where sharpness and aggression are required."
+  },
+  {
+   "tags": [
+    "genre:drum-bass-dnb-playbook",
+    "genre:hip-hop-r-b-playbook",
+    "genre:house-tech-house-playbook",
+    "genre:pop-playbook",
+    "recipe",
+    "recipe:stems-transition"
+   ],
+   "source": "05 - Transition Cookbook/Stems Transition.md",
+   "text": "RECIPE Stems Transition [advanced, needs stems]: Use when Open-Format mixing, Live Mashups, Pop-to-Club transitions. When you want to play an iconic rap or pop vocal over a fresh electronic club beat without buying or downloading an acapella...."
+  },
+  {
+   "tags": [
+    "camelot_bypass",
+    "genre:drum-bass-dnb-playbook",
+    "genre:dubstep-playbook",
+    "genre:hip-hop-r-b-playbook",
+    "genre:house-tech-house-playbook",
+    "genre:pop-playbook",
+    "recipe",
+    "recipe:stutter-transition"
+   ],
+   "source": "05 - Transition Cookbook/Stutter Transition.md",
+   "text": "RECIPE Stutter Transition [intermediate, any key]: Use when Hip-Hop, Pop, Bass House, Trap, Drum & Bass. Introducing an iconic pop or rap vocal over an electronic drum beat. Avoid when Smooth Progressive House or Ambient sets."
+  },
+  {
+   "tags": [
+    "bpm_gap",
+    "camelot_bypass",
+    "genre:drum-bass-dnb-playbook",
+    "genre:dubstep-playbook",
+    "genre:hip-hop-r-b-playbook",
+    "genre:house-tech-house-playbook",
+    "genre:pop-playbook",
+    "recipe",
+    "recipe:tempo-bridge"
+   ],
+   "source": "05 - Transition Cookbook/Tempo Bridge.md",
+   "text": "RECIPE Tempo Bridge [advanced, crosses any tempo gap, any key]: Use when Shifting from slow R&B/Afrobeats (100–110 BPM) into House/Pop (120–128 BPM). Accelerating from House (128 BPM) into Hard Techno (140+ BPM) or Drum & Bass (174 BPM)...."
+  },
+  {
+   "tags": [
+    "genre:dubstep-playbook",
+    "genre:house-tech-house-playbook",
+    "genre:pop-playbook",
+    "genre:trap-bass-music-playbook",
+    "recipe",
+    "recipe:vocal-punchline-drop-snap"
+   ],
+   "source": "05 - Transition Cookbook/Vocal Punchline Drop Snap.md",
+   "text": "RECIPE Vocal Punchline Drop Snap [intermediate]: Use when Peak-time festival sets and high-velocity nightclub hours (12:30 AM – 2:30 AM). Short-form social video routines (Instagram Reels, TikTok, YouTube Shorts) where listener retention drops if a transition takes longer than 3 seconds...."
+  },
+  {
+   "tags": [
+    "genre:future-bass-melodic-bass-playbook",
+    "genre:hip-hop-r-b-playbook",
+    "genre:house-tech-house-playbook",
+    "genre:melodic-electronic-playbook",
+    "genre:pop-playbook",
+    "recipe",
+    "recipe:vocal-transition"
+   ],
+   "source": "05 - Transition Cookbook/Vocal Transition.md",
+   "text": "RECIPE Vocal Transition [intermediate, needs stems]: Use when Pop, R&B, Vocal House, Melodic Electronic, Open-Format club sets. Creating emotionally resonant moments where two beloved songs feel like a pre-planned duet...."
+  }
+ ]
+}

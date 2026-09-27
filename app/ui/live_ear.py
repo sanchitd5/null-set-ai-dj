@@ -24,15 +24,18 @@ Structure]], [[Loops & Beat Jumps]]); a filter wash only REMOVES low end, so
 two decks never share sub-bass ([[EQ & Frequency Management]]).
 
 Env:
-  OMNI_BASE_URL   OpenAI-compatible endpoint. Default: local mlx-vlm server at
-                  http://127.0.0.1:8901/v1, run from its own venv (mlx-vlm needs
-                  starlette>=1.0, the app's fastapi pins <0.28):
-                    ~/.venvs/mlx-vlm/bin/python -m mlx_vlm.server \
-                      --model mlx-community/Qwen3-Omni-30B-A3B-Instruct-4bit --port 8901
-                  start.sh starts it when that venv exists. Cloud (optional):
+  OMNI_BASE_URL   OpenAI-compatible endpoint. Default: whatever model_runtime.py
+                  already published for the autopilot text calls (OLLAMA_BASE_URL,
+                  name kept for backward compat) - one mlx_vlm.server process
+                  serves both text-only autopilot suggestions and this module's
+                  audio-in calls, so there is no separate model/port to configure
+                  here. Falls back to LOCAL_URL (http://127.0.0.1:8901/v1) when
+                  model_runtime hasn't published anything yet (e.g. this module
+                  imported standalone, or MLX/Ollama both still starting up).
+                  Cloud (optional):
                   https://{WorkspaceId}.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1
-  OMNI_MODEL      default mlx-community/Qwen3-Omni-30B-A3B-Instruct-4bit
-                  (local) or qwen3.8-omni-flash (cloud).
+  OMNI_MODEL      falls back to AUTOPILOT_MODEL (published by model_runtime.py),
+                  then LOCAL_MODEL (local) or qwen3.8-omni-flash (cloud).
   OMNI_API_KEY    falls back to DASHSCOPE_API_KEY, then "none" (local).
   OMNI_TIMEOUT_S  per call, default 10. A decision later than a phrase is useless.
 """
@@ -44,8 +47,10 @@ import threading
 import time
 from typing import Optional
 
+from app.music_brain import live_ear_rag
+
 LOCAL_URL = "http://127.0.0.1:8901/v1"
-LOCAL_MODEL = "mlx-community/Qwen3-Omni-30B-A3B-Instruct-4bit"
+LOCAL_MODEL = "mlx-community/Qwen3-Omni-30B-A3B-Captioner"
 CLOUD_MODEL = "qwen3.8-omni-flash"
 MAX_AUDIO_BYTES = 1_500_000        # ~45 s of 16 kHz mono 16-bit: far above one clip
 MAX_REASON_CHARS = 200
@@ -66,9 +71,14 @@ _busy = threading.Lock()   # one live call at a time; a second is refused, not q
 
 def config() -> dict:
     key = os.environ.get("OMNI_API_KEY") or os.environ.get("DASHSCOPE_API_KEY") or ""
-    base = os.environ.get("OMNI_BASE_URL") or LOCAL_URL   # local first; cloud only when asked for
+    # OMNI_BASE_URL / OMNI_MODEL win when set explicitly; otherwise reuse
+    # whatever model_runtime.py already published for the shared mlx_vlm.server
+    # (same env vars the text-only autopilot client reads), and only fall back
+    # to the hardcoded local default if nothing has published yet.
+    base = (os.environ.get("OMNI_BASE_URL") or os.environ.get("OLLAMA_BASE_URL") or LOCAL_URL)
     cloud = "dashscope" in base or "aliyuncs" in base
-    model = os.environ.get("OMNI_MODEL") or (CLOUD_MODEL if cloud else LOCAL_MODEL)
+    model = os.environ.get("OMNI_MODEL") or (os.environ.get("AUTOPILOT_MODEL") if not cloud else None) or (
+        CLOUD_MODEL if cloud else LOCAL_MODEL)
     try:
         timeout = float(os.environ.get("OMNI_TIMEOUT_S", "10"))
     except ValueError:
@@ -200,9 +210,13 @@ def _user_text(m: dict) -> str:
             "seam_shift_ms", "grid_err_ms", "seam_click_ratio", "peak_dbfs", "rms_dbfs",
             "clip_events", "low_clash", "washed", "moved")
     lines = [f"{k}: {m[k]}" for k in keys if m.get(k) is not None]
+    f = flags(m)
+    examples = live_ear_rag.retrieve(f, washed=bool(m.get("washed")), moved=bool(m.get("moved")))
+    ex_block = ("\nSIMILAR PAST CALLS (grounded, ./DJ wiki-derived):\n"
+                + "\n".join(f"- {e}" for e in examples)) if examples else ""
     return ("WATCHDOG\n" + "\n".join(lines) +
-            f"\nFLAGS: {', '.join(flags(m)) or 'none'}" +
-            f"\nALLOWED: {', '.join(allowed(m))}")
+            f"\nFLAGS: {', '.join(f) or 'none'}" +
+            f"\nALLOWED: {', '.join(allowed(m))}" + ex_block)
 
 
 def _ask_omni(c: dict, wav: bytes, m: dict) -> str:
