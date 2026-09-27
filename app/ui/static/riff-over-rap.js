@@ -129,7 +129,10 @@
     const aGain = (plan.gains && plan.gains.a_gain) || 1;
 
     // A: stop its own playback exactly at t0, the stretched stems take over.
-    for (const s of oa._allSources()) { try { s.stop(t0); } catch (e) { /* already stopped */ } }
+    // Through the deck so its liveness knows: from t0 A's own mix and stems are
+    // silent, so no stem move may mute A's mix on the strength of them.
+    if (oa.stopSourcesAt) oa.stopSourcesAt(t0);
+    else for (const s of oa._allSources()) { try { s.stop(t0); } catch (e) { /* already stopped */ } s._stopAt = t0; }
     // Deck A keeps "playing": its clock follows the stretched stems back to song
     // time (groove loop, then the breakdown loop), so the deck never looks stopped.
     const g0 = plan.a_groove[0], s0 = plan.a_solo[0];   // groove start, drop start
@@ -221,6 +224,10 @@
       oa._meterGain = null;
       const endPos = extPos(audioCtx.currentTime);
       oa._extPos = null;
+      // drop the stopped sources too: afterBlend's stopNow() is a no-op on a deck
+      // that no longer plays, so they'd linger in source/_stemSrc and pass for stems
+      if (oa._stopSource) oa._stopSource();
+      if (oa.stemState && oa._fallbackToMix) oa._fallbackToMix();
       oa.playing = false;
       oa.startOffset = endPos;
       if (oa.onPlayStateChange) oa.onPlayStateChange(false);

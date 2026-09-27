@@ -471,27 +471,91 @@ class Deck {
     if (name === "vocals") s.connect(this.vocalBusGain);
     s.connect(this.stemMeter[name]);
     s.start(at, Math.max(0, Math.min((pos + st.lag) * k, st[name].duration - 0.01)));
+    s._startAt = at;
+    // A stem that runs out (buffer shorter than the mix) while the deck is in
+    // stem mode would leave the muted mix over nothing: hand back to the mix.
+    s.onended = () => {
+      s._dead = true;
+      if (this._stemSrc[name] !== s) return;           // replaced / stopped on purpose
+      if (this.stemState && this._mixLiveAt(audioCtx.currentTime)) this._fallbackToMix();
+    };
     this._stemSrc[name] = s;
   }
 
   // Stems decoded: keep them, and if the deck is already playing, attach the
   // stem sources 150 ms ahead on the exact sample the mix will be at.
   setStems(stems) {
-    this._stopStems();
-    this.stems = stems;
-    if (!stems || !this.playing || this._braking || this._spinningUp || !this.source) return;
+    const attach = !!(stems && this.playing && !this._braking && !this._spinningUp && this.source);
     const T = audioCtx.currentTime + 0.15;
-    const pos = this._positionAt(T);
-    for (const n of STEM_NAMES) this._startStem(n, T, pos, this.source);
-    if (stems.ratio && Math.abs(stems.ratio - 1) > 0.001) this.stemMix({ drums: 1, bass: 1, vocals: 1, other: 1, bus: 0 }, T, 0.01);
+    // In stem mode the old stems play on until the new ones land on the same
+    // sample (stopping them now left a 150 ms hole with the mix muted).
+    this._stopStems(attach && this.stemState ? T : 0);
+    this.stems = stems;
+    if (attach) {
+      const pos = this._positionAt(T);
+      for (const n of STEM_NAMES) this._startStem(n, T, pos, this.source);
+      // Key-locked set from the full mix: hand over to the stems. Already in stem
+      // mode: the booked moves keep running on the new sources (re-setting every
+      // gain here cancelled them and desynced stemState from the audio).
+      if (!this.stemState && stems.ratio && Math.abs(stems.ratio - 1) > 0.001) this.stemMix({ drums: 1, bass: 1, vocals: 1, other: 1, bus: 0 }, T, 0.01);
+    }
+    if (this.stemState && this.playing && !this.stemsLiveAt(attach ? T : audioCtx.currentTime)) this._fallbackToMix();
   }
 
-  _stopStems() {
+  // at > 0: stop on the audio clock at `at` (disconnect once ended).
+  _stopStems(at = 0) {
     for (const s of Object.values(this._stemSrc)) {
-      try { s.stop(); } catch (e) { /* already stopped */ }
-      s.disconnect();
+      try { s.stop(at); } catch (e) { /* already stopped */ }
+      if (at > audioCtx.currentTime) s.onended = () => { s._dead = true; s.disconnect(); };
+      else { s._dead = true; s.disconnect(); }
     }
     this._stemSrc = {};
+  }
+
+  // Stop every source of this deck on the audio clock at `t` without dropping
+  // the deck state (riff over rap takes over the deck's output from t). Marked
+  // so liveness checks know they are silent from t on.
+  stopSourcesAt(t) {
+    for (const s of this._allSources()) {
+      try { s.stop(t); } catch (e) { /* already stopped */ }
+      s._stopAt = t;
+    }
+  }
+
+  // A source is sounding at audio time t: not ended, not stopped by t.
+  _srcLiveAt(s, t) {
+    return !!s && !s._dead && !(s._stopAt !== undefined && s._stopAt <= t);
+  }
+
+  _mixLiveAt(t) { return this._srcLiveAt(this.source, t); }
+
+  // Stems genuinely playing at audio time t: every stem source alive and
+  // started by t, or sample-locked with a mix that has not started either
+  // (play(pos, false, when): handing over before the first sample is silent
+  // on both sides). Existence alone was the old test: dead sources passed it.
+  stemsLiveAt(t) {
+    if (!this.stems || !this._mixLiveAt(t)) return false;
+    const mixStart = this.source._startAt || 0;
+    return STEM_NAMES.every((n) => {
+      const s = this._stemSrc[n];
+      return this._srcLiveAt(s, t) && (s._startAt || 0) <= Math.max(t, mixStart) + 0.005;
+    });
+  }
+
+  // Back to the full mix now, whatever stemState says (stems gone / dead).
+  // Unlike stemMix(null) this ignores tempoStems: a pitched mix beats silence.
+  _fallbackToMix() {
+    const t = audioCtx.currentTime, end = t + 0.01;
+    const to = (param, v) => {
+      param.cancelScheduledValues(t);
+      param.setValueAtTime(param.value, t);
+      param.linearRampToValueAtTime(v, end);
+    };
+    to(this.mixGain.gain, 1);
+    for (const n of STEM_NAMES) to(this.stemGain[n].gain, 0);
+    to(this.vocalBusGain.gain, 0);
+    this.stemState = null;
+    this._emitStem(null);
   }
 
   // Mini player read-out: {level (RMS, pre-fader), gain (what the crowd hears of it)}.
@@ -507,11 +571,13 @@ class Deck {
     return { level, gain: g };
   }
 
-  get stemsReady() { return !!(this.stems && STEM_NAMES.every((n) => this._stemSrc[n])); }
+  get stemsReady() { return this.stemsLiveAt(audioCtx.currentTime); }
 
   // Stem move on the audio clock. target = {drums, bass, vocals, other, bus}
   // (0..1, omitted = unchanged); null = back to the full mix. Ramps over
-  // `ramp` s from `when`. Returns false when stems aren't running.
+  // `ramp` s from `when`. Returns false (mix untouched) unless the stems are
+  // genuinely playing at the move's time: a stem move must never mute the
+  // full mix over dead stems.
   stemMix(target, when = 0, ramp = 0.03) {
     const t = Math.max(audioCtx.currentTime, when || 0), end = t + Math.max(0.005, ramp);
     // Ramp from the LOGICAL level (the previous stem state), not param.value:
@@ -524,7 +590,9 @@ class Deck {
     };
     const prev = this.stemState;                         // null = full mix
     const was = (n) => (prev ? prev[n] || 0 : 0);        // audible stem gain before this move
-    if (target === null && this.tempoStems) target = { drums: 1, bass: 1, vocals: 1, other: 1, bus: 0 };
+    const live = this.stemsLiveAt(t);
+    // key-locked deck: "full" means all stems up, but only while they sound
+    if (target === null && this.tempoStems && live) target = { drums: 1, bass: 1, vocals: 1, other: 1, bus: 0 };
     if (target === null) {
       if (!prev) return true;
       set(this.mixGain.gain, 0, 1);
@@ -534,7 +602,7 @@ class Deck {
       this._emitStem(null);
       return true;
     }
-    if (!this.stemsReady) return false;
+    if (!live) return false;
     const cur = prev || { drums: 1, bass: 1, vocals: 1, other: 1, bus: 0 };
     const next = { ...cur, ...target };
     // from the full mix: stems start where the mix was (1) and the mix hands over
@@ -654,14 +722,16 @@ class Deck {
     src.connect(this.mixGain);
     const startAt = when && when > audioCtx.currentTime ? when : 0;
     src.start(startAt, Math.max(0, Math.min(bufPos, duration - 0.01)));
+    src._startAt = startAt || audioCtx.currentTime;
+    src.onended = () => { src._dead = true; };
     this.source = src;
     // Stems ride along sample-locked (reversed playback: full mix only).
     if (this.stems && !this.reversed) {
-      for (const n of STEM_NAMES) this._startStem(n, startAt || audioCtx.currentTime, pos, src);
-      if (this.tempoStems && !this.stemState) this.stemMix({ drums: 1, bass: 1, vocals: 1, other: 1, bus: 0 }, startAt || audioCtx.currentTime, 0.005);
-    } else if (this.stemState) {
-      this.stemMix(null);
+      for (const n of STEM_NAMES) this._startStem(n, src._startAt, pos, src);
+      if (this.tempoStems && !this.stemState) this.stemMix({ drums: 1, bass: 1, vocals: 1, other: 1, bus: 0 }, src._startAt, 0.005);
     }
+    // stem mode carried over but the stems didn't start (reversed, missing): full mix
+    if (this.stemState && !this.stemsLiveAt(src._startAt)) this._fallbackToMix();
     this.startedAt = startAt || audioCtx.currentTime;
     this.startOffset = pos;
     this.playing = true;
