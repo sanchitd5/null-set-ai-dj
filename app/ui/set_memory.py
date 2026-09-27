@@ -48,22 +48,29 @@ class SetMemory:
         except Exception:
             pass  # memory is best-effort, never breaks a suggest call
 
-    def record(self, played: Iterable[str]) -> None:
+    def record(self, played: Iterable[str], set_id: str = "") -> None:
+        """Remember `played` as heard in set `set_id` ("" = unscoped caller)."""
         now = time.time()
         with _lock:
             for name in played:
                 k = _key(name)
                 if k:
-                    self._data[k] = {"name": str(name)[:120], "t": now}
+                    self._data[k] = {"name": str(name)[:120], "t": now, "set": set_id}
             cutoff = now - MAX_AGE_DAYS * 86400
             items = sorted(((k, v) for k, v in self._data.items() if v.get("t", 0) >= cutoff),
                            key=lambda kv: kv[1]["t"], reverse=True)[:MAX_SONGS]
             self._data = dict(items)
             self._save()
 
-    def earlier_sets(self, current: Iterable[str], limit: int = PROMPT_LIMIT) -> List[str]:
-        """Most recent remembered songs that are NOT in the current set."""
+    def earlier_sets(self, current: Iterable[str], limit: int = PROMPT_LIMIT,
+                     set_id: str = "") -> List[str]:
+        """Most recent remembered songs that are NOT in the current set.
+
+        With a set_id, everything this set recorded counts as the current set
+        too (the request's history is only its last 30 songs), so a long set's
+        own early songs never come back as "heard in an earlier set"."""
         cur = {_key(c) for c in current}
         with _lock:
             items = sorted(self._data.items(), key=lambda kv: kv[1]["t"], reverse=True)
-        return [v["name"] for k, v in items if k not in cur][:limit]
+        return [v["name"] for k, v in items
+                if k not in cur and not (set_id and v.get("set") == set_id)][:limit]

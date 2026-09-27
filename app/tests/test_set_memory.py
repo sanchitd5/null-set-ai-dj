@@ -9,6 +9,26 @@ def test_memory_offers_only_earlier_sets(tmp_path):
     assert again.earlier_sets(["Charli xcx - Guess (official lyric video)", "100 gecs - Money Machine"]) == []
 
 
+def test_memory_is_scoped_per_set(tmp_path):
+    m = SetMemory(tmp_path / "mem.json")
+    m.record(["Old Artist - Old Song"], "set-1")                        # an earlier set
+    m.record(["Early - Song 1", "Mid - Song 2"], "set-2")                # this set, early songs
+    # set-2's request history no longer carries its early songs (last 30 only):
+    # they are still this set's, not "earlier sets"
+    assert m.earlier_sets(["Now - Song 40"], set_id="set-2") == ["Old Artist - Old Song"]
+    # another tab / set sees set-2's songs as earlier
+    assert set(m.earlier_sets([], set_id="set-3")) == {"Old Artist - Old Song", "Early - Song 1", "Mid - Song 2"}
+    # unscoped caller: old behaviour
+    assert set(m.earlier_sets(["Early - Song 1"])) == {"Old Artist - Old Song", "Mid - Song 2"}
+
+
+def test_clean_set_id():
+    from app.ui.server import _clean_set_id
+    assert _clean_set_id("3f2a-9c_1") == "3f2a-9c_1"
+    assert _clean_set_id("bad id; drop") == "" and _clean_set_id(None) == ""
+    assert len(_clean_set_id("a" * 200)) == 64
+
+
 def test_earlier_set_songs_dropped_when_fresh_exists(monkeypatch):
     import app.ui.autopilot_service as ap
     fake = '{"suggestions":[{"artist":"Lane 8","title":"Little By Little"},{"artist":"Four Tet","title":"Baby"}]}'

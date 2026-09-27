@@ -44,6 +44,12 @@
   let currentEnergy = null;   // LLM's 1-10 energy read of the current song
   let playedIds = [];         // track ids played this set (LAYER callbacks: an earlier vocal)
   let setStartedAt = 0;       // Date.now() when the set started (elapsed_seconds for suggest)
+  // One id per set in this browser tab: the server scopes its suggestion memory
+  // to it, so another tab's set (or this tab's previous set) never counts as
+  // "this set", and two tabs never share a cached suggestion.
+  const newSetId = () => (window.crypto && crypto.randomUUID ? crypto.randomUUID()
+    : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`);
+  let setId = newSetId();
   let beatMutedByLayer = false; // a LAYER paused the live beat layer (restore after / on stop)
   function unmuteBeatLayer() {
     if (beatMutedByLayer && window.beatLayer) window.beatLayer.setEnabled(true);
@@ -774,7 +780,7 @@
     const res = await fetch("/api/autopilot/suggest", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ track_id: trackId, occasion: occasionWithBridge(opts), ...leadFields(opts), history: history.slice(-30), avoid: avoid.slice(-6), set_position: setPos, set_mode: setMode(), energy_note: energyNote, energy_hook: energyHook, lookahead: !!opts.lookAhead,
+      body: JSON.stringify({ set_id: setId, track_id: trackId, occasion: occasionWithBridge(opts), ...leadFields(opts), history: history.slice(-30), avoid: avoid.slice(-6), set_position: setPos, set_mode: setMode(), energy_note: energyNote, energy_hook: energyHook, lookahead: !!opts.lookAhead,
         variety_run: varietyRun().run, variety_genre: varietyRun().genre,
         tempo_target: bridgeTarget(opts.lookAhead), tempo_note: bridgeNote(opts.lookAhead) || null,
         elapsed_seconds: setStartedAt ? (Date.now() - setStartedAt) / 1000 : null }),
@@ -2008,6 +2014,7 @@
 
   // Common reset for any set start.
   function resetSetState() {
+    setId = newSetId();
     history = [];
     steering = "stay";
     steerStep = 0;
@@ -2060,6 +2067,7 @@
       modeEl.value = "quick";
       apStatus(`"${occasion}" is a high-energy occasion → QUICK mode`);
     }
+    setId = newSetId();
     history = [];
     steering = "stay";
     steerStep = 0;

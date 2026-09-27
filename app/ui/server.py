@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import mimetypes
+import re
 import shutil
 import threading
 import time
@@ -1306,6 +1307,10 @@ def get_render_audio(filename: str):
 
 class AutopilotSuggestRequest(BaseModel):
     track_id: str
+    # One id per set per browser tab (autopilot.js setId). Scopes the cross-set
+    # memory so this set's own songs are never "earlier sets" and another tab's
+    # set never leaks in; also keeps two tabs from sharing one cached answer.
+    set_id: str = ""
     occasion: Optional[str] = None
     history: list[str] = []
     set_position: Optional[float] = None  # 0.0=start, 1.0=end; computed from history if omitted
@@ -1396,6 +1401,12 @@ def _occasion_with_note(occasion: Optional[str], note: Optional[str], variety: s
 # call for that track can ground on the matching ./DJ genre playbook.
 _suggested_genres: Dict[str, str] = {}
 _set_memory = None  # app.ui.set_memory.SetMemory, created on first suggest
+
+
+def _clean_set_id(raw) -> str:
+    """Browser-sent set id: keep it only if it's a short plain token."""
+    s = str(raw or "").strip()[:64]
+    return s if re.fullmatch(r"[A-Za-z0-9_-]+", s) else ""
 
 
 def _genre_key(title: str) -> str:
@@ -1512,9 +1523,10 @@ def _autopilot_suggest_impl(req: AutopilotSuggestRequest):
     global _set_memory
     if _set_memory is None:
         _set_memory = SetMemory(CACHE_DIR / "set_memory.json")
+    set_id = _clean_set_id(req.set_id)
     if not req.lookahead:
-        _set_memory.record(history_display)
-    earlier = _set_memory.earlier_sets(history_display + avoid_display)
+        _set_memory.record(history_display, set_id)
+    earlier = _set_memory.earlier_sets(history_display + avoid_display, set_id=set_id)
 
     # Absolute loudness (Avg Energy is peak-normalised per song). Best-effort.
     loudness_dbfs = None
