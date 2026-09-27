@@ -21,6 +21,9 @@ def fake(monkeypatch, tmp_path):
     monkeypatch.setattr(srv, "_stem_queue", [])
     monkeypatch.setattr(srv, "_stem_backlog", [])
     monkeypatch.setattr(srv, "_stem_cv", threading.Condition())
+    from app.music_brain import stem_service
+    monkeypatch.setattr(stem_service, "StemWorker", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no worker in tests")))
+    monkeypatch.setattr(srv, "_stem_cache", {})
     return done, busy
 
 
@@ -55,3 +58,26 @@ def test_deck_request_promotes_a_backlog_track(fake):
     srv._queue_stems("b2")                      # a deck asks for b2
     assert srv._stem_queue == ["b2"] or done[:1] == ["b2"]
     assert "b2" not in srv._stem_backlog
+
+
+@pytest.mark.slow
+def test_persistent_worker_separates_two_songs_pipelined(tmp_path):
+    from pathlib import Path
+
+    import soundfile as sf
+
+    from app.music_brain import stem_service
+
+    songs = sorted(Path("data/cache/uploads").glob("*.flac"))[:2]
+    if len(songs) < 2:
+        pytest.skip("no library audio")
+    w = stem_service.StemWorker()
+    for i, s in enumerate(songs):
+        w._proc.stdin.write(__import__("json").dumps({"id": str(i), "path": str(s), "out_dir": str(tmp_path / str(i))}) + "\n")
+    w._proc.stdin.flush()
+    got = [w.results.get(timeout=300) for _ in songs]
+    assert all(r["ok"] for r in got), got
+    for r in got:
+        assert set(r["stems"]) == {"drums", "bass", "vocals", "other"}
+        info = sf.info(r["stems"]["vocals"])
+        assert info.samplerate == 44100 and info.duration > 30

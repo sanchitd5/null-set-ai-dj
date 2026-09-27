@@ -153,6 +153,69 @@ def separate(
     )
 
 
+# ---- persistent worker (app/music_brain/stem_worker.py) ---------------------
+FAST_MODEL = "htdemucs"   # single model: ~4.5x faster than the htdemucs_ft bag, same 4 stems
+
+
+class StemWorker:
+    """One long-lived `stem_worker` process: model loaded once, next song
+    decoded while the current one runs on the GPU, stems written on a thread."""
+
+    def __init__(self, model: str = FAST_MODEL):
+        import queue
+        import threading
+
+        self.model = model
+        self.results: "queue.Queue[dict]" = queue.Queue()
+        self._proc = subprocess.Popen(
+            [sys.executable, "-m", "app.music_brain.stem_worker", "--model", model],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            text=True, bufsize=1, cwd=str(Path(__file__).resolve().parents[2]),
+        )
+        first = self._proc.stdout.readline()
+        if not first or not json.loads(first).get("ready"):
+            raise RuntimeError("stem worker failed to start")
+        threading.Thread(target=self._read, daemon=True).start()
+
+    def _read(self) -> None:
+        for line in self._proc.stdout:
+            try:
+                self.results.put(json.loads(line))
+            except ValueError:
+                continue
+        self.results.put({"id": None, "ok": False, "error": "worker exited"})
+
+    @property
+    def alive(self) -> bool:
+        return self._proc.poll() is None
+
+    def submit(self, job_id: str, audio_path: Path) -> Path:
+        """Queue a 4-stem separation; returns the cache dir it will fill."""
+        cache_dir = _cache_dir_for(file_hash(audio_path), self.model, None)
+        self._proc.stdin.write(json.dumps({"id": job_id, "path": str(audio_path), "out_dir": str(cache_dir)}) + "\n")
+        self._proc.stdin.flush()
+        return cache_dir
+
+    @staticmethod
+    def finish(result: dict) -> Dict[str, str]:
+        """Write the manifest for a finished job (the cache hit marker)."""
+        stems = result["stems"]
+        cache_dir = Path(next(iter(stems.values()))).parent
+        with open(_manifest_path(cache_dir), "w", encoding="utf-8") as f:
+            json.dump(stems, f, indent=2)
+        return stems
+
+
+def cached_four_stems(audio_path: Path) -> Optional[Dict[str, str]]:
+    """4 stems from any model already in the cache (htdemucs_ft first, then htdemucs)."""
+    h = file_hash(audio_path)
+    for model in (DEMUCS_MODEL, FAST_MODEL):
+        st = _load_from_cache(_cache_dir_for(h, model, None))
+        if st and all(st.get(n) for n in FOUR_STEM_NAMES):
+            return st
+    return None
+
+
 def _detect_device() -> str:
     try:
         import torch

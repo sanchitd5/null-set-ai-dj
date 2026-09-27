@@ -13,6 +13,7 @@ import json
 import mimetypes
 import shutil
 import threading
+import time
 import uuid
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -458,13 +459,18 @@ _stem_cv = threading.Condition()
 _stem_done = {"separated": 0, "failed": 0}
 
 
+_stem_cache: Dict[str, Dict[str, str]] = {}
+
+
 def _cached_stems4(track_id: str) -> Optional[Dict[str, str]]:
     from app.music_brain import stem_service
-    from app.music_brain.config import DEMUCS_MODEL
 
-    audio_hash = stem_service.file_hash(_track_path(track_id))
-    stems = stem_service._load_from_cache(stem_service._cache_dir_for(audio_hash, DEMUCS_MODEL, None))
-    return stems if stems and all(stems.get(n) for n in STEM_NAMES) else None
+    if track_id in _stem_cache:
+        return _stem_cache[track_id]
+    stems = stem_service.cached_four_stems(_track_path(track_id))
+    if stems:
+        _stem_cache[track_id] = stems
+    return stems
 
 
 def _llm_busy() -> bool:
@@ -474,30 +480,90 @@ def _llm_busy() -> bool:
     return bool(snap["in_flight"] or snap["queued"])
 
 
+STEM_IN_FLIGHT = 2        # one separating, one decoding ahead (stem_worker pipeline)
+MAX_BACKFILL_S = 12 * 60  # longer files are albums / mixes: separated only if a deck asks
+
+
+def _next_stem_job() -> Optional[str]:
+    """Urgent first; the backfill only while the LLM is idle. Caller holds _stem_cv."""
+    if _stem_queue:
+        return _stem_queue.pop(0)
+    if _stem_backlog and not _llm_busy():
+        return _stem_backlog.pop(0)
+    return None
+
+
 def _stem_worker() -> None:
-    """One separation at a time. Urgent jobs first; the library backfill runs
-    only while no LLM call is in flight or queued (Demucs and the LLM share
-    the GPU: a suggestion must never wait on a backfill)."""
+    """Feeds the persistent separation process (app/music_brain/stem_worker.py):
+    up to STEM_IN_FLIGHT songs at once so the next one decodes while the current
+    one runs on the GPU. Falls back to one-shot Demucs if the process won't start."""
+    import queue as _q
+
     global _stem_busy
+    from app.music_brain import stem_service
+
+    proc, in_flight = None, {}
     while True:
+        if proc is None or not proc.alive:
+            try:
+                proc = stem_service.StemWorker()
+            except Exception as exc:
+                print(f"[stems] worker unavailable ({exc}); one-shot Demucs", flush=True)
+                proc = None
         with _stem_cv:
-            while not _stem_queue and not (_stem_backlog and not _llm_busy()):
+            while len(in_flight) < (STEM_IN_FLIGHT if proc else 1):
+                tid = _next_stem_job()
+                if tid is None:
+                    break
+                if tid not in _tracks or _cached_stems4(tid) is not None:
+                    continue
+                if proc:
+                    proc.submit(tid, _track_path(tid))
+                    in_flight[tid] = time.monotonic()
+                else:
+                    in_flight[tid] = None
+            _stem_busy = next(iter(in_flight), None)
+            if not in_flight:
                 _stem_cv.wait(timeout=2.0)
-            src = _stem_queue if _stem_queue else _stem_backlog
-            _stem_busy = src.pop(0)
-        tid = _stem_busy
-        try:
-            if tid in _tracks and _cached_stems4(tid) is None:
-                separate_stems(_track_path(tid))           # 4-stem, cached by content hash
+                continue
+        if proc is None:                                    # fallback: synchronous one-shot
+            tid = next(iter(in_flight))
+            try:
+                separate_stems(_track_path(tid))
                 _stem_done["separated"] += 1
-            if tid in _tracks:
-                _cached_vocal_regions(tid)                 # vocal map from the new vocals stem
-        except Exception as exc:
+                _cached_vocal_regions(tid)
+            except Exception as exc:
+                _stem_done["failed"] += 1
+                print(f"[stems] {tid}: {exc}", flush=True)
+            in_flight.pop(tid, None)
+            continue
+        try:
+            res = proc.results.get(timeout=5.0)
+        except _q.Empty:
+            continue
+        tid = res.get("id")
+        if tid not in in_flight:
+            if res.get("error") == "worker exited":
+                for t in in_flight:
+                    _queue_stems(t)                         # redo on a fresh worker
+                in_flight.clear()
+                proc = None
+            continue
+        in_flight.pop(tid)
+        if res.get("ok"):
+            try:
+                _stem_cache[tid] = stem_service.StemWorker.finish(res)
+                _stem_done["separated"] += 1
+                _stem_done["last_seconds"] = res.get("seconds")
+                _cached_vocal_regions(tid)
+            except Exception as exc:
+                _stem_done["failed"] += 1
+                print(f"[stems] {tid}: {exc}", flush=True)
+        else:
             _stem_done["failed"] += 1
-            print(f"[stems] {tid}: {exc}", flush=True)
-        finally:
-            with _stem_cv:
-                _stem_busy = None
+            print(f"[stems] {tid}: {res.get('error')}", flush=True)
+        with _stem_cv:
+            _stem_busy = next(iter(in_flight), None)
 
 
 def _start_stem_worker() -> None:
@@ -527,9 +593,21 @@ def _backfill_stems() -> None:
     """Every library track gets its stems separated ahead of time, in the
     background, so a deck load never waits on Demucs."""
     def scan():
+        import soundfile as _sf
+
+        from app.ui.download_service import _is_live, _is_mix
+
         missing = []
         for tid in list(_tracks):
             try:
+                name = _track_names.get(tid) or ""
+                if _is_mix(name) or _is_live(name):
+                    continue                             # not a song: the autopilot never plays it
+                try:
+                    if _sf.info(str(_tracks[tid])).duration > MAX_BACKFILL_S:
+                        continue                         # an album / mix file, not a song
+                except Exception:
+                    pass
                 if _cached_stems4(tid) is None:
                     missing.append(tid)
             except Exception:
