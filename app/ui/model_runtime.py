@@ -16,6 +16,7 @@ no change. Only publishes once the backend has actually answered.
 
 Env:
   LLM_BACKEND   auto (default) | mlx | ollama
+  MLX_SUPERVISED 1 = start.sh runs mlx_lm.server as a coupled child: wait and attach, never spawn
   MLX_MODEL     mlx-community/Qwen3-30B-A3B-Instruct-2507-4bit
   MLX_PORT      8081
   OLLAMA_MODEL  gemma3:27b      (fallback model)
@@ -43,6 +44,8 @@ OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "gemma3:27b")
 OLLAMA_KEEP_ALIVE = "2h"
 MLX_START_TIMEOUT_S = 600  # first load of a 16 GB model from disk
+# MLX_SUPERVISED=1: start.sh runs the model server as a coupled child; attach only.
+SUPERVISED = os.environ.get("MLX_SUPERVISED", "") == "1"
 LOG_PATH = Path(os.environ.get("MLX_LOG", "/tmp/ai-dj-mlx-server.log"))
 
 state = {"backend": None, "model": None, "base_url": None, "ready": False,
@@ -144,7 +147,18 @@ def _start_mlx() -> bool:
     if why:
         state["detail"] = f"mlx unavailable: {why}"
         return False
-    _stop_foreign_mlx()
+    if SUPERVISED:
+        # start.sh owns the model server as a live, coupled child process: never
+        # spawn a detached copy or kill it here, just wait for it and attach.
+        deadline = time.time() + MLX_START_TIMEOUT_S
+        state["detail"] = "waiting for the supervised mlx_lm.server"
+        while not _mlx_up():
+            if time.time() > deadline:
+                state["detail"] = "supervised mlx_lm.server did not come up in time"
+                return False
+            time.sleep(1)
+    else:
+        _stop_foreign_mlx()
     if not _mlx_up():
         log = open(LOG_PATH, "ab")
         _proc = subprocess.Popen(
