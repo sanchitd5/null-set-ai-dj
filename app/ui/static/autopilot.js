@@ -404,13 +404,12 @@
         break;
 
       case "echo": // arm ECHO on A; A keeps its lows until the bar-4 swap, tail carries B's entry
+        // one continuous 8-bar crossfader sweep (no 2-bar rush); the echo tail
+        // carries A out while B takes over
         setFx(out, "echo", 0.7);
-        rampParam(xfEl, fromXf, 0, 4 * bar);
+        rampParam(xfEl, fromXf, toXf, 8 * bar);
         bassSwapAt(4);
-        at(4, () => {
-          rampParam(xfEl, 0, toXf, 2 * bar);
-          rampParam(highOut, null, HIGH_SWEEP, 2 * bar);
-        });
+        at(4, () => rampParam(highOut, null, HIGH_SWEEP, 4 * bar));
         total = 8;
         break;
 
@@ -1342,6 +1341,26 @@
     }));
   }
 
+  async function tryLibraryLockable(currentId, gen) {
+    const d = window.decks && window.decks[activeDeck];
+    if (!d || !d.bpm) return false;
+    const aEff = d.bpm * d._playbackRate();
+    const key = d.analysis && d.analysis.key && d.analysis.key.camelot || "";
+    const exclude = [...playedIds, currentId].join(",");
+    try {
+      const res = await fetch(`/api/library/lockable?bpm=${aEff.toFixed(2)}&key=${encodeURIComponent(key)}&exclude=${encodeURIComponent(exclude)}&max_gap=${lockLimit()}`);
+      const lib = (await res.json()).tracks || [];
+      for (const t of lib) {
+        if (!active || gen !== prepGen) return false;
+        if (history.includes(t.name)) continue;
+        apStatus(`Library pick that locks to ${Math.round(aEff)} BPM: ${t.name}`);
+        const c = { track_id: t.track_id, name: t.name, bpm: t.bpm, duration: t.duration, keep: false, fromLibrary: true };
+        if (await tryCandidate(currentId, c, gen)) return true;
+      }
+    } catch (e) { console.warn("library fallback:", e.message); }
+    return false;
+  }
+
   async function tryCandidate(currentId, cand, gen) {
     try { return await evaluateCandidate(currentId, cand, gen); }
     catch (e) {
@@ -1406,6 +1425,9 @@
       // hunting for a tempo that may barely exist (a 96 BPM dembow seed has
       // almost no house / UK dance peers). Take the best song already waiting
       // (the AI's own first picks) with a tempo-jump transition instead.
+      // Before any forced tempo jump: songs already in the library whose REAL
+      // tempo locks (the whole set as one song, user). Same vibe gate as the rest.
+      if (round === MAX_ROUNDS && await tryLibraryLockable(currentId, gen)) return;
       if (round === MAX_ROUNDS && ready.length) {
         allowTempoJump = true;
         const waiting = ready.splice(0, ready.length);

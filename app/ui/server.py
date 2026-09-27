@@ -619,6 +619,39 @@ def _backfill_stems() -> None:
     threading.Thread(target=scan, daemon=True).start()
 
 
+@app.get("/api/library/lockable")
+def get_library_lockable(bpm: float, key: str = "", exclude: str = "", limit: int = 6, max_gap: float = 0.08):
+    """Library songs whose analysed tempo locks to `bpm` (half / double time
+    count) within max_gap, best key match first. The autopilot's fallback
+    before it would force a tempo jump."""
+    from app.music_brain import techniques as tq
+    from app.ui.download_service import _is_live, _is_mix
+
+    skip = set(filter(None, exclude.split(",")))
+    out = []
+    for tid, path in list(_tracks.items()):
+        if tid in skip:
+            continue
+        name = _track_names.get(tid) or path.stem
+        if _is_mix(name) or _is_live(name):
+            continue
+        try:
+            a = analyze_track(path)
+        except Exception:
+            continue
+        if not a.bpm or a.duration < 90 or a.duration > 12 * 60:
+            continue
+        gap = min(abs(bpm / (a.bpm * m) - 1) for m in (1, 2, 0.5))
+        if gap > max_gap:
+            continue
+        k = a.key.camelot if a.key else None
+        ks = tq.camelot_score(key, k) if key and k else 0.5
+        out.append({"track_id": tid, "name": name, "bpm": a.bpm, "key": k, "gap": round(gap, 4),
+                    "key_score": ks, "duration": a.duration, "stems": _stem_cache.get(tid) is not None})
+    out.sort(key=lambda x: (-x["key_score"], x["gap"]))
+    return {"tracks": out[: max(1, min(limit, 20))]}
+
+
 @app.get("/api/stems/status")
 def get_stems_status():
     with _stem_cv:
