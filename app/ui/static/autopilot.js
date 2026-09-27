@@ -306,6 +306,26 @@
     setFx(deck, "none");
   }
 
+  const MASHUP_VOX = 0.7;     // B's voice under A's music but never buried (user)
+  // {entry, M, why} when a mashup transition fits A -> B, else null.
+  function mashupFits(od, idk) {
+    const ve = idk._vocalEntry;
+    if (!od.stemsReady || !idk.stems || !ve || ve.entry == null || !od.bpm || !idk.bpm) return null;
+    const aEff = od.bpm * od._playbackRate();
+    const gap = Math.abs(aEff / idk.bpm - 1);
+    if (gap > 0.25) return null;
+    if (gap > 0.02 && !(idk.tempoStems && Math.abs(idk.tempoStems.bpm / aEff - 1) < 0.01)) return null;
+    const cs = window.djMind && window.djMind.core && window.djMind.core.camelotScore;
+    const ka = od.analysis && od.analysis.key && od.analysis.key.camelot, kb = idk.analysis && idk.analysis.key && idk.analysis.key.camelot;
+    const keyOk = !cs || !ka || !kb || cs(ka, kb) >= 0.8;
+    if (!keyOk && !ve.rap) return null;                                // a sung vocal over clashing chords: no
+    const barS = 240 / aEff;
+    const aLeft = od.buffer ? (od.buffer.duration - od._currentPosition()) / od._playbackRate() : 0;
+    const M = ve.vocal32 >= 0.7 && aLeft >= 44 * barS ? 32 : aLeft >= 26 * barS && ve.vocal16 >= 0.5 ? 16 : 0;
+    if (!M) return null;
+    return { entry: ve.entry, M, why: `${M}-bar mashup: B's ${ve.rap ? "rap" : "vocal"} over A's instrumental${gap > 0.02 ? `, B key-locked ${(gap * 100).toFixed(0)} %` : ""}, then B's beat on the line` };
+  }
+
   function recipeKind(recipe) {
     const r = String(recipe || "").toLowerCase();
     if (r.includes("double drop")) return "double";
@@ -352,6 +372,25 @@
       at(bars - 0.25, () => rampParam(lowOut, null, LOW_KILL, beat));
       at(bars, () => rampParam(lowIn, LOW_KILL, 0, beat));
     };
+
+    // MASHUP -> TRANSITION (user): A's instrumental under B's vocal phrase, hold
+    // vox, A's beat drops out, B's beat takes over on the line, 8-bar crossfade.
+    // Needs: stems on both, B's vocal phrase, keys that agree (or B raps), and
+    // B on key-locked tempo stems at A's tempo when they differ.
+    {
+      const sm1 = window.stemMoves, od1 = window.decks && window.decks[out], id1 = window.decks && window.decks[inn];
+      const mt = sm1 && od1 && id1 ? mashupFits(od1, id1) : null;
+      if (mt && kind !== "cut" && kind !== "double") {
+        ["low", "mid", "high"].forEach((b) => { setRange(eqEl(out, b), 0); setRange(eqEl(inn, b), 0); });
+        const secs = sm1.mashupTransition(out, inn, xT0, mt.entry, mt.M, MASHUP_VOX, mt.why);
+        if (secs > 0) {
+          const barS = 240 / (od1.bpm || 128) / od1._playbackRate();
+          rampParam(xfEl, fromXf, 0, 2 * barS * 1000);                     // B's voice fades in with the fader
+          later(Math.max(0, (xT0 + mt.M * barS - audioCtx.currentTime) * 1000), () => rampParam(xfEl, 0, toXf, 8 * barS * 1000));
+          return secs * 1000;
+        }
+      }
+    }
 
     // Tempo gap, both songs have stems: STEM BRIDGE instead of an echo-out (user:
     // "Echo Out is painful"). Strip A, hold its voice, B's pads in beatless, the
@@ -814,7 +853,7 @@
   // +/-8 % on pitch; +/-15 % when the playing deck has stems: the next song
   // then plays on key-locked tempo stems (multi-BPM stem sets), no pitch shift.
   function stemsOn() { const d = window.decks && window.decks[activeDeck]; return !!(d && d.stems); }
-  function lockLimit() { return stemsOn() ? 0.15 : 0.08; }
+  function lockLimit() { return stemsOn() ? 0.25 : 0.08; }
   function tempoLockableAt(cand, lim) {
     const d = window.decks && window.decks[activeDeck];
     if (!d || !d.bpm || !cand.bpm) return true;
@@ -1156,12 +1195,14 @@
           const aEff1 = oa1.bpm * oa1._playbackRate();
           const m1 = [1, 2, 0.5].reduce((b, m) => (Math.abs(aEff1 / (sd1.bpm * m) - 1) < Math.abs(aEff1 / (sd1.bpm * b) - 1) ? m : b));
           const g1 = Math.abs(aEff1 / (sd1.bpm * m1) - 1);
-          if (g1 > 0.02 && g1 <= 0.15) sd1._tempoStemsJob = sd1.useTempoStems(aEff1 / m1);
+          if (g1 > 0.02 && g1 <= 0.25) sd1._tempoStemsJob = sd1.useTempoStems(aEff1 / m1);
+          // where its vocal phrase starts (for a mashup transition)
+          fetch(`/api/tracks/${nextId}/vocal_entry`).then((r) => r.json()).then((v) => { sd1._vocalEntry = v; }).catch(() => {});
         });
       }
     }
     // Over 8 % the blend needs the key-locked stems: book the song only once they're on.
-    if (cand.bpm && !tempoLockableAt(cand, 0.08) && tempoLockableAt(cand, 0.15)) {
+    if (cand.bpm && !tempoLockableAt(cand, 0.08) && tempoLockableAt(cand, 0.25)) {
       const sd2 = window.decks && window.decks[stagingDeck()];
       apStatus(`Key-locking ${nextName} to this tempo (tempo stems)…`);
       const t2 = Date.now();
@@ -1535,7 +1576,7 @@
     const stemsBoth = !!(odS && odS.stemsReady && sdS && sdS.stems);
     const aEffS = odS ? odS.bpm * odS._playbackRate() : 0;
     const gapS = sdS && sdS.bpm ? Math.min(...[1, 2, 0.5].map((m) => Math.abs(aEffS / (sdS.bpm * m) - 1))) : 1;
-    const oneSong = stemsBoth && gapS <= 0.15;
+    const oneSong = stemsBoth && gapS <= 0.25;
     const od0bpm = (window.decks && window.decks[activeDeck] && window.decks[activeDeck].bpm) || 128;
     // Beat-to-beat: when the tempos lock, hand beat to beat. Echo-outs and cuts
     // are for tempo gaps; they turned "vocal -> beat" when used between
@@ -1560,18 +1601,19 @@
         else if (vIn < 16) { recipe = "Bass Swap"; vocalCut = `8-bar swap: B sings in ${Math.round(vIn)} bars`; }
       }
     } else if (oneSong) {
-      // tempo gap up to 15 %: key-locked tempo stems make it a real blend
+      // tempo gap up to 25 %: key-locked tempo stems make it a real blend
       recipe = "Long Blend";
     } else if (stemsBoth) {
       // tempo can't lock: a stem bridge, never an echo-out (user)
       recipe = "Stem Bridge";
     } else if (!["echo", "filter"].includes(recipeKind(recipe))) {
-      // No tempo lock possible: beats cannot be layered, so don't hard-swap
-      // (instant swaps between unrelated tempos changed the whole vibe in the
-      // live set). Echo the outgoing song away while the new one enters on its
-      // phrase - the wiki's tempo-gap move ([[Echo Out]], What Do I Play Next).
+      // No stems and no tempo lock: beats cannot be layered, so don't hard-swap.
+      // Echo the outgoing song away while the new one enters on its phrase
+      // ([[Echo Out]]). Rare now: every library song is pre-separated.
       recipe = "Echo Out";
     }
+    // Mashup -> transition beats every other move when the pair fits (user)
+    if (stemsBoth && odS && sdS && mashupFits(odS, sdS)) recipe = "Mashup → Transition";
     if (layer) { bTime = layer.entry; recipe = `LAYER ${layer.hold_bars}+${layer.unwind_bars} bars`; }
     jumpPending = !blend && !oneSong;
     const overlapStyle = layer ? "layer"
@@ -1714,7 +1756,7 @@
           .reduce((best, r) => (Math.abs(r - 1) < Math.abs(best - 1) ? r : best));
         // Key-locked tempo stems (prefetched below): locks up to 15 % keep B's key.
         const keyLocked = sd.tempoStems && Math.abs(sd.tempoStems.bpm / (sd.bpm * lockRate) - 1) < 0.01;
-        if (keyLocked) setDeckPitch(stagingDeck(), (lockRate - 1) * 100, 16);
+        if (keyLocked) setDeckPitch(stagingDeck(), (lockRate - 1) * 100, 26);
         else if (Math.abs(lockRate - 1) <= 0.08) setDeckPitch(stagingDeck(), (lockRate - 1) * 100);
       }
       const leadS = Math.max(0.05, (fireAt - deckPosition(activeDeck)) / rateA);

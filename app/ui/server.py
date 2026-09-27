@@ -619,6 +619,47 @@ def _backfill_stems() -> None:
     threading.Thread(target=scan, daemon=True).start()
 
 
+_vocal_entry_cache: Dict[str, dict] = {}
+
+
+@app.get("/api/tracks/{track_id}/vocal_entry")
+def get_vocal_entry(track_id: str):
+    """Where this song's vocal phrase starts for a mashup (after a repeated
+    opening hook), whether it's rap, and how long it keeps going (bars)."""
+    import librosa
+
+    from app.music_brain import techniques as tq
+
+    _track_path(track_id)
+    if track_id in _vocal_entry_cache:
+        return _vocal_entry_cache[track_id]
+    st = _cached_stems4(track_id)
+    regions = _cached_vocal_regions(track_id) or []
+    if not st or not regions:
+        return {"entry": None, "reason": "no stems / vocals yet"}
+    a = analyze_track(_track_path(track_id)).to_dict()
+    bar = 240.0 / a["bpm"]
+    yv, srv = librosa.load(st["vocals"], sr=22050, mono=True)
+    rep = tq.repetitive_bars(yv, srv, a["downbeat_times"])
+
+    def share(lo, hi):
+        return sum(max(0.0, min(e, hi) - max(s, lo)) for s, e in regions) / max(1e-6, hi - lo)
+
+    first = next((p for p in a["phrase_boundaries_8bar"] if share(p, p + 16 * bar) >= 0.5), None)
+    if first is None:
+        res = {"entry": None, "reason": "no 16-bar vocal phrase"}
+    else:
+        entry = tq.skip_repetitive_intro(rep, a["downbeat_times"], a["phrase_boundaries_8bar"], first)
+        if share(entry, entry + 16 * bar) < 0.5:
+            entry = first
+        y, sr = librosa.load(st["vocals"], sr=16000, mono=True, offset=entry, duration=min(30.0, 16 * bar))
+        style = tq.vocal_style(y, sr)
+        res = {"entry": entry, "rap": style["rap"], "style": style, "bpm": a["bpm"],
+               "vocal16": round(share(entry, entry + 16 * bar), 2), "vocal32": round(share(entry, entry + 32 * bar), 2)}
+    _vocal_entry_cache[track_id] = res
+    return res
+
+
 @app.get("/api/library/lockable")
 def get_library_lockable(bpm: float, key: str = "", exclude: str = "", limit: int = 6, max_gap: float = 0.08):
     """Library songs whose analysed tempo locks to `bpm` (half / double time

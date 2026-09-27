@@ -109,3 +109,23 @@ console.log("stem moves core ok");
   }
   console.log("stem bridge ok");
 }
+
+// ---- mashup transition ---------------------------------------------------------
+{
+  const { mashupTransitionPlan } = require("../ui/static/stem-moves.js");
+  for (const M of [16, 32]) {
+    const p = mashupTransitionPlan(M, 0.6);
+    assert.strictEqual(p.total, M + 8);
+    // one singer: A's voice leaves exactly as B's arrives
+    assert.ok(p.events.find((e) => e.bar === 0 && e.deck === "out").stems.vocals === 0);
+    // B's backing only from the swap line
+    assert.ok(p.events.filter((e) => e.deck === "in" && e.stems && e.bar < M).every((e) => !e.stems.drums && !e.stems.bass && !e.stems.other));
+    // A's beat leaves 2 bars before B's lands, never both
+    const aOut = p.events.find((e) => e.deck === "out" && e.stems && e.stems.drums === 0);
+    assert.ok(aOut.bar === M - 2);
+    assert.strictEqual(p.events.find((e) => e.deck === "in" && e.stems && e.stems.drums === 1).bar, M);
+    const holds = p.events.filter((e) => e.hold);
+    assert.strictEqual(holds.length, M === 32 ? 1 : 0);
+  }
+  console.log("mashup transition ok");
+}

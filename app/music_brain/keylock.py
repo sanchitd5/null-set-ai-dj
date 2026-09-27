@@ -244,7 +244,7 @@ def pitch_shift_semitones(ratio: float) -> float:
 # ~15 % apart in tempo is beatmatched at its original key. One set per
 # (song, BPM rounded to 0.5), cached; ~30 s to render a 3-4 min song.
 TEMPO_STEP = 0.5
-MAX_TEMPO_STRETCH = 0.16
+MAX_TEMPO_STRETCH = 0.26   # leavemealone (174) x Victory Lap (140): 24 %
 
 
 def tempo_key(audio_hash: str, native_bpm: float, target_bpm: float) -> Tuple[str, float]:

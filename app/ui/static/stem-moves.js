@@ -95,6 +95,35 @@
   }
   const STEM_BLEND_KINDS = new Set(["bass", "blend", "filter", "loop", "double"]);
 
+  // Mashup transition (user: "create a mashup then transition; leavemealone and
+  // Victory Lap is a perfect example"). A = instrumental, B = vocal only (B on
+  // key-locked tempo stems at A's tempo), M bars; then B's beat takes over on the
+  // line and an 8-bar crossfade carries the rest. Bars at the common tempo.
+  //   0        A's voice out, B's voice in (vox gain v)
+  //   12..16   HOLD VOX on B (and again 28..32 in a 32-bar mashup)
+  //   M/2      B's voice forward (x1.3)
+  //   M-2      A's beat out: B's voice over A's synths alone
+  //   M        B's drums + bass in; A's synths fade over 8, B's synths rise
+  //   M+8      B full
+  function mashupTransitionPlan(M, v) {
+    const ev = [
+      // A's synths fill the space its vocal leaves (+2 dB), so the mashup doesn't sag
+      { bar: 0, deck: "out", stems: { vocals: 0, other: 1.25 }, ramp: 0.25 },
+      { bar: 0, deck: "in", start: true, stems: { drums: 0, bass: 0, vocals: v, other: 0 }, ramp: 0 },
+      { bar: M / 2, deck: "in", stems: { vocals: Math.min(1, v * 1.3) }, ramp: 2 },
+      { bar: M - 2, deck: "out", stems: { drums: 0, bass: 0 }, ramp: 0.25 },
+      { bar: M, deck: "in", stems: { drums: 1, bass: 1 }, ramp: 0.05 },
+      { bar: M, deck: "out", stems: { other: 0 }, ramp: 8 },
+      { bar: M, deck: "in", stems: { other: 1, vocals: 1 }, ramp: 8 },
+      { bar: M + 8, deck: "in", stems: null, ramp: 0.05 },
+    ];
+    for (let s = 0; s + 16 <= M; s += 16) {
+      if (s + 16 === M) continue;                        // the last section ends in the A-drop, no hold
+      ev.push({ bar: s + 12, deck: "in", hold: { stem: "vocals", fromBar: s + 11, bars: 1, untilBar: s + 16 } });
+    }
+    return { events: ev.sort((a, b) => a.bar - b.bar), total: M + 8 };
+  }
+
   // Stem bridge: across ANY tempo gap, no echo-out (user: "Echo Out is painful").
   // No two beats ever overlap, so the tempos never meet:
   //   A bar 0   A's drums out            (strip)
@@ -154,7 +183,7 @@
       : ctx.vocal >= 0.15 ? ["bass_out", "drum_break", "synth_hold"] : ["drum_break", "synth_hold", "bass_out"];
     return menu.find((k) => !used.has(k)) || null;
   }
-  const core = { BREAKDOWN, breakdownFits, handoffFits, vocalShare, stemBlendPlan, STEM_BLEND_KINDS, remixEvents, remixPick, stemBridgePlan };
+  const core = { BREAKDOWN, breakdownFits, handoffFits, vocalShare, stemBlendPlan, STEM_BLEND_KINDS, remixEvents, remixPick, stemBridgePlan, mashupTransitionPlan };
   if (typeof module !== "undefined" && module.exports) module.exports = core;
   if (typeof root.document === "undefined" || typeof audioCtx === "undefined") return;
 
@@ -314,7 +343,38 @@
     return plan.total;
   }
 
-  root.stemMoves = { core, breakdown, handoff, instrumental, reset, audioAt, vocalShare, stemBlend, remix, REMIX_LABEL, mashupBreak, stemBridge };
+  // Run it. t0 = A's phrase line (audio time); bEntry = B's vocal phrase start
+  // (track time); B must already carry tempo stems at A's tempo when they differ.
+  function mashupTransition(outId, innId, t0, bEntry, M, vox, why) {
+    const out = root.decks[outId], inn = root.decks[innId];
+    if (!out || !inn || !out.stemsReady || !inn.stems) return 0;
+    cancel(outId); cancel(innId);
+    const barS = 240 / (out.bpm || 128) / ((out._playbackRate && out._playbackRate()) || 1);
+    const bRate = (out.bpm * out._playbackRate()) / inn.bpm;          // B follows A's tempo (key-locked stems)
+    const plan = mashupTransitionPlan(M, vox);
+    const barB = 240 / inn.bpm;
+    for (const e of plan.events) {
+      const d = e.deck === "out" ? out : inn, at = t0 + e.bar * barS;
+      if (e.start) {
+        timers[innId].push(setTimeout(() => {
+          inn.setPitchPercent((bRate - 1) * 100);
+          inn.play(bEntry, false, at);
+          setTimeout(() => inn.stemMix(e.stems, at - 0.005, 0.005), 150);
+        }, Math.max(0, (at - audioCtx.currentTime) * 1000 - 700)));
+      } else if (e.hold) {
+        const until = t0 + e.hold.untilBar * barS;
+        timers[innId].push(setTimeout(() => { if (inn.playing) inn.holdStem("vocals", bEntry + e.hold.fromBar * barB, 1, at, until); },
+          Math.max(0, (at - audioCtx.currentTime) * 1000 - 250)));
+      } else book(d, at, e.stems, Math.max(0.005, e.ramp * barS));
+    }
+    root.dispatchEvent(new CustomEvent("ai-cue", { detail: { at: t0 + M * barS, kind: "drop", deck: innId, bar: barS,
+      why: "B's beat takes over after the mashup" } }));
+    note(outId, `MASHUP → ${innId.toUpperCase()} · ${M} bars`, why ||
+      `A's instrumental under B's vocal, hold vox, A's beat drops out, B's beat takes over on the line, 8-bar crossfade`);
+    return plan.total * barS;
+  }
+
+  root.stemMoves = { core, breakdown, handoff, instrumental, reset, audioAt, vocalShare, stemBlend, remix, REMIX_LABEL, mashupBreak, stemBridge, mashupTransition };
 
   // ------------------------------------------------------ stem rail UI --
   // Per deck, under the loop rail: separation status + one toggle per stem.
