@@ -766,14 +766,6 @@ def suggest_next_tracks(
     if brief:
         user_msg += _KNOWLEDGE_TEMPLATE.format(brief=brief)
 
-    try:
-        from app.music_brain import dj_rag
-        rag_chunks = dj_rag.retrieve(genre=genre or "", set_position=set_position)
-    except Exception:  # grounding is best-effort
-        rag_chunks = []
-    if rag_chunks:
-        user_msg += "\n\nDJ RULES (grounded, ./DJ wiki):\n" + "\n".join(f"- {c}" for c in rag_chunks)
-
     system_msg = _SYSTEM
     if lead_to and lead_steps:
         # LEAD TO: a focused prompt. With the full prompt the model saw the
