@@ -74,6 +74,37 @@ assert.strictEqual(energyNote([5, 6], 0.9, false), "callback");
 assert.strictEqual(energyNote([5, 6], 0.9, true), null);
 assert.strictEqual(energyNote([9], 0.2, false), null);
 
+// repeated-hook motif (research/notes/set-study-mDtud5fLgFQ.md section 5):
+// "Quiereme" / "x2" / remix are one hook; 3 plays max, 8 songs apart
+{
+  const { hookKey, motifHook, MOTIF_GAP_SONGS } = core;
+  assert.strictEqual(hookKey("LATIN MAFIA - Quiereme"), "quiereme");
+  assert.strictEqual(hookKey("LATIN MAFIA - Quiereme x2"), "quiereme");
+  assert.strictEqual(hookKey("LATIN MAFIA - Quiereme (Fred again.. Edit) [Official Video]"), "quiereme");
+  assert.strictEqual(hookKey("Bad Bunny - Tití Me Preguntó feat. X"), "tití me preguntó");
+  const fill = (n) => Array.from({ length: n }, (_, i) => `Artist ${i} - Song ${i}`);
+  // one play only: no motif, the rule 7 bookend still applies late
+  const once = ["A - Quiereme", ...fill(10)];
+  assert.strictEqual(motifHook(once), null);
+  assert.strictEqual(energyNote([5], 0.9, false, { history: once }), "callback");
+  // two plays, not yet 8 songs since: no reprise, and no opener callback either
+  const two = ["A - Hey", "A - Quiereme", "A - Quiereme x2", ...fill(MOTIF_GAP_SONGS - 1)];
+  assert.deepStrictEqual(motifHook(two), { key: "quiereme", title: "A - Quiereme x2", plays: 2, lastIdx: 2 });
+  assert.strictEqual(energyNote([5], 0.9, false, { history: two }), null);
+  // 8 songs since the 2nd play: reprise, even mid-set (returns spread across the set)
+  const due = ["A - Hey", "A - Quiereme", "A - Quiereme x2", ...fill(MOTIF_GAP_SONGS)];
+  assert.strictEqual(energyNote([5], 0.4, false, { history: due }), "reprise");
+  assert.strictEqual(energyNote([5], 0.4, false, { history: due, repriseAsked: "quiereme:2" }), null);
+  assert.strictEqual(energyNote([9, 9], 0.4, false, { history: due }), "dip");  // rule 9 still first
+  // third play reached: the motif is spent, and still no opener bookend on top
+  const spent = [...due, "A - Quiereme (Remix)", ...fill(MOTIF_GAP_SONGS)];
+  assert.strictEqual(motifHook(spent).plays, 3);
+  assert.strictEqual(energyNote([5], 0.9, false, { history: spent }), null);
+  // most plays wins; ties go to the hook introduced first
+  assert.strictEqual(motifHook(["X - B", "X - A", "X - B", "X - A", "X - A"]).key, "a");
+  assert.strictEqual(motifHook(["X - B", "X - A", "X - B", "X - A"]).key, "b");
+}
+
 // ---- AI plan + remix moves ------------------------------------------------
 const { aiVeto, remixBlock, needsHoldLoop, holdLoopAnchor, holdLoopSpan, phraseBounds } = core;
 const rx = (o) => s(Object.assign({ phraseIdx: 6, lastRemixPhrase: null, remixUsed: [], remixCount: 0,

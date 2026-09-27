@@ -25,6 +25,19 @@
 // (fxAllowed). Energy dip (rule 9) and callback (rule 7) are hints passed to
 // the LLM track picker through energyNote(), not audio moves.
 //
+// Second study (research/notes/set-study-mDtud5fLgFQ.md, Latin house/pop,
+// one DJ, ~69 min):
+//   reprise   (mDtud5fLgFQ sections 4.3, 5 and 6 "Callback device") - a hook
+//              the set has already returned to ("Quiereme" at 19:10, 20:50,
+//              59:03, same band-energy shape each time) is a recurring motif,
+//              not a bookend. Once a song has 2+ plays in the history it may
+//              come back, as another version, up to 3 plays in all, spaced
+//              MOTIF_GAP_SONGS apart. A set that threads a motif uses it
+//              INSTEAD of the rule 7 open/close callback. Picker hint only.
+//   The same study corroborates rule 3 (mDtud5fLgFQ section 4.1: the sub is
+//   already falling before nearly every marker) and rule 4 (section 4.2: sub
+//   held down under the ambient 28:32 / 36:02 records); no change needed.
+//
 // Rules from CLAUDE.md honoured here: moves start on 8-bar phrase lines; the
 // sub drop only ever REMOVES low end, so two tracks never share sub-bass.
 //
@@ -50,6 +63,13 @@
   const LOW_KILL = -26;
   const PEAK_ENERGY = 8;               // LLM 1-10 read; rule 9 dip hint
   const CALLBACK_SET_POS = 0.8;        // rule 7: late in the set
+  // Repeated-hook motif (research/notes/set-study-mDtud5fLgFQ.md section 5).
+  const MOTIF_MIN_PLAYS = 2;           // a title heard twice is the set's hook, not a one-off
+  const MOTIF_MAX_PLAYS = 3;           // "Quiereme x3": the most any hook returned in that set
+  // "Quiereme x2" (20:50) -> "x3" (59:03): 7 songs between. Same number as
+  // REMIX_REPLAY_GAP in app/ui/autopilot_service.py, so the picker's repeat
+  // filter lets the reprise through instead of dropping it.
+  const MOTIF_GAP_SONGS = 8;
   // Remix moves (the song is re-edited live, not played as is). Restraint
   // (rule 8, "too many snares"): a per-song cap, never two phrases in a row,
   // each kind once per song, none in the first 16 bars or last 24 before exit.
@@ -590,15 +610,69 @@
     return { pick: best || cands[0], score: best ? bestS : null };
   }
 
-  // Rule 9 (dip after a long peak) outranks rule 7 (late callback).
-  function energyNote(energies, setPos, callbackDone) {
+  // Song identity for the motif count: the tracklist's own operational
+  // definition in research/notes/set-study-mDtud5fLgFQ.md section 5 is "the
+  // same title again" ("Quiereme", "Quiereme x2", "Quiereme x3"), so a remix
+  // or edit of a played song is the same hook. Mirrors _bare_title() in
+  // app/ui/autopilot_service.py, plus the "xN" pass counter. Unicode letters
+  // are kept so non-Latin titles still get an identity.
+  function hookKey(name) {
+    let t = String(name || "").toLowerCase();
+    const dash = t.indexOf(" - ");
+    if (dash >= 0) t = t.slice(dash + 3);                 // "Artist - Title" -> title
+    t = t.replace(/[([][^)\]]*[)\]]/g, " ");              // (Remix) / [Official Video]
+    t = t.split(/\s+[-–—|]\s+/)[0];
+    t = t.replace(/\s+(feat\.?|ft\.?|featuring)\s+.*$/, "");
+    t = t.replace(/\s+x\s?\d+\s*$/, "");                  // "Quiereme x2" -> "quiereme"
+    return t.replace(/[^\p{L}\p{N} ]+/gu, " ").split(/\s+/).filter(Boolean).join(" ");
+  }
+
+  // The set's recurring hook: the most-played identity with >= MOTIF_MIN_PLAYS
+  // plays (ties: the one introduced first). null when nothing has recurred.
+  // -> {key, title (latest display name), plays, lastIdx}
+  function motifHook(history) {
+    const seen = new Map();
+    (history || []).forEach((name, i) => {
+      const key = hookKey(name);
+      if (!key) return;
+      const m = seen.get(key) || { key, title: name, plays: 0, firstIdx: i, lastIdx: i };
+      m.plays += 1; m.lastIdx = i; m.title = name;
+      seen.set(key, m);
+    });
+    let best = null;
+    for (const m of seen.values()) {
+      if (m.plays < MOTIF_MIN_PLAYS) continue;
+      if (!best || m.plays > best.plays || (m.plays === best.plays && m.firstIdx < best.firstIdx)) best = m;
+    }
+    return best && { key: best.key, title: best.title, plays: best.plays, lastIdx: best.lastIdx };
+  }
+
+  // A motif may return (research/notes/set-study-mDtud5fLgFQ.md section 5):
+  // under MOTIF_MAX_PLAYS, >= MOTIF_GAP_SONGS songs since its last play
+  // (history ends with the playing song), not already asked for at this count.
+  function repriseDue(m, history, asked) {
+    if (!m || m.plays >= MOTIF_MAX_PLAYS) return false;
+    if ((history || []).length - 1 - m.lastIdx < MOTIF_GAP_SONGS) return false;
+    return asked !== `${m.key}:${m.plays}`;
+  }
+
+  // Rule 9 (dip after a long peak) outranks the mDtud5fLgFQ reprise, which
+  // outranks rule 7 (late callback). A set with a motif already has its
+  // repetition device (research/notes/set-study-mDtud5fLgFQ.md section 6,
+  // "Callback device": one hook threaded through the set INSTEAD of an
+  // open/close frame), so the opener bookend is not asked for on top of it.
+  // opts: {history: display names played, playing song last; repriseAsked}
+  function energyNote(energies, setPos, callbackDone, opts = {}) {
     const e = (energies || []).filter(Number.isFinite);
     if (e.length >= 2 && e.slice(-2).every((v) => v >= PEAK_ENERGY)) return "dip";
-    if (!callbackDone && setPos >= CALLBACK_SET_POS) return "callback";
+    const m = motifHook(opts.history);
+    if (repriseDue(m, opts.history, opts.repriseAsked)) return "reprise";
+    if (!callbackDone && !m && setPos >= CALLBACK_SET_POS) return "callback";
     return null;
   }
 
   const core = { decide, mergeSections, sectionAt, phraseAt, vocalShare, subdropBars, energyNote,
+                 hookKey, motifHook, MOTIF_MAX_PLAYS, MOTIF_GAP_SONGS,
                  phraseBounds, phraseLabel, isPreDrop, remixBlock, aiVeto, needsHoldLoop, holdLoopAnchor, holdLoopSpan, holdLoopCandidates, pickHoldLoop,
                  PRECLEAR_DB, LOW_KILL, REMIX_MOVES,
                  camelotScore, energyQ3, isPeak, dropLines, DROP_JUMP, bigMomentBlock, peakBlock, peakTransition,
@@ -631,6 +705,7 @@
   let lastLayerTransition = -9;                 // LAYER ledger (one every LAYER_EVERY)
   let layerRun = null;                          // {until (nowS), source, why} while a LAYER plays
   const energies = []; let callbackDone = false;
+  let repriseAsked = null;                      // "hookKey:plays" of the last reprise hint (mDtud5fLgFQ)
   const log = [];
   // PEAK ledger (set-wide): big moments, backspins, beat boosts, LLM energy
   const bigLog = [];                            // [{track, kind, at}]
@@ -1245,10 +1320,18 @@
     return true;
   }
   function noteEnergy(e) { if (Number.isFinite(e)) energies.push(e); }
-  function nextEnergyNote(setPos) {
-    const n = energyNote(energies, setPos, callbackDone);
+  // -> {note, hook}: hook is the motif's display name when note is "reprise"
+  // (research/notes/set-study-mDtud5fLgFQ.md section 5), else null.
+  function nextEnergyNote(setPos, history) {
+    const n = energyNote(energies, setPos, callbackDone, { history, repriseAsked });
     if (n === "callback") callbackDone = true;
-    return n;
+    let hook = null;
+    if (n === "reprise") {
+      const m = motifHook(history);
+      repriseAsked = `${m.key}:${m.plays}`;     // ask once per play count
+      hook = m.title;
+    }
+    return { note: n, hook };
   }
   // Peak transition for the booked pair (autopilot.js scheduleTransition hook).
   // ctx: {drop (blend plan, entry_mode "drop"), lo, hi, plannedExit, entryPos, inDeck}
@@ -1273,7 +1356,7 @@
     });
   }
   function setProfileEnergy(e) { profileE = Number.isFinite(e) ? (e <= 1 ? e * 10 : e) : null; }
-  function reset() { stop(); energies.length = 0; callbackDone = false; log.length = 0;
+  function reset() { stop(); energies.length = 0; callbackDone = false; repriseAsked = null; log.length = 0;
                      bigLog.length = 0; brakesUsed = 0; lastSwapBraked = false;
                      boostTrackIdx = -9; lastBoostAt = -Infinity; profileE = null;
                      trackIdx = 0; subdropTrackIdx = -9; lastMoveAt = -Infinity;

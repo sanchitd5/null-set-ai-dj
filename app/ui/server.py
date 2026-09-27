@@ -1313,6 +1313,9 @@ class AutopilotSuggestRequest(BaseModel):
     # "dip": the set has sat near its loudness peak for a while, so ask for a
     # track that lets energy fall back before building again (set study rule 9).
     energy_note: Optional[str] = None
+    # "reprise" only: display name of the set's recurring hook (dj-mind.js
+    # motifHook, set study mDtud5fLgFQ section 5). Ignored for other notes.
+    energy_hook: Optional[str] = None
     # Look-ahead (songs for AFTER the booked next one): lowest LLM priority,
     # waits behind any transition plan (app/ui/llm_gate.py).
     lookahead: bool = False
@@ -1360,12 +1363,32 @@ _ENERGY_NOTES = {
     "callback": "the set is near its end - one track that calls back the opening "
                 "track (first title in the history: same artist, hook or key family) "
                 "would bookend the set, recontextualized, not a repeat",
+    # research/notes/set-study-mDtud5fLgFQ.md sections 5-6: a hook the set has
+    # already returned to comes back once more, as a DIFFERENT version (the
+    # repeat filter drops the identical one), instead of an open/close bookend.
+    "reprise": "the crowd has already heard \"{hook}\" more than once tonight - it is "
+               "this set's recurring hook: bring it back once more as a different "
+               "version of that same song (remix, edit or rework, not the version "
+               "already played), re-approached through a build",
 }
 
+ENERGY_HOOK_MAX = 120  # a display name, not free text: capped before it enters the prompt
 
-def _occasion_with_note(occasion: Optional[str], note: Optional[str], variety: str = "") -> str:
+
+def _clean_hook(hook: Optional[str]) -> str:
+    """Printable, quote-free, length-capped track name for the reprise note."""
+    s = "".join(ch for ch in str(hook or "") if ch.isprintable()).replace('"', "'")
+    return " ".join(s.split())[:ENERGY_HOOK_MAX]
+
+
+def _occasion_with_note(occasion: Optional[str], note: Optional[str], variety: str = "",
+                        hook: Optional[str] = None) -> str:
     base = occasion or ""
-    extras = [x for x in (_ENERGY_NOTES.get(note or ""), variety) if x]
+    text = _ENERGY_NOTES.get(note or "")
+    if note == "reprise":
+        h = _clean_hook(hook)
+        text = text.format(hook=h) if h else None  # no hook named -> nothing to reprise
+    extras = [x for x in (text, variety) if x]
     return f"{base} ({'; '.join(extras)})".strip() if extras else base
 
 
@@ -1512,7 +1535,8 @@ def _autopilot_suggest_impl(req: AutopilotSuggestRequest):
             duration=analysis.duration or 0.0,
             avg_energy=avg_energy,
             occasion=_occasion_with_note(req.occasion, req.energy_note,
-                                         _variety_note(req.variety_run, req.variety_genre)),
+                                         _variety_note(req.variety_run, req.variety_genre),
+                                         hook=req.energy_hook),
             history=req.history + req.avoid,
             set_position=set_position,
             set_mode=req.set_mode if req.set_mode in SET_MODES else "hybrid",
