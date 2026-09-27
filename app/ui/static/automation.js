@@ -29,19 +29,42 @@
   // running setValueCurveAtTime/ramp automation (Web Audio spec), which is
   // what made every automated crossfade/EQ move step and stutter: the mirrored
   // slider's own synthetic "input" event was fighting the smooth curve 60x/s.
+  // Scoped: each mark is a refcounted hold released once (idempotent). The flag
+  // goes only when the last hold on the element is released, and never when it
+  // was already set by someone else (autopilot.js flags its own transition).
+  const holds = new Map();   // element -> {n, foreign}
   function markAiAudio(selector) {
     const el = document.querySelector(selector);
-    if (el) el.dataset.aiAudio = "1";
-    return el;
+    if (!el) return { el: null, release() {} };
+    let h = holds.get(el);
+    if (!h) {
+      h = { n: 0, foreign: el.dataset.aiAudio !== undefined };
+      holds.set(el, h);
+      el.dataset.aiAudio = "1";
+    }
+    h.n++;
+    let done = false;
+    const hold = {
+      el,
+      release() {
+        if (done) return;
+        done = true;
+        if (--h.n > 0) return;
+        holds.delete(el);
+        if (!h.foreign) delete el.dataset.aiAudio;
+      },
+    };
+    if (run) run.holds.push(hold);
+    return hold;
   }
   function mirror(selector, from, to, start, duration, token) {
-    const el = markAiAudio(selector);
+    const hold = markAiAudio(selector);
     const frame = () => {
-      if (!run || run.token !== token) { if (el) delete el.dataset.aiAudio; return; }
+      if (!run || run.token !== token) { hold.release(); return; }
       const p = Math.min(1, Math.max(0, (audioCtx.currentTime - start) / duration));
       setRange(selector, from + (to - from) * p);
       if (p < 1) requestAnimationFrame(frame);
-      else if (el) delete el.dataset.aiAudio;
+      else hold.release();
     };
     requestAnimationFrame(frame);
   }
@@ -71,7 +94,8 @@
   function finish(token, outcome = "completed") {
     if (!run || run.token !== token) return;
     run.timers.forEach(clearTimeout);
-    document.querySelectorAll("[data-ai-audio]").forEach((el) => { delete el.dataset.aiAudio; });
+    // only this run's flags: a blanket clear also wiped autopilot's, re-opening the stutter
+    run.holds.forEach((h) => h.release());
     try {
       const now = audioCtx.currentTime;
       decks.a.crossfaderGain.gain.cancelScheduledValues(now);
@@ -94,7 +118,7 @@
     const duration = beatsToSeconds(decks.a, 32);
     const start = audioCtx.currentTime + 0.15;
     const swap = start + duration / 2;
-    run = { token, selected, start, finish: start + duration, timers: [] };
+    run = { token, selected, start, finish: start + duration, timers: [], holds: [] };
     arm.disabled = true;
     cancel.disabled = false;
 
@@ -117,8 +141,8 @@
       run.timers.push(setTimeout(() => {
         setRange('.eq-knob[data-deck="a"][data-band="low"]', -26);
         setRange('.eq-knob[data-deck="b"][data-band="low"]', 0);
-        if (knobA) delete knobA.dataset.aiAudio;
-        if (knobB) delete knobB.dataset.aiAudio;
+        knobA.release();
+        knobB.release();
       }, Math.max(0, (swap - audioCtx.currentTime) * 1000)));
     } else if (selected.recipe === "Filter Transition") {
       curve(decks.a.lowFilter.gain, 0, -26, start, duration);
