@@ -416,24 +416,11 @@ def _key_clash_reason(current_key: str | None, expected_key) -> str | None:
 
 MAX_GENRE_HOP = 1  # 0 same subgenre, 1 neighbour; 2+ only on a deliberate move
 
-# Broad genre families, matched as substrings of the model's genre labels. The
-# model's own genre_hop is not trusted alone: it rated Afusic "Pal Pal" (Urdu
-# pop) -> Fred again.. "Delilah" (UK electronic) as a small hop.
-GENRE_FAMILIES = {
-    "south_asian": ("punjabi", "bhangra", "desi", "bollywood", "hindi", "urdu", "pakistani",
-                    "indian", "filmi", "sufi", "qawwali", "haryanvi", "tamil", "telugu"),
-    "electronic": ("house", "techno", "garage", "trance", "edm", "electronic", "electronica",
-                   "dubstep", "drum & bass", "drum and bass", "dnb", "bass music", "breakbeat",
-                   "downtempo", "ambient", "future bass", "electro", "idm", "jungle", "dance"),
-    "hiphop": ("hip-hop", "hip hop", "rap", "trap", "drill", "grime"),
-    "rnb": ("r&b", "rnb", "soul"),
-    "latin": ("reggaeton", "latin", "dembow", "cumbia", "bachata", "salsa", "urbano"),
-    "afro": ("afrobeat", "afro", "amapiano", "afropop"),
-    "rock": ("rock", "punk", "metal", "grunge"),
-    "pop": ("pop",),
-    "country": ("country", "folk", "americana"),
-    "jazz": ("jazz", "funk", "disco"),
-}
+# Genre-family distance is shared with RecipeMatcher (app/music_brain/genre.py)
+# so a manual /api/match call gets the same "no unrelated-genre jump" sense.
+# The model's own genre_hop is not trusted alone: it rated Afusic "Pal Pal"
+# (Urdu pop) -> Fred again.. "Delilah" (UK electronic) as a small hop.
+from app.music_brain.genre import GENRE_FAMILIES  # noqa: E402
 
 
 def _tempo_locks(target: float, bpm) -> bool | None:
@@ -468,15 +455,8 @@ def _parroted(data: dict, title: str) -> bool:
     return bool(sugg) and all(_bare_title(x["title"]) in ex for x in sugg)
 
 
-def _genre_families(label) -> set:
-    g = str(label or "").lower()
-    return {fam for fam, keys in GENRE_FAMILIES.items() if any(k in g for k in keys)}
-
-
-def _family_jump(current_genre, genre) -> bool:
-    """True when both labels are known and share no family (e.g. Urdu pop -> UK garage)."""
-    a, b = _genre_families(current_genre), _genre_families(genre)
-    return bool(a and b) and not (a & b)
+from app.music_brain.genre import genre_families as _genre_families  # noqa: E402
+from app.music_brain.genre import family_jump as _family_jump  # noqa: E402
 
 
 def _filter_suggestions(

@@ -21,6 +21,7 @@ from typing import List, Optional, Tuple
 
 from app.music_brain.analyzer import TrackAnalysis
 from app.music_brain.config import BARS_PER_PHRASE, BEATS_PER_BAR
+from app.music_brain.genre import genre_score
 from app.music_brain.knowledge_parser import KnowledgeParser, TransitionRecipe
 
 _CAMELOT_RE = re.compile(r"^(\d{1,2})([AB])$", re.IGNORECASE)
@@ -368,6 +369,8 @@ class RecipeMatcher:
         a_time: float,
         track_b: TrackAnalysis,
         b_time: float,
+        genre_a: Optional[str] = None,
+        genre_b: Optional[str] = None,
     ) -> TransitionCandidate:
         camelot_score, camelot_reason = 1.0, "not evaluated (no key estimate)"
         key_blocked = False
@@ -412,6 +415,10 @@ class RecipeMatcher:
         if recipe.max_bpm_delta is None and already_compatible:
             raw *= 0.85
 
+        # Unrelated-genre jump (e.g. melodic house -> industrial metal): key/BPM/
+        # phrase math can still line up, so this is a hard multiplier, not a nudge.
+        raw *= genre_score(genre_a, genre_b)
+
         score = max(0.0, min(100.0, raw * 100.0))
         explanation = _explain(recipe, camelot_reason, bpm_label, a_time, b_time, penalty)
 
@@ -430,6 +437,8 @@ class RecipeMatcher:
         track_b: TrackAnalysis,
         top_n: int = 3,
         energy_hint: str = "maintain",
+        genre_a: Optional[str] = None,
+        genre_b: Optional[str] = None,
     ) -> List[TransitionCandidate]:
         entry_points = find_entry_candidates(track_b) or (
             [track_b.phrase_boundaries_8bar[0]] if track_b.phrase_boundaries_8bar else [0.0]
@@ -444,7 +453,9 @@ class RecipeMatcher:
             exits = recipe_exit_candidates(track_a, recipe.name)[-MAX_POINTS_PER_SIDE:]
             for a_time in reversed(exits):
                 for b_time in entry_points:
-                    candidate = self._score_one(recipe, track_a, a_time, track_b, b_time)
+                    candidate = self._score_one(
+                        recipe, track_a, a_time, track_b, b_time, genre_a, genre_b,
+                    )
                     existing = best_per_recipe.get(recipe.name)
                     if existing is None or candidate.score > existing.score:
                         best_per_recipe[recipe.name] = candidate
@@ -471,6 +482,8 @@ class RecipeMatcher:
         track_b: TrackAnalysis,
         b_time: float,
         snap_to_phrase: bool = True,
+        genre_a: Optional[str] = None,
+        genre_b: Optional[str] = None,
     ) -> TransitionCandidate:
         """Scores one specific recipe at explicit, user-chosen times — the
         manual-override path (as opposed to `match`, which picks its own
@@ -486,7 +499,7 @@ class RecipeMatcher:
             a_time = nearest_phrase_boundary(track_a, a_time)
             b_time = nearest_phrase_boundary(track_b, b_time)
 
-        return self._score_one(recipe, track_a, a_time, track_b, b_time)
+        return self._score_one(recipe, track_a, a_time, track_b, b_time, genre_a, genre_b)
 
     def resolve_candidate(
         self,
