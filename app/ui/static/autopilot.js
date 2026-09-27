@@ -792,6 +792,7 @@
     // a tempo gap (Echo Out), instead of holding out for a beat-matchable pick.
     if (!opts.lookAhead) {
       if (data.current_genre) currentGenre = data.current_genre;
+      if (data.current_era) currentEra = data.current_era;
       steering = data.steering === "move" && steerStep < MAX_STEER_STEPS ? "move" : "stay";
       if (steering === "stay") steerStep = 0;
       // Steering into music at another tempo: ladder there (BRIDGE PATH).
@@ -908,6 +909,7 @@
   // Variety: subgenre of each played song, to spot a style that has plateaued.
   let genreLog = [];
   let currentGenre = "";
+  let currentEra = "";     // model's release decade for the playing song ("1990s"): library fallback holds it
   function genreFamily(g) {
     return String(g || "").toLowerCase().split(/[\/,&(]| - /)[0].replace(/[^a-z0-9 ]+/g, " ").trim();
   }
@@ -1430,7 +1432,7 @@
     try {
       // genre: the server only offers library songs known to share the playing
       // song's scene (tempo + key alone paired Barbie Girl with Bicep "Glue")
-      const res = await fetch(`/api/library/lockable?bpm=${aEff.toFixed(2)}&key=${encodeURIComponent(key)}&exclude=${encodeURIComponent(exclude)}&max_gap=${lockLimit()}&genre=${encodeURIComponent(currentGenre || "")}`);
+      const res = await fetch(`/api/library/lockable?bpm=${aEff.toFixed(2)}&key=${encodeURIComponent(key)}&exclude=${encodeURIComponent(exclude)}&max_gap=${lockLimit()}&genre=${encodeURIComponent(currentGenre || "")}&era=${encodeURIComponent(currentEra || "")}`);
       const lib = (await res.json()).tracks || [];
       for (const t of lib) {
         if (!active || gen !== prepGen) return false;
@@ -1840,6 +1842,7 @@
         unmuteBeatLayer();
         genreLog.push(currentGenre || "");
         currentGenre = (scheduledNext && scheduledNext.suggestion && scheduledNext.suggestion.genre) || "";
+        currentEra = (scheduledNext && scheduledNext.suggestion && scheduledNext.suggestion.era) || currentEra;
         songsSinceJump = jumpPending ? 0 : songsSinceJump + 1;
         jumpPending = false;
         if (steering === "move") steerStep++;
@@ -2024,6 +2027,7 @@
     leadStatus("");
     genreLog = [];
     currentGenre = "";
+    currentEra = "";
     songsSinceJump = 0;
     jumpPending = false;
     bridge = null;
@@ -2077,6 +2081,7 @@
     leadStatus("");
     genreLog = [];
     currentGenre = "";
+    currentEra = "";
     songsSinceJump = 0;
     jumpPending = false;
     bridge = null;

@@ -181,3 +181,25 @@ def test_genre_near_scene_level():
     assert genre_near("synth-pop", "pop") is True
     assert genre_near("drum and bass", "future bass") is False   # longer term wins over "bass"
     assert genre_near("eurodance", "") is None and genre_near("", "house") is None
+
+
+def test_era_parsing_and_gap():
+    from app.music_brain.genre import decade_of, era_gap
+    assert decade_of("1990s") == 1990 and decade_of("90s") == 1990 and decade_of("late 90's") == 1990
+    assert decade_of("1997") == 1990 and decade_of("2010s") == 2010 and decade_of("00s") == 2000
+    assert decade_of("") is None and decade_of("modern") is None
+    assert era_gap("1990s", "2010s") == 2        # Barbie Girl -> Glue: a jump
+    assert era_gap("1990s", "2000s") == 1        # neighbour: fine
+    assert era_gap("1990s", "") is None
+
+
+def test_era_jump_dropped_unless_moving():
+    data = {"current_genre": "eurodance", "current_era": "1990s", "suggestions": [
+        {"artist": "Bicep", "title": "Glue", "genre": "dance", "era": "2010s", "genre_hop": 0, "occasion_fit": 8},
+        {"artist": "Vengaboys", "title": "Boom, Boom, Boom, Boom!!", "genre": "eurodance", "era": "1990s",
+         "genre_hop": 0, "occasion_fit": 8}]}
+    assert [s["title"] for s in _filter_suggestions(data, [])] == ["Boom, Boom, Boom, Boom!!"]
+    only_jump = {**data, "suggestions": data["suggestions"][:1]}
+    kept = _filter_suggestions(only_jump, [])
+    assert [s["title"] for s in kept] == ["Glue"] and kept[0]["rejected_reason"].startswith("era jump")
+    assert [s["title"] for s in _filter_suggestions(data, [], allow_genre_change=True)] == ["Glue", "Boom, Boom, Boom, Boom!!"]

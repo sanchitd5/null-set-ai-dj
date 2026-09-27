@@ -10,6 +10,7 @@ passes it in.
 
 from __future__ import annotations
 
+import re
 from typing import Optional
 
 GENRE_FAMILIES = {
@@ -72,6 +73,34 @@ def genre_near(genre_a, genre_b) -> Optional[bool]:
     if not a or not b:
         return None
     return bool(a & b)
+
+
+# Era: a set holds its decade the way it holds its genre. Aqua "Barbie Girl"
+# (1997) -> Bicep "Glue" (2017) shares tempo and even "dance", but breaks the
+# vibe (user). Labels come from the model ("1990s", "90s", "late 90s", "1997").
+_DECADE_RE = re.compile(r"\b(1[89]\d0|20[0-3]0)s?\b|\b(\d0)'?s\b|\b(1[89]\d\d|20[0-3]\d)\b")
+
+
+def decade_of(label) -> Optional[int]:
+    """1990 for "1990s" / "90s" / "late 90's" / "1997"; None if no decade in it."""
+    m = _DECADE_RE.search(str(label or "").lower())
+    if not m:
+        return None
+    if m.group(1):
+        return int(m.group(1))
+    if m.group(2):
+        d = int(m.group(2))
+        return (1900 if d >= 30 else 2000) + d
+    return int(m.group(3)) // 10 * 10
+
+
+MAX_ERA_GAP = 1  # decades: 90s -> 2000s is a neighbour, 90s -> 2010s is a jump
+
+
+def era_gap(era_a, era_b) -> Optional[int]:
+    """Decades between two era labels; None if either is unknown."""
+    a, b = decade_of(era_a), decade_of(era_b)
+    return None if a is None or b is None else abs(a - b) // 10
 
 
 GENRE_JUMP_PENALTY = 0.6  # unrelated-family jump knocks the transition score down hard

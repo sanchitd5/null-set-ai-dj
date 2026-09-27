@@ -663,7 +663,7 @@ def get_vocal_entry(track_id: str):
 
 @app.get("/api/library/lockable")
 def get_library_lockable(bpm: float, key: str = "", exclude: str = "", limit: int = 6, max_gap: float = 0.08,
-                         genre: str = ""):
+                         genre: str = "", era: str = ""):
     """Library songs whose analysed tempo locks to `bpm` (half / double time
     count) within max_gap, best key match first. The autopilot's fallback
     before it would force a tempo jump.
@@ -672,14 +672,19 @@ def get_library_lockable(bpm: float, key: str = "", exclude: str = "", limit: in
     known to sit in the same scene (genre.genre_near) - tempo and key alone
     let Aqua "Barbie Girl" hand over to Bicep "Glue" (user). A song whose
     genre isn't known yet is left out too: better a genre-right tempo jump
-    than a genre-wrong lock."""
+    than a genre-wrong lock.
+
+    `era` = the playing song's release decade: a library song more than one
+    decade away is left out (Barbie Girl 1997 -> Glue 2017). Unknown era is
+    allowed; genre already gates the unlabelled ones."""
     from app.music_brain import techniques as tq
-    from app.music_brain.genre import genre_near
+    from app.music_brain.genre import MAX_ERA_GAP, era_gap, genre_near
     from app.ui.download_service import _is_live, _is_mix
     from app.ui.track_identity import clean_identity
 
     skip = set(filter(None, exclude.split(",")))
     genre = str(genre or "").strip()[:80]
+    era = str(era or "").strip()[:40]
     out = []
     for tid, path in list(_tracks.items()):
         if tid in skip:
@@ -687,8 +692,13 @@ def get_library_lockable(bpm: float, key: str = "", exclude: str = "", limit: in
         name = _track_names.get(tid) or path.stem
         if _is_mix(name) or _is_live(name):
             continue
-        lib_genre = _suggested_genres.get(_genre_key(clean_identity(name)[1]), "")
+        lib_key = _genre_key(clean_identity(name)[1])
+        lib_genre = _suggested_genres.get(lib_key, "")
         if genre and genre_near(genre, lib_genre) is not True:
+            continue
+        lib_era = _suggested_eras.get(lib_key, "")
+        egap = era_gap(era, lib_era)
+        if egap is not None and egap > MAX_ERA_GAP:
             continue
         try:
             a = analyze_track(path)
@@ -703,7 +713,7 @@ def get_library_lockable(bpm: float, key: str = "", exclude: str = "", limit: in
         ks = tq.camelot_score(key, k) if key and k else 0.5
         out.append({"track_id": tid, "name": name, "bpm": a.bpm, "key": k, "gap": round(gap, 4),
                     "key_score": ks, "duration": a.duration, "stems": _stem_cache.get(tid) is not None,
-                    "genre": lib_genre})
+                    "genre": lib_genre, "era": lib_era})
     out.sort(key=lambda x: (-x["key_score"], x["gap"]))
     return {"tracks": out[: max(1, min(limit, 20))]}
 
@@ -1414,6 +1424,9 @@ def _occasion_with_note(occasion: Optional[str], note: Optional[str], variety: s
 # Normalised suggested title -> genre the model gave it, so the next suggest
 # call for that track can ground on the matching ./DJ genre playbook.
 _suggested_genres: Dict[str, str] = {}
+# Normalised title -> release era the model gave it ("1990s"), same lifetime
+# as _suggested_genres: the library fallback holds the set's decade too.
+_suggested_eras: Dict[str, str] = {}
 _set_memory = None  # app.ui.set_memory.SetMemory, created on first suggest
 
 
@@ -1584,10 +1597,14 @@ def _autopilot_suggest_impl(req: AutopilotSuggestRequest):
     for s in suggestions:
         if s.get("title") and s.get("genre"):
             _suggested_genres[_genre_key(s["title"])] = str(s["genre"])
+        if s.get("title") and s.get("era"):
+            _suggested_eras[_genre_key(s["title"])] = str(s["era"])
     # The playing song's own genre (the model's current_genre): library songs
     # get labels as they play, so the library fallback can check genre.
     if meta.get("current_genre") and not req.lookahead:
         _suggested_genres[_genre_key(title_part)] = str(meta["current_genre"])
+    if meta.get("current_era") and not req.lookahead:
+        _suggested_eras[_genre_key(title_part)] = str(meta["current_era"])
     return {"suggestions": suggestions, "set_position": round(set_position, 2), **meta}
 
 

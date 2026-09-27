@@ -45,8 +45,8 @@ A = minor keys, B = major keys. Hour arithmetic wraps: 12+1=1."""
 _FEW_SHOT = """\
 EXAMPLE (output shape only - placeholder names, never suggest these):
 Current: "Song Zero" by Artist Zero | 124 BPM | 8A | Energy 0.6 | Genre: melodic house
-{"steering":"stay","occasion_fit":0,"current_genre":"melodic house","current_profile":{"energy":6,"tempo_feel":"driving","drums":"steady","vocals":"chopped","mood":"bittersweet","texture":"raw"},"suggestions":[
-  {"artist":"Artist One","title":"Song One","reason":"9A (+1 hour), 122 BPM; same chopped vocal over a steady kick.","genre":"melodic house","expected_bpm":122,"expected_key":"9A","mix_moment":"exit at outro ~bar 64","energy_delta":"maintain","vibe_link":"chopped vocal loop over rolling bass","genre_hop":0,"occasion_fit":0,"track_profile":{"energy":6,"tempo_feel":"driving","drums":"steady","vocals":"chopped","mood":"bittersweet","texture":"raw"}}
+{"steering":"stay","occasion_fit":0,"current_genre":"melodic house","current_era":"2020s","current_profile":{"energy":6,"tempo_feel":"driving","drums":"steady","vocals":"chopped","mood":"bittersweet","texture":"raw"},"suggestions":[
+  {"artist":"Artist One","title":"Song One","reason":"9A (+1 hour), 122 BPM; same chopped vocal over a steady kick.","genre":"melodic house","era":"2020s","expected_bpm":122,"expected_key":"9A","mix_moment":"exit at outro ~bar 64","energy_delta":"maintain","vibe_link":"chopped vocal loop over rolling bass","genre_hop":0,"occasion_fit":0,"track_profile":{"energy":6,"tempo_feel":"driving","drums":"steady","vocals":"chopped","mood":"bittersweet","texture":"raw"}}
 ]}"""
 
 _SYSTEM = f"""\
@@ -100,6 +100,14 @@ VIBE CONTINUITY (critical rule):
     Good: "punchy UK bass kick and pitched vocal chop cadence"
     Bad: "same genre", "similar style", "UK bass DNA"
 
+ERA CONTINUITY (as important as genre):
+  Also infer the current song's era (the decade it was released, e.g. "1990s") and give every
+  suggestion its own release "era". A set holds its era the way it holds its genre: stay within
+  ONE decade of the current song (1990s -> 1990s or 2000s is fine; 1990s -> 2010s is a jump).
+  Eurodance/90s pop (Aqua "Barbie Girl") continues with other 90s/early-2000s dance-pop, NOT a 2010s
+  UK breakbeat track, even at the same tempo. A remix counts at the remix's own release year.
+  To change era, bridge through a modern remix or rework of an older song.
+
 TRACK PROFILE (judge the SONG, not the artist):
   Artist reputation is NOT enough. The same artist has chill tracks and peak tracks.
   First describe the CURRENT track in "current_profile", then give every suggestion its own "track_profile":
@@ -151,7 +159,7 @@ FACTS (critical):
   reason: ONE short sentence.
 
 OUTPUT FORMAT — return ONLY valid JSON, no markdown, no explanation:
-{{"steering":"stay|move","occasion_fit":0,"current_genre":"","current_profile":{{"energy":0,"tempo_feel":"","drums":"","vocals":"","mood":"","texture":""}},"suggestions":[{{"artist":"","title":"","reason":"one sentence: harmonic move + how THIS song's sound matches","genre":"inferred genre of suggested track","expected_bpm":0,"expected_key":"","mix_moment":"exit at [section] ~bar N","energy_delta":"up|down|maintain","vibe_link":"specific sonic characteristic shared — NOT a genre label","genre_hop":0,"occasion_fit":0,"track_profile":{{"energy":0,"tempo_feel":"","drums":"","vocals":"","mood":"","texture":""}}}}]}}
+{{"steering":"stay|move","occasion_fit":0,"current_genre":"","current_era":"release decade e.g. 1990s","current_profile":{{"energy":0,"tempo_feel":"","drums":"","vocals":"","mood":"","texture":""}},"suggestions":[{{"artist":"","title":"","reason":"one sentence: harmonic move + how THIS song's sound matches","genre":"inferred genre of suggested track","era":"its release decade","expected_bpm":0,"expected_key":"","mix_moment":"exit at [section] ~bar N","energy_delta":"up|down|maintain","vibe_link":"specific sonic characteristic shared — NOT a genre label","genre_hop":0,"occasion_fit":0,"track_profile":{{"energy":0,"tempo_feel":"","drums":"","vocals":"","mood":"","texture":""}}}}]}}
 
 {_FEW_SHOT}"""
 
@@ -342,8 +350,9 @@ _USER_TEMPLATE = (
     "Set mode: {set_mode_line}\n"
     "{tempo_line}"
     "ALLOWED KEYS (expected_key must be one of these unless steering): {allowed_keys}\n"
-    "First fill current_genre and current_profile for THIS song, then pick songs whose own "
-    "track_profile stays close to it. Stay in this genre neighbourhood unless the occasion demands a shift.\n"
+    "First fill current_genre, current_era and current_profile for THIS song, then pick songs whose own "
+    "track_profile stays close to it. Stay in this genre neighbourhood AND within one decade of this "
+    "song's era unless the occasion demands a shift.\n"
     "Already played this set - NEVER suggest these again: {history}\n"
     "Artists heard in the last few songs (pick someone else unless it is a deliberate "
     "same-artist moment early in the set): {recent_artists}\n"
@@ -463,6 +472,7 @@ def _parroted(data: dict, title: str) -> bool:
 
 from app.music_brain.genre import genre_families as _genre_families  # noqa: E402
 from app.music_brain.genre import family_jump as _family_jump  # noqa: E402
+from app.music_brain.genre import MAX_ERA_GAP, era_gap  # noqa: E402
 
 
 def _filter_suggestions(
@@ -499,6 +509,7 @@ def _filter_suggestions(
     # model says "move" freely (it let Pal Pal -> Delilah through).
     steering_any = occasion_set and steering_move
     cur_genre = data.get("current_genre")
+    cur_era = data.get("current_era")
     for s in data.get("suggestions", []) or []:
         if not isinstance(s, dict) or not s.get("title"):
             continue
@@ -518,11 +529,22 @@ def _filter_suggestions(
         hop = _num(s.get("genre_hop"))
         if _family_jump(cur_genre, s.get("genre")):
             hop = max(hop or 0.0, 2.0)
-        print(f"[suggest] {label[:60]!r} genre={s.get('genre')!r} hop={hop} (cur={cur_genre!r})", flush=True)
-        if hop is not None and hop > MAX_GENRE_HOP and not (steering_any or allow_genre_change):
-            s["rejected_reason"] = f"genre jump ({hop:.0f})"
-            genre_jumps.append((hop, s))
-            continue
+        # Era continuity (user: Aqua "Barbie Girl" -> Bicep "Glue" broke the
+        # vibe). Two decades apart counts as a jump of that size, in the same
+        # bucket as genre jumps, so the closest one survives if nothing else does.
+        egap = era_gap(cur_era, s.get("era"))
+        era_jump = egap is not None and egap > MAX_ERA_GAP
+        print(f"[suggest] {label[:60]!r} genre={s.get('genre')!r} hop={hop} (cur={cur_genre!r})"
+              f" era={s.get('era')!r} (cur={cur_era!r})", flush=True)
+        if not (steering_any or allow_genre_change):
+            if era_jump:
+                s["rejected_reason"] = f"era jump ({s.get('era')} after {cur_era})"
+                genre_jumps.append((max(hop or 0.0, float(egap)), s))
+                continue
+            if hop is not None and hop > MAX_GENRE_HOP:
+                s["rejected_reason"] = f"genre jump ({hop:.0f})"
+                genre_jumps.append((hop, s))
+                continue
         fit = _num(s.get("occasion_fit"))
         if theme_floor is not None and fit is not None and fit < theme_floor:
             off_theme.append((fit, s))
@@ -816,22 +838,24 @@ def suggest_next_tracks(
     )
     # Genre transitions, it never jumps (user: Pal Pal -> Delilah). When every pick
     # jumped, ask once more with the rejected picks named, rather than play a jump.
-    if (suggestions and str(suggestions[0].get("rejected_reason", "")).startswith("genre jump")
+    if (suggestions and str(suggestions[0].get("rejected_reason", "")).startswith(("genre jump", "era jump"))
             and can_retry()):
         cur_genre = data.get("current_genre") or "the current song's genre"
         jumped = "; ".join(f"{x.get('artist', '')} - {x.get('title', '')} ({x.get('genre', '')})"
                            for x in data.get("suggestions", []) if isinstance(x, dict))[:400]
-        retry_msg = (user_msg + f"\n\nREJECTED - these jumped genre away from {cur_genre}: {jumped}. "
-                     f"Suggest songs IN {cur_genre}, or a crossover song one step away that still "
-                     f"belongs to {cur_genre}.")
+        cur_era = data.get("current_era") or "the current song's era"
+        retry_msg = (user_msg + f"\n\nREJECTED - these jumped genre or era away from {cur_genre} "
+                     f"({cur_era}): {jumped}. Suggest songs IN {cur_genre} from within one decade of "
+                     f"{cur_era}, or a crossover song one step away that still belongs to it.")
         try:
             data2 = _extract_json(chat_raw(system_msg, retry_msg, temperature=0.4,
                                            max_tokens=1100 if lead_to else 900, priority=prio))
             data2.setdefault("current_genre", data.get("current_genre"))
+            data2.setdefault("current_era", data.get("current_era"))
             retry = _filter_suggestions(
                 data2, history, occasion_set=bool((occasion or "").strip()) and not lead_to,
                 current_key=camelot, allow_genre_change=bool(lead_to))
-            if retry and not str(retry[0].get("rejected_reason", "")).startswith("genre jump"):
+            if retry and not str(retry[0].get("rejected_reason", "")).startswith(("genre jump", "era jump")):
                 data, suggestions = data2, retry
         except ValueError as exc:
             print(f"[suggest] genre retry failed: {exc}", flush=True)
@@ -856,6 +880,7 @@ def suggest_next_tracks(
                 data2 = _extract_json(chat_raw(system_msg, retry_msg, temperature=0.4,
                                                max_tokens=1100 if lead_to else 900, priority=prio))
                 data2.setdefault("current_genre", data.get("current_genre"))
+                data2.setdefault("current_era", data.get("current_era"))
                 retry = _filter_suggestions(
                     data2, history, occasion_set=bool((occasion or "").strip()) and not lead_to,
                     current_key=camelot, allow_genre_change=bool(lead_to))
@@ -883,6 +908,7 @@ def suggest_next_tracks(
             data2 = _extract_json(chat_raw(system_msg, retry_msg, temperature=0.4,
                                            max_tokens=1100 if lead_to else 900, priority=prio))
             data2.setdefault("current_genre", data.get("current_genre"))
+            data2.setdefault("current_era", data.get("current_era"))
             retry = _filter_suggestions(
                 data2, history, occasion_set=bool((occasion or "").strip()) and not lead_to,
                 current_key=camelot, allow_genre_change=bool(lead_to))
@@ -905,6 +931,7 @@ def suggest_next_tracks(
     if meta is not None:  # caller wants the model's read of the CURRENT track too
         meta["current_profile"] = data.get("current_profile") or {}
         meta["current_genre"] = data.get("current_genre") or ""
+        meta["current_era"] = data.get("current_era") or ""
         try:
             meta["occasion_fit"] = max(0.0, min(10.0, float(data.get("occasion_fit"))))
         except (TypeError, ValueError):
