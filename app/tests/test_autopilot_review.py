@@ -162,7 +162,8 @@ def _run_server_suggest(monkeypatch, **req):
     monkeypatch.setattr(server, "_track_path", lambda tid: server.Path(f"/tmp/{tid}.mp3"))
     monkeypatch.setattr(server, "analyze_track", lambda p: analysis)
     monkeypatch.setattr(server, "_set_memory", SimpleNamespace(record=lambda h, *a, **k: None,
-                                                               earlier_sets=lambda h, *a, **k: []))
+                                                               earlier_sets=lambda h, *a, **k: [],
+                                                               favourite_artists=lambda *a, **k: []))
     monkeypatch.setattr(svc, "suggest_next_tracks", fake_suggest)
     monkeypatch.setattr(vibe, "analyze_vibe", lambda p: SimpleNamespace(loudness_dbfs=-9.0))
     out = server.autopilot_suggest(server.AutopilotSuggestRequest(track_id="t", **req))

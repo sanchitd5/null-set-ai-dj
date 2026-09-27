@@ -57,3 +57,23 @@ def test_lead_to_uses_focused_prompt_and_skips_continuity_filters(monkeypatch):
     assert seen["system"] == ap._LEAD_SYSTEM and "step 1 of 3" in seen["user"] and seen["max_tokens"] == 1100
     assert [s["title"] for s in out] == ["Bass Rani"]   # key / mood / fit filters don't fight the destination
     assert ap.lead_line("", 1, 3) == "" and "step 3 of 3" in ap.lead_line("Bollywood dance", 5, 3)
+
+
+def test_favourite_artists_from_memory(tmp_path):
+    m = SetMemory(tmp_path / "mem.json")
+    m.record(["Fred again.. - Delilah", "Fred Again - Admit It (U Don't Want 2)", "Fred again.. - Jungle",
+              "LATIN MAFIA, Fred again.. - Cmon", "Bicep - Glue", "Bicep - Apricots"], "s1")
+    favs = m.favourite_artists()
+    assert len(favs) == 1 and favs[0].lower().startswith("fred again")   # 4 songs; Bicep only 2
+
+
+def test_favourite_artist_songs_not_dropped_as_earlier_sets(monkeypatch):
+    import app.ui.autopilot_service as ap
+    fake = ('{"suggestions":[{"artist":"Fred again..","title":"Delilah (pull me out of this)"},'
+            '{"artist":"Four Tet","title":"Baby"},{"artist":"Lane 8","title":"Little By Little"}]}')
+    monkeypatch.setattr(ap, "chat_raw", lambda *a, **k: fake)
+    out = ap.suggest_next_tracks("Marea", "Fred again..", 123, "4A", 240, 0.5, "", [],
+                                 earlier_sets=["Fred again.. - Delilah (pull me out of this)",
+                                               "Lane 8 - Little By Little"],
+                                 favourite_artists=["Fred again.."])
+    assert [s["title"] for s in out] == ["Delilah (pull me out of this)", "Baby"]   # Lane 8 still dropped

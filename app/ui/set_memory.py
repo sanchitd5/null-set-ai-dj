@@ -21,8 +21,14 @@ from typing import Iterable, List
 MAX_SONGS = 300
 MAX_AGE_DAYS = 14
 PROMPT_LIMIT = 40
+FAVOURITE_MIN_SONGS = 3   # different remembered songs by one artist -> a favourite
 
 _lock = threading.Lock()
+
+
+def artist_key(name: str) -> str:
+    """"Fred again..", "Fred Again", "FRED AGAIN..." -> "fredagain"."""
+    return re.sub(r"[^a-z0-9]+", "", str(name).lower())
 
 
 def _key(title: str) -> str:
@@ -61,6 +67,23 @@ class SetMemory:
                            key=lambda kv: kv[1]["t"], reverse=True)[:MAX_SONGS]
             self._data = dict(items)
             self._save()
+
+    def favourite_artists(self, min_songs: int = FAVOURITE_MIN_SONGS, limit: int = 12) -> List[str]:
+        """Artists the listener keeps coming back to: >= min_songs different
+        remembered songs credit them. Their songs must not be avoided just for
+        having been heard (user: "biased against Fred again.. songs")."""
+        from app.ui.track_identity import credited_artists
+        counts: dict = {}
+        shown: dict = {}
+        with _lock:
+            names = [v["name"] for v in self._data.values()]
+        for name in names:
+            for a in {artist_key(x): x for x in credited_artists(str(name))}.items():
+                if a[0]:
+                    counts[a[0]] = counts.get(a[0], 0) + 1
+                    shown.setdefault(a[0], a[1].strip(" .") + (".." if a[1].rstrip().endswith("..") else ""))
+        top = sorted((k for k, c in counts.items() if c >= min_songs), key=lambda k: -counts[k])
+        return [shown[k] for k in top[:limit]]
 
     def earlier_sets(self, current: Iterable[str], limit: int = PROMPT_LIMIT,
                      set_id: str = "") -> List[str]:

@@ -355,9 +355,13 @@ _USER_TEMPLATE = (
     "song's era unless the occasion demands a shift.\n"
     "Already played this set - NEVER suggest these again: {history}\n"
     "Artists heard in the last few songs (pick someone else unless it is a deliberate "
-    "same-artist moment early in the set): {recent_artists}\n"
+    "same-artist moment early in the set, or one of the listener's favourite artists below): {recent_artists}\n"
+    "The listener's FAVOURITE artists (they come back to them set after set): {favourite_artists}. "
+    "Their songs are WELCOME whenever they fit the vibe - other tracks, remixes, edits, collaborations - "
+    "never avoid them for having been heard before; just don't repeat this set's history.\n"
     "Played in the listener's EARLIER sets - they have heard these recently, so prefer fresh "
-    "songs over them (only reuse one if it is clearly the perfect fit): {earlier_sets}\n"
+    "songs over them (only reuse one if it is clearly the perfect fit; favourite artists' songs "
+    "are exempt): {earlier_sets}\n"
     "At least ONE of your suggestions must be a less obvious pick (a deep cut, a newer release "
     "or a lesser-played gem) FROM THE SAME GENRE as the current song, not the genre's most famous anthem.\n"
     "genre_hop for each suggestion: 0 = same subgenre, 1 = neighbouring subgenre (e.g. melodic house -> "
@@ -733,6 +737,7 @@ def suggest_next_tracks(
     history_display: list[str] | None = None,
     lookahead: bool = False,
     earlier_sets: list[str] | None = None,
+    favourite_artists: list[str] | None = None,
     loudness_dbfs: float | None = None,
     tempo_target: float | None = None,
     tempo_note: str = "",
@@ -781,6 +786,7 @@ def suggest_next_tracks(
         history=", ".join((history_display or history)[-30:]) if history else "none",
         recent_artists=_recent_artists(history_display or history),
         earlier_sets=", ".join(earlier_sets or []) or "none",
+        favourite_artists=", ".join(favourite_artists or []) or "none",
         set_pos_pct=round(set_position * 100),
         arc_phase=_set_arc_phase(set_position),
         n=n + EXTRA_CANDIDATES,  # spares: invented / off-tempo picks are dropped below
@@ -925,8 +931,17 @@ def suggest_next_tracks(
     # Songs from EARLIER sets are dropped whenever a fresh alternative exists:
     # the soft prompt hint alone let "Lane 8 - Little By Little" follow Fred
     # again.. in every set.
+    # Favourite artists are exempt (user: "biased against Fred again.. songs"):
+    # a listener who plays an artist in every set wants more of them, and
+    # dropping every remembered title of theirs left only other artists.
+    from app.ui.set_memory import artist_key
+    from app.ui.track_identity import credited_artists
+    fav = {artist_key(a) for a in (favourite_artists or [])}
+    def _is_fav(x):
+        names = [x.get("artist", "")] + credited_artists(f"{x.get('artist', '')} - {x.get('title', '')}")
+        return bool(fav) and any(artist_key(n) in fav for n in names if n)
     heard = {_bare_title(str(x).split(" - ", 1)[-1]) for x in (earlier_sets or [])}
-    fresh = [x for x in suggestions if _bare_title(x.get("title", "")) not in heard]
+    fresh = [x for x in suggestions if _is_fav(x) or _bare_title(x.get("title", "")) not in heard]
     suggestions = (fresh or suggestions)[:n]
     if meta is not None:  # caller wants the model's read of the CURRENT track too
         meta["current_profile"] = data.get("current_profile") or {}
