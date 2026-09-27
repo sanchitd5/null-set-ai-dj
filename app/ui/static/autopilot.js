@@ -420,8 +420,18 @@
     if (sm && sm.core.STEM_BLEND_KINDS.has(kind) && od && idk && od.stemsReady && idk.stemsReady) {
       // one song: 32-bar blends when A has the room left, else 16 (bass / double: 8-16)
       const aLeft = od.buffer ? (od.buffer.duration - (od._positionAt ? od._positionAt(xT0) : od._currentPosition())) : 0;
-      const long = aLeft / (bar / 1000) >= 34;
-      const bars = (kind === "blend" || kind === "filter" || kind === "loop" ? (long ? 32 : 16) : kind === "bass" ? 16 : 8) * scale;
+      const roomBars = aLeft / (bar / 1000);
+      const long = roomBars >= 34;
+      // A stem blend is a real mashup (both tracks layered), not a quick swap:
+      // it should run a genuine ~30s together before the crossfade lands, not
+      // whatever a bar-count guess happens to work out to (user). Only widens
+      // "blend"/"filter"/"loop" (the actual mashup kinds); bass/double-drop
+      // stay short and percussive by design. Never runs past the track's own
+      // remaining room.
+      const minMashupBars = Math.ceil(30000 / bar);
+      const bars = (kind === "blend" || kind === "filter" || kind === "loop"
+        ? Math.min(Math.max(long ? 32 : 16, minMashupBars), Math.max(8, Math.floor(roomBars) - 1))
+        : kind === "bass" ? 16 : 8) * scale;
       const barS = bar / 1000;
       ["low", "mid", "high"].forEach((b) => { setRange(eqEl(out, b), 0); setRange(eqEl(inn, b), 0); });
       // The crossfader sweeps A -> B across the whole blend (equal power, on the
