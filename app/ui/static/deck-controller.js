@@ -353,7 +353,65 @@ class Deck {
   }
 
   _playbackRate() {
+    // mid-glide: the rate the sources are playing at right now
+    if (this._rateRamp) return this._rampRateAt(audioCtx.currentTime);
     return Math.max(0.05, 1 + (this._pitchPercent + this._bendPercent) / 100);
+  }
+
+  // ---- smooth tempo glide (user: "the bpm should come to normal") -----------
+  // One linear playbackRate ramp r0 -> r1 over [t0, t1] on the audio clock, on
+  // every source of the deck (mix, stems, holds). The position clock is rebased
+  // when the glide is booked (startedAt <= t0), so song time travelled is the
+  // integral of the rate: exact during and after the ramp.
+  _rampRateAt(T) {
+    const rr = this._rateRamp;
+    if (T <= rr.t0) return rr.r0;
+    if (T >= rr.t1) return rr.r1;
+    return rr.r0 + ((rr.r1 - rr.r0) * (T - rr.t0)) / (rr.t1 - rr.t0);
+  }
+
+  // Song seconds travelled between startedAt and audio time T.
+  _travelled(T) {
+    const s = this.startedAt, rr = this._rateRamp;
+    if (!(T > s)) return 0;
+    if (!rr) return (T - s) * this._playbackRate();
+    const d = rr.t1 - rr.t0;
+    const pre = Math.max(0, Math.min(T, rr.t0) - s) * rr.r0;
+    const x = Math.max(0, Math.min(T, rr.t1) - Math.max(s, rr.t0));
+    const mid = d > 0 ? rr.r0 * x + ((rr.r1 - rr.r0) * x * x) / (2 * d) : 0;
+    const post = Math.max(0, T - Math.max(s, rr.t1)) * rr.r1;
+    return pre + mid + post;
+  }
+
+  // Put the deck's rate curve (steady, or the booked glide) on one source's
+  // playbackRate param from audio time `from` on. k = the source's rate multiplier.
+  _scheduleRate(p, k, from) {
+    const rr = this._rateRamp;
+    p.cancelScheduledValues(from);
+    if (!rr || from >= rr.t1) { p.setValueAtTime((rr ? rr.r1 : this._playbackRate()) * k, from); return; }
+    p.setValueAtTime(this._rampRateAt(from) * k, from);
+    if (from < rr.t0) p.setValueAtTime(rr.r0 * k, rr.t0);
+    p.linearRampToValueAtTime(rr.r1 * k, rr.t1);
+  }
+
+  // Glide the tempo to `pct` (pitch fader %) over `seconds`, starting at audio
+  // time `at` (now when omitted). Not playing / braking / spinning up: an
+  // instant setPitchPercent. A fader or bend move during the glide cancels it
+  // at the current rate (_applyRate). Returns the audio time the glide ends.
+  rampPitchPercent(pct, seconds, at = 0) {
+    const now = audioCtx.currentTime;
+    if (!this.playing || this._braking || this._spinningUp || !(seconds > 0) || this._extPos) {
+      this.setPitchPercent(pct);
+      return now;
+    }
+    const t0 = Math.max(now, at || 0);
+    const r0 = this._playbackRate();
+    this.startOffset = this._currentPosition();   // rebase on the old curve first
+    this.startedAt = now;
+    this._pitchPercent = pct;
+    this._rateRamp = { t0, t1: t0 + seconds, r0, r1: Math.max(0.05, 1 + (pct + this._bendPercent) / 100) };
+    for (const s of this._allSources()) this._scheduleRate(s.playbackRate, s._rateMul || 1, now);
+    return t0 + seconds;
   }
 
   _activeBuffer() {
@@ -412,8 +470,8 @@ class Deck {
       return this._clampPos(this._spinUpPos + (this.reversed ? -travelled : travelled));
     }
     if (!this.playing) return this.startOffset;
-    // max(0): before a scheduled start the position holds at the cue point
-    const travelled = Math.max(0, audioCtx.currentTime - this.startedAt) * this._playbackRate();
+    // before a scheduled start the position holds at the cue point
+    const travelled = this._travelled(audioCtx.currentTime);
     const raw = this.startOffset + (this.reversed ? -travelled : travelled);
     const span = this._loopSpan;
     if (span && this.loopOn && raw >= span[1] && span[1] > span[0]) {
@@ -427,11 +485,17 @@ class Deck {
   _applyRate() {
     if (this._spinningUp) return; // let the spin-up ramp finish first
     if (this.playing && !this._braking) {
-      this.startOffset = this._currentPosition();
+      this.startOffset = this._currentPosition();   // on the glide curve if one runs
       this.startedAt = audioCtx.currentTime;
     }
+    // a manual rate change wins over a booked glide (the fader now says where)
+    const gliding = !!this._rateRamp;
+    this._rateRamp = null;
     if (this.source && !this._braking) {
-      for (const s of this._allSources()) s.playbackRate.value = this._playbackRate() * (s._rateMul || 1);
+      for (const s of this._allSources()) {
+        if (gliding) s.playbackRate.cancelScheduledValues(audioCtx.currentTime);
+        s.playbackRate.value = this._playbackRate() * (s._rateMul || 1);
+      }
     }
   }
 
@@ -442,7 +506,7 @@ class Deck {
   // Track position at audio time T (same maths as _currentPosition, any T).
   _positionAt(T) {
     if (!this.playing) return this.startOffset;
-    const travelled = Math.max(0, T - this.startedAt) * this._playbackRate();
+    const travelled = this._travelled(T);
     const raw = this.startOffset + (this.reversed ? -travelled : travelled);
     const span = this._loopSpan;
     if (span && this.loopOn && raw >= span[1] && span[1] > span[0]) return span[0] + ((raw - span[0]) % (span[1] - span[0]));
@@ -462,6 +526,7 @@ class Deck {
     const k = st.ratio || 1;
     s._rateMul = k;
     s.playbackRate.value = this._playbackRate() * k;
+    if (this._rateRamp) this._scheduleRate(s.playbackRate, k, audioCtx.currentTime);   // mid-glide: follow it
     if (mixSrc.loop) {
       s.loop = true;
       s.loopStart = (mixSrc.loopStart + st.lag) * k;
@@ -478,15 +543,17 @@ class Deck {
       s._dead = true;
       if (this._stemSrc[name] !== s) return;           // replaced / stopped on purpose
       if (this.stemState && this._mixLiveAt(audioCtx.currentTime)) this._fallbackToMix();
+      if (this._mixLiveAt(audioCtx.currentTime)) this.rearmStems(`${name} ended`);   // no-op when they ran out
     };
     this._stemSrc[name] = s;
   }
 
   // Stems decoded: keep them, and if the deck is already playing, attach the
-  // stem sources 150 ms ahead on the exact sample the mix will be at.
-  setStems(stems) {
+  // stem sources 150 ms ahead on the exact sample the mix will be at (or at
+  // audio time `at`, when later: the tempo ladder swaps sets on a phrase line).
+  setStems(stems, at = 0) {
     const attach = !!(stems && this.playing && !this._braking && !this._spinningUp && this.source);
-    const T = audioCtx.currentTime + 0.15;
+    const T = Math.max(audioCtx.currentTime + 0.15, at || 0);
     // In stem mode the old stems play on until the new ones land on the same
     // sample (stopping them now left a 150 ms hole with the mix muted).
     this._stopStems(attach && this.stemState ? T : 0);
@@ -571,7 +638,30 @@ class Deck {
     return { level, gain: g };
   }
 
-  get stemsReady() { return this.stemsLiveAt(audioCtx.currentTime); }
+  // Live now, or a set swap (setStems: new stems land 150 ms ahead) about to
+  // land: that window is not "no stems" (a transition planned inside it cut).
+  get stemsReady() {
+    const now = audioCtx.currentTime;
+    return this.stemsLiveAt(now) || this.stemsLiveAt(now + 0.2);   // 0.2 s > setStems' 150 ms lead
+  }
+
+  // Decoded stems that are not sounding while the mix plays (a source ended /
+  // was replaced / never attached): restart them sample-locked to the mix
+  // instead of treating the deck as stemless for the rest of the song. Not
+  // while another engine owns the output (riff over rap stopped the mix too,
+  // so the mix is not live there). Returns whether the stems are ready.
+  rearmStems(why = "") {
+    if (this.stemsReady) return true;
+    const now = audioCtx.currentTime;
+    if (!this.stems || !this.playing || this.reversed || this._braking || this._spinningUp || this._extPos) return false;
+    if (!this._mixLiveAt(now)) return false;
+    const pos = this._positionAt(now + 0.15), k = this.stems.ratio || 1, lag = this.stems.lag || 0;
+    const room = STEM_NAMES.every((n) => this.stems[n] && (pos + lag) * k < this.stems[n].duration - 1);
+    if (!room) return false;                               // stems genuinely ran out
+    console.info(`deck ${this.id}: stems re-armed${why ? ` (${why})` : ""}`);
+    this.setStems(this.stems);
+    return this.stemsReady;
+  }
 
   // Stem move on the audio clock. target = {drums, bass, vocals, other, bus}
   // (0..1, omitted = unchanged); null = back to the full mix. Ramps over
@@ -630,6 +720,7 @@ class Deck {
     s.loopEnd = (from + bars * bar + st.lag) * k;
     s._rateMul = k;
     s.playbackRate.value = this._playbackRate() * k;
+    if (this._rateRamp) this._scheduleRate(s.playbackRate, k, audioCtx.currentTime);
     const g = audioCtx.createGain();
     g.gain.setValueAtTime(0, at);
     g.gain.linearRampToValueAtTime(1, at + xf);
@@ -700,8 +791,12 @@ class Deck {
     if (audioCtx.state === "suspended") audioCtx.resume();
     this._cancelBrake();
     this._cancelSpinUp();
+    // a glide still running survives internal restarts (loop re-arm, seek,
+    // hot cue); the transport's spin-up starts from the fader's rate instead
+    const glide = !spin && this.playing && this._rateRamp && this._rateRamp.t1 > audioCtx.currentTime ? this._rateRamp : null;
     this._stopSource();
     const pos = this._clampPos(fromPosition !== undefined ? fromPosition : this._currentPosition());
+    if (!glide) this._rateRamp = null;
     const duration = this.buffer.duration;
     if (this.reversed) this._ensureReverseBuffer();
     const buffer = this._activeBuffer();
@@ -735,6 +830,12 @@ class Deck {
     this.startedAt = startAt || audioCtx.currentTime;
     this.startOffset = pos;
     this.playing = true;
+    if (glide) {
+      // re-anchor the glide on the new clock (it must not begin before startedAt)
+      const g0 = Math.max(this.startedAt, glide.t0);
+      this._rateRamp = { t0: g0, t1: glide.t1, r0: this._rampRateAt(g0), r1: glide.r1 };
+      for (const s of this._allSources()) this._scheduleRate(s.playbackRate, s._rateMul || 1, audioCtx.currentTime);
+    }
 
     if (spin) {
       const now = audioCtx.currentTime;
@@ -774,6 +875,7 @@ class Deck {
   stopNow() {
     if (!this.playing) return;
     this.startOffset = this._currentPosition();
+    this._rateRamp = null;
     this._cancelBrake();
     this._cancelSpinUp();
     this._stopSource();
@@ -829,31 +931,76 @@ class Deck {
     const tid = this.id === "a" ? state.trackA : state.trackB;
     if (!tid || !this.buffer || !this.stems) return false;
     if (this.tempoStems && Math.abs(this.tempoStems.bpm - bpm) < 0.5) return true;
-    const analysis = this.analysis;
-    for (let i = 0; i < 90; i++) {
-      const res = await fetch(`/api/tracks/${tid}/stems?bpm=${bpm.toFixed(2)}&separate=1`);
-      if (!res.ok) return false;
-      const v = await res.json();
-      if (this.analysis !== analysis) return false;
-      if (v.stems) {
-        const bufs = {};
-        await Promise.all(STEM_NAMES.map(async (n) => {
-          bufs[n] = await audioCtx.decodeAudioData(await (await fetch(v.stems[n])).arrayBuffer());
-        }));
-        if (this.analysis !== analysis) return false;
-        bufs.lag = this.stems.lag || 0;
-        bufs.ratio = v.ratio;
-        this._nativeStems = this._nativeStems || this.stems;
-        this.tempoStems = { bpm: v.bpm, ratio: v.ratio };
-        this.setStems(bufs);
-        return true;
-      }
-      await new Promise((r) => setTimeout(r, 2000));
-    }
-    return false;
+    const bufs = await this.fetchTempoStems(bpm, 180);
+    if (!bufs) return false;
+    this._nativeStems = this._nativeStems || this.stems;
+    this.tempoStems = { bpm: bufs.bpm, ratio: bufs.ratio };
+    this.setStems(bufs);
+    return true;
   }
 
-  // Back to the native stems (and the full mix) on the next start/now.
+  // Decode this song's stems key-locked at `bpm` WITHOUT attaching them
+  // (polls while the server renders, up to maxWaitS). Resolves the buffer set
+  // ({drums, bass, vocals, other, lag, ratio, bpm}) or null: no track / no
+  // native stems / render refused (Rubber Band missing, gap too big) / the
+  // deck loaded another song meanwhile / timed out.
+  async fetchTempoStems(bpm, maxWaitS = 120) {
+    const tid = this.id === "a" ? state.trackA : state.trackB;
+    const nat = this._nativeStems || this.stems;
+    if (!tid || !this.buffer || !nat || !(bpm > 0)) return null;
+    const analysis = this.analysis;
+    const t0 = Date.now();
+    try {
+      while (Date.now() - t0 < maxWaitS * 1000) {
+        const res = await fetch(`/api/tracks/${tid}/stems?bpm=${bpm.toFixed(2)}&separate=1`);
+        if (!res.ok) return null;
+        const v = await res.json();
+        if (this.analysis !== analysis) return null;
+        if (v.stems) {
+          const bufs = {};
+          await Promise.all(STEM_NAMES.map(async (n) => {
+            bufs[n] = await audioCtx.decodeAudioData(await (await fetch(v.stems[n])).arrayBuffer());
+          }));
+          if (this.analysis !== analysis) return null;
+          bufs.lag = nat.lag || 0;
+          bufs.ratio = v.ratio || 1;
+          bufs.bpm = v.bpm || bpm;
+          return bufs;
+        }
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+    } catch (e) { console.warn("tempo stems:", e.message); }
+    return null;
+  }
+
+  // One step of the tempo ladder, on the audio clock at `at` (a phrase line):
+  // the deck's tempo becomes `pct` and its stems become `bufs` (key-locked at
+  // exactly that tempo, so they play at rate 1: the key never moves), or
+  // bufs = null for the native stems at pct 0 (then the full mix is back).
+  // The rate step lands in the last 10 ms before the line, while the old set
+  // still plays; the new set starts on the line itself.
+  swapTempoStemsAt(bufs, pct, at) {
+    if (!this.playing) return false;
+    const T = Math.max(audioCtx.currentTime + 0.16, at || 0);
+    const nat = this._nativeStems || (this.tempoStems ? null : this.stems);
+    if (!bufs && !nat) return false;
+    this.rampPitchPercent(pct, 0.01, T - 0.01);
+    if (bufs) {
+      this._nativeStems = nat;
+      this.tempoStems = { bpm: bufs.bpm, ratio: bufs.ratio };
+      this.setStems(bufs, T);
+    } else {
+      this.tempoStems = null;
+      this._nativeStems = null;
+      this.setStems(nat, T);
+      if (this.stemState) this.stemMix(null, T + 0.01, 0.02);
+    }
+    return true;
+  }
+
+  // Back to the native stems (and the full mix) on the next start/now. Never
+  // ends stemless: no cached native set means re-fetching it (the song's
+  // stems are on the server already, this deck just dropped its copy).
   dropTempoStems() {
     if (!this.tempoStems) return;
     this.tempoStems = null;
@@ -861,6 +1008,11 @@ class Deck {
     this._nativeStems = null;
     this.setStems(nat || null);
     this.stemMix(null, 0, 0.02);
+    if (!nat && this.analysis) {
+      const tid = this.id === "a" ? state.trackA : state.trackB;
+      console.warn(`deck ${this.id}: no native stems cached after the tempo set, re-fetching`);
+      if (tid) this._loadVocals(tid, this.analysis);
+    }
   }
 
   // Live stems + vocal map. The analysis carries no vocal regions unless a
@@ -969,6 +1121,7 @@ class Deck {
     // Capture the position BEFORE flipping _braking on -- _currentPosition()
     // switches to the deceleration integral as soon as that flag is set.
     this._brakeStartPos = this._currentPosition();
+    this._rateRamp = null;                 // the brake's own ramp takes over from `rate`
     this._brakeStartRate = rate;
     this._brakeStartedAt = audioCtx.currentTime;
     this._brakeDur = seconds;

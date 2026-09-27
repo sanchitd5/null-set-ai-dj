@@ -128,10 +128,10 @@ const mixAt = (d, t) => d.mixGain.gain.at(t);
 {
   ctx.currentTime = 10;
   const d = makeDeck();
-  d.stems = stemBufs();
+  d.stems = { ...stemBufs(), vocals: buf(31) };  // the vocal stem really is at its end
   d.play(30);
   d._stemSrc.vocals.end();
-  assert.strictEqual(d.stemsReady, false);
+  assert.strictEqual(d.stemsReady, false, "ran out: nothing to re-arm");
   assert.strictEqual(d.stemMix(DRUMS_ONLY, 10.2, 0.03), false, "refuses with an ended stem");
   assert.strictEqual(mixAt(d, 11), 1);
 
@@ -221,6 +221,135 @@ const mixAt = (d, t) => d.mixGain.gain.at(t);
   d.play(30);
   assert.strictEqual(d.stemState, null);
   assert.ok(Math.abs(mixAt(d, 10.1) - 1) < 1e-9, "reversed: mix up");
+}
+
+// 10. dead stems with song left: re-armed sample-locked, not "stemless for the
+//     rest of the song" (the Open Eye Signal -> Delilah cut)
+{
+  ctx.currentTime = 10;
+  const d = makeDeck();
+  d.stems = stemBufs();
+  d.play(30);
+  d._stemSrc.drums._dead = true;              // e.g. a source that died without us replacing it
+  assert.strictEqual(d.stemsReady, false);
+  assert.strictEqual(d.rearmStems("test"), true, "re-armed");
+  const s = d._stemSrc.drums;
+  assert.ok(!s._dead && Math.abs(s.startedAt - 10.15) < 1e-9, "new source lands 150 ms ahead");
+  assert.ok(Math.abs(s.off - 30.15) < 1e-9, `on the mix's sample, got ${s.off}`);
+  // riff over rap owns the output (mix stopped too): never re-armed behind it
+  const e = makeDeck();
+  e.stems = stemBufs();
+  e.play(30);
+  e.stopSourcesAt(10.5);
+  ctx.currentTime = 11;
+  assert.strictEqual(e.rearmStems("test"), false);
+  // no decoded stems at all: nothing to re-arm
+  const f = makeDeck();
+  f.play(30);
+  assert.strictEqual(f.rearmStems(), false);
+}
+
+// 11. set swap window: the 150 ms before new stems land is not "no stems"
+{
+  ctx.currentTime = 10;
+  const d = makeDeck();
+  d.stems = stemBufs();
+  d.play(30);
+  d.setStems({ ...stemBufs(), ratio: 1.02 });
+  assert.strictEqual(d.stemsLiveAt(10), false, "the new set is not sounding yet");
+  assert.strictEqual(d.stemsReady, true, "but it lands inside the swap window");
+}
+
+// ---- smooth tempo glide (rampPitchPercent): position = integral of the rate --
+const realRate = (d) => { d._playbackRate = Deck.prototype._playbackRate; return d; };
+const near = (a, b, msg, eps = 1e-6) => assert.ok(Math.abs(a - b) < eps, `${msg}: ${a} vs ${b}`);
+{
+  ctx.currentTime = 10;
+  const d = realRate(makeDeck());
+  d.stems = { ...stemBufs(), ratio: 1.02 };   // key-locked set: stems run 1.02x the deck rate
+  d.play(30);
+  const end = d.rampPitchPercent(-4, 8, 12);   // 1.00 -> 0.96 over [12, 20]
+  near(end, 20, "glide end");
+  near(d._pitchPercent, -4, "fader target");
+  const pos = (T) => (T <= 12 ? 30 + (T - 10) : T <= 20 ? 32 + (T - 12) * (1 - (0.04 * (T - 12)) / 16) : 32 + 8 * 0.98 + (T - 20) * 0.96);
+  for (const T of [11, 12, 14, 16, 19.5, 20, 25]) {
+    ctx.currentTime = T;
+    near(d._currentPosition(), pos(T), `position at ${T}`);
+    near(d._positionAt(T), pos(T), `positionAt ${T}`);
+  }
+  // every source follows the same curve (stems x their ratio)
+  near(d.source.playbackRate.at(16), 0.98, "mix rate mid-glide");
+  near(d._stemSrc.drums.playbackRate.at(16), 0.98 * 1.02, "stem rate mid-glide");
+  near(d.source.playbackRate.at(22), 0.96, "mix rate after");
+  near(d._stemSrc.vocals.playbackRate.at(11), 1.02, "stem rate before");
+  near(d._playbackRate(), 0.96, "steady rate after the glide");
+}
+{
+  // a fader move mid-glide wins, position stays continuous
+  ctx.currentTime = 10;
+  const d = realRate(makeDeck());
+  d.play(30);
+  d.rampPitchPercent(-4, 8);                   // [10, 18]
+  ctx.currentTime = 14;
+  const p = d._currentPosition();
+  near(p, 30 + 4 * 0.99, "mid-glide position");
+  d.setPitchPercent(-1);
+  near(d._currentPosition(), p, "no jump on the manual move");
+  assert.strictEqual(d._rateRamp, null);
+  ctx.currentTime = 16;
+  near(d._currentPosition(), p + 2 * 0.99, "then the manual rate");
+  near(d.source.playbackRate.at(17), 0.99, "the glide's tail was cancelled");
+}
+{
+  // an internal restart (loop re-arm / seek) mid-glide keeps the glide going
+  ctx.currentTime = 10;
+  const d = realRate(makeDeck());
+  d.stems = stemBufs();
+  d.play(30);
+  d.rampPitchPercent(-4, 8);                   // [10, 18]
+  ctx.currentTime = 14;
+  d.play(50);
+  near(d._playbackRate(), 0.98, "rate carried over");
+  ctx.currentTime = 18;
+  near(d._currentPosition(), 50 + 4 * 0.97, "rest of the glide integrated");
+  near(d.source.playbackRate.at(16), 0.97, "new mix source rides the glide");
+  near(d._stemSrc.bass.playbackRate.at(18), 0.96, "new stems too");
+}
+{
+  // not playing: an instant fader set, no glide booked
+  ctx.currentTime = 10;
+  const d = realRate(makeDeck());
+  d.rampPitchPercent(-3, 8);
+  assert.strictEqual(d._rateRamp || null, null);
+  near(d._pitchPercent, -3, "set");
+}
+{
+  // tempo ladder step: rate + stem set change on the line, key-locked stems play at rate 1
+  ctx.currentTime = 10;
+  const d = realRate(makeDeck());
+  const native = stemBufs();
+  d.stems = native;
+  d.play(30);
+  const r1 = 122.5 / 128, r2 = 125 / 128;
+  d.swapTempoStemsAt({ ...stemBufs(), ratio: 1 / r1, bpm: 122.5 }, (r1 - 1) * 100, 11);
+  near(d._stemSrc.drums.playbackRate.at(11.001), 1, "step 1 stems at rate 1 (key unchanged)");
+  near(d.source.playbackRate.at(11.001), r1, "deck at the step tempo");
+  assert.strictEqual(d._nativeStems, native);
+  ctx.currentTime = 12;
+  const p12 = d._currentPosition();
+  near(p12, 31 - 0.005 * (1 - r1) + (1) * r1, "position through the step", 1e-3);
+  d.swapTempoStemsAt({ ...stemBufs(), ratio: 1 / r2, bpm: 125 }, (r2 - 1) * 100, 13);
+  near(d._stemSrc.other.playbackRate.at(13.001), 1, "step 2 stems at rate 1");
+  near(d.source.playbackRate.at(13.001), r2, "deck at step 2");
+  assert.strictEqual(d._nativeStems, native, "native set kept across steps");
+  ctx.currentTime = 14;                        // one glide at a time: the ladder books a step after the last landed
+  d.swapTempoStemsAt(null, 0, 15);             // home: native stems, native tempo
+  assert.strictEqual(d.stems, native);
+  assert.strictEqual(d.tempoStems, null);
+  near(d.source.playbackRate.at(15.001), 1, "native tempo");
+  near(d._stemSrc.vocals.playbackRate.at(15.001), 1, "native stems at rate 1");
+  ctx.currentTime = 16;
+  near(d._currentPosition(), p12 + r1 * 1 + r2 * 2 + 1, "clock exact across the ladder", 2e-2);
 }
 console.log("stem liveness ok");
 

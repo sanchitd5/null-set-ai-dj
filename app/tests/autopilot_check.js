@@ -1,7 +1,8 @@
 // Node check for the pure autopilot core (app/ui/static/autopilot.js).
 // Run by test_autopilot_core.py; exits non-zero on the first failed assertion.
 const assert = require("assert");
-const { stemBlendBars, stemBlendFader, phraseWaitS } = require("../ui/static/autopilot.js");
+const { stemBlendBars, stemBlendFader, phraseWaitS, introBars, vocalRecipe, homePlan, maskedGlideBars, maskedDropAt,
+  LADDER_STEP_PCT } = require("../ui/static/autopilot.js");
 
 const bar128 = 240 / 128;   // 1.875 s
 const bar90 = 240 / 90;     // 2.667 s
@@ -27,21 +28,62 @@ assert.strictEqual(stemBlendBars("bass", bar128, 100, 1), 16);
 assert.strictEqual(stemBlendBars("double", bar128, 100, 1), 8);
 assert.strictEqual(stemBlendBars("double", bar128, 100, 0.5), 4);
 
-// fader: body to centre, then an 8-bar crossfade that ends on B's side
+// fader: parks at the centre in 1 bar (B's one intro stem does the
+// introducing), crosses only after the intro phrase, over the last 8 bars
 let f = stemBlendFader("blend", 32, 1);
-assert.deepStrictEqual(f, [{ bar: 0, from: -1, to: 0, bars: 16 }, { bar: 24, from: 0, to: 1, bars: 8 }]);
+assert.deepStrictEqual(f, [{ bar: 0, from: -1, to: 0, bars: 1 }, { bar: 24, from: 0, to: 1, bars: 8 }]);
 f = stemBlendFader("blend", 16, -1);
-assert.deepStrictEqual(f, [{ bar: 0, from: 1, to: 0, bars: 8 }, { bar: 8, from: 0, to: -1, bars: 8 }]);
+assert.deepStrictEqual(f, [{ bar: 0, from: 1, to: 0, bars: 1 }, { bar: 8, from: 0, to: -1, bars: 8 }]);
 f = stemBlendFader("bass", 16, 1);
 assert.strictEqual(f[1].bar + f[1].bars, 16);
 f = stemBlendFader("double", 8, 1);
-assert.deepStrictEqual(f, [{ bar: 0, from: -1, to: 1, bars: 8 }]);
-// every move is continuous with the previous one (no jumps)
-for (const [k, n] of [["blend", 32], ["blend", 16], ["bass", 16], ["blend", 8]]) {
+assert.deepStrictEqual(f, [{ bar: 0, from: -1, to: 0, bars: 1 }, { bar: 6, from: 0, to: 1, bars: 2 }]);
+// every move is continuous with the previous one (no jumps); the crossing
+// never starts before the intro phrase (8 bars, 4 when short)
+for (const [k, n] of [["blend", 32], ["blend", 16], ["bass", 16], ["blend", 8], ["bass", 8], ["filter", 4]]) {
   const m = stemBlendFader(k, n, 1);
   for (let i = 1; i < m.length; i++) assert.strictEqual(m[i].from, m[i - 1].to);
   assert.ok(m[m.length - 1].bar + m[m.length - 1].bars <= n);
+  assert.ok(m[1].bar >= introBars(n), `${k} ${n}: crosses at ${m[1].bar}`);
+  assert.strictEqual(m[0].to, 0);
 }
+assert.strictEqual(introBars(32), 8); assert.strictEqual(introBars(16), 8); assert.strictEqual(introBars(8), 4);
+
+// vocal-driven recipe: stems on either side never cut (Open Eye Signal -> Delilah)
+assert.strictEqual(vocalRecipe({ vIn: 3, oneSong: false, aStems: false, bStems: true }).recipe, "Bass Swap");
+assert.strictEqual(vocalRecipe({ vIn: 3, oneSong: false, aStems: true, bStems: false }).recipe, "Bass Swap");
+assert.strictEqual(vocalRecipe({ vIn: 3, oneSong: false, aStems: false, bStems: false }).recipe, "Quick Cut");
+assert.strictEqual(vocalRecipe({ vIn: 6, oneSong: false, aStems: false, bStems: true }).short, false, "B's voice is held: no shortening");
+assert.strictEqual(vocalRecipe({ vIn: 6, oneSong: false, aStems: false, bStems: false }).short, true);
+assert.strictEqual(vocalRecipe({ vIn: 3, oneSong: true, aStems: true, bStems: true }), null);
+assert.strictEqual(vocalRecipe({ vIn: 20, oneSong: false, aStems: false, bStems: false }), null);
+assert.strictEqual(vocalRecipe({ vIn: null, oneSong: false, aStems: false, bStems: false }), null);
+
+// tempo home: always ends at native, the path by gap
+const ph16 = 16;
+assert.strictEqual(homePlan({ gapPct: 0.01, tempoStems: false, songLeftS: 200, phraseS: ph16 }).path, "none");
+assert.strictEqual(homePlan({ gapPct: -6, tempoStems: false, songLeftS: 200, phraseS: ph16 }).path, "glide");
+assert.strictEqual(homePlan({ gapPct: 2.5, tempoStems: true, songLeftS: 200, phraseS: ph16 }).path, "drop");
+let hp = homePlan({ gapPct: -12, tempoStems: true, songLeftS: 300, phraseS: ph16 });
+assert.strictEqual(hp.path, "ladder");
+assert.strictEqual(hp.steps[hp.steps.length - 1], 0, "ends native");
+let prev = -12;
+for (const s of hp.steps) { assert.ok(Math.abs(s - prev) <= LADDER_STEP_PCT + 1e-9, `step ${prev} -> ${s}`); prev = s; }
+hp = homePlan({ gapPct: 20, tempoStems: true, songLeftS: 60, phraseS: ph16 });
+assert.strictEqual(hp.path, "masked", "no time for 7 renders");
+assert.deepStrictEqual(hp.steps, [0]);
+// the old 4 % dead end is gone: every gap has a path home
+for (const g of [4.5, 8, 15, 25, -25]) {
+  for (const left of [30, 400]) assert.notStrictEqual(homePlan({ gapPct: g, tempoStems: true, songLeftS: left, phraseS: ph16 }).path, "none");
+}
+assert.strictEqual(maskedGlideBars(3), 32); assert.strictEqual(maskedGlideBars(25), 64);
+// masked drop: first phrase line inside B's breakdown, else where its vocal is out
+const secs = [{ label: "verse", start: 0, end: 64 }, { label: "breakdown", start: 64, end: 96 }];
+let md = maskedDropAt(10, 0, 16, 200, secs, [[0, 60]]);
+assert.deepStrictEqual(md, { at: 64, why: "B's breakdown" });
+md = maskedDropAt(10, 0, 16, 200, [], [[0, 40]]);
+assert.deepStrictEqual(md, { at: 48, why: "B's vocal is out" });
+assert.strictEqual(maskedDropAt(10, 0, 16, 60, [], [[0, 100]]), null);
 
 // phrase wait: next 8-bar line of the entry grid
 const ph = 8 * bar128;
