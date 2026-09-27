@@ -58,8 +58,9 @@
   const REMIX_GAP_PHRASES = 2;         // remix phrases at least 2 apart
   const BEAT_LAYER_MIN_SCORE = 65;
   const FILTER_MID_DB = -18;           // filter build: mids swept this far out
+  const SEAM_VOCAL_GAP_S = 0.25;      // a loop seam this close inside a vocal region cuts it
+  const HOLD_SEAM_PASS = 0.6;         // silent pre-check: worst seam score a hold loop may have
   const HOLD_LOOP_LEAD_S = 24;         // safety loop when the end is this close
-  const HOLD_LOOP_PASSES = 3;          // then shrink 8 -> 4 bars
   const REMIX_MOVES = ["loop_extend", "beat_jump", "stutter", "filter_build", "echo_freeze", "beat_layer", "peak_roll"];
   const DROP_LEADINS = ["stutter", "filter_build", "echo_freeze"];  // tension -> release
 
@@ -533,7 +534,61 @@
     const before = outro ? pick(outro.start) : null;
     return before != null ? before : pick(duration);
   }
-  function holdLoopBars(passes) { return passes >= HOLD_LOOP_PASSES ? 4 : 8; }
+  // The hold loop should sound like the song going on (an extended edit), not
+  // a stuck record: loop the last 32 bars before the outro (16 / 8 when the
+  // song hasn't played that much since it came in). `anchor` = start of the
+  // last clean phrase; returns {start, bars} with start on a downbeat.
+  // With vocal regions, every seam (loop start, loop end, and the jump-out
+  // point at the anchor's end) must sit in a vocal gap: a seam through a sung
+  // line chops the singer at every wrap. Candidates: 32/16/8 bars, ending at
+  // the anchor's end or up to 3 phrases earlier; longest clean span wins.
+  // All spans worth trying, in preference order: vocal-clean ones first
+  // (longest, latest), then the plain spans. Each: {start, bars, end, vocalClean}.
+  // The loop engages at the anchor's end (jump-out), so the first seam is
+  // jumpOut -> start and every later one end -> start; both get checked.
+  function holdLoopCandidates(anchor, entry, barSecs, downbeats, vocals) {
+    const snap = (t) => (downbeats && downbeats.length
+      ? downbeats.reduce((b, x) => (Math.abs(x - t) < Math.abs(b - t) ? x : b), downbeats[0]) : t);
+    const phrase = PHRASE_BARS * barSecs, lo = Math.max(0, entry || 0) - 0.01;
+    const cuts = (t) => (vocals || []).some(([s, e]) => s < t - SEAM_VOCAL_GAP_S && e > t + SEAM_VOCAL_GAP_S);
+    const jumpOut = anchor + phrase, out = [], seen = new Set();
+    const add = (start, bars, clean) => {
+      const key = `${start.toFixed(2)}:${bars}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      out.push({ start, bars, end: start + bars * barSecs, jumpOut, vocalClean: clean });
+    };
+    if (vocals && vocals.length && !cuts(jumpOut)) {
+      for (const bars of [32, 16, PHRASE_BARS]) {
+        for (let back = 0; back <= 3; back++) {
+          const end = back ? snap(jumpOut - back * phrase) : jumpOut;
+          const start = snap(end - bars * barSecs);
+          if (start >= lo && !cuts(start) && !cuts(end)) add(start, bars, true);
+        }
+      }
+    }
+    for (const bars of [32, 16, PHRASE_BARS]) {
+      const start = bars === PHRASE_BARS ? anchor : snap(anchor - (bars - PHRASE_BARS) * barSecs);
+      if (bars === PHRASE_BARS || start >= lo) add(start, bars, !(vocals && vocals.length) ? null : false);
+    }
+    return out;
+  }
+  function holdLoopSpan(anchor, entry, barSecs, downbeats, vocals) {
+    const c = holdLoopCandidates(anchor, entry, barSecs, downbeats, vocals)[0];
+    return c ? { start: c.start, bars: c.bars } : { start: anchor, bars: PHRASE_BARS };
+  }
+  // Pick from silently-scored candidates: the first (most preferred) whose
+  // worst seam passes, else the best-sounding one. seam(c) -> 0..1 or null.
+  function pickHoldLoop(cands, seam, pass) {
+    let best = null, bestS = -1;
+    for (const c of cands) {
+      const s = seam(c);
+      if (s == null) return { pick: c, score: null };          // can't score: keep preference order
+      if (s >= pass) return { pick: c, score: s };
+      if (s > bestS) { best = c; bestS = s; }
+    }
+    return { pick: best || cands[0], score: best ? bestS : null };
+  }
 
   // Rule 9 (dip after a long peak) outranks rule 7 (late callback).
   function energyNote(energies, setPos, callbackDone) {
@@ -544,7 +599,7 @@
   }
 
   const core = { decide, mergeSections, sectionAt, phraseAt, vocalShare, subdropBars, energyNote,
-                 phraseBounds, phraseLabel, isPreDrop, remixBlock, aiVeto, needsHoldLoop, holdLoopAnchor, holdLoopBars,
+                 phraseBounds, phraseLabel, isPreDrop, remixBlock, aiVeto, needsHoldLoop, holdLoopAnchor, holdLoopSpan, holdLoopCandidates, pickHoldLoop,
                  PRECLEAR_DB, LOW_KILL, REMIX_MOVES,
                  camelotScore, energyQ3, isPeak, dropLines, DROP_JUMP, bigMomentBlock, peakBlock, peakTransition,
                  PEAK_MOVES, BIG_MOMENTS, BIG_COOLDOWN_S, BEAT_BOOST_BARS, BEAT_BOOST_COOLDOWN_S, BACKSPIN_MAX,
@@ -833,8 +888,10 @@
     }
   }
 
-  // Safety net: the song is ending and nothing is scheduled -> loop the last
-  // clean phrase before the outro, shrink to 4 bars after HOLD_LOOP_PASSES.
+  // Safety net: the song is ending and nothing is scheduled -> at the end of
+  // the last clean phrase before the outro, jump back up to 32 bars and loop
+  // that whole span, so the song sounds extended rather than stuck. Never
+  // shrinks: a short loop getting shorter is what a stuck record sounds like.
   function holdLoopTick(d, pos) {
     if (holdLoop) return;
     const a = d.analysis || {};
@@ -843,21 +900,40 @@
     const dur = d.buffer ? d.buffer.duration : Infinity;
     if (!needsHoldLoop(dur - pos, !!plan, !!d.loopOn)) return;
     const long = mergeSections(a.sections, bar);
-    const start = holdLoopAnchor(a.downbeat_times, long, pos, dur, bar);
-    if (start == null) return;
-    const endT = start + PHRASE_BARS * bar, id = deckId;
-    holdLoop = { start, bars: 8 };
+    const anchor = holdLoopAnchor(a.downbeat_times, long, pos, dur, bar);
+    if (anchor == null) return;
+    const endT = anchor + PHRASE_BARS * bar, id = deckId;
+    // Silent pre-check (live-ear.js): every candidate is scored on the deck's
+    // buffer before anything is heard; the crowd only hears the winner.
+    const cands = holdLoopCandidates(anchor, d._mindEntry, bar, a.downbeat_times, a.vocal_active_regions);
+    const ear = window.liveEar && window.liveEar.precheck;
+    const scored = ear ? ear(d, cands.flatMap((c) => [c, { start: c.start, bars: (c.jumpOut - c.start) / bar, _jump: c }]), bar) : [];
+    const seamOf = (c) => {
+      if (!ear) return null;
+      const wrap = scored.find((s) => s.start === c.start && s.bars === c.bars && !s._jump);
+      const jump = scored.find((s) => s._jump === c);
+      const w = wrap && wrap.seam ? wrap.seam.score : null, j = jump && jump.seam ? jump.seam.score : null;
+      return w == null ? null : Math.min(w, j == null ? w : j);
+    };
+    const choice = pickHoldLoop(cands, seamOf, HOLD_SEAM_PASS);
+    const span = choice.pick || { start: anchor, bars: PHRASE_BARS };
+    holdLoop = { start: span.start, bars: span.bars, seam: choice.score,
+                 tried: cands.map((c) => ({ start: c.start, bars: c.bars, seam: seamOf(c), vocalClean: c.vocalClean })) };
+    emitAi("precheck", { deck: deckId, span, score: choice.score, tried: holdLoop.tried.length });
+    if (window.liveEar && window.liveEar.silentEar) {
+      window.liveEar.silentEar(d, { start: span.start, bars: span.bars, seam: { score: choice.score } }, bar)
+        .then((r) => { if (r && holdLoop) { holdLoop.omni = r; emitAi("silent-ear", { deck: id, result: r }); } });
+    }
     const go = () => {
       if (deckId !== id || plan) { holdLoop = null; return; }
-      loopAt(d, id, start, PHRASE_BARS * 4);
+      loopAt(d, id, span.start, span.bars * 4);
       holdLoop.looping = true;
-      // After HOLD_LOOP_PASSES passes, at the wrap, keep only the last 4 bars.
-      later((HOLD_LOOP_PASSES * PHRASE_BARS * bar * 1000) / rate - 10, () => {
-        if (deckId !== id || plan || !holdLoop || !d.loopOn) return;
-        holdLoop.start = start + 4 * bar; holdLoop.bars = holdLoopBars(HOLD_LOOP_PASSES);
-        loopAt(d, id, holdLoop.start, holdLoop.bars * 4);
-        say({ action: "holdloop", rule: "safety", why: "still waiting - loop down to 4 bars" }, d._currentPosition());
-      });
+      holdLoop.since = nowS();
+      // The span crosses a sung line: loop the instrumental (live stems), so it
+      // plays like an extended break instead of a chopped singer.
+      if (span.vocalClean === false && window.stemMoves && window.stemMoves.instrumental(d, true)) {
+        holdLoop.instrumental = true;
+      }
     };
     // Loop back on the phrase line: at the anchor's end if still ahead, else
     // (already in the outro) at the next phrase line, so the jump back keeps
@@ -869,7 +945,109 @@
     }
     if (lineT > pos) later(((lineT - pos) * 1000) / rate - 10, go);
     else go();
-    say({ action: "holdloop", rule: "safety", why: "HOLD LOOP: waiting for next song" }, pos);
+    const checked = choice.score == null ? "" : ` · silent check ${Math.round(choice.score * 100)}% of ${cands.length}`;
+    const vox = span.vocalClean === true ? " · clear of vocals" : span.vocalClean === false ? " · crosses vocals" : "";
+    say({ action: "holdloop", rule: "safety", why: `HOLD LOOP: ${span.bars} bars, waiting for next song${checked}${vox}` }, pos);
+  }
+
+  // ---- live ear hooks (live-ear.js): read the hold loop, reshape it -------
+  function holdLoopInfo() {
+    const d = deck();
+    if (!holdLoop || !holdLoop.looping || !d || !d.loopOn || plan) return null;
+    const bar = barSecsOf(d);
+    return {
+      deck: deckId, start: holdLoop.start, bars: holdLoop.bars, bar,
+      rate: (d._playbackRate && d._playbackRate()) || 1,
+      secs: nowS() - (holdLoop.since || nowS()),
+      washed: !!holdLoop.washed, moved: !!holdLoop.moved,
+      canMove: holdLoop.start - PHRASE_BARS * bar >= Math.max(0, d._mindEntry || 0) - 0.01,
+    };
+  }
+  // One ear decision. Loop changes land on the next wrap (a grid line), EQ
+  // moves ramp over bars; a wash only cuts, so the low end never doubles.
+  function holdLoopAct(action, why, source) {
+    const d = deck(), info = holdLoopInfo();
+    if (!d || !info || action === "keep") return false;
+    const id = deckId, { bar, rate } = info;
+    const pos = d._currentPosition();
+    const wrapIn = ((info.start + info.bars * bar - pos) * 1000) / rate - 10;
+    // Snap to the analysed downbeat: bars from BPM alone drift off the grid.
+    const db = (d.analysis && d.analysis.downbeat_times) || [];
+    const snap = (t) => (db.length ? db.reduce((b, x) => (Math.abs(x - t) < Math.abs(b - t) ? x : b), db[0]) : t);
+    const reloop = (start, bars) => later(wrapIn, () => {
+      if (deckId !== id || plan || !holdLoop || !d.loopOn) return;
+      holdLoop.start = snap(start); holdLoop.bars = bars;
+      loopAt(d, id, holdLoop.start, bars * 4);
+    });
+    const voc = (d.analysis && d.analysis.vocal_active_regions) || [];
+    const cutsVocal = (t) => voc.some(([s, e]) => s < t - SEAM_VOCAL_GAP_S && e > t + SEAM_VOCAL_GAP_S);
+    const moveTo = snap(info.start - PHRASE_BARS * bar);
+    // Silent check before the crowd hears it: the moved loop must not score
+    // worse than the one playing.
+    const pre = window.liveEar && window.liveEar.precheck;
+    const moveSeam = pre ? (pre(d, [{ start: moveTo, bars: info.bars }], bar)[0].seam || {}).score : null;
+    const moveOk = moveSeam == null || holdLoop.seam == null || moveSeam >= holdLoop.seam - 0.05;
+    if (action === "move_loop" && info.canMove && !cutsVocal(moveTo) && !cutsVocal(moveTo + info.bars * bar) && moveOk) {
+      if (moveSeam != null) holdLoop.seam = moveSeam;
+      reloop(moveTo, info.bars); holdLoop.moved = true;
+    } else if (action === "filter_wash" && !info.washed) {
+      ramp(eqBand(id, "low"), LOW_KILL, (4 * bar * 1000) / rate);
+      ramp(eqBand(id, "mid"), -8, (4 * bar * 1000) / rate);
+      holdLoop.washed = true;
+    } else if (action === "restore" && info.washed) {
+      ramp(eqBand(id, "low"), 0, (bar * 1000) / rate);
+      ramp(eqBand(id, "mid"), 0, (bar * 1000) / rate);
+      holdLoop.washed = false;
+    } else return false;
+    holdLoop.touched = true;
+    say({ action: "holdloop", source: source || "EAR", why: `${action.replace("_", " ")}: ${why || ""}`.trim() }, pos);
+    return true;
+  }
+
+  // Famous song + live stems: once per song, strip it to the voice and rebuild
+  // it (stem-moves.js, the USB002 move), on a phrase line, with the vocal
+  // carrying the bars and room left before the planned exit.
+  function stemBreakdownTick(d, pos, bar) {
+    const sm = window.stemMoves;
+    if (!sm || !d.stemsReady || d._breakdownDone) return false;
+    const [phraseStart] = phraseBounds(d.analysis && d.analysis.downbeat_times, phraseAt(d.analysis && d.analysis.downbeat_times, pos, bar), bar);
+    if (Math.abs(pos - phraseStart) > bar / 2) return false;          // only right on the line
+    const bars = sm.core.breakdownFits({
+      bar, pos: phraseStart, duration: d.buffer ? d.buffer.duration : 0,
+      exitAt: plan ? plan.fireAt : null, barsOnTrack: (pos - (d._mindEntry || 0)) / bar,
+      vocals: d.analysis && d.analysis.vocal_active_regions, famous: !!(d.fame && d.fame.famous), used: false,
+    });
+    if (!bars) return false;
+    // Start on the NEXT line if this one is already past by more than a beat.
+    const start = pos - phraseStart > bar / 4 ? phraseStart + PHRASE_BARS * bar : phraseStart;
+    if (!sm.breakdown(d, start, bars, `${d.fame.views ? Math.round(d.fame.views / 1e6) + "M views: " : ""}famous, play it in full`)) return false;
+    d._breakdownDone = true;
+    busyUntil = nowS() + ((start - pos) + bars * bar) / ((d._playbackRate && d._playbackRate()) || 1);
+    say({ action: "stem_breakdown", source: "STEMS", why: `STRIP & REBUILD ${bars} bars: drums out, bass out, voice alone, rebuild, drop` }, pos);
+    return true;
+  }
+
+  // Remix on the go: on 16-bar lines (every 2nd phrase from the song's entry),
+  // a stem move in that section (stem-moves.js remixPick / remixEvents).
+  function stemRemixTick(d, pos, bar, phrase) {
+    const sm = window.stemMoves;
+    if (!sm || !d.stemsReady || !toggleOn("ap-remix-toggle")) return false;
+    const entryPhrase = phraseAt(d.analysis && d.analysis.downbeat_times, d._mindEntry || 0, bar);
+    if ((phrase - entryPhrase) % 2 !== 0) return false;                  // 16-bar lines only
+    const [lineT] = phraseBounds(d.analysis && d.analysis.downbeat_times, phrase, bar);
+    if (Math.abs(pos - lineT) > bar / 2) return false;
+    const exitT = plan ? plan.fireAt : d.buffer.duration;
+    const r = d._remix || (d._remix = { used: [], count: 0, lastAtBar: null });
+    const atBar = (lineT - (d._mindEntry || 0)) / bar;
+    const kind = sm.core.remixPick({
+      vocal: sm.vocalShare(d.analysis && d.analysis.vocal_active_regions, lineT, lineT + 16 * bar),
+      used: r.used, count: r.count, barsOnTrack: atBar, barsLeft: (exitT - lineT) / bar, lastAtBar: r.lastAtBar, atBar,
+    });
+    if (!kind || !sm.remix(d, lineT, kind, 16)) return false;
+    r.used.push(kind); r.count++; r.lastAtBar = atBar;
+    busyUntil = nowS() + (16 * bar) / ((d._playbackRate && d._playbackRate()) || 1);
+    say({ action: "stem_remix", source: "STEMS", why: `REMIX: ${sm.REMIX_LABEL[kind]} in this 16-bar section` }, pos);
+    return true;
   }
 
   function say(dec, pos) {
@@ -878,6 +1056,22 @@
     log.push({ action: dec.action, why: dec.why, tag, peak: !!dec.peak, clock: `${m}:${String(s).padStart(2, "0")}` });
     if (log.length > 20) log.shift();
     render(dec);
+    emitAi("decision", { deck: deckId, pos, action: dec.action, why: dec.why, tag });
+  }
+  // AI activity bus for the overlays (ai-overlay.js).
+  function emitAi(kind, detail) {
+    if (typeof window.dispatchEvent !== "function" || typeof CustomEvent === "undefined") return;
+    window.dispatchEvent(new CustomEvent("ai-activity", { detail: { kind, ...detail } }));
+  }
+  // What the overlays draw on the waveforms: exit window, hold loop, vocals.
+  function overlayState() {
+    const d = deck();
+    return {
+      deck: deckId, planFireAt: plan ? plan.fireAt : null, planStyle: plan ? plan.style : null,
+      holdLoop: holdLoop ? { start: holdLoop.start, bars: holdLoop.bars, looping: !!holdLoop.looping,
+                             seam: holdLoop.seam, tried: holdLoop.tried, omni: holdLoop.omni } : null,
+      bar: d ? barSecsOf(d) : null,
+    };
   }
 
   function tick() {
@@ -897,10 +1091,12 @@
     const first = lastPhrase === null;
     lastPhrase = phrase;
     if (first) { d._mindEntry = pos; }
+    if (!first && mindOn() && stemBreakdownTick(d, pos, bar)) return;
+    if (!first && mindOn() && stemRemixTick(d, pos, bar, phrase)) return;
     const st = state(d, pos);
     if (!aiOn()) st.aiMove = null;
     const dec = mindOn() ? decide(st)
-      : { action: "ride", rule: "", why: "FRED MIND off - playing the record" };
+      : { action: "ride", rule: "", why: "SET MIND off - playing the record" };
     apply(dec, st, d);
     if (dec.action !== "ride" && (dec.action !== "layer" || log.length === 0 || log[log.length - 1].action !== "layer")) {
       say(dec, pos);
@@ -1019,6 +1215,12 @@
       const rate = (d._playbackRate && d._playbackRate()) || 1;
       const end = holdLoop.start + holdLoop.bars * bar;
       const pos = d._currentPosition();
+      // An ear wash left mids down: bring them back for the blend (the
+      // transition owns the low EQ from here).
+      if (holdLoop.washed) ramp(eqBand(id, "mid"), 0, (bar * 1000) / rate);
+      // Instrumental hold: the vocal returns on the release line (a handoff
+      // transition may take it straight onto the bus instead).
+      if (holdLoop.instrumental && window.stemMoves) window.stemMoves.instrumental(d, false, end);
       later(((end - pos) * 1000) / rate - 10, () => { if (deckId === id) loopRelease(d, id, end); });
       plan.fireAt = plan.maxFireAt = end + 0.1;
       say({ action: "holdloop", rule: "safety", why: "next song ready - releasing the loop into the transition" }, pos);
@@ -1079,5 +1281,6 @@
 
   window.djMind = { follow, stop, reset, setPlan, fireAt, onTransition, fxAllowed,
                     noteEnergy, nextEnergyNote, requestPlan, planPeak, setProfileEnergy,
-                    planLayer, layering, get layerActive() { return !!layerRun; }, core };
+                    planLayer, layering, get layerActive() { return !!layerRun; }, core,
+                    holdLoopInfo, holdLoopAct, overlayState };
 })(typeof window !== "undefined" ? window : globalThis);

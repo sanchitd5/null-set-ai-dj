@@ -16,6 +16,8 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
+from concurrent.futures import ThreadPoolExecutor, wait
 
 from app.ui import llm_gate
 
@@ -36,38 +38,15 @@ CAMELOT WHEEL — compatible moves from any position X:
               7A/7B, 8A/8B, 9A/9B, 10A/10B, 11A/11B, 12A/12B
 A = minor keys, B = major keys. Hour arithmetic wraps: 12+1=1."""
 
-# ── Few-shot examples ─────────────────────────────────────────────────────────
+# ── Few-shot example ──────────────────────────────────────────────────────────
+# Shape only, with placeholder names. Real songs here were copied back verbatim
+# (gemma-4: Marea / Delilah for any seed) and pulled every set toward the
+# examples' artists (Fred again.. bias); a placeholder can't be played.
 _FEW_SHOT = """\
-EXAMPLE 1 — melodic house, early set (set_position 0.15), building vibe before branching out:
-Current: "Alvaro" by Fred again.. | 122 BPM | 11A | Energy 0.55 | Genre: melodic house
-History: [] (nothing played yet — safe to stay in same artist world)
-{"current_genre":"melodic house","current_profile":{"energy":6,"tempo_feel":"driving","drums":"steady","vocals":"chopped","mood":"bittersweet","texture":"raw"},"suggestions":[
-  {"artist":"Fred again..","title":"Marea (We've Lost Dancing)","reason":"11A identical key, 123 BPM seamless; same chopped vocal loop over a steady four-to-the-floor kick, same bittersweet lift, so the floor keeps moving.","genre":"melodic house","expected_bpm":123,"expected_key":"11A","mix_moment":"exit at vocal breakdown ~bar 48","energy_delta":"maintain","vibe_link":"same granular vocal chops and melodic 4-bar drops","track_profile":{"energy":7,"tempo_feel":"driving","drums":"steady","vocals":"chopped","mood":"bittersweet","texture":"raw"}},
-  {"artist":"Fred again..","title":"Delilah (pull me out of this)","reason":"12A (+1 hour) gentle key lift, 118 BPM keeps the pocket tight; layered field-recording textures and a driving kick keep the same raw, bittersweet feel.","genre":"melodic house","expected_bpm":118,"expected_key":"12A","mix_moment":"exit at outro pad wash ~bar 64","energy_delta":"maintain","vibe_link":"layered field-recording texture and slow-burn emotional build","track_profile":{"energy":6,"tempo_feel":"driving","drums":"steady","vocals":"chopped","mood":"bittersweet","texture":"raw"}}
-]}
-
-EXAMPLE 2 — UK garage/deep house, peak (set_position 0.72):
-Current: "Latch" by Disclosure | 120 BPM | 4B | Energy 0.78 | Genre: UK garage / deep house
-History: ["Disclosure - When A Fire Starts To Burn", "Disclosure - Latch"]
-{"current_genre":"UK garage / deep house","current_profile":{"energy":8,"tempo_feel":"driving","drums":"busy","vocals":"sung","mood":"euphoric","texture":"polished"},"suggestions":[
-  {"artist":"Jamie xx","title":"I Know There's Gonna Be (Good Times)","reason":"4B identical key, 118 BPM seamless; punchy UK bass drum pattern and pitched vocal chops keep the same euphoric, busy groove.","genre":"UK bass / house","expected_bpm":118,"expected_key":"4B","mix_moment":"exit at second chorus ~bar 96","energy_delta":"maintain","vibe_link":"punchy UK bass kick and pitched vocal chop cadence","track_profile":{"energy":8,"tempo_feel":"driving","drums":"busy","vocals":"chopped","mood":"euphoric","texture":"polished"}},
-  {"artist":"Duke Dumont","title":"Won't Look Back","reason":"5B (+1 hour) smooth harmonic lift, 122 BPM slight tempo push; soulful sung hook and swung hats keep the euphoric floor while nudging energy forward.","genre":"deep house","expected_bpm":122,"expected_key":"5B","mix_moment":"exit at breakdown ~bar 48","energy_delta":"up","vibe_link":"soulful vocal stabs and swung hi-hat groove","track_profile":{"energy":8,"tempo_feel":"driving","drums":"steady","vocals":"sung","mood":"euphoric","texture":"polished"}}
-]}
-
-EXAMPLE 3 - hip-hop / trap, occasion "birthday party", mid-set (set_position 0.5). Half-time counts: 72 BPM x2 = 144, inside the 141-159 window:
-Current: "HUMBLE." by Kendrick Lamar | 150 BPM | 4A | Energy 0.70 | Genre: hip-hop / trap
-{"steering":"stay","occasion_fit":8,"current_genre":"hip-hop / trap","current_profile":{"energy":8,"tempo_feel":"mid","drums":"sparse","vocals":"sung","mood":"dark","texture":"polished"},"suggestions":[
-  {"artist":"Future","title":"Mask Off","reason":"4A identical key, 150 BPM seamless; flute loop over sparse 808s keeps the dark, head-nod bounce.","genre":"trap","expected_bpm":150,"expected_key":"4A","mix_moment":"exit at hook end ~bar 32","energy_delta":"maintain","vibe_link":"sparse 808 bounce under a looped melodic hook","occasion_fit":8,"track_profile":{"energy":7,"tempo_feel":"mid","drums":"sparse","vocals":"sung","mood":"dark","texture":"polished"}},
-  {"artist":"Lil Uzi Vert","title":"XO Tour Llif3","reason":"5A (+1 hour), 155 BPM small push; same minor-key trap bounce with a sung melodic hook.","genre":"trap","expected_bpm":155,"expected_key":"5A","mix_moment":"exit at second hook ~bar 48","energy_delta":"up","vibe_link":"minor-key synth lead over rattling hi-hats","occasion_fit":8,"track_profile":{"energy":8,"tempo_feel":"mid","drums":"busy","vocals":"sung","mood":"dark","texture":"polished"}},
-  {"artist":"Kendrick Lamar","title":"Money Trees","reason":"4B relative major, 72 BPM locks at double time (144); a laid-back same-artist breather.","genre":"hip-hop","expected_bpm":72,"expected_key":"4B","mix_moment":"exit at verse end ~bar 40","energy_delta":"down","vibe_link":"hazy sampled loop and dry storytelling vocal","occasion_fit":7,"track_profile":{"energy":6,"tempo_feel":"mid","drums":"sparse","vocals":"sung","mood":"dark","texture":"raw"}}
-]}
-
-EXAMPLE 4 - drum & bass, no occasion, peak (set_position 0.8). 174 BPM DnB also locks with 87 BPM half-time tracks:
-Current: "Tarantula" by Pendulum | 174 BPM | 9A | Energy 0.85 | Genre: drum & bass
-{"steering":"stay","occasion_fit":0,"current_genre":"drum & bass","current_profile":{"energy":9,"tempo_feel":"driving","drums":"busy","vocals":"sung","mood":"euphoric","texture":"polished"},"suggestions":[
-  {"artist":"Sub Focus","title":"Solar System","reason":"9A identical key, 174 BPM seamless; rolling breaks and big synth stabs hold the peak.","genre":"drum & bass","expected_bpm":174,"expected_key":"9A","mix_moment":"exit at second drop ~bar 96","energy_delta":"maintain","vibe_link":"rolling two-step breaks under wide synth stabs","occasion_fit":0,"track_profile":{"energy":9,"tempo_feel":"driving","drums":"busy","vocals":"none","mood":"euphoric","texture":"polished"}},
-  {"artist":"Chase & Status","title":"Baddadan","reason":"10A (+1 hour), 174 BPM; heavier jump-up bass keeps the peak but darkens slightly.","genre":"drum & bass","expected_bpm":174,"expected_key":"10A","mix_moment":"exit at drop 2 end ~bar 80","energy_delta":"maintain","vibe_link":"punchy DnB kick with MC vocal hooks","occasion_fit":0,"track_profile":{"energy":9,"tempo_feel":"driving","drums":"busy","vocals":"chopped","mood":"euphoric","texture":"raw"}},
-  {"artist":"Wilkinson","title":"Afterglow","reason":"9B relative major, 174 BPM; its half-time 87 intro lets the floor breathe before the liquid drop.","genre":"liquid drum & bass","expected_bpm":174,"expected_key":"9B","mix_moment":"exit at outro ~bar 128","energy_delta":"down","vibe_link":"liquid breaks with a soaring sung chorus","occasion_fit":0,"track_profile":{"energy":8,"tempo_feel":"driving","drums":"busy","vocals":"sung","mood":"euphoric","texture":"polished"}}
+EXAMPLE (output shape only - placeholder names, never suggest these):
+Current: "Song Zero" by Artist Zero | 124 BPM | 8A | Energy 0.6 | Genre: melodic house
+{"steering":"stay","occasion_fit":0,"current_genre":"melodic house","current_profile":{"energy":6,"tempo_feel":"driving","drums":"steady","vocals":"chopped","mood":"bittersweet","texture":"raw"},"suggestions":[
+  {"artist":"Artist One","title":"Song One","reason":"9A (+1 hour), 122 BPM; same chopped vocal over a steady kick.","genre":"melodic house","expected_bpm":122,"expected_key":"9A","mix_moment":"exit at outro ~bar 64","energy_delta":"maintain","vibe_link":"chopped vocal loop over rolling bass","genre_hop":0,"occasion_fit":0,"track_profile":{"energy":6,"tempo_feel":"driving","drums":"steady","vocals":"chopped","mood":"bittersweet","texture":"raw"}}
 ]}"""
 
 _SYSTEM = f"""\
@@ -154,8 +133,15 @@ MIX MOMENT: For each suggestion specify WHERE in the outgoing track to begin the
 AVOID TRACKS: The history list contains track names already played. Do NOT suggest any track whose
   title appears in that list. Same artist is fine — only the exact title is banned.
 
+FACTS (critical):
+  Suggest only songs that really exist, credited to their real artist. Every pick is
+  checked against YouTube; invented titles are thrown away.
+  expected_bpm and expected_key are THAT song's own tempo and key as released. NEVER copy
+  the current song's BPM or key into a suggestion; if you don't know a song's tempo, skip it.
+  reason: ONE short sentence.
+
 OUTPUT FORMAT — return ONLY valid JSON, no markdown, no explanation:
-{{"steering":"stay|move","occasion_fit":0,"current_genre":"","current_profile":{{"energy":0,"tempo_feel":"","drums":"","vocals":"","mood":"","texture":""}},"suggestions":[{{"artist":"","title":"","reason":"2-sentence reason referencing harmonic move, energy arc, and how THIS song's sound matches","genre":"inferred genre of suggested track","expected_bpm":0,"expected_key":"","mix_moment":"exit at [section] ~bar N","energy_delta":"up|down|maintain","vibe_link":"specific sonic characteristic shared — NOT a genre label","genre_hop":0,"occasion_fit":0,"track_profile":{{"energy":0,"tempo_feel":"","drums":"","vocals":"","mood":"","texture":""}}}}]}}
+{{"steering":"stay|move","occasion_fit":0,"current_genre":"","current_profile":{{"energy":0,"tempo_feel":"","drums":"","vocals":"","mood":"","texture":""}},"suggestions":[{{"artist":"","title":"","reason":"one sentence: harmonic move + how THIS song's sound matches","genre":"inferred genre of suggested track","expected_bpm":0,"expected_key":"","mix_moment":"exit at [section] ~bar N","energy_delta":"up|down|maintain","vibe_link":"specific sonic characteristic shared — NOT a genre label","genre_hop":0,"occasion_fit":0,"track_profile":{{"energy":0,"tempo_feel":"","drums":"","vocals":"","mood":"","texture":""}}}}]}}
 
 {_FEW_SHOT}"""
 
@@ -164,6 +150,36 @@ TEMPO_LOCK_PCT = 0.06  # the autopilot pitch-locks the next song within +/-8%; a
 
 MIN_THEME_FIT = 6.0
 SUGGEST_TEMPERATURE = 0.75
+
+# A good DJ picks the next record in 10-15 s. One call on a 3B-active MoE takes
+# ~7 s, so a corrective retry (genre / tempo / invented song) is only made while
+# it still finishes inside the budget. Bad-JSON retries always run: no JSON, no pick.
+SUGGEST_BUDGET_S = float(os.environ.get("SUGGEST_BUDGET_S", "15"))
+RETRY_COST_S = 7.0
+EXTRA_CANDIDATES = 2  # ask for n+2: ~1 in 2 local-model picks is invented or off-tempo
+VERIFY_TIMEOUT_S = 4.0  # parallel YouTube lookups (~1.5 s each); slower = unknown, kept
+VERIFY_SONGS = os.environ.get("SUGGEST_VERIFY", "1") != "0"
+
+
+def _verify_song(artist: str, title: str):
+    from app.ui.download_service import verify_song
+    return verify_song(artist, title)
+
+
+def _verify_picks(picks: list[dict]) -> tuple[list[dict], list[dict]]:
+    """(real, invented). A pick whose lookup fails or runs past VERIFY_TIMEOUT_S
+    counts as real: a slow network must not empty the queue."""
+    if not VERIFY_SONGS or not picks:
+        return list(picks), []
+    pool = ThreadPoolExecutor(max_workers=min(6, len(picks)))
+    futs = [pool.submit(_verify_song, p.get("artist", ""), p.get("title", "")) for p in picks]
+    wait(futs, timeout=VERIFY_TIMEOUT_S)
+    pool.shutdown(wait=False, cancel_futures=True)
+    real, fake = [], []
+    for p, f in zip(picks, futs):
+        ok = f.result() if f.done() and not f.cancelled() and f.exception() is None else None
+        (fake if ok is False else real).append(p)
+    return real, fake
 
 
 def _num(v):
@@ -737,7 +753,7 @@ def suggest_next_tracks(
         earlier_sets=", ".join(earlier_sets or []) or "none",
         set_pos_pct=round(set_position * 100),
         arc_phase=_set_arc_phase(set_position),
-        n=n,
+        n=n + EXTRA_CANDIDATES,  # spares: invented / off-tempo picks are dropped below
     )
 
     try:
@@ -763,12 +779,18 @@ def suggest_next_tracks(
         )
 
     prio = llm_gate.LOOKAHEAD if lookahead else llm_gate.SUGGEST
+    t_start = time.monotonic()
+
+    def can_retry() -> bool:
+        """A corrective retry only while it still lands inside the decision budget."""
+        return time.monotonic() - t_start < SUGGEST_BUDGET_S - RETRY_COST_S
+
     data = None
     for attempt in range(3):  # two retries when the JSON is past repair (gemma-4 slips now and then)
         # 0.75: song picks should vary between runs (0.5 replayed the same set from
         # the same seed); the transition PLAN stays at a low temperature.
         raw = chat_raw(system_msg, user_msg, temperature=SUGGEST_TEMPERATURE if attempt == 0 else 0.4,
-                       max_tokens=1100 if lead_to else 700, priority=prio)  # lead JSON is longer
+                       max_tokens=1100 if lead_to else 900, priority=prio)  # lead JSON is longer
         try:
             data = _extract_json(raw)
             if _parroted(data, title):
@@ -786,7 +808,8 @@ def suggest_next_tracks(
     )
     # Genre transitions, it never jumps (user: Pal Pal -> Delilah). When every pick
     # jumped, ask once more with the rejected picks named, rather than play a jump.
-    if suggestions and str(suggestions[0].get("rejected_reason", "")).startswith("genre jump"):
+    if (suggestions and str(suggestions[0].get("rejected_reason", "")).startswith("genre jump")
+            and can_retry()):
         cur_genre = data.get("current_genre") or "the current song's genre"
         jumped = "; ".join(f"{x.get('artist', '')} - {x.get('title', '')} ({x.get('genre', '')})"
                            for x in data.get("suggestions", []) if isinstance(x, dict))[:400]
@@ -795,7 +818,7 @@ def suggest_next_tracks(
                      f"belongs to {cur_genre}.")
         try:
             data2 = _extract_json(chat_raw(system_msg, retry_msg, temperature=0.4,
-                                           max_tokens=1100 if lead_to else 700, priority=prio))
+                                           max_tokens=1100 if lead_to else 900, priority=prio))
             data2.setdefault("current_genre", data.get("current_genre"))
             retry = _filter_suggestions(
                 data2, history, occasion_set=bool((occasion or "").strip()) and not lead_to,
@@ -812,7 +835,9 @@ def suggest_next_tracks(
     target = tempo_target or bpm
     if suggestions and not moving:
         locked = [x for x in suggestions if _tempo_locks(target, x.get("expected_bpm")) is not False]
-        if not locked:
+        if not locked and not can_retry():
+            pass  # no time to ask again: keep them, the client ladders toward the tempo
+        elif not locked:
             far = "; ".join(f"{x.get('artist', '')} - {x.get('title', '')} ({x.get('expected_bpm')} BPM)"
                             for x in suggestions)[:400]
             print(f"[suggest] tempo: all picks off {target:.0f} BPM: {far}", flush=True)
@@ -821,7 +846,7 @@ def suggest_next_tracks(
                          "Keep the same mood, vocals and energy as the current song.")
             try:
                 data2 = _extract_json(chat_raw(system_msg, retry_msg, temperature=0.4,
-                                               max_tokens=1100 if lead_to else 700, priority=prio))
+                                               max_tokens=1100 if lead_to else 900, priority=prio))
                 data2.setdefault("current_genre", data.get("current_genre"))
                 retry = _filter_suggestions(
                     data2, history, occasion_set=bool((occasion or "").strip()) and not lead_to,
@@ -833,6 +858,36 @@ def suggest_next_tracks(
                 print(f"[suggest] tempo retry failed: {exc}", flush=True)
         else:
             suggestions = locked
+    # The playing song is never its own next (gemma-4: Vroom Vroom -> Vroom Vroom).
+    seed = _bare_title(title)
+    suggestions = [x for x in suggestions if _bare_title(x.get("title", "")) != seed]
+    # Real songs only: a local model invents plausible titles ("Four Tet - Morrison").
+    # Those used to fail at download, one full prepare round later.
+    real, fake = _verify_picks(suggestions)
+    # Nothing real left: one retry even past the budget, since an empty answer
+    # costs the client a whole prepare round (the hold-loop path).
+    if fake and not real:
+        names = "; ".join(f"{x.get('artist', '')} - {x.get('title', '')}" for x in fake)[:400]
+        print(f"[suggest] not real songs: {names}", flush=True)
+        retry_msg = (user_msg + f"\n\nREJECTED - these songs do not exist: {names}. "
+                     "Suggest real released songs you are sure of, credited to their real artist.")
+        try:
+            data2 = _extract_json(chat_raw(system_msg, retry_msg, temperature=0.4,
+                                           max_tokens=1100 if lead_to else 900, priority=prio))
+            data2.setdefault("current_genre", data.get("current_genre"))
+            retry = _filter_suggestions(
+                data2, history, occasion_set=bool((occasion or "").strip()) and not lead_to,
+                current_key=camelot, allow_genre_change=bool(lead_to))
+            if not moving:
+                retry = [x for x in retry if _tempo_locks(target, x.get("expected_bpm")) is not False]
+            retry = [x for x in retry if _bare_title(x.get("title", "")) != seed]
+            real, _ = _verify_picks(retry)
+        except ValueError as exc:
+            print(f"[suggest] real-song retry failed: {exc}", flush=True)
+    elif fake:
+        print(f"[suggest] dropped {len(fake)} invented song(s): "
+              + "; ".join(f"{x.get('artist', '')} - {x.get('title', '')}" for x in fake)[:300], flush=True)
+    suggestions = real
     # Songs from EARLIER sets are dropped whenever a fresh alternative exists:
     # the soft prompt hint alone let "Lane 8 - Little By Little" follow Fred
     # again.. in every set.

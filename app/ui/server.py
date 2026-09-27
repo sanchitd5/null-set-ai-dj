@@ -12,6 +12,7 @@ import hashlib
 import json
 import mimetypes
 import shutil
+import threading
 import uuid
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -53,6 +54,15 @@ def _boot_llm() -> None:
     from app.ui import model_runtime
 
     model_runtime.start_background()
+
+
+@app.on_event("startup")
+def _migrate_analyses() -> None:
+    """Library analyses from before v5 get their tempo refined in the
+    background, one song at a time; nothing is re-analysed from scratch."""
+    from app.music_brain.analyzer import queue_upgrade
+
+    queue_upgrade(sorted(_tracks.values()))
 
 
 @app.get("/api/llm/status")
@@ -253,6 +263,7 @@ def _register_downloaded(paths: List[Path]) -> List[dict]:
             shutil.move(str(path), dest)
         _tracks[track_id] = dest
         _remember_track_name(track_id, original_name)
+        _queue_stems(track_id)            # separate now, before a deck needs it
         results.append({"track_id": track_id, "filename": dest.name, "display_name": original_name})
     return results
 
@@ -320,7 +331,28 @@ async def upload_track(file: UploadFile):
     _tracks[track_id] = dest
     if file.filename:
         _remember_track_name(track_id, Path(file.filename).stem)
+    _queue_stems(track_id)                # separate now, before a deck needs it
     return {"track_id": track_id, "filename": file.filename}
+
+
+def _name_from_tags(track_id: str, path: Path) -> Optional[str]:
+    """A track stored under its hash with no remembered name: take it from the
+    file's own tags ("Artist - Title", or the title when it already reads
+    that way) and remember it."""
+    try:
+        import mutagen
+
+        f = mutagen.File(str(path), easy=True)
+        tags = (f.tags or {}) if f else {}
+    except Exception:
+        return None
+    title = " ".join((tags.get("title") or [""])[0].split())
+    artist = " ".join((tags.get("artist") or [""])[0].split())
+    if not title:
+        return None
+    name = title if (" - " in title or " – " in title or not artist) else f"{artist} - {title}"
+    _remember_track_name(track_id, name[:200])
+    return name[:200]
 
 
 @app.get("/api/tracks")
@@ -328,7 +360,7 @@ def list_tracks():
     from app.ui.download_service import _is_live, _is_mix
 
     def _entry(tid, p):
-        name = _track_names.get(tid, p.stem)
+        name = _track_names.get(tid) or _name_from_tags(tid, p) or p.stem
         # not_a_song: live/event recordings and mixes already in the library
         # (downloaded before those filters existed); the autopilot skips them.
         return {"track_id": tid, "path": str(p), "display_name": name,
@@ -346,7 +378,10 @@ def _register_library_tracks() -> list[dict[str, object]]:
 
     tracks = scan_library()
     for track in tracks:
-        _tracks.setdefault(str(track["track_id"]), Path(str(track["path"])))
+        tid = str(track["track_id"])
+        if tid not in _tracks:
+            _tracks[tid] = Path(str(track["path"]))
+            _queue_stems(tid, urgent=False)   # new library track: backfill its stems
     return tracks
 
 
@@ -384,42 +419,371 @@ def get_recipes():
     return {"recipes": [r.to_dict() for r in _knowledge.get_all()]}
 
 
-@app.post("/api/match")
-def post_match(req: MatchRequest):
-    import dataclasses
-
+def _cached_vocal_regions(track_id: str) -> Optional[list]:
+    """Vocal regions only when a Demucs vocal stem is already cached:
+    matching must never start a separation."""
     from app.music_brain import stem_service
     from app.music_brain.config import DEMUCS_MODEL
     from app.music_brain.mashup import MASHUP_DEMUCS_MODEL
 
-    def cached_vocals(track_id: str) -> Optional[list]:
-        """Vocal regions only when a Demucs vocal stem is already cached:
-        matching must never start a separation."""
-        if track_id in _vocal_regions:
-            return _vocal_regions[track_id]
-        audio_hash = stem_service.file_hash(_track_path(track_id))
-        for model, two in ((MASHUP_DEMUCS_MODEL, "vocals"), (DEMUCS_MODEL, "vocals"), (DEMUCS_MODEL, None)):
-            stems = stem_service._load_from_cache(stem_service._cache_dir_for(audio_hash, model, two))
-            if not stems or not stems.get("vocals"):
-                continue
-            if (model, two) == (MASHUP_DEMUCS_MODEL, "vocals"):
-                return _vocal_regions_for(track_id)  # hits the same stem cache
-            try:
-                from app.music_brain.analyzer import vocal_presence_map
+    if track_id in _vocal_regions:
+        return _vocal_regions[track_id]
+    audio_hash = stem_service.file_hash(_track_path(track_id))
+    for model, two in ((MASHUP_DEMUCS_MODEL, "vocals"), (DEMUCS_MODEL, "vocals"), (DEMUCS_MODEL, None)):
+        stems = stem_service._load_from_cache(stem_service._cache_dir_for(audio_hash, model, two))
+        if not stems or not stems.get("vocals"):
+            continue
+        if (model, two) == (MASHUP_DEMUCS_MODEL, "vocals"):
+            return _vocal_regions_for(track_id)  # hits the same stem cache
+        try:
+            from app.music_brain.analyzer import vocal_presence_map
 
-                regions = [list(r) for r in vocal_presence_map(Path(stems["vocals"]))]
-            except Exception as exc:
-                print(f"[match] vocal map unavailable for {track_id}: {exc}", flush=True)
-                return None
-            _vocal_regions[track_id] = regions
-            return regions
-        return None
+            regions = [list(r) for r in vocal_presence_map(Path(stems["vocals"]))]
+        except Exception as exc:
+            print(f"[match] vocal map unavailable for {track_id}: {exc}", flush=True)
+            return None
+        _vocal_regions[track_id] = regions
+        return regions
+    return None
+
+
+# Live stems: ONE background worker separates songs into 4 stems (drums, bass,
+# vocals, other) in the order the decks ask, so the playing song and the next
+# one get stems while they play (~40 s per song on htdemucs_ft here).
+STEM_NAMES = ("drums", "bass", "vocals", "other")
+_stem_queue: "list[str]" = []      # urgent: decks, fresh uploads / downloads (FIFO)
+_stem_backlog: "list[str]" = []    # library backfill: only while the LLM is idle
+_stem_busy: Optional[str] = None
+_stem_cv = threading.Condition()
+_stem_done = {"separated": 0, "failed": 0}
+
+
+def _cached_stems4(track_id: str) -> Optional[Dict[str, str]]:
+    from app.music_brain import stem_service
+    from app.music_brain.config import DEMUCS_MODEL
+
+    audio_hash = stem_service.file_hash(_track_path(track_id))
+    stems = stem_service._load_from_cache(stem_service._cache_dir_for(audio_hash, DEMUCS_MODEL, None))
+    return stems if stems and all(stems.get(n) for n in STEM_NAMES) else None
+
+
+def _llm_busy() -> bool:
+    from app.ui.llm_gate import gate
+
+    snap = gate.snapshot()
+    return bool(snap["in_flight"] or snap["queued"])
+
+
+def _stem_worker() -> None:
+    """One separation at a time. Urgent jobs first; the library backfill runs
+    only while no LLM call is in flight or queued (Demucs and the LLM share
+    the GPU: a suggestion must never wait on a backfill)."""
+    global _stem_busy
+    while True:
+        with _stem_cv:
+            while not _stem_queue and not (_stem_backlog and not _llm_busy()):
+                _stem_cv.wait(timeout=2.0)
+            src = _stem_queue if _stem_queue else _stem_backlog
+            _stem_busy = src.pop(0)
+        tid = _stem_busy
+        try:
+            if tid in _tracks and _cached_stems4(tid) is None:
+                separate_stems(_track_path(tid))           # 4-stem, cached by content hash
+                _stem_done["separated"] += 1
+            if tid in _tracks:
+                _cached_vocal_regions(tid)                 # vocal map from the new vocals stem
+        except Exception as exc:
+            _stem_done["failed"] += 1
+            print(f"[stems] {tid}: {exc}", flush=True)
+        finally:
+            with _stem_cv:
+                _stem_busy = None
+
+
+def _start_stem_worker() -> None:
+    if not getattr(_stem_worker, "started", False):
+        _stem_worker.started = True
+        threading.Thread(target=_stem_worker, daemon=True).start()
+
+
+def _queue_stems(track_id: str, urgent: bool = True) -> bool:
+    """Queue a 4-stem separation; True while queued or running. Urgent jobs
+    (a deck, a new track) go ahead of the library backfill."""
+    with _stem_cv:
+        if _stem_busy == track_id or track_id in _stem_queue:
+            return True
+        if track_id in _stem_backlog:
+            if not urgent:
+                return True
+            _stem_backlog.remove(track_id)
+        (_stem_queue if urgent else _stem_backlog).append(track_id)
+        _start_stem_worker()
+        _stem_cv.notify_all()
+        return True
+
+
+@app.on_event("startup")
+def _backfill_stems() -> None:
+    """Every library track gets its stems separated ahead of time, in the
+    background, so a deck load never waits on Demucs."""
+    def scan():
+        missing = []
+        for tid in list(_tracks):
+            try:
+                if _cached_stems4(tid) is None:
+                    missing.append(tid)
+            except Exception:
+                continue
+        for tid in missing:
+            _queue_stems(tid, urgent=False)
+        print(f"[stems] library backfill: {len(missing)} of {len(_tracks)} tracks to separate", flush=True)
+
+    threading.Thread(target=scan, daemon=True).start()
+
+
+@app.get("/api/stems/status")
+def get_stems_status():
+    with _stem_cv:
+        return {"busy": _stem_busy, "urgent": list(_stem_queue), "backlog": len(_stem_backlog),
+                "llm_busy": _llm_busy(), **_stem_done}
+
+
+@app.get("/api/tracks/{track_id}/vocals")
+def get_track_vocals(track_id: str, separate: bool = False):
+    """Vocal activity regions [[start, end], ...] for the hold loop / DJ mind.
+    Cached stem -> regions now; separate=1 -> queue the 4-stem separation and
+    answer pending; poll again."""
+    _track_path(track_id)  # 404 for unknown ids
+    regions = _cached_vocal_regions(track_id)
+    if regions is not None:
+        return {"regions": regions, "pending": False}
+    pending = _queue_stems(track_id) if separate else False
+    return {"regions": None, "pending": pending}
+
+
+@app.get("/api/tracks/{track_id}/stems")
+def get_track_stems(track_id: str, separate: bool = False, bpm: Optional[float] = None):
+    """4 live stems for a deck: {stems: {name: url}} when separated, else
+    pending (separate=1 queues it). bpm=X: the same stems key-locked at X BPM
+    (rendered once and cached; pending while rendering)."""
+    _track_path(track_id)
+    stems = _cached_stems4(track_id)
+    if stems and bpm:
+        from app.music_brain import keylock, stem_service
+
+        native = analyze_track(_track_path(track_id)).bpm
+        if abs(bpm / native - 1) > 0.005:
+            if not keylock.available():
+                raise HTTPException(status_code=503, detail="Rubber Band not installed")
+            r = keylock.ensure_tempo(stem_service.file_hash(_track_path(track_id)), stems, native, bpm)
+            if r["state"].startswith("error"):
+                raise HTTPException(status_code=422, detail=r["state"])
+            if r["state"] != "done":
+                return {"stems": None, "pending": True, "bpm": r["bpm"]}
+            return {"stems": {n: f"/api/riff/{r['key']}/{n}" for n in STEM_NAMES}, "pending": False,
+                    "bpm": r["bpm"], "ratio": r["ratio"], "native_bpm": native}
+    if stems:
+        return {"stems": {n: f"/api/tracks/{track_id}/stems/{n}" for n in STEM_NAMES}, "pending": False}
+    return {"stems": None, "pending": _queue_stems(track_id) if separate else False}
+
+
+_voiced_cache: Dict[tuple, dict] = {}
+
+
+def _pair_features(a_id: str, b_id: str, keylock: bool = False):
+    """PairFeatures for the technique library, from cached stems (never separates)."""
+    import librosa
+    import numpy as np
+
+    from app.music_brain import techniques as tq
+
+    ta, tb = analyze_track(_track_path(a_id)), analyze_track(_track_path(b_id))
+    sa, sb = _cached_stems4(a_id), _cached_stems4(b_id)
+
+    def share(regions, lo, hi):
+        if not regions or hi <= lo:
+            return 0.0
+        return sum(max(0.0, min(e, hi) - max(s, lo)) for s, e in regions) / (hi - lo)
+
+    va, vb = _cached_vocal_regions(a_id) or [], _cached_vocal_regions(b_id) or []
+    lo, hi = max(0.0, ta.duration - 90), ta.duration - 10          # A's exit window (last ~1.5 min)
+    grooves, breaks = [], []
+    if sa:
+        audio = {n: librosa.load(sa[n], sr=11025, mono=True)[0] for n in tq.STEMS}
+        smap = tq.stem_map(audio, 11025, ta.phrase_boundaries_8bar)
+        grooves, breaks = tq.full_groove_runs(smap), tq.breakdowns(smap)
+    b_rap, rap_at = None, []
+    if sb and vb:
+        key = (b_id, "style")
+        if key not in _voiced_cache:
+            # style per 20 s of sung/rapped audio, up to 8 chunks across the song
+            chunks = [(s, min(e, s + 20)) for s, e in vb if e - s >= 12]
+            step = max(1, len(chunks) // 8)
+            rows = []
+            for s, e in chunks[::step][:8]:
+                y, sr = librosa.load(sb["vocals"], sr=16000, mono=True, offset=s, duration=e - s)
+                rows.append({"at": round(s, 1), **tq.vocal_style(y, sr)})
+            _voiced_cache[key] = rows
+        rows = _voiced_cache[key]
+        rap_at = [r["at"] for r in rows if r["rap"]]
+        b_rap = bool(rap_at)
+    return tq.PairFeatures(
+        bpm_a=ta.bpm, bpm_b=tb.bpm, key_a=ta.key.camelot if ta.key else None, key_b=tb.key.camelot if tb.key else None,
+        stems_a=bool(sa), stems_b=bool(sb), famous_a=bool(_fame.get(a_id, {}).get("famous")),
+        vocal_a_exit=share(va, lo, hi), vocal_b_entry=max([share(vb, t, t + 30) for t in rap_at] or [share(vb, 0, min(tb.duration, 60))]), b_rap=b_rap, b_rap_at=rap_at,
+        a_grooves=grooves, a_breakdowns=breaks, keylock=keylock, exit_window=(lo, hi),
+    )
+
+
+@app.get("/api/techniques")
+def get_techniques(a: str, b: str, keylock: bool = False):
+    """Which learned techniques fit A -> B, each with its reasons (app.music_brain.techniques)."""
+    from app.music_brain import techniques as tq
+
+    f = _pair_features(a, b, keylock)
+    return {"features": {"tempo_gap": round(f.tempo_gap, 4), "key_score": f.key, "b_style": _voiced_cache.get((b, "style")), "b_rap_at": f.b_rap_at,
+                         "grooves": f.a_grooves, "breakdowns": f.a_breakdowns, "stems": [f.stems_a, f.stems_b]},
+            "techniques": tq.rank(f)}
+
+
+class RiffRequest(BaseModel):
+    a_id: str
+    b_id: str
+    not_before: float = 0.0          # A's current position + lead: the groove must start after it
+
+
+@app.post("/api/riff/plan")
+def post_riff_plan(req: RiffRequest):
+    """Riff over rap, live: pick A's groove + breakdown and B's rap entry, and
+    start the key-locked render of A's stems at B's tempo (cached). Always
+    answers; ok=False carries the reasons (the normal transition runs)."""
+    import librosa
+    import numpy as np
+
+    from app.music_brain import keylock
+    from app.music_brain import stem_service
+    from app.music_brain import techniques as tq
+
+    if not keylock.available():
+        return {"ok": False, "reasons": ["Rubber Band not installed (brew install rubberband)"]}
+    f = _pair_features(req.a_id, req.b_id, keylock=True)
+    fit = next(x for x in tq.rank(f) if x["name"] == "riff_over_rap")
+    if not fit["fits"]:
+        return {"ok": False, "reasons": [r for r in fit["reasons"] if r.startswith("no:")]}
+    a = analyze_track(_track_path(req.a_id)).to_dict()
+    b = analyze_track(_track_path(req.b_id)).to_dict()
+    sb = _cached_stems4(req.b_id)
+
+    def b_bass_db(lo, hi):
+        y, sr = librosa.load(sb["bass"], sr=11025, mono=True, offset=lo, duration=hi - lo)
+        return float(10 * np.log10(np.mean(y ** 2) + 1e-12))
+
+    plan = keylock.choose(a, b, f.a_grooves, f.a_breakdowns, f.b_rap_at, b_bass_db, req.not_before)
+    if not plan["ok"]:
+        return plan
+    # B's entry skips a repeated opening hook (rhythm repeats bar after bar)
+    yv, srv = librosa.load(sb["vocals"], sr=22050, mono=True)
+    rep = tq.repetitive_bars(yv, srv, b["downbeat_times"])
+    entry = tq.skip_repetitive_intro(rep, b["downbeat_times"], b["phrase_boundaries_8bar"], plan["b_entry"])
+    plan["b_skipped_hook_s"] = round(entry - plan["b_entry"], 2)
+    plan["b_entry"] = plan["b_start"] = entry
+    # The mashup runs 32 bars when B keeps rapping through it (the vibe holds), else 16
+    vr = _cached_vocal_regions(req.b_id) or []
+    win_lo = plan["b_entry"]
+    win_hi = win_lo + keylock.MASHUP_BARS_LONG * plan["bar_s"]
+    cov = sum(max(0.0, min(e, win_hi) - max(s, win_lo)) for s, e in vr) / (win_hi - win_lo)
+    long_ok = cov >= keylock.MASHUP_LONG_VOCAL and b["duration"] >= win_hi + keylock.BLEND_BARS * plan["bar_s"] + 20
+    plan["timeline"] = keylock.timeline(keylock.MASHUP_BARS_LONG if long_ok else keylock.MASHUP_BARS_SHORT)
+    plan["mashup_vibe"] = {"b_rap_coverage": round(cov, 2), "long": long_ok}
+    key, state = keylock.ensure(stem_service.file_hash(_track_path(req.a_id)), _cached_stems4(req.a_id), plan)
+    # B's levels where it drops (16 bars from the rap), for the balance
+    lo, hi = plan["b_entry"], plan["b_entry"] + 16 * plan["bar_s"]
+    lv = {n: librosa.load(sb[n], sr=11025, mono=True, offset=lo, duration=hi - lo)[0] for n in keylock.STEMS}
+    plan["b_levels"] = {"b_mix_db": keylock.rms_db(sum(lv.values())), "b_vocals_db": keylock.rms_db(lv["vocals"]),
+                        "b_bass_db": keylock.rms_db(lv["bass"])}
+    plan.update(key=key, state=state, why=fit["reasons"],
+                stems={n: f"/api/riff/{key}/{n}" for n in keylock.STEMS},
+                detune_avoided_st=round(keylock.pitch_shift_semitones(plan["ratio"]), 2))
+    return plan
+
+
+@app.get("/api/riff/{key}")
+def get_riff_state(key: str):
+    from app.music_brain import keylock
+
+    return {"state": keylock.state(key), "meta": keylock.meta(key)}
+
+
+@app.post("/api/riff/{key}/balance")
+def post_riff_balance(key: str, b_levels: dict):
+    """Gains for a rendered riff (A level-matched, B's rap and bass under the riff)."""
+    from app.music_brain import keylock
+
+    m = keylock.meta(key)
+    if not m or "a_mix_db" not in m:
+        raise HTTPException(status_code=404, detail="riff not rendered")
+    try:
+        return keylock.balance(m, {k: float(b_levels[k]) for k in ("b_mix_db", "b_vocals_db", "b_bass_db")})
+    except (KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=f"b_levels: {exc}") from exc
+
+
+@app.get("/api/riff/{key}/{name}")
+def get_riff_stem(key: str, name: str):
+    from app.music_brain import keylock
+
+    p = keylock.stem_path(key, name)
+    if not p:
+        raise HTTPException(status_code=404, detail="key-locked stem not rendered")
+    return FileResponse(p, media_type="audio/wav")
+
+
+@app.get("/api/tracks/{track_id}/stems/{name}")
+def get_track_stem_audio(track_id: str, name: str):
+    if name not in STEM_NAMES:
+        raise HTTPException(status_code=404, detail="unknown stem")
+    stems = _cached_stems4(track_id)
+    if not stems:
+        raise HTTPException(status_code=404, detail="stems not separated yet")
+    return FileResponse(stems[name], media_type="audio/wav")
+
+
+_fame: Dict[str, dict] = {}
+FAME_PATH = CACHE_DIR / "fame.json"
+FAMOUS_VIEWS = 20_000_000   # the room knows it (leavemealone 36M, played 7 min in the USB002 set)
+
+
+@app.get("/api/tracks/{track_id}/fame")
+def get_track_fame(track_id: str):
+    """How well known the song is: YouTube views of its best matching upload."""
+    from app.ui.download_service import song_views
+
+    _track_path(track_id)
+    if not _fame and FAME_PATH.exists():
+        try:
+            _fame.update(json.loads(FAME_PATH.read_text()))
+        except ValueError:
+            pass
+    if track_id in _fame:
+        return _fame[track_id]
+    name = _track_names.get(track_id) or ""
+    views = song_views(name) if len(name) >= 3 else None
+    res = {"views": views, "famous": bool(views and views >= FAMOUS_VIEWS), "name": name}
+    if views is not None:                    # only cache real answers
+        _fame[track_id] = res
+        FAME_PATH.write_text(json.dumps(_fame))
+    return res
+
+
+@app.post("/api/match")
+def post_match(req: MatchRequest):
+    import dataclasses
 
     tracks = []
     for track_id in (req.track_a_id, req.track_b_id):
         track = analyze_track(_track_path(track_id))
         try:
-            regions = cached_vocals(track_id)
+            regions = _cached_vocal_regions(track_id)
         except Exception as exc:  # best-effort: never break matching
             print(f"[match] vocal lookup failed for {track_id}: {exc}", flush=True)
             regions = None
@@ -446,6 +810,7 @@ class MashupRequest(BaseModel):
     host_id: str
     guest_id: str
     bars: int = 8
+    host_mutable: bool = False      # host deck has live stems: its vocal can be muted
 
 
 def _vocals_stem(track_id: str) -> str:
@@ -530,6 +895,7 @@ def post_mashup_plan(req: MashupRequest):
             host_vocals_path=lambda: _vocals_stem(req.host_id),
             guest_vocals_path=lambda: _vocals_stem(req.guest_id),
             bars=req.bars,
+            host_mutable=req.host_mutable,
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"mashup plan error: {exc}") from exc
@@ -1060,6 +1426,41 @@ def autopilot_plan(req: MindPlanRequest):
         raise HTTPException(status_code=502, detail=f"LLM plan error: {exc}") from exc
     plan["exit_options"] = facts["exit_options"]
     return plan
+
+
+@app.get("/api/live/ear")
+def get_live_ear_status():
+    from app.ui import live_ear
+
+    return live_ear.status()
+
+
+@app.post("/api/live/ear")
+async def post_live_ear(metrics: str = Form(...), clip: Optional[UploadFile] = None):
+    """One hold-loop decision: watchdog numbers (JSON form field) plus an
+    optional few-second master-bus WAV. Always answers; the model only
+    proposes (see app.ui.live_ear)."""
+    from starlette.concurrency import run_in_threadpool
+
+    from app.ui import live_ear
+
+    if len(metrics) > 4000:
+        raise HTTPException(status_code=400, detail="metrics too large")
+    try:
+        m = json.loads(metrics)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"metrics must be JSON: {exc}") from exc
+    if not isinstance(m, dict):
+        raise HTTPException(status_code=400, detail="metrics must be a JSON object")
+    m = {k: v for k, v in m.items() if isinstance(v, (int, float, str, bool)) or v is None}
+    wav = None
+    if clip is not None:
+        wav = await clip.read(live_ear.MAX_AUDIO_BYTES + 1)
+        try:
+            live_ear.check_wav(wav)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return await run_in_threadpool(live_ear.decide, wav, m)
 
 
 @app.post("/api/samples")

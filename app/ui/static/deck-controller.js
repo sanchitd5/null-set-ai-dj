@@ -25,7 +25,34 @@ window.emitDJEvent = window.emitDJEvent || ((type, detail = {}) => {
 // whole console and so the recorder has one node to tap.
 const masterGain = audioCtx.createGain();
 masterGain.gain.value = 0.9;
-masterGain.connect(audioCtx.destination);
+// Brick-wall limiter after the master: a stem move, a level-matched riff or
+// two full decks at unity summed past 0 dBFS (a live riff recording hit 0 dBFS
+// 184 times). Fast attack, -1 dB ceiling. Everything that "hears the master"
+// (VU, recorder, live ear) taps masterOut, i.e. what the crowd hears.
+const masterLimiter = audioCtx.createDynamicsCompressor();
+masterLimiter.threshold.value = -4;
+masterLimiter.knee.value = 0;
+masterLimiter.ratio.value = 20;
+masterLimiter.attack.value = 0.001;
+masterLimiter.release.value = 0.1;
+const masterOut = audioCtx.createGain();
+// No make-up gain: the Web Audio compressor is not a true brick-wall, so its
+// transient overshoot needs the headroom (+2 dB make-up hit 0 dBFS 15k times).
+masterOut.gain.value = 10 ** (-0.5 / 20);
+masterGain.connect(masterLimiter);
+masterLimiter.connect(masterOut);
+masterOut.connect(audioCtx.destination);
+window.masterOut = masterOut;
+
+// Vocal bus: a deck's vocal stem sent past its own EQ and crossfader, so an
+// outgoing vocal can keep singing over the incoming beat. High-passed at
+// 120 Hz: one bass owner, always ([[EQ & Frequency Management]]).
+const STEM_NAMES = ["drums", "bass", "vocals", "other"];
+const vocalBus = audioCtx.createBiquadFilter();
+vocalBus.type = "highpass";
+vocalBus.frequency.value = 120;
+vocalBus.connect(masterGain);
+window.vocalBus = vocalBus;
 
 const BRAKE_SECONDS = 0.8;
 // A real turntable never starts or stops instantly: PLAY/PAUSE spins the
@@ -35,6 +62,58 @@ const BRAKE_SECONDS = 0.8;
 // precision moves, not platter moves.
 const SPIN_UP_SECONDS = 0.35;
 const SPIN_DOWN_SECONDS = 0.45;
+
+// Seconds the stems run late against the decoded mix (mp3 encoder delay:
+// ~23 ms; lossless: 0). Coarse search on a decimated 3 s window, then a
+// sample-exact refine.
+function stemLag(mixBuf, stems) {
+  const sr = mixBuf.sampleRate, m = mixBuf.getChannelData(0);
+  const parts = STEM_NAMES.map((n) => stems[n].getChannelData(0));
+  const len = Math.min(m.length, ...parts.map((p) => p.length));
+  const sum = (i) => parts.reduce((s, p) => s + (p[i] || 0), 0);
+  const at = Math.min(Math.floor(len * 0.3), Math.max(0, len - 4 * sr)), W = Math.floor(3 * sr);
+  if (at + W + 4096 >= len) return 0;
+  const score = (lag, step) => {
+    let dot = 0, a2 = 0, b2 = 0;
+    for (let i = at; i < at + W; i += step) { const a = m[i], b = sum(i + lag); dot += a * b; a2 += a * a; b2 += b * b; }
+    return a2 > 0 && b2 > 0 ? dot / Math.sqrt(a2 * b2) : -1;
+  };
+  let best = 0, bestS = -2;
+  for (let lag = -4096; lag <= 4096; lag += 16) { const s = score(lag, 8); if (s > bestS) { bestS = s; best = lag; } }
+  for (let lag = best - 16; lag <= best + 16; lag++) { const s = score(lag, 1); if (s > bestS) { bestS = s; best = lag; } }
+  return bestS > 0.5 ? best / sr : 0;
+}
+
+// Same search in the DSP worker (dsp-worker.js): only the 3 s window crosses
+// the thread boundary, the main thread stays free. Falls back to stemLag().
+let dspWorker = null, dspSeq = 0;
+const dspWaiting = new Map();
+function dsp() {
+  if (dspWorker === null) {
+    try {
+      dspWorker = new Worker("/dsp-worker.js");
+      dspWorker.onmessage = (e) => { const cb = dspWaiting.get(e.data.id); if (cb) { dspWaiting.delete(e.data.id); cb(e.data); } };
+      dspWorker.onerror = () => { dspWorker = false; for (const cb of dspWaiting.values()) cb({ error: "worker failed" }); dspWaiting.clear(); };
+    } catch (e) { dspWorker = false; }
+  }
+  return dspWorker || null;
+}
+function stemLagAsync(mixBuf, stems) {
+  const w = dsp();
+  if (!w) return Promise.resolve(stemLag(mixBuf, stems));
+  const sr = mixBuf.sampleRate, m = mixBuf.getChannelData(0), PAD = 4096;
+  const len = Math.min(m.length, ...STEM_NAMES.map((n) => stems[n].length));
+  const at = Math.min(Math.floor(len * 0.3), Math.max(0, len - 4 * sr)), W = Math.floor(3 * sr);
+  if (at < PAD || at + W + PAD >= len) return Promise.resolve(stemLag(mixBuf, stems));
+  const mix = m.slice(at, at + W);
+  const parts = STEM_NAMES.map((n) => stems[n].getChannelData(0).slice(at - PAD, at + W + PAD));
+  const id = ++dspSeq;
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => { dspWaiting.delete(id); resolve(stemLag(mixBuf, stems)); }, 5000);
+    dspWaiting.set(id, (r) => { clearTimeout(timer); resolve(r.error ? stemLag(mixBuf, stems) : r.lag); });
+    w.postMessage({ id, op: "stemLag", sr, mix, stems: parts }, [mix.buffer, ...parts.map((x) => x.buffer)]);
+  });
+}
 
 class Deck {
   constructor(id, wavesurfer) {
@@ -79,6 +158,42 @@ class Deck {
 
     // Pre-EQ gain stage (channel trim), distinct from the volume fader.
     this.inputGain = audioCtx.createGain();
+
+    // Live stems (drums / bass / vocals / other): four sources run sample-locked
+    // beside the full mix at gain 0; a stem move crossfades mix -> stems on the
+    // audio clock. stems sum to the mix within -15..-21 dB, so the switch is
+    // inaudible. The vocal also has a bus send that skips this deck's EQ and
+    // crossfader: that's how an outgoing vocal rides over the incoming beat.
+    this.mixGain = audioCtx.createGain();
+    this.mixGain.connect(this.inputGain);
+    this.stems = null;          // {drums, bass, vocals, other: AudioBuffer, lag: s}
+    this._stemSrc = {};         // name -> AudioBufferSourceNode
+    this.stemGain = {};
+    this.stemLive = {};         // name -> gain of the running stem source (0 while that stem is held)
+    for (const n of STEM_NAMES) {
+      const g = audioCtx.createGain();
+      g.gain.value = 0;
+      g.connect(this.inputGain);
+      this.stemGain[n] = g;
+      const live = audioCtx.createGain();
+      live.connect(g);
+      this.stemLive[n] = live;
+    }
+    this._holds = {};           // name -> {src, until}
+    this.vocalBusGain = audioCtx.createGain();
+    this.vocalBusGain.gain.value = 0;
+    this.vocalBusGain.connect(vocalBus);
+    // Mini players (stem-moves.js): one pre-fader analyser per stem, so a
+    // muted stem still shows what it would play. Not connected to any output.
+    this.stemMeter = {};
+    for (const n of STEM_NAMES) {
+      const m = audioCtx.createAnalyser();
+      m.fftSize = 512;
+      m.smoothingTimeConstant = 0;
+      this.stemMeter[n] = m;
+    }
+    this._meterGain = null;     // {name: GainNode} while another engine (riff over rap) drives this deck
+    this.stemState = null;      // null = full mix, else {drums, bass, vocals, other, bus}
 
     this.lowFilter = audioCtx.createBiquadFilter();
     this.lowFilter.type = "lowshelf";
@@ -126,6 +241,13 @@ class Deck {
     // it keeps a legacy load working rather than crashing).
     this.buffer = (window.decodedBuffers && window.decodedBuffers[this.id]) || this.wavesurfer.getDecodedData();
     if (!this.buffer) return;
+    // New song: the old one's stems (and any stem move) go.
+    this.tempoStems = null;
+    this._nativeStems = null;
+    this.stemMix(null, 0, 0.005);
+    this.setStems(null);
+    this._breakdownDone = false;
+    this._remix = null;
     this.trimEnd = this.buffer.duration;
     this.cuePoint = 0;
     this.reverseBuffer = null; // rebuilt lazily for the new track
@@ -139,6 +261,10 @@ class Deck {
           const analysis = await res.json();
           this.analysis = analysis;
           if (analysis.bpm > 0) this.bpm = analysis.bpm;
+          this._loadVocals(trackId, analysis);
+          this.fame = null;
+          fetch(`/api/tracks/${trackId}/fame`).then((r) => (r.ok ? r.json() : null))
+            .then((f) => { if (this.analysis === analysis) this.fame = f; }).catch(() => {});
         }
       } catch (e) { /* keep default bpm */ }
     }
@@ -268,6 +394,9 @@ class Deck {
   }
 
   _currentPosition() {
+    // Another engine (riff over rap) is playing this deck's stems: its clock
+    // says where in the song we are, so the platter, time and cursor move on.
+    if (this._extPos) return this._extPos(audioCtx.currentTime);
     if (this._braking) {
       // playbackRate is linearly ramping r0 -> 0 across the ramp time, so the
       // distance travelled is the integral of that ramp, not rate * elapsed.
@@ -302,7 +431,169 @@ class Deck {
       this.startedAt = audioCtx.currentTime;
     }
     if (this.source && !this._braking) {
-      this.source.playbackRate.value = this._playbackRate();
+      for (const s of this._allSources()) s.playbackRate.value = this._playbackRate() * (s._rateMul || 1);
+    }
+  }
+
+  _allSources() {
+    return [this.source, ...Object.values(this._stemSrc)].filter(Boolean);
+  }
+
+  // Track position at audio time T (same maths as _currentPosition, any T).
+  _positionAt(T) {
+    if (!this.playing) return this.startOffset;
+    const travelled = Math.max(0, T - this.startedAt) * this._playbackRate();
+    const raw = this.startOffset + (this.reversed ? -travelled : travelled);
+    const span = this._loopSpan;
+    if (span && this.loopOn && raw >= span[1] && span[1] > span[0]) return span[0] + ((raw - span[0]) % (span[1] - span[0]));
+    return this._clampPos(raw);
+  }
+
+  // One stem source mirroring the mix source: same rate, same loop window,
+  // offset by the stems' measured lag. Starts at audio time `at`, track pos `pos`.
+  _startStem(name, at, pos, mixSrc) {
+    const st = this.stems;
+    if (!st || !st[name] || this.reversed) return;
+    const s = audioCtx.createBufferSource();
+    s.buffer = st[name];
+    // Tempo stems (key-locked at another BPM, st.ratio = stretched / original):
+    // song time t lives at t * ratio in them, and they play `ratio` faster than
+    // the mix source to cover the same song time, at their own (unchanged) key.
+    const k = st.ratio || 1;
+    s._rateMul = k;
+    s.playbackRate.value = this._playbackRate() * k;
+    if (mixSrc.loop) {
+      s.loop = true;
+      s.loopStart = (mixSrc.loopStart + st.lag) * k;
+      s.loopEnd = (mixSrc.loopEnd + st.lag) * k;
+    }
+    s.connect(this.stemLive[name]);
+    if (name === "vocals") s.connect(this.vocalBusGain);
+    s.connect(this.stemMeter[name]);
+    s.start(at, Math.max(0, Math.min((pos + st.lag) * k, st[name].duration - 0.01)));
+    this._stemSrc[name] = s;
+  }
+
+  // Stems decoded: keep them, and if the deck is already playing, attach the
+  // stem sources 150 ms ahead on the exact sample the mix will be at.
+  setStems(stems) {
+    this._stopStems();
+    this.stems = stems;
+    if (!stems || !this.playing || this._braking || this._spinningUp || !this.source) return;
+    const T = audioCtx.currentTime + 0.15;
+    const pos = this._positionAt(T);
+    for (const n of STEM_NAMES) this._startStem(n, T, pos, this.source);
+    if (stems.ratio && Math.abs(stems.ratio - 1) > 0.001) this.stemMix({ drums: 1, bass: 1, vocals: 1, other: 1, bus: 0 }, T, 0.01);
+  }
+
+  _stopStems() {
+    for (const s of Object.values(this._stemSrc)) {
+      try { s.stop(); } catch (e) { /* already stopped */ }
+      s.disconnect();
+    }
+    this._stemSrc = {};
+  }
+
+  // Mini player read-out: {level (RMS, pre-fader), gain (what the crowd hears of it)}.
+  meterRead(name, buf) {
+    const m = this.stemMeter[name];
+    m.getFloatTimeDomainData(buf);
+    let e = 0;
+    for (let i = 0; i < buf.length; i++) e += buf[i] * buf[i];
+    const level = Math.sqrt(e / buf.length);
+    const g = this._meterGain ? this._meterGain[name].gain.value
+      : this.stemState ? this.stemGain[name].gain.value + (name === "vocals" ? this.vocalBusGain.gain.value : 0)
+      : this.playing ? 1 : 0;
+    return { level, gain: g };
+  }
+
+  get stemsReady() { return !!(this.stems && STEM_NAMES.every((n) => this._stemSrc[n])); }
+
+  // Stem move on the audio clock. target = {drums, bass, vocals, other, bus}
+  // (0..1, omitted = unchanged); null = back to the full mix. Ramps over
+  // `ramp` s from `when`. Returns false when stems aren't running.
+  stemMix(target, when = 0, ramp = 0.03) {
+    const t = Math.max(audioCtx.currentTime, when || 0), end = t + Math.max(0.005, ramp);
+    // Ramp from the LOGICAL level (the previous stem state), not param.value:
+    // a move booked right after one that hasn't played yet would otherwise
+    // start from the stale value (a rap meant to land would fade in).
+    const set = (param, from, v) => {
+      param.cancelScheduledValues(t);
+      param.setValueAtTime(from, t);
+      param.linearRampToValueAtTime(v, end);
+    };
+    const prev = this.stemState;                         // null = full mix
+    const was = (n) => (prev ? prev[n] || 0 : 0);        // audible stem gain before this move
+    if (target === null && this.tempoStems) target = { drums: 1, bass: 1, vocals: 1, other: 1, bus: 0 };
+    if (target === null) {
+      if (!prev) return true;
+      set(this.mixGain.gain, 0, 1);
+      for (const n of STEM_NAMES) set(this.stemGain[n].gain, was(n), 0);
+      set(this.vocalBusGain.gain, was("bus"), 0);
+      this.stemState = null;
+      this._emitStem(null);
+      return true;
+    }
+    if (!this.stemsReady) return false;
+    const cur = prev || { drums: 1, bass: 1, vocals: 1, other: 1, bus: 0 };
+    const next = { ...cur, ...target };
+    // from the full mix: stems start where the mix was (1) and the mix hands over
+    // instantly-ish, so the switch itself is inaudible
+    set(this.mixGain.gain, prev ? 0 : 1, 0);
+    for (const n of STEM_NAMES) set(this.stemGain[n].gain, prev ? was(n) : 1, next[n]);
+    set(this.vocalBusGain.gain, was("bus"), next.bus || 0);
+    this.stemState = next;
+    this._emitStem(next);
+    return true;
+  }
+
+  // Stem hold: loop `bars` of one stem (song time `from`) from audio time
+  // `at` until `until`, while the other stems play on. The live stem is
+  // crossfaded out/in over `xf` s at both edges. Needs stem mode.
+  holdStem(name, from, bars, at, until, xf = 0.02) {
+    const st = this.stems;
+    if (!st || !st[name] || !this.stemsReady) return false;
+    this.releaseHold(name, at);
+    const k = st.ratio || 1, bar = 240 / (this.bpm || 128);
+    const s = audioCtx.createBufferSource();
+    s.buffer = st[name];
+    s.loop = true;
+    s.loopStart = (from + st.lag) * k;
+    s.loopEnd = (from + bars * bar + st.lag) * k;
+    s._rateMul = k;
+    s.playbackRate.value = this._playbackRate() * k;
+    const g = audioCtx.createGain();
+    g.gain.setValueAtTime(0, at);
+    g.gain.linearRampToValueAtTime(1, at + xf);
+    g.gain.setValueAtTime(1, until - xf);
+    g.gain.linearRampToValueAtTime(0, until);
+    s.connect(g); g.connect(this.stemGain[name]);
+    s.start(at, s.loopStart);
+    s.stop(until + 0.05);
+    const live = this.stemLive[name].gain;
+    live.cancelScheduledValues(at);
+    live.setValueAtTime(1, at); live.linearRampToValueAtTime(0, at + xf);
+    live.setValueAtTime(0, until - xf); live.linearRampToValueAtTime(1, until);
+    this._holds[name] = { src: s, gain: g, until };
+    this._stemSrc["hold_" + name] = s;           // rate changes / brakes reach it too
+    s.onended = () => { if (this._holds[name] && this._holds[name].src === s) { delete this._holds[name]; delete this._stemSrc["hold_" + name]; } g.disconnect(); };
+    return true;
+  }
+
+  releaseHold(name, at = 0) {
+    const h = this._holds[name];
+    if (!h) return;
+    const t = Math.max(audioCtx.currentTime, at || 0);
+    try { h.src.stop(t + 0.03); } catch (e) { /* already stopped */ }
+    const live = this.stemLive[name].gain;
+    live.cancelScheduledValues(t); live.setValueAtTime(live.value, t); live.linearRampToValueAtTime(1, t + 0.03);
+    delete this._holds[name];
+    delete this._stemSrc["hold_" + name];
+  }
+
+  _emitStem(state) {
+    if (typeof window.dispatchEvent === "function") {
+      window.dispatchEvent(new CustomEvent("ai-activity", { detail: { kind: "stems", deck: this.id, state } }));
     }
   }
 
@@ -360,10 +651,17 @@ class Deck {
     // Forward loops report a wrapped position, so the clock (cursor, phrase
     // grid, autopilot exit timing) stays inside the loop instead of running on.
     this._loopSpan = this.loopOn && !this.reversed ? [pos, Math.min(pos + this.loopBeats * 60 / (this.bpm || 128), duration)] : null;
-    src.connect(this.inputGain);
+    src.connect(this.mixGain);
     const startAt = when && when > audioCtx.currentTime ? when : 0;
     src.start(startAt, Math.max(0, Math.min(bufPos, duration - 0.01)));
     this.source = src;
+    // Stems ride along sample-locked (reversed playback: full mix only).
+    if (this.stems && !this.reversed) {
+      for (const n of STEM_NAMES) this._startStem(n, startAt || audioCtx.currentTime, pos, src);
+      if (this.tempoStems && !this.stemState) this.stemMix({ drums: 1, bass: 1, vocals: 1, other: 1, bus: 0 }, startAt || audioCtx.currentTime, 0.005);
+    } else if (this.stemState) {
+      this.stemMix(null);
+    }
     this.startedAt = startAt || audioCtx.currentTime;
     this.startOffset = pos;
     this.playing = true;
@@ -371,10 +669,12 @@ class Deck {
     if (spin) {
       const now = audioCtx.currentTime;
       const target = this._playbackRate();
-      const p = src.playbackRate;
-      p.cancelScheduledValues(now);
-      p.setValueAtTime(0.0001, now);
-      p.linearRampToValueAtTime(target, now + SPIN_UP_SECONDS);
+      for (const s of this._allSources()) {
+        const p = s.playbackRate;
+        p.cancelScheduledValues(now);
+        p.setValueAtTime(0.0001, now);
+        p.linearRampToValueAtTime(target * (s._rateMul || 1), now + SPIN_UP_SECONDS);
+      }
       this._spinningUp = true;
       this._spinUpStartedAt = now;
       this._spinUpRate = target;
@@ -417,6 +717,7 @@ class Deck {
       this.source.disconnect();
       this.source = null;
     }
+    this._stopStems();
   }
 
   toggle() {
@@ -449,6 +750,78 @@ class Deck {
     }
     this.play(this.hotCues[n]);
     return "jump";
+  }
+
+  // Key-locked stems at `bpm` (multi-BPM stem sets, server-rendered and cached).
+  // While on, the deck plays its stems instead of its pitched mix: the pitch
+  // fader moves tempo, not key. Resolves true when attached (or already on).
+  async useTempoStems(bpm) {
+    const tid = this.id === "a" ? state.trackA : state.trackB;
+    if (!tid || !this.buffer || !this.stems) return false;
+    if (this.tempoStems && Math.abs(this.tempoStems.bpm - bpm) < 0.5) return true;
+    const analysis = this.analysis;
+    for (let i = 0; i < 90; i++) {
+      const res = await fetch(`/api/tracks/${tid}/stems?bpm=${bpm.toFixed(2)}&separate=1`);
+      if (!res.ok) return false;
+      const v = await res.json();
+      if (this.analysis !== analysis) return false;
+      if (v.stems) {
+        const bufs = {};
+        await Promise.all(STEM_NAMES.map(async (n) => {
+          bufs[n] = await audioCtx.decodeAudioData(await (await fetch(v.stems[n])).arrayBuffer());
+        }));
+        if (this.analysis !== analysis) return false;
+        bufs.lag = this.stems.lag || 0;
+        bufs.ratio = v.ratio;
+        this._nativeStems = this._nativeStems || this.stems;
+        this.tempoStems = { bpm: v.bpm, ratio: v.ratio };
+        this.setStems(bufs);
+        return true;
+      }
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+    return false;
+  }
+
+  // Back to the native stems (and the full mix) on the next start/now.
+  dropTempoStems() {
+    if (!this.tempoStems) return;
+    this.tempoStems = null;
+    const nat = this._nativeStems;
+    this._nativeStems = null;
+    this.setStems(nat || null);
+    this.stemMix(null, 0, 0.02);
+  }
+
+  // Live stems + vocal map. The analysis carries no vocal regions unless a
+  // stem exists, so the server separates the song (4 stems) in the background
+  // while it plays; the deck polls, decodes the stems, measures their lag
+  // against the mix and attaches them sample-locked.
+  async _loadVocals(trackId, analysis) {
+    for (let i = 0; i < 60; i++) {                       // ~10 min of polling
+      if (this.analysis !== analysis) return;            // another song loaded
+      try {
+        const res = await fetch(`/api/tracks/${trackId}/stems?separate=1`);
+        if (!res.ok) return;
+        const v = await res.json();
+        if (v.stems) {
+          if (!(analysis.vocal_active_regions && analysis.vocal_active_regions.length)) {
+            const vr = await (await fetch(`/api/tracks/${trackId}/vocals`)).json();
+            if (Array.isArray(vr.regions)) analysis.vocal_active_regions = vr.regions;
+          }
+          if (this.analysis !== analysis) return;
+          const bufs = {};
+          await Promise.all(STEM_NAMES.map(async (n) => {
+            bufs[n] = await audioCtx.decodeAudioData(await (await fetch(v.stems[n])).arrayBuffer());
+          }));
+          if (this.analysis !== analysis || !this.buffer) return;
+          bufs.lag = await stemLagAsync(this.buffer, bufs);
+          this.setStems(bufs);
+          return;
+        }
+      } catch (e) { console.warn("stems:", e.message); return; }
+      await new Promise((r) => setTimeout(r, 10000));
+    }
   }
 
   toggleLoop() {
@@ -530,12 +903,14 @@ class Deck {
     this._brakeStartedAt = audioCtx.currentTime;
     this._brakeDur = seconds;
     this._braking = true;
-    const p = this.source.playbackRate;
-    p.cancelScheduledValues(audioCtx.currentTime);
-    p.setValueAtTime(rate, audioCtx.currentTime);
     // AudioParam playbackRate of exactly 0 is legal but some engines stall on
     // it, so ramp to a hair above zero and then hard-stop.
-    p.linearRampToValueAtTime(0.0001, audioCtx.currentTime + seconds);
+    for (const s of this._allSources()) {
+      const p = s.playbackRate;
+      p.cancelScheduledValues(audioCtx.currentTime);
+      p.setValueAtTime(rate * (s._rateMul || 1), audioCtx.currentTime);
+      p.linearRampToValueAtTime(0.0001, audioCtx.currentTime + seconds);
+    }
     this._brakeTimer = setTimeout(() => {
       const finalPos = this._currentPosition();
       this._braking = false;
@@ -596,7 +971,7 @@ function setupTrimRegion(deckId, wavesurfer) {
       id: "trim",
       start: inset,
       end: duration - inset,
-      color: deckId === "a" ? "rgba(0, 240, 255, 0.10)" : "rgba(255, 87, 8, 0.10)",
+      color: deckId === "a" ? "rgba(0, 255, 102, 0.10)" : "rgba(255, 43, 214, 0.10)",
       drag: false,
       resize: true,
     });
@@ -1054,7 +1429,7 @@ function paintLadder(segs, level) {
 const masterAnalyser = audioCtx.createAnalyser();
 masterAnalyser.fftSize = 256;
 const masterLevelData = new Uint8Array(masterAnalyser.frequencyBinCount);
-masterGain.connect(masterAnalyser);
+masterOut.connect(masterAnalyser);
 
 function masterLevel() {
   masterAnalyser.getByteTimeDomainData(masterLevelData);

@@ -59,8 +59,7 @@ def test_parroted_few_shot_is_retried(monkeypatch):
     import json
     import app.ui.autopilot_service as svc
     copy = {"current_genre": "melodic house", "suggestions": [
-        {"artist": "Fred again..", "title": "Marea (We've Lost Dancing)", "genre": "melodic house", "genre_hop": 0},
-        {"artist": "Fred again..", "title": "Delilah (pull me out of this)", "genre": "melodic house", "genre_hop": 0}]}
+        {"artist": "Artist One", "title": "Song One", "genre": "melodic house", "genre_hop": 0}]}
     real = {"current_genre": "dream pop", "suggestions": [
         {"artist": "Beach House", "title": "Space Song", "genre": "dream pop", "genre_hop": 0}]}
     replies = iter([json.dumps(copy), json.dumps(real)])
@@ -105,7 +104,67 @@ def test_double_time_counts_as_locked():
     assert _tempo_locks(96, 117) is False
 
 
+def test_invented_songs_dropped_and_retried(monkeypatch):
+    import json
+    import app.ui.autopilot_service as svc
+    fake = {"current_genre": "dream pop", "suggestions": [_pick("Morrison", 95)]}
+    real = {"current_genre": "dream pop", "suggestions": [_pick("Space Song", 95), _pick("Invented", 95)]}
+    replies, prompts = iter([json.dumps(fake), json.dumps(real)]), []
+    monkeypatch.setattr(svc, "chat_raw", lambda s, u, **k: (prompts.append(u), next(replies))[1])
+    monkeypatch.setattr(svc, "_verify_song", lambda a, t: t == "Space Song")
+    out = svc.suggest_next_tracks("Apocalypse", "Cigarettes After Sex", 96.0, "8A", 290.0, 0.3, "", [])
+    assert [s["title"] for s in out] == ["Space Song"]
+    assert "do not exist" in prompts[1] and "Morrison" in prompts[1]
+
+
+def test_unknown_lookup_keeps_pick(monkeypatch):
+    import json
+    import app.ui.autopilot_service as svc
+    reply = {"current_genre": "dream pop", "suggestions": [_pick("Space Song", 95)]}
+    monkeypatch.setattr(svc, "chat_raw", lambda *a, **k: json.dumps(reply))
+    monkeypatch.setattr(svc, "_verify_song", lambda a, t: (_ for _ in ()).throw(OSError("offline")))
+    out = svc.suggest_next_tracks("Apocalypse", "Cigarettes After Sex", 96.0, "8A", 290.0, 0.3, "", [])
+    assert [s["title"] for s in out] == ["Space Song"]
+
+
+def test_current_song_never_its_own_next(monkeypatch):
+    import json
+    import app.ui.autopilot_service as svc
+    reply = {"current_genre": "dream pop", "suggestions": [_pick("Apocalypse", 96), _pick("Space Song", 95)]}
+    monkeypatch.setattr(svc, "chat_raw", lambda *a, **k: json.dumps(reply))
+    out = svc.suggest_next_tracks("Apocalypse", "Cigarettes After Sex", 96.0, "8A", 290.0, 0.3, "", [])
+    assert [s["title"] for s in out] == ["Space Song"]
+
+
+def test_no_corrective_retry_past_budget(monkeypatch):
+    import json
+    import app.ui.autopilot_service as svc
+    far = {"current_genre": "dream pop", "suggestions": [_pick("Cirrus", 117)]}
+    calls = []
+    monkeypatch.setattr(svc, "chat_raw", lambda *a, **k: (calls.append(1), json.dumps(far))[1])
+    monkeypatch.setattr(svc, "SUGGEST_BUDGET_S", 0.0)
+    out = svc.suggest_next_tracks("Apocalypse", "Cigarettes After Sex", 96.0, "8A", 290.0, 0.3, "", [])
+    assert len(calls) == 1 and [s["title"] for s in out] == ["Cirrus"]  # client ladders toward it
+
+
+def test_dated_concert_upload_is_not_the_song():
+    from app.ui.download_service import _DATED_RE
+    assert _DATED_RE.search('Skrillex & Four Tet - "Butterflies" - April 29, 2023 - Morrison, Colorado')
+    assert _DATED_RE.search("Fred again.. live 23 July 2021")
+    assert not _DATED_RE.search("Fred again.. - Delilah (pull me out of this)")
+
+
 def test_qwen3_think_block_is_stripped():
     from app.ui.autopilot_service import _extract_json
     raw = '<think>\nmaybe {"a": 1}?\n</think>\n\n{"suggestions": []}'
     assert _extract_json(raw) == {"suggestions": []}
+
+
+def test_sequel_is_not_the_song():
+    from app.ui.download_service import _sequel
+    assert _sequel("Victory Lap Five", "Victory Lap")
+    assert _sequel("Fred again.. - Victory Lap Two (with Skepta)", "Victory Lap")
+    assert _sequel("Song Pt. 2", "Song")
+    assert not _sequel("Fred again.. - Victory Lap (feat. Skepta & PlaqueBoyMax)", "Victory Lap")
+    assert not _sequel("Victory Lap Five", "Victory Lap Five")
+    assert not _sequel("22 (Over U)", "22")

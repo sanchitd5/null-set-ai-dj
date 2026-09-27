@@ -30,7 +30,7 @@ MAX_RATE_DEVIATION = 0.04
 MIN_KEY_SCORE = 0.8
 MIN_GUEST_VOCAL_COVERAGE = 0.5
 MAX_HOST_VOCAL_COVERAGE = 0.2
-ALLOWED_BARS = (8, 16)
+ALLOWED_BARS = (8, 16, 32)  # 32 = full mashup: the guest's whole vocal phrase over the host
 
 Regions = List[Tuple[float, float]]
 
@@ -78,11 +78,16 @@ def plan_mashup(
     host_vocals_path: Callable[[], str],
     guest_vocals_path: Callable[[], str],
     bars: int = 8,
+    host_mutable: bool = False,
 ) -> dict:
     """Plan a guest-vocal-over-host-beat layer.
 
     host_vocals_path / guest_vocals_path are called lazily (Demucs is slow), and
     only after the cheap key and tempo checks pass.
+
+    host_mutable: the host deck has live stems, so its own vocal can be muted
+    under the guest's (stem mashup). Any host phrase then qualifies; phrases
+    that are already instrumental come first.
     """
     if bars not in ALLOWED_BARS:
         raise ValueError(f"bars must be one of {ALLOWED_BARS}")
@@ -119,14 +124,20 @@ def plan_mashup(
 
     host_regions = vocal_presence_map(Path(host_vocals_path()))
     h_len = bars * host_bar
-    entries = []
+    entries, muted = [], []
     for b in host.phrase_boundaries_8bar:
         if b + h_len > host.duration - 8 * host_bar:
             break
         if _touches_edge_section(host, b, b + h_len):
             continue
-        if _coverage(host_regions, b, b + h_len) <= MAX_HOST_VOCAL_COVERAGE:
+        cov = _coverage(host_regions, b, b + h_len)
+        if cov <= MAX_HOST_VOCAL_COVERAGE:
             entries.append(round(b, 3))
+        elif host_mutable:
+            muted.append(round(b, 3))
+    mute_host = False
+    if not entries and muted:
+        entries, mute_host = muted, True
     if not entries:
         return {"ok": False, "reasons": ["host has no instrumental phrase long enough"]}
 
@@ -134,6 +145,7 @@ def plan_mashup(
         "ok": True,
         "reasons": [],
         "bars": bars,
+        "mute_host_vocals": mute_host,
         "rate": round(rate, 5),
         "semitones": round(12 * math.log2(rate), 3),
         "guest_start": round(best_start, 3),

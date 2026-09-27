@@ -75,7 +75,7 @@ assert.strictEqual(energyNote([5, 6], 0.9, true), null);
 assert.strictEqual(energyNote([9], 0.2, false), null);
 
 // ---- AI plan + remix moves ------------------------------------------------
-const { aiVeto, remixBlock, needsHoldLoop, holdLoopAnchor, holdLoopBars, phraseBounds } = core;
+const { aiVeto, remixBlock, needsHoldLoop, holdLoopAnchor, holdLoopSpan, phraseBounds } = core;
 const rx = (o) => s(Object.assign({ phraseIdx: 6, lastRemixPhrase: null, remixUsed: [], remixCount: 0,
                                     preDrop: false, skipHitsDrop: { 8: false, 16: false } }, o));
 
@@ -142,7 +142,20 @@ const hsecs = [{ label: "drop", start: 160, end: 192, energy: 0.9 }, { label: "o
 assert.strictEqual(holdLoopAnchor([], hsecs, 205, 224, 2), 176);
 // no outro: last whole phrase that has started
 assert.strictEqual(holdLoopAnchor([], [], 205, 224, 2), 192);
-assert.strictEqual(holdLoopBars(0), 8); assert.strictEqual(holdLoopBars(3), 4);
+// hold loop spans up to 32 bars back so the song sounds extended, never stuck
+{ const b2 = 2, dbs = Array.from({ length: 120 }, (_, i) => i * b2);
+  assert.deepStrictEqual(holdLoopSpan(176, 0, b2, dbs), { start: 128, bars: 32 });
+  assert.deepStrictEqual(holdLoopSpan(176, 150, b2, dbs), { start: 160, bars: 16 });   // came in late
+  assert.deepStrictEqual(holdLoopSpan(176, 170, b2, dbs), { start: 176, bars: 8 });
+  assert.deepStrictEqual(holdLoopSpan(176.03, 0, b2, dbs).start, 128);                 // snapped to a downbeat
+  // vocals: seams must sit in vocal gaps (a seam through a sung line sounds stuck)
+  // bar = 2 s: anchor 176 -> jump-out 192; 32-bar span 128-192
+  assert.deepStrictEqual(holdLoopSpan(176, 0, b2, dbs, [[120, 130]]), { start: 112, bars: 32 });  // 128 cut -> end 176
+  assert.deepStrictEqual(holdLoopSpan(176, 0, b2, dbs, [[100, 140], [150, 170]]), { start: 80, bars: 32 });   // 3 phrases back
+  assert.deepStrictEqual(holdLoopSpan(176, 0, b2, dbs, [[10, 20]]), { start: 128, bars: 32 });     // no cut: as before
+  // jump-out point inside a vocal: nothing clean possible -> plain span
+  assert.deepStrictEqual(holdLoopSpan(176, 0, b2, dbs, [[185, 200]]), { start: 128, bars: 32 });
+}
 
 // ── PEAK mode ────────────────────────────────────────────────────────────────
 {
@@ -290,3 +303,17 @@ assert.strictEqual(holdLoopBars(0), 8); assert.strictEqual(holdLoopBars(3), 4);
 }
 
 console.log("dj-mind core ok");
+
+// ---- silent pre-check picker ----------------------------------------------
+{
+  const { pickHoldLoop, holdLoopCandidates } = core;
+  const c = [{ id: 1 }, { id: 2 }, { id: 3 }];
+  assert.strictEqual(pickHoldLoop(c, (x) => ({ 1: 0.3, 2: 0.8, 3: 0.9 })[x.id], 0.6).pick.id, 2); // first passing, in order
+  assert.strictEqual(pickHoldLoop(c, (x) => ({ 1: 0.3, 2: 0.5, 3: 0.4 })[x.id], 0.6).pick.id, 2); // none pass: best
+  assert.strictEqual(pickHoldLoop(c, () => null, 0.6).pick.id, 1);                               // unscored: preference
+  const dbs = Array.from({ length: 120 }, (_, i) => i * 2);
+  const cs = holdLoopCandidates(176, 0, 2, dbs, [[120, 130]]);
+  assert.ok(cs[0].vocalClean === true && cs.some((x) => x.vocalClean === false));
+  assert.ok(cs.every((x) => x.jumpOut === 192));
+}
+console.log("hold loop picker ok");

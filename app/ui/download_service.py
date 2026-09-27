@@ -149,6 +149,26 @@ _VERSION_RE = re.compile(
 )
 
 
+# Sequel markers: "Victory Lap Five" is not "Victory Lap" (user, 2026-09-27).
+_SEQUEL_WORDS = {"two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
+                 "ii", "iii", "iv", "v", "2", "3", "4", "5", "6", "7", "8", "9", "10"}
+
+
+def _sequel(video_title: str, wanted_title: str) -> bool:
+    """True when the video title continues the wanted title with a sequel
+    marker the request doesn't have ("Victory Lap Five", "Song Pt. 2")."""
+    want = _norm(re.sub(r"[\(\[][^\)\]]*[\)\]]", " ", wanted_title)).split()
+    if not want:
+        return False
+    vt = _norm(re.sub(r"[\(\[][^\)\]]*[\)\]]", " ", video_title)).split()
+    for i in range(len(vt) - len(want) + 1):
+        if vt[i:i + len(want)] == want:
+            rest = vt[i + len(want): i + len(want) + 2]
+            if rest and (rest[0] in _SEQUEL_WORDS or (rest[0] in ("pt", "part") and len(rest) > 1)):
+                return rest[0] not in want
+    return False
+
+
 def _search_match_filter(words: list[str], song: Optional[tuple[list[str], list[str], str]] = None):
     """yt-dlp match_filter: accept only a real song whose title matches the query.
 
@@ -195,6 +215,8 @@ def _search_match_filter(words: list[str], song: Optional[tuple[list[str], list[
                 return f"artist does not match ({a_hits}/{len(artist_w)} words)"
             if _VERSION_RE.search(title) and not _VERSION_RE.search(raw_title):
                 return "alternate version (remix/edit) not requested"
+            if _sequel(title, raw_title):
+                return "a sequel (Two / Five / Pt. 2) of the requested song, not the song"
             return None
         if words:
             hay = " " + _norm(f"{title} {info.get('channel') or ''} {info.get('uploader') or ''}") + " "
@@ -238,6 +260,75 @@ def search_songs(query: str, limit: int = 8) -> list[dict]:
         if len(out) >= limit:
             break
     return out
+
+
+# Dated uploads are concert / radio recordings: "... - April 29, 2023 - Morrison, CO".
+_DATED_RE = re.compile(
+    r"\b(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+\d{1,2}(st|nd|rd|th)?,?\s+(19|20)\d{2}\b"
+    r"|\b\d{1,2}(st|nd|rd|th)?\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+(19|20)\d{2}\b",
+    re.IGNORECASE,
+)
+VERIFY_POOL = 8
+
+
+def verify_song(artist: str, title: str) -> Optional[bool]:
+    """Does "artist - title" exist as a real song? One flat YouTube search (~1.5 s,
+    no download). True = found, False = no upload matches, None = search failed
+    (caller must not drop the pick on None).
+
+    Stricter than the download matcher: EVERY artist word must appear (so
+    "AP Dhillon" does not pass on "Arjan Dhillon"), and dated concert uploads
+    don't count. A local model invents plausible titles; catching them here costs
+    ~1.5 s instead of a failed download round."""
+    artist, title = " ".join(str(artist or "").split()), " ".join(str(title or "").split())
+    if _yt_dlp is None or not artist or not title or len(artist) + len(title) > 200:
+        return None
+    artist_w, title_w = _words_of(artist), _words_of(re.sub(r"[\(\[][^\)\]]*[\)\]]", " ", title))
+    if not artist_w or not title_w:
+        return None
+    base = _search_match_filter(_words_of(f"{artist} {title}"), (artist_w, title_w, title))
+    opts = {"quiet": True, "no_warnings": True, "extract_flat": "in_playlist",
+            "skip_download": True, "playlistend": VERIFY_POOL}
+    try:
+        with _yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(f"ytsearch{VERIFY_POOL}:{artist} - {title} audio", download=False)
+    except Exception:
+        return None
+    for e in (info or {}).get("entries") or []:
+        if not e or base(e) is not None or _DATED_RE.search(e.get("title") or ""):
+            continue
+        hay = " " + _norm(f"{e.get('title') or ''} {e.get('channel') or ''} {e.get('uploader') or ''}") + " "
+        if all(f" {w} " in hay for w in artist_w):
+            return True
+    return False
+
+
+def song_views(name: str) -> Optional[int]:
+    """YouTube views of the best-known upload of `name` (a track display name).
+    Highest view count among the top results whose title shares most of the
+    name's words; None when the search fails or nothing matches."""
+    q = " ".join(re.sub(r"[\(\[][^\)\]]*[\)\]]", " ", str(name or "")).split())[:120]
+    words = [w for w in _words_of(q) if w not in ("official", "audio", "video", "lyric", "lyrics", "music")]
+    if _yt_dlp is None or len(words) < 1:
+        return None
+    opts = {"quiet": True, "no_warnings": True, "extract_flat": "in_playlist",
+            "skip_download": True, "playlistend": 6}
+    try:
+        with _yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(f"ytsearch6:{q}", download=False)
+    except Exception:
+        return None
+    best = None
+    for e in (info or {}).get("entries") or []:
+        if not e or _is_mix(e.get("title") or "") or _DATED_RE.search(e.get("title") or ""):
+            continue
+        hay = " " + _norm(f"{e.get('title') or ''} {e.get('channel') or ''}") + " "
+        if sum(1 for w in words if f" {w} " in hay) / len(words) < 0.6:
+            continue
+        v = e.get("view_count")
+        if isinstance(v, int) and (best is None or v > best):
+            best = v
+    return best if best is not None else 0
 
 
 def detect_source(url: str) -> str:

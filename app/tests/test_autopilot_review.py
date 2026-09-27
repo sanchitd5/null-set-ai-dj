@@ -98,17 +98,20 @@ def _examples():
     return out
 
 
-def test_few_shot_json_parses_and_new_examples_use_current_schema():
+def test_few_shot_json_parses_and_uses_current_schema():
     ex = _examples()
-    assert len(ex) == 4
-    new = [v for k, v in ex.items() if k.startswith(("EXAMPLE 3", "EXAMPLE 4"))]
-    assert len(new) == 2
-    for d in new:
+    assert len(ex) == 1
+    for d in ex.values():
         assert {"steering", "occasion_fit", "current_genre", "current_profile"} <= set(d)
-        assert len(d["suggestions"]) == 3
         for s in d["suggestions"]:
             assert {"occasion_fit", "track_profile", "genre", "vibe_link", "expected_key"} <= set(s)
-    assert "half-time" in svc._FEW_SHOT.lower() and "drum & bass" in svc._FEW_SHOT
+
+
+def test_few_shot_uses_placeholder_songs_only():
+    # real songs in the example were copied back verbatim and biased every set
+    for d in _examples().values():
+        for s in d["suggestions"]:
+            assert s["artist"].startswith("Artist ") and s["title"].startswith("Song ")
 
 
 def test_few_shot_examples_obey_allowed_keys():

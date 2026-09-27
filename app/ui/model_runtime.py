@@ -2,7 +2,7 @@
 
 At server startup (background thread, never blocks the app):
   1. MLX: start `mlx_lm.server` for MLX_MODEL (default
-     mlx-community/gemma-3-27b-it-4bit) on MLX_PORT unless one is already
+     mlx-community/Qwen3-30B-A3B-Instruct-2507-4bit) on MLX_PORT unless one is already
      answering, then send one tiny warm-up chat so the weights are loaded and
      the first real suggestion does not pay the model-load cost.
   2. If MLX is unavailable (not Apple Silicon, mlx-lm missing, model not
@@ -16,7 +16,7 @@ no change. Only publishes once the backend has actually answered.
 
 Env:
   LLM_BACKEND   auto (default) | mlx | ollama
-  MLX_MODEL     mlx-community/gemma-3-27b-it-4bit
+  MLX_MODEL     mlx-community/Qwen3-30B-A3B-Instruct-2507-4bit
   MLX_PORT      8081
   OLLAMA_MODEL  gemma3:27b      (fallback model)
   OLLAMA_URL    http://localhost:11434
@@ -36,7 +36,7 @@ import urllib.request
 from pathlib import Path
 from typing import Optional
 
-MLX_MODEL = os.environ.get("MLX_MODEL", "mlx-community/gemma-3-27b-it-4bit")
+MLX_MODEL = os.environ.get("MLX_MODEL", "mlx-community/Qwen3-30B-A3B-Instruct-2507-4bit")
 MLX_PORT = int(os.environ.get("MLX_PORT", "8081"))
 MLX_URL = f"http://127.0.0.1:{MLX_PORT}"
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>AI Music Brain — DJ Console</title>
+  <title>NULL::SET — AI DJ Console</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -18,9 +18,23 @@
 <!-- ========================================================================= -->
 <header class="topbar">
   <div class="brand">
-    <span class="brand-dot"></span>
-    <span class="brand-name">PULSE</span>
-    <span class="chip">AI MUSIC BRAIN</span>
+    <button class="nul-mascot nul-idle" id="nul-mascot" type="button" aria-label="NULL, the AI DJ: show what it is doing" title="NULL, the AI DJ. Click: show what it's doing">
+      <svg viewBox="0 0 32 32" aria-hidden="true">
+        <g class="nul-head">
+          <rect class="nul-phones" x="2" y="11" width="4" height="10" rx="1.5"/>
+          <rect class="nul-phones" x="26" y="11" width="4" height="10" rx="1.5"/>
+          <path class="nul-band" d="M4 12 Q16 -1 28 12" fill="none"/>
+          <rect class="nul-face" x="6" y="7" width="20" height="18" rx="4"/>
+          <g class="nul-eyes"><rect class="nul-eye" x="10" y="13" width="4" height="4" rx="1"/><rect class="nul-eye" x="18" y="13" width="4" height="4" rx="1"/></g>
+          <rect class="nul-mouth" x="12" y="20" width="8" height="1.6" rx="0.8"/>
+          <path class="nul-sweat" d="M25 6 q1.6 2.4 0 3.4 q-1.6 -1 0 -3.4z"/>
+          <text class="nul-bang" x="27" y="7">!</text>
+        </g>
+      </svg>
+    </button>
+    <canvas class="nul-waves" id="nul-waves" width="168" height="56" aria-hidden="true"></canvas>
+    <span class="brand-name">NULL::SET</span>
+    <span class="chip" id="nul-state">AI DJ</span>
   </div>
 
   <div class="divider-v"></div>
@@ -50,6 +64,12 @@
           title="Keylock is not available in this build: raw Web Audio playbackRate always shifts pitch with tempo. True keylock needs a phase-vocoder / granular time-stretch (e.g. SoundTouchJS).">
     KEYLOCK <span class="na">N/A</span>
   </button>
+
+  <!-- TRACK ID: what is playing and what is next (ai-overlay.js) -->
+  <div class="hud track-id" id="track-id" title="Track ID: now playing and next up">
+    <div class="hud-col"><span class="hud-label">NOW ▸</span><span class="tid-name" id="tid-now">—</span></div>
+    <div class="hud-col"><span class="hud-label">NEXT ▸</span><span class="tid-name tid-next" id="tid-next">—</span></div>
+  </div>
 
   <div class="spacer"></div>
 
@@ -263,6 +283,19 @@
 <main class="workspace">
 
   <!-- ============================ DECK A ================================== -->
+  <!-- AI ACTIONS: every automatic move, on demand (ai-actions.js). Each lands on the next 8-bar line. -->
+  <div class="ai-actions" id="ai-actions" role="toolbar" aria-label="AI actions">
+    <span class="hud-label">AI ACTIONS</span>
+    <button class="hw-btn ai-action" data-ai-action="mix" title="Mix into the other deck now: 16-bar stem blend (synths first, kick + bass swap on bar 8, one singer). Key-locked tempo stems when the tempos are far apart">AUTO MIX</button>
+    <button class="hw-btn ai-action" data-ai-action="mashup" title="The other deck's vocal phrase over this song (its own vocal muted via stems)">AUTO MASHUP</button>
+    <button class="hw-btn ai-action" data-ai-action="sample" title="Sampler move into the next line: riser, snare roll, clap + open hat">AUTO SAMPLE</button>
+    <button class="hw-btn ai-action" data-ai-action="strip" title="Strip & rebuild this song with its stems (the USB002 move): drums out, bass out, voice alone, build, drop">STRIP &amp; REBUILD</button>
+    <button class="hw-btn ai-action" data-ai-action="remix" title="Stem remix in the next 16-bar section: the move that fits this song's content (hold on, acapella, drum break, bass out, synth hold)">STEM REMIX</button>
+    <button class="hw-btn ai-action" data-ai-action="hold" title="Hold on: loop the vocal's last bar over the next 4 bars while the music plays on">HOLD VOX</button>
+    <button class="hw-btn ai-action" data-ai-action="vocals" title="This song to its instrumental on the next line, or back to the full mix">VOCAL SWAP</button>
+    <button class="hw-btn ai-action" data-ai-action="riff" title="Riff over rap: key-lock this song to the next one's tempo, loop its drop under the next song's rap (only when the pair fits)">RIFF × RAP</button>
+  </div>
+
   <section class="deck-panel deck-a" id="deck-a" data-deck="a">
     <div class="deck-head">
       <div class="deck-id">A</div>
@@ -704,7 +737,7 @@
 
   <div class="ap-controls">
     <input type="text" id="ap-seed-input"
-           placeholder="Seed URL — YouTube or YouTube Music track…"
+           placeholder="Seed URL (optional: empty = start from the song playing now)…"
            autocomplete="off" spellcheck="false" />
     <input type="text" id="ap-occasion-input"
            placeholder="Occasion (e.g. late night club, festival warm-up, chill sunset)…"
@@ -716,6 +749,7 @@
         <option value="quick">QUICK · high energy</option>
       </select>
       <button class="hw-btn accent-btn" id="ap-start-btn">▶ START SET</button>
+      <button class="hw-btn" id="ap-start-current-btn" title="Start the set from the song playing now (or loaded on a deck): no download, no restart. The songs you've already played this session steer the suggestions">▶ FROM CURRENT</button>
       <button class="hw-btn" id="ap-stop-btn" disabled>■ STOP</button>
       <label class="hud-label" title="Synced drum machine: sparse fills, build rolls and breakdown kicks on the playing deck's beatgrid">
         <input type="checkbox" id="ap-drums-toggle" checked /> LIVE DRUMS
@@ -723,11 +757,23 @@
       <label class="hud-label" title="Lay the next track's vocal over an instrumental phrase of the current one (A x B), when key and tempo fit">
         <input type="checkbox" id="ap-mashup-toggle" checked /> MASHUPS
       </label>
+      <label class="hud-label" title="Riff over rap (USB002 1:06:00): when A's tempo is 3-15 % off B's, A has a groove running into its own breakdown and B raps, A's stems are key-locked to B's tempo on the server and the 64-bar move replaces the transition">
+        <input type="checkbox" id="ap-riff-toggle" checked /> RIFF×RAP
+      </label>
+      <label class="hud-label" title="The AI plays the sampler: riser + snare roll + clap/open hat into drops, a riser into transitions, an open hat when a new layer arrives. Own 150 Hz high-passed bus that follows the music's level; one move per 16 bars, 4 per song">
+        <input type="checkbox" id="ap-sampler-toggle" checked /> AUTO SAMPLER
+      </label>
+      <label class="hud-label" title="Remix on the go with stems: in some 16-bar sections the AI holds the vocal's last bar (hold on), drops to the acapella, a drum break, bass out or a synth hold, and brings everything back on the line. Max 3 per song, 32 bars apart">
+        <input type="checkbox" id="ap-remix-toggle" checked /> STEM REMIX
+      </label>
       <label class="hud-label" title="Phrase-level DJ moves: pre-clear, sub drops, loops, beat jumps, rolls, filter builds, echo throws">
-        <input type="checkbox" id="ap-mind-toggle" checked /> FRED MIND
+        <input type="checkbox" id="ap-mind-toggle" checked /> SET MIND
       </label>
       <label class="hud-label" title="One LLM plan per song pair (recipe, exit phrase, moves); the rules still veto anything unsafe">
         <input type="checkbox" id="ap-ai-toggle" checked /> AI ASSIST
+      </label>
+      <label class="hud-label" title="During a HOLD LOOP: a DSP watchdog checks the loop seam, grid, clipping and low end every 250 ms; once per phrase Qwen3-Omni listens to the master and picks move / wash / keep (rules decide when the model is off)">
+        <input type="checkbox" id="ap-ear-toggle" checked /> LIVE EAR
       </label>
       <label class="hud-label" title="Peak-time moves on high-energy songs: double drop, drop swap, fake-out, roll into the drop, heavier live drums. Max 1 big moment per song, 2 per 3 songs">
         <input type="checkbox" id="ap-peak-toggle" checked /> PEAK MOVES
@@ -828,10 +874,12 @@
 <footer class="footbar">
   <span>WEB AUDIO ENGINE · <span id="foot-rate">--</span> · BUFFER: browser-managed</span>
   <span id="foot-decks">DECK A: -- · DECK B: --</span>
-  <span>AI MUSIC BRAIN — personal / educational use</span>
+  <span>NULL::SET AI DJ — personal / educational use</span>
 </footer>
 
 <script src="/app.js"></script>
+<script src="/ai-overlay.js"></script>
+<script src="/mascot.js"></script>
 <script src="/deck-controller.js"></script>
 <script src="/fx-rack.js"></script>
 <script src="/automation.js"></script>
@@ -840,7 +888,13 @@
 <script src="/sampler-deck.js"></script>
 <script src="/mashup-layer.js"></script>
 <script src="/browser.js"></script>
+<script src="/stem-moves.js"></script>
+<script src="/riff-over-rap.js"></script>
+<script src="/auto-sampler.js"></script>
+<script src="/ai-actions.js"></script>
+<script src="/stem-wave.js"></script>
 <script src="/dj-mind.js"></script>
+<script src="/live-ear.js"></script>
 <script src="/download-progress.js"></script>
 <script src="/autopilot.js"></script>
 <script src="/beat-grid-ai.js"></script>

@@ -208,7 +208,7 @@ if (padGrid) {
 // <a download> — no backend round-trip needed.
 
 const recDest = audioCtx.createMediaStreamDestination();
-masterGain.connect(recDest);
+masterOut.connect(recDest);
 
 const recBtn = document.getElementById("rec-btn");
 const recStatus = document.getElementById("rec-status");

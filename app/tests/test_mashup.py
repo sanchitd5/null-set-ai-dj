@@ -72,3 +72,23 @@ def test_bars_validated():
     t = _track("h", 120, "8A")
     with pytest.raises(ValueError):
         mashup.plan_mashup(t, t, lambda: "", lambda: "", bars=12)
+
+
+def test_host_mutable_allows_a_sung_host_phrase(regions):
+    """Live stems on the host: a phrase where the host sings qualifies, flagged
+    mute_host_vocals; without stems the same pair has no instrumental phrase."""
+    host, guest = _track("h", 124, "8A"), _track("g", 124, "8A")
+    regions["host.wav"] = [(0.0, 240.0)]       # host sings the whole song
+    regions["guest.wav"] = [(0.0, 240.0)]
+    plain = mashup.plan_mashup(host, guest, lambda: "host.wav", lambda: "guest.wav", bars=8)
+    assert plain["ok"] is False
+    muted = mashup.plan_mashup(host, guest, lambda: "host.wav", lambda: "guest.wav", bars=8, host_mutable=True)
+    assert muted["ok"] is True and muted["mute_host_vocals"] is True
+
+
+def test_full_mashup_32_bars(regions):
+    host, guest = _track("h", 120, "8A"), _track("g", 120, "8A")
+    regions["host.wav"] = []
+    regions["guest.wav"] = [(0.0, 240.0)]
+    plan = mashup.plan_mashup(host, guest, lambda: "host.wav", lambda: "guest.wav", bars=32)
+    assert plan["ok"] and plan["guest_duration"] == pytest.approx(64.0) and plan["mute_host_vocals"] is False

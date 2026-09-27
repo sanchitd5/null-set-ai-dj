@@ -6,7 +6,7 @@
 #   PORT=8010 ./start.sh  use another port
 #
 # The server boots the LLM itself (app/ui/model_runtime.py): MLX
-# (mlx-community/gemma-3-27b-it-4bit) on Apple Silicon, Ollama as fallback.
+# (mlx-community/Qwen3-30B-A3B-Instruct-2507-4bit) on Apple Silicon, Ollama as fallback.
 # Settings live in .env (LLM_BACKEND, MLX_MODEL, MLX_PORT, OLLAMA_MODEL).
 # Logs: /tmp/ai-dj-server.log (server), /tmp/ai-dj-mlx-server.log (MLX).
 set -euo pipefail
@@ -39,6 +39,18 @@ if [[ -n "$PIDS" ]]; then
   sleep 2
   PIDS="$(lsof -ti ":$PORT" 2>/dev/null || true)"
   [[ -n "$PIDS" ]] && kill -9 $PIDS 2>/dev/null || true
+fi
+
+# Live ear (app/ui/live_ear.py): Qwen3-Omni on mlx-vlm, in its own venv because
+# mlx-vlm needs starlette>=1.0 and the app's fastapi pins <0.28. Optional: the
+# hold loop falls back to the DSP rules when this server is not running.
+OMNI_PY="${OMNI_PY:-$HOME/.venvs/mlx-vlm/bin/python}"
+OMNI_PORT="${OMNI_PORT:-8901}"
+OMNI_MODEL="${OMNI_MODEL:-mlx-community/Qwen3-Omni-30B-A3B-Instruct-4bit}"
+if [[ -x "$OMNI_PY" ]] && ! curl -s --noproxy '*' -m 2 -o /dev/null "http://127.0.0.1:$OMNI_PORT/v1/models"; then
+  echo "starting live ear ($OMNI_MODEL) on :$OMNI_PORT  (log: /tmp/ai-dj-omni-server.log)"
+  (cd /tmp && nohup "$OMNI_PY" -m mlx_vlm.server --model "$OMNI_MODEL" --host 127.0.0.1 \
+     --port "$OMNI_PORT" > /tmp/ai-dj-omni-server.log 2>&1 &)
 fi
 
 echo "starting server on http://localhost:$PORT  (log: $LOG)"

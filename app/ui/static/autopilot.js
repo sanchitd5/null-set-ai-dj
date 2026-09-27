@@ -353,6 +353,23 @@
       at(bars, () => rampParam(lowIn, LOW_KILL, 0, beat));
     };
 
+    // Both decks have live stems: the transition is done with stems, not EQ
+    // (user: the automixer should lean on stems). Every layer gets one owner:
+    // B's synths first, kick + bass swap together on the line, one singer.
+    const sm = window.stemMoves;
+    const od = window.decks && window.decks[out], idk = window.decks && window.decks[inn];
+    if (sm && sm.core.STEM_BLEND_KINDS.has(kind) && od && idk && od.stemsReady && idk.stemsReady) {
+      const bars = (kind === "blend" || kind === "filter" || kind === "loop" ? 16 : 8) * scale;
+      const barS = bar / 1000;
+      ["low", "mid", "high"].forEach((b) => { setRange(eqEl(out, b), 0); setRange(eqEl(inn, b), 0); });
+      setRange(xfEl(), 0);                                   // both channels open; stems do the mixing
+      if (sm.stemBlend(kind, out, inn, xT0, bars, barS)) {
+        at(bars, () => setRange(xfEl(), toXf));
+        return bars * bar;
+      }
+      setRange(xfEl(), fromXf);
+    }
+
     // Incoming deck always enters with its sub killed: single bass owner.
     setRange(lowIn(), LOW_KILL);
     setRange(eqEl(inn, "mid"), 0);
@@ -447,7 +464,26 @@
         total = 16;
         break;
     }
+    stemHandoff(kind, out, inn, (total * bar) / 1000);
     return total * bar;
+  }
+
+  // One singer through the blend (user: the outgoing vocal goes onto the
+  // incoming stems): B enters as its instrumental, A's vocal rides B's beat on
+  // the vocal bus, B's own vocal returns as A's fades (stem-moves.js).
+  function stemHandoff(kind, out, inn, totalS) {
+    if (!window.stemMoves || kind === "cut" || kind === "double" || totalS < 4) return false;
+    const od = window.decks && window.decks[out], id = window.decks && window.decks[inn];
+    if (!od || !id) return false;
+    const ka = od.analysis && od.analysis.key && od.analysis.key.camelot;
+    const kb = id.analysis && id.analysis.key && id.analysis.key.camelot;
+    const core = window.djMind && window.djMind.core;
+    const keyScore = core && core.camelotScore ? core.camelotScore(ka, kb) : 0;
+    const p0 = od._positionAt ? od._positionAt(xT0) : od._currentPosition();
+    const outVocal = window.stemMoves.vocalShare(od.analysis && od.analysis.vocal_active_regions, p0, p0 + totalS);
+    const fits = window.stemMoves.core.handoffFits({ outStems: od.stemsReady, inStems: id.stemsReady, keyScore, outVocal });
+    return fits && window.stemMoves.handoff(out, inn, xT0, totalS,
+      `${Math.round(outVocal * 100)}% vocal in the blend, keys ${ka}->${kb}: one singer, A's voice over B's beat`);
   }
 
   /**
@@ -1219,10 +1255,10 @@
     }
   }
 
-  function setDeckPitch(deckId, pct) {
+  function setDeckPitch(deckId, pct, range = 8) {
     const d = window.decks && window.decks[deckId];
     if (!d) return;
-    const v = Math.max(-8, Math.min(8, pct));
+    const v = Math.max(-range, Math.min(range, pct));
     d.setPitchPercent(v);
     const fader = document.querySelector(`.pitch-fader[data-deck="${deckId}"]`);
     if (fader) fader.value = String(v.toFixed(1));
@@ -1234,7 +1270,8 @@
   // over ~32 bars (inaudible steps), so pitch shift never accumulates.
   function easePitchHome(deckId) {
     const d = window.decks && window.decks[deckId];
-    if (!d || !d._pitchPercent) return;
+    // key-locked tempo stems: the set stays at this tempo, the key never moved
+    if (!d || !d._pitchPercent || d.tempoStems) return;
     const steps = 32;
     const barMsNow = 240000 / ((d.bpm || 128) * d._playbackRate());
     const start = d._pitchPercent;
@@ -1387,6 +1424,21 @@
   }
 
   function scheduleTransition(currentId, nextId, nextName, candidate, blend = null, minExit = null, layer = null) {
+    // Tempo gap 2-15 %: render B's stems key-locked at A's tempo now, while A plays
+    // (multi-BPM stem sets, cached on the server), so the blend keeps B's key.
+    {
+      const oa0 = window.decks && window.decks[activeDeck], sd0 = window.decks && window.decks[stagingDeck()];
+      if (oa0 && sd0 && oa0.bpm > 0 && sd0.bpm > 0 && sd0.useTempoStems) {
+        const aEff0 = oa0.bpm * oa0._playbackRate();
+        const m0 = [1, 2, 0.5].reduce((b, m) => (Math.abs(aEff0 / (sd0.bpm * m) - 1) < Math.abs(aEff0 / (sd0.bpm * b) - 1) ? m : b));
+        const gap0 = Math.abs(aEff0 / (sd0.bpm * m0) - 1);
+        if (gap0 > 0.02 && gap0 <= 0.15) {
+          sd0.useTempoStems(aEff0 / m0).then((ok) => ok && window.dispatchEvent(new CustomEvent("ai-activity", { detail: {
+            kind: "stem-move", deck: stagingDeck(), label: `TEMPO STEMS · ${(aEff0 / m0).toFixed(1)} BPM`,
+            why: `${nextName}: stems key-locked ${(gap0 * 100).toFixed(1)} % to this tempo, no pitch shift` } })));
+        }
+      }
+    }
     if (!active) return;
     let bTime = candidate.b_time || 0;
     let vocalShort = false, vocalCut = "";
@@ -1475,6 +1527,28 @@
       });
     }
 
+    // Riff over rap (riff-over-rap.js): when the pair fits (3-15 % tempo gap,
+    // A has a groove running into its own breakdown, B raps) and A's
+    // key-locked stems render in time, the fire line moves to A's groove start
+    // and the whole 64-bar move replaces the recipe.
+    let riff = null, riffEntry = null;
+    if (!layer && !peakT && riffOn() && window.riffOverRap) {
+      const notBefore = deckPosition(activeDeck) + 25;
+      window.riffOverRap.prepare(currentId, nextId, notBefore).then((r) => {
+        if (!r || executed || !active || currentTrackId !== currentId) return;
+        const g0 = r.plan.a_groove[0], pos = deckPosition(activeDeck);
+        const sdB = window.decks && window.decks[stagingDeck()];
+        if (g0 < pos + 6 || g0 > hi + 60 || !(sdB && sdB.stems)) {
+          console.info("riff over rap: ready but", g0 < pos + 6 ? "A is past its groove" : g0 > hi + 60 ? "the groove comes too late" : "B's stems aren't loaded");
+          return;
+        }
+        riff = r;
+        fireAt = g0;
+        recipe = "RIFF OVER RAP";
+        if (window.djMind) window.djMind.setPlan({ fireAt, maxFireAt: fireAt, style: "layer", preClearBars: 0 });
+      }).catch((e) => console.warn("riff over rap:", e.message));
+    }
+
     const tick = setInterval(() => {
       if (!active) { clearInterval(tick); return; }
       if (window.djMind) fireAt = window.djMind.fireAt(fireAt);
@@ -1507,6 +1581,26 @@
       mashupTag = "";
       apStatus(`Blending → ${nextName} (${recipe})…`);
 
+      if (riff) {
+        const outgoing = activeDeck, incoming = stagingDeck();
+        const oaR = window.decks[outgoing];
+        const leadR = Math.max(0.05, (fireAt - deckPosition(outgoing)) / oaR._playbackRate());
+        const t0R = audioCtx.currentTime + leadR;
+        const ui = {
+          xf: (inn, f) => setRange(xfader, (inn === "b" ? 1 : -1) * f),
+          eq: (d, band, v) => setRange(eqEl(d, band), v),
+          pitch: (d, pct) => setDeckPitch(d, pct),
+        };
+        const totalMs = window.riffOverRap.run(riff, outgoing, incoming, t0R, ui);
+        if (window.djMind && window.djMind.layering) {
+          window.djMind.layering(totalMs / 1000, { source: "RIFF",
+            why: `riff over rap: A's groove key-locked to ${riff.plan.target_bpm} BPM, B's rap on bar 40` });
+        }
+        riffEntry = riff.plan.b_entry;
+        later(totalMs + 500, afterBlend);
+        return;
+      }
+
       // Tempo-lock B to A, then start it sample-accurately so B's entry
       // downbeat lands exactly on A's phrase line.
       const sd = window.decks && window.decks[stagingDeck()];
@@ -1518,13 +1612,17 @@
         const aEff = oa.bpm * rateA;
         const lockRate = [1, 2, 0.5].map((m) => aEff / (sd.bpm * m))
           .reduce((best, r) => (Math.abs(r - 1) < Math.abs(best - 1) ? r : best));
-        if (Math.abs(lockRate - 1) <= 0.08) setDeckPitch(stagingDeck(), (lockRate - 1) * 100);
+        // Key-locked tempo stems (prefetched below): locks up to 15 % keep B's key.
+        const keyLocked = sd.tempoStems && Math.abs(sd.tempoStems.bpm / (sd.bpm * lockRate) - 1) < 0.01;
+        if (keyLocked) setDeckPitch(stagingDeck(), (lockRate - 1) * 100, 16);
+        else if (Math.abs(lockRate - 1) <= 0.08) setDeckPitch(stagingDeck(), (lockRate - 1) * 100);
       }
       const leadS = Math.max(0.05, (fireAt - deckPosition(activeDeck)) / rateA);
       const t0 = audioCtx.currentTime + leadS;
       if (sd) sd.play(bTime, false, t0);
       // LAYER: B "arrives" at the bass hand-off; its play window counts from there
       const nextEntry = layer ? layer.b_swap : bTime;
+      riffEntry = null;
       // Drop Swap + [[Backspin (Spinback)]]: A's build winds down (deck brake,
       // 0.8 s) into the downbeat where B's drop cuts in.
       if (peakT && peakT.brake && oa && typeof oa.brake === "function") {
@@ -1552,18 +1650,21 @@
           }
         } else {
           totalMs = executeTransition(recipe, outgoing, incoming, xfDuration, t0) + XF_LOOKAHEAD_MS;
+          window.dispatchEvent(new CustomEvent("ai-cue", { detail: { at: t0, kind: recipeKind(recipe) === "cut" ? "drop" : "transition",
+            deck: incoming, bar: 240 / ((window.decks[incoming] && window.decks[incoming].bpm) || 128), why: `${recipe}: B's first downbeat` } }));
         }
         later(totalMs + 500, afterBlend);
       });
 
       // After the transition completes, update state and continue
-      const afterBlend = () => {
+      function afterBlend() {   // declaration: hoisted, the riff branch above calls it
         endAudioClock(); // controls are the user's again
         if (!active) return;
 
         // Stop the outgoing deck and put it back to neutral for its next load
         const od = window.decks && window.decks[outgoing];
         if (od) od.stopNow();
+        if (window.stemMoves) window.stemMoves.reset(od);   // never leave its mix muted
         resetDeck(outgoing);
 
         history.push(nextName);
@@ -1578,7 +1679,7 @@
         scheduledNext = null;
         activeDeck = stagingDeck();
         currentTrackId = nextId;
-        entryPos = nextEntry;
+        entryPos = riffEntry != null ? riffEntry : nextEntry;
         currentEnergy = null;
         if (window.beatLayer) window.beatLayer.follow(activeDeck);
         if (window.djMind) {
@@ -1592,7 +1693,7 @@
         setRange(xfader, activeDeck === "a" ? -1 : 1);
 
         prepareTransition(currentTrackId);
-      };
+      }
     }, 200);
     runTimers.push(tick);
     return fireAt;
@@ -1621,6 +1722,14 @@
 
   function playWindow(score) {
     if (steering === "move") return WINDOWS.bridge;
+    // A famous song plays in full (user; the USB002 set rides leavemealone for
+    // 7 min): exit only in its last ~50 s, i.e. the outro. Stem breakdowns
+    // (stem-moves.js) keep it from sounding long.
+    const pd = window.decks && window.decks[activeDeck];
+    if (pd && pd.fame && pd.fame.famous && pd.buffer) {
+      const rem = pd.buffer.duration - (entryPos || 0);
+      if (rem > 90) return { min: Math.max(60, rem - 50), max: Math.max(70, rem - 6), xf: 24, label: "FULL·famous" };
+    }
     const mode = setMode();
     const weak = score < 65;
     if (mode === "long") return WINDOWS.long;
@@ -1636,6 +1745,11 @@
   // 8/16-bar phrase of the current track (the Fred again.. "x" move: tease the
   // next record's voice over this beat, then bring the record itself in).
   // Restraint: at most one layer per track; skipped unless key and tempo fit.
+  function riffOn() {
+    const t = document.getElementById("ap-riff-toggle");
+    return !t || t.checked;
+  }
+
   function mashupsOn() {
     const t = document.getElementById("ap-mashup-toggle");
     return !t || t.checked;
@@ -1653,13 +1767,17 @@
     if (!d) return;
     const bar = 240 / (d.bpm || 128);
     const room = fireAt - 2 * bar - (deckPosition(hostDeck) + 10);
-    const bars = room >= 16 * bar ? 16 : room >= 8 * bar ? 8 : 0;
+    // 32 bars = full mashup (the guest's whole vocal phrase over this beat).
+    const bars = room >= 32 * bar ? 32 : room >= 16 * bar ? 16 : room >= 8 * bar ? 8 : 0;
     if (!bars) return;
+    // Live stems on the host: its own vocal can drop out under the guest's,
+    // so the mashup no longer needs an instrumental stretch of this song.
+    const hostMutable = !!d.stemsReady;
     try {
       const res = await fetch("/api/mashup/plan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ host_id: hostId, guest_id: guestId, bars }),
+        body: JSON.stringify({ host_id: hostId, guest_id: guestId, bars, host_mutable: hostMutable }),
       });
       const plan = await res.json();
       if (!active || activeDeck !== hostDeck || currentTrackId !== hostId) return;
@@ -1671,7 +1789,19 @@
       const entry = plan.host_entries.find((e) => e >= pos + 3 && e + plan.host_duration <= fireAt - bar);
       if (entry == null) return;
       if (await window.mashup.play(hostDeck, plan, entry)) {
-        mashupTag = ` | ✕ ${guestName} vocal @${fmtTime(entry)} (${plan.bars} bars)`;
+        mashupTag = ` | ✕ ${guestName} vocal @${fmtTime(entry)} (${plan.bars} bars${plan.mute_host_vocals ? ", host instrumental" : ""})`;
+        if (plan.mute_host_vocals && window.stemMoves) {
+          // host goes instrumental for exactly the guest's phrase
+          const sm = window.stemMoves;
+          const onAt = sm.audioAt(d, entry), offAt = sm.audioAt(d, entry + plan.host_duration);
+          setTimeout(() => d.stemMix({ vocals: 0 }, onAt, 0.05), Math.max(0, (onAt - audioCtx.currentTime) * 1000 - 200));
+          setTimeout(() => d.stemMix(null, offAt, 0.2), Math.max(0, (offAt - audioCtx.currentTime) * 1000 - 200));
+          window.dispatchEvent(new CustomEvent("ai-activity", { detail: { kind: "stem-move", deck: hostDeck,
+            label: `FULL MASHUP · ${plan.bars} bars`, why: `${guestName} vocal over this song's instrumental` } }));
+        }
+        // stem remix inside the mashup: host drums + bass out for its last quarter,
+        // the guest's vocal over the host's synths, everything back on the line
+        if (window.stemMoves && d.stemsReady) window.stemMoves.mashupBreak(d, entry, plan.bars, !!plan.mute_host_vocals);
       }
     } catch (e) {
       console.warn("Mashup failed:", e.message);
@@ -1679,9 +1809,91 @@
   }
 
   // ── start / stop ──────────────────────────────────────────────────────────
+  // Session history: every song that has played audibly for >= 30 s this
+  // session, autopilot or not ({id, name}, in play order). The set's
+  // suggestions continue from it.
+  const SESSION_MIN_S = 30;
+  const session = [];
+  const heard = {};                      // track id -> audible seconds
+  setInterval(() => {
+    for (const id of ["a", "b"]) {
+      const d = window.decks && window.decks[id];
+      const tid = window.state && (id === "a" ? window.state.trackA : window.state.trackB);
+      if (!d || !d.playing || !tid) continue;
+      const g = (d.crossfaderGain ? d.crossfaderGain.gain.value : 1) * (d.volumeGain ? d.volumeGain.gain.value : 1);
+      if (g < 0.3) continue;
+      heard[tid] = (heard[tid] || 0) + 1;
+      if (heard[tid] === SESSION_MIN_S && !session.some((x) => x.id === tid)) {
+        const el = document.getElementById(`title-${id}`);
+        session.push({ id: tid, name: el ? el.textContent.trim() : tid });
+        if (session.length > 60) session.shift();
+      }
+    }
+  }, 1000);
+  window.setSession = session;
+
+  // The audible deck, else a loaded one: {deck, trackId, name, playing}
+  function currentDeck() {
+    let best = null;
+    for (const id of ["a", "b"]) {
+      const d = window.decks && window.decks[id];
+      const tid = window.state && (id === "a" ? window.state.trackA : window.state.trackB);
+      if (!d || !d.buffer || !tid) continue;
+      const g = d.playing ? (d.crossfaderGain ? d.crossfaderGain.gain.value : 1) * (d.volumeGain ? d.volumeGain.gain.value : 1) : -1;
+      const el = document.getElementById(`title-${id}`);
+      const c = { deck: id, trackId: tid, name: el ? el.textContent.trim() : tid, playing: d.playing, level: g };
+      if (!best || c.level > best.level) best = c;
+    }
+    return best;
+  }
+
+  // Common reset for any set start.
+  function resetSetState() {
+    history = [];
+    steering = "stay";
+    steerStep = 0;
+    leadTo = null;
+    leadStatus("");
+    genreLog = [];
+    currentGenre = "";
+    songsSinceJump = 0;
+    jumpPending = false;
+    bridge = null;
+    scheduledNext = null;
+    pendingSugs = [];
+    renderQueue([]);
+  }
+
+  // Start the set from the song playing now (or loaded): no download, no
+  // restart; the session so far is the set's history.
+  async function startFromCurrent() {
+    const cur = currentDeck();
+    if (!cur) { apStatus("Nothing loaded: load or play a song, or paste a seed URL."); return; }
+    occasion = occasionInput ? occasionInput.value.trim() : "";
+    resetSetState();
+    active = true;
+    activeDeck = cur.deck;
+    updateButtons();
+    currentTrackId = cur.trackId;
+    const d = window.decks[cur.deck];
+    if (!d.playing) d.play(d._currentPosition() || 0, true);
+    if (xfader) { xfader.value = cur.deck === "a" ? "-1" : "1"; xfader.dispatchEvent(new Event("input")); }
+    entryPos = Math.max(0, d._currentPosition() - (heard[cur.trackId] || 0));
+    currentEnergy = null;
+    if (window.beatLayer) window.beatLayer.follow(cur.deck);
+    if (window.djMind) { window.djMind.reset(); window.djMind.follow(cur.deck); }
+    const past = session.filter((x) => x.id !== cur.trackId);
+    history = [...past.map((x) => x.name), cur.name];
+    playedIds = [...past.map((x) => x.id), cur.trackId];
+    setStartedAt = Date.now() - 1000 * past.reduce((sum, x) => sum + (heard[x.id] || 0), 0);
+    apStatus(`▶ Set from ${cur.name}${past.length ? ` (after ${past.length} song${past.length > 1 ? "s" : ""} played)` : ""} — finding next track…`);
+    startWatchdog();
+    prepareTransition(currentTrackId);
+  }
+
   async function start() {
     const url = seedInput ? seedInput.value.trim() : "";
-    if (!url) { apStatus("Paste a seed URL first."); return; }
+    if (!url) return startFromCurrent();              // no seed: continue from what's playing
     occasion = occasionInput ? occasionInput.value.trim() : "";
     // High-energy occasions run in QUICK mode unless the user picked a mode.
     const modeEl = document.getElementById("ap-mode");
@@ -1732,8 +1944,10 @@
       if (window.beatLayer) window.beatLayer.follow("a");
       if (window.djMind) { window.djMind.reset(); window.djMind.follow("a"); }
 
-      history = [seedName];
-      playedIds = [currentTrackId];
+      // the session so far steers the set too
+      const past = session.filter((x) => x.id !== currentTrackId);
+      history = [...past.map((x) => x.name), seedName];
+      playedIds = [...past.map((x) => x.id), currentTrackId];
       setStartedAt = Date.now();
       apStatus(`▶ Playing: ${seedName} — finding next track in background…`);
       startWatchdog();
@@ -1781,6 +1995,8 @@
 
   function updateButtons() {
     if (startBtn) startBtn.disabled = active;
+    const scb = document.getElementById("ap-start-current-btn");
+    if (scb) scb.disabled = active;
     if (stopBtn)  stopBtn.disabled  = !active;
   }
 
@@ -1864,6 +2080,8 @@
   });
 
   startBtn.addEventListener("click", start);
+  const startCurBtn = document.getElementById("ap-start-current-btn");
+  if (startCurBtn) startCurBtn.addEventListener("click", () => { if (!active) startFromCurrent(); });
   if (stopBtn) stopBtn.addEventListener("click", stop);
   if (seedInput) seedInput.addEventListener("keydown", (e) => { if (e.key === "Enter") start(); });
 })();

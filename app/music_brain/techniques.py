@@ -1,0 +1,285 @@
+"""Transition techniques learned from real sets, each with the conditions it needs.
+
+Not every technique mixes every pair: each one states what it needs, and
+rank() returns every technique with the reasons it fits or does not, so the
+planner (and the user) can see why a move was or was not chosen.
+
+Sources (measured with 4-stem Demucs; see research/notes/set-study-gfF8jzBVWvM.md):
+  USB002 = Fred again.. & Thomas Bangalter, Alexandra Palace, 27 Feb 2026.
+
+  strip_rebuild   USB002 74:22, leavemealone (Nia Archives Remix), 174 BPM.
+                  Vocal never stops; drums out -> bass out (voice alone) -> bass
+                  back, no kick -> bass out + drums creep (build) -> drop on the
+                  line, ~40 bars. How a famous song plays 7 minutes.
+  riff_over_rap   USB002 66:00-68:48, Aerodynamic (122.9, 10A) x Victory Lap Five
+                  (140, 5B). Outgoing KEY-LOCKED +13.9 % to the incoming tempo
+                  (pitch 0.00 st); its 16-bar full groove LOOPED; incoming bass
+                  swapped in under it; loop released into the outgoing song's
+                  OWN drumless breakdown (= the 8-bar break); incoming drops in
+                  under the breakdown's riff, looped on top, riff fades after
+                  ~8 bars. Keys 5 hours apart: fine, the top layer is rap.
+                  ONE TONAL OWNER: while A's riff plays, B brings drums, bass and
+                  rap only; B's own synths enter as the riff fades (the set's
+                  `other` layer is Aerodynamic's alone at 67:36-68:24).
+  vocal_handoff   House rule (user): one singer through a crossfade; outgoing
+                  vocal rides the incoming instrumental, incoming vocal returns
+                  as it fades.
+  full_mashup     Incoming vocal phrase over the outgoing instrumental (stems).
+  eq_blend        The recipe engine's default (recipe_matcher.py).
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Callable, Dict, List, Optional, Sequence, Tuple
+
+import numpy as np
+
+STEMS = ("drums", "bass", "vocals", "other")
+SILENT_DB = -45.0          # a stem this quiet over a phrase is "out"
+# Rap vs sung (measured 2026-09-27; voiced fraction does NOT separate them:
+# rap is voiced speech). Sung notes hold a pitch and sit on the scale; rap
+# glides. VLF rap: held 0.074 s, 25.8 c off-note (random = 25); Starboy 0.184 s
+# / 12.5 c, Apocalypse 0.380 / 13.9, Teardrop 0.184 / 22.2. Preliminary: 5 songs.
+RAP_MAX_HOLD_S = 0.10
+RAP_MIN_OFFNOTE_C = 20.0
+MAX_KEYLOCK_STRETCH = 0.15  # USB002 pushed a riff +13.9 % key-locked
+MAX_RATE_STRETCH = 0.06    # without key-lock (pitch moves): the recipe engine's limit
+
+
+# ----------------------------------------------------------------- features
+def camelot_score(a: Optional[str], b: Optional[str]) -> float:
+    """Same table as CLAUDE.md section 4 (and dj-mind.js camelotScore)."""
+    import re
+
+    pa = re.match(r"^(\d{1,2})([AB])$", str(a or "").strip(), re.I)
+    pb = re.match(r"^(\d{1,2})([AB])$", str(b or "").strip(), re.I)
+    if not pa or not pb:
+        return 0.0
+    d = min((int(pa[1]) - int(pb[1])) % 12, (int(pb[1]) - int(pa[1])) % 12)
+    if pa[2].upper() != pb[2].upper():
+        return 0.85 if d == 0 else 0.0
+    return {0: 1.0, 1: 0.9, 2: 0.8}.get(d, 0.0)
+
+
+def vocal_style(y: np.ndarray, sr: int) -> dict:
+    """{'rap': bool, 'hold_s', 'offnote_c'} from an isolated vocal (pyin)."""
+    import librosa
+
+    hop = 256
+    rms = librosa.feature.rms(y=y, hop_length=hop)[0]
+    f0, flag, _ = librosa.pyin(y, fmin=70, fmax=900, sr=sr, frame_length=1024, hop_length=hop)
+    loud = rms[: len(flag)] > np.percentile(rms, 40)
+    cents = 1200 * np.log2(np.where(flag & loud, f0, np.nan) / 440.0)
+    d = np.abs(np.diff(cents))
+    runs, cur = [], 0
+    for x in d:
+        if np.isfinite(x) and x < 25:
+            cur += 1
+        elif cur:
+            runs.append(cur)
+            cur = 0
+    held = [r for r in runs if r >= 3]
+    hold = float(np.mean(held)) * hop / sr if held else 0.0
+    off = float(np.nanmean(np.abs(cents - np.round(cents / 100) * 100))) if np.isfinite(cents).any() else 25.0
+    return {"rap": hold < RAP_MAX_HOLD_S and off > RAP_MIN_OFFNOTE_C, "hold_s": round(hold, 3), "offnote_c": round(off, 1)}
+
+
+# A hook chanted bar after bar: each bar's vocal RHYTHM repeats an earlier bar
+# (onset-envelope r >= 0.75 against the previous 8). Timbre can't tell hook from
+# verse (same voice: MFCC r 0.75-0.86 everywhere); rhythm can. Victory Lap:
+# 0:16.8-0:25.3 repeats at r 0.76-0.94, the verse breaks it at 0:27 (0.50).
+REPEAT_R = 0.75
+REPEAT_RUN = 3
+
+
+def repetitive_bars(vocals: np.ndarray, sr: int, downbeats: Sequence[float], upto: int = 48) -> List[bool]:
+    """Per bar (from downbeats[0]): does its vocal rhythm repeat a bar within the previous 8?"""
+    import librosa
+
+    hop = 128
+    env = librosa.onset.onset_strength(y=vocals, sr=sr, hop_length=hop)
+    fr = sr / hop
+    db = list(downbeats)[: upto + 1]
+    if len(db) < 3:
+        return []
+    n = int(round((db[1] - db[0]) * fr))
+
+    def bar(i):
+        a = int(db[i] * fr)
+        x = env[a:a + n]
+        return x - x.mean() if len(x) == n else None
+
+    def r(x, y):
+        if x is None or y is None:
+            return 0.0
+        d = np.linalg.norm(x) * np.linalg.norm(y)
+        return float(np.dot(x, y) / d) if d > 1e-9 else 0.0
+
+    bars = [bar(i) for i in range(len(db) - 1)]
+    return [i > 0 and max(r(bars[i], bars[j]) for j in range(max(0, i - 8), i)) >= REPEAT_R for i in range(len(bars))]
+
+
+def skip_repetitive_intro(rep: List[bool], downbeats: Sequence[float], phrases: Sequence[float], rap_at: float) -> float:
+    """Entry after the opening hook (the first run of >= REPEAT_RUN repeating
+    bars), snapped forward to B's next 8-bar phrase line."""
+    # the FIRST run is the opening hook; later repeats are the verse's own
+    # rhyme patterns (Victory Lap 0:32-0:36) and stay in
+    end_bar, run = None, 0
+    for i, x in enumerate(rep):
+        run = run + 1 if x else 0
+        if run >= REPEAT_RUN:
+            end_bar = i
+        elif end_bar is not None:
+            break
+    if end_bar is None:
+        return rap_at
+    after = downbeats[end_bar + 1] if end_bar + 1 < len(downbeats) else rap_at
+    nxt = [p for p in phrases if p >= after - 0.05]
+    return max(rap_at, nxt[0] if nxt else after)
+
+
+def stem_map(stem_audio: Dict[str, np.ndarray], sr: int, phrases: Sequence[float]) -> List[Dict[str, float]]:
+    """Per 8-bar phrase: RMS dB of each stem. [{start, end, drums, bass, vocals, other}]"""
+    out = []
+    for a, b in zip(phrases, phrases[1:]):
+        row = {"start": float(a), "end": float(b)}
+        for n in STEMS:
+            y = stem_audio.get(n)
+            seg = y[int(a * sr): int(b * sr)] if y is not None else np.zeros(1)
+            row[n] = float(10 * np.log10(np.mean(np.square(seg)) + 1e-12)) if len(seg) else -120.0
+        out.append(row)
+    return out
+
+
+def full_groove_runs(smap: List[Dict[str, float]], min_phrases: int = 2) -> List[Tuple[float, float]]:
+    """Stretches where drums, bass and riff all play: loopable groove."""
+    runs, cur = [], None
+    for r in smap:
+        on = all(r[n] > SILENT_DB for n in ("drums", "bass", "other"))
+        if on and cur is None:
+            cur = [r["start"], r["end"]]
+        elif on:
+            cur[1] = r["end"]
+        elif cur is not None:
+            runs.append(tuple(cur)); cur = None
+    if cur is not None:
+        runs.append(tuple(cur))
+    return [x for x in runs if x[1] - x[0] >= min_phrases * (smap[0]["end"] - smap[0]["start"] if smap else 0) * 0.95]
+
+
+def breakdowns(smap: List[Dict[str, float]]) -> List[Tuple[float, float]]:
+    """Phrases with the riff but no drums and no bass: a natural break."""
+    return [(r["start"], r["end"]) for r in smap
+            if r["drums"] <= SILENT_DB and r["bass"] <= SILENT_DB and r["other"] > SILENT_DB]
+
+
+@dataclass
+class PairFeatures:
+    bpm_a: float
+    bpm_b: float
+    key_a: Optional[str] = None
+    key_b: Optional[str] = None
+    stems_a: bool = False
+    stems_b: bool = False
+    famous_a: bool = False
+    vocal_a_exit: float = 0.0          # share of the exit window where A sings
+    vocal_b_entry: float = 0.0         # share of B's entry window with vocals
+    b_rap: Optional[bool] = None       # B has a rap section (vocal_style), None = unknown
+    b_rap_at: List[float] = field(default_factory=list)   # where B raps (s): enter there
+    a_grooves: List[Tuple[float, float]] = field(default_factory=list)
+    a_breakdowns: List[Tuple[float, float]] = field(default_factory=list)
+    keylock: bool = False              # engine can stretch without moving pitch
+    exit_window: Tuple[float, float] = (0.0, 0.0)
+
+    @property
+    def tempo_gap(self) -> float:
+        return abs(self.bpm_b / self.bpm_a - 1) if self.bpm_a > 0 else 1.0
+
+    @property
+    def key(self) -> float:
+        return camelot_score(self.key_a, self.key_b)
+
+
+# --------------------------------------------------------------- techniques
+Check = Tuple[bool, str]
+
+
+@dataclass
+class Technique:
+    name: str
+    source: str
+    what: str
+    checks: Callable[[PairFeatures], List[Check]]
+    live: bool = True                  # False: needs something the live engine lacks
+
+    def assess(self, f: PairFeatures) -> dict:
+        res = self.checks(f)
+        return {"name": self.name, "source": self.source, "what": self.what,
+                "fits": all(ok for ok, _ in res),
+                "reasons": [("ok: " if ok else "no: ") + why for ok, why in res]}
+
+
+def _riff_over_rap(f: PairFeatures) -> List[Check]:
+    gap = f.tempo_gap
+    lo, hi = f.exit_window
+    brk = [b for b in f.a_breakdowns if lo - 60 <= b[0] <= hi + 30]
+    rap = bool(f.b_rap) and f.vocal_b_entry >= 0.3
+    return [
+        (f.stems_a and f.stems_b, "stems on both songs" if f.stems_a and f.stems_b else "needs 4 stems on both songs"),
+        (0.03 <= gap <= MAX_KEYLOCK_STRETCH, f"tempo gap {gap:.1%} (3-15 %: stretch A onto B's tempo)"),
+        (f.keylock or gap <= MAX_RATE_STRETCH,
+         "key-locked stretch available" if f.keylock else f"no key-lock: {gap:.1%} would detune A's riff by {12 * np.log2(1 + gap):.1f} st"),
+        (bool(f.a_grooves), "A has a loopable full groove" if f.a_grooves else "A has no drums+bass+riff stretch to loop"),
+        (bool(brk), "A has its own drumless breakdown near the exit" if brk else "A has no drumless breakdown near the exit (the break comes from the song)"),
+        (rap or f.key >= 0.8, (f"B raps at {', '.join(f'{int(t // 60)}:{int(t % 60):02d}' for t in f.b_rap_at[:3]) or '?'}: enter there, the key clash doesn't matter") if rap else
+         ("keys compatible" if f.key >= 0.8 else f"B's vocal is sung and keys clash ({f.key_a}->{f.key_b})")),
+    ]
+
+
+def _strip_rebuild(f: PairFeatures) -> List[Check]:
+    return [
+        (f.famous_a, "A is famous: worth playing in full" if f.famous_a else "A isn't famous: no need to stretch it"),
+        (f.stems_a, "A has live stems" if f.stems_a else "needs A's 4 stems"),
+        (f.vocal_a_exit >= 0.5, f"A's vocal carries {f.vocal_a_exit:.0%} of the section (needs 50 %)"),
+    ]
+
+
+def _vocal_handoff(f: PairFeatures) -> List[Check]:
+    return [
+        (f.stems_a and f.stems_b, "stems on both" if f.stems_a and f.stems_b else "needs stems on both"),
+        (f.key >= 0.8, f"keys {f.key_a}->{f.key_b} score {f.key:.2f} (A's voice sits over B's harmony)"),
+        (f.vocal_a_exit >= 0.3, f"A sings {f.vocal_a_exit:.0%} of the blend"),
+        (f.tempo_gap <= MAX_RATE_STRETCH, f"tempo gap {f.tempo_gap:.1%} (<= 6 % pitch-lock)"),
+    ]
+
+
+def _full_mashup(f: PairFeatures) -> List[Check]:
+    return [
+        (f.stems_a, "A can drop its vocal (stems)" if f.stems_a else "needs A's stems"),
+        (f.vocal_b_entry >= 0.5, f"B has a vocal phrase ({f.vocal_b_entry:.0%})"),
+        (f.key >= 0.8 or bool(f.b_rap),
+         "harmony fits (or B raps)" if f.key >= 0.8 else f"keys {f.key_a}->{f.key_b} clash under a sung vocal"),
+        (f.tempo_gap <= 0.04, f"tempo gap {f.tempo_gap:.1%} (<= 4 % for a vocal)"),
+    ]
+
+
+def _eq_blend(f: PairFeatures) -> List[Check]:
+    return [(f.tempo_gap <= MAX_RATE_STRETCH or True, "always available (recipe engine picks the recipe)")]
+
+
+TECHNIQUES = [
+    Technique("riff_over_rap", "USB002 1:06:00 Aerodynamic x Victory Lap Five",
+              "A key-locked to B's tempo, A's groove looped, bass to B, release into A's own breakdown, "
+              "B drops in under A's looped riff", _riff_over_rap, live=False),
+    Technique("strip_rebuild", "USB002 1:14:22 leavemealone (Nia Archives Remix)",
+              "drums out, bass out, voice alone, bass back, build, drop on the line (40 bars)", _strip_rebuild),
+    Technique("vocal_handoff", "house rule", "one singer: A's vocal rides B's instrumental", _vocal_handoff),
+    Technique("full_mashup", "stems", "B's vocal phrase over A's instrumental", _full_mashup),
+    Technique("eq_blend", "recipe engine", "EQ-first recipe blend (bass swap, echo out, ...)", _eq_blend),
+]
+
+
+def rank(f: PairFeatures) -> List[dict]:
+    """Every technique with fits + reasons; fitting ones first, in library order."""
+    out = [t.assess(f) | {"live": t.live} for t in TECHNIQUES]
+    return sorted(out, key=lambda x: (not x["fits"], TECHNIQUES.index(next(t for t in TECHNIQUES if t.name == x["name"]))))

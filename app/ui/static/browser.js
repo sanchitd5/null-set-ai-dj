@@ -191,7 +191,7 @@
     try {
       const res = await fetch("/api/tracks");
       const data = await res.json();
-      tracks = (data.tracks || []).map((t) => ({ track_id: t.track_id, name: baseName(t.path) }));
+      tracks = (data.tracks || []).map((t) => ({ track_id: t.track_id, name: t.display_name || baseName(t.path) }));
       render();
       warmAnalyses(tracks.filter((t) => !analysisCache.has(t.track_id)));
     } catch (e) {

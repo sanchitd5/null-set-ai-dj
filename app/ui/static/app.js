@@ -14,9 +14,9 @@ window.state = state;
 // feel, without giving up WaveSurfer's click-to-seek and Regions trim handles.
 const waveformA = WaveSurfer.create({
   container: "#waveform-a",
-  waveColor: "#00838d",
-  progressColor: "#00f0ff",
-  cursorColor: "#dbfcff",
+  waveColor: "#00803a",
+  progressColor: "#00ff66",
+  cursorColor: "#b8ffd3",
   cursorWidth: 2,
   height: 84,
   autoCenter: true,
@@ -26,9 +26,9 @@ window.waveformA = waveformA;
 
 const waveformB = WaveSurfer.create({
   container: "#waveform-b",
-  waveColor: "#8f3305",
-  progressColor: "#ff5708",
-  cursorColor: "#ffdbcf",
+  waveColor: "#8a1a76",
+  progressColor: "#ff2bd6",
+  cursorColor: "#ffc2f1",
   cursorWidth: 2,
   height: 84,
   autoCenter: true,

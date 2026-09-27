@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -100,9 +101,10 @@ def analyze_tempo_and_beats(y: np.ndarray, sr: int) -> Tuple[float, np.ndarray]:
     Section-consensus tempo (music_brain/tempo.py): a whole-song beat_track
     read "Cola" (122 BPM) as 80.7 because most of the song sits on a 2/3 pulse.
     """
-    from app.music_brain.tempo import robust_tempo
+    from app.music_brain.tempo import loop_tempo, robust_tempo
 
-    return robust_tempo(y, sr)
+    bpm, beat_times = robust_tempo(y, sr)
+    return loop_tempo(y, sr, bpm, beat_times), beat_times
 
 
 def compute_downbeats(
@@ -387,11 +389,81 @@ def vocal_presence_map(
 # v2: section-consensus tempo (tempo.py).
 # v3: downbeat phase + phrase offset (grid no longer assumes beat 0 is bar 1).
 # v4: key chroma tuning-corrected, first/last 8% trimmed.
-ANALYSIS_VERSION = 4
+# v5: bpm = tempo at which an 8-bar loop repeats (tempo.loop_tempo), not the
+#     tempogram bin (loops and blends drifted ~150 ms per 8 bars).
+ANALYSIS_VERSION = 5
 
 
-def _cache_path_for(audio_path: Path) -> Path:
-    return ANALYSIS_CACHE_DIR / f"{_file_hash(audio_path)}.v{ANALYSIS_VERSION}.json"
+def _cache_path_for(audio_path: Path, version: int = ANALYSIS_VERSION, digest: Optional[str] = None) -> Path:
+    return ANALYSIS_CACHE_DIR / f"{digest or _file_hash(audio_path)}.v{version}.json"
+
+
+def _from_dict(data: dict) -> "TrackAnalysis":
+    data = dict(data)
+    data["key"] = KeyEstimate(**data["key"]) if data.get("key") else None
+    data["sections"] = [StructureSection(**s) for s in data.get("sections", [])]
+    data["vocal_active_regions"] = [tuple(r) for r in data.get("vocal_active_regions", [])]
+    return TrackAnalysis(**data)
+
+
+# v4 -> v5 only changed the bpm (tempo.loop_tempo). A song analysed before
+# must not be re-analysed from scratch: the v4 record answers at once and a
+# background worker refines just its tempo (~1 s) into a v5 record.
+_mem_index: dict = {}          # (path, size, mtime_ns) -> TrackAnalysis
+_upgrade_lock = threading.Lock()
+_upgrade_queue: List[Path] = []
+_upgrade_started = False
+
+
+def upgrade_to_current(audio_path: Path) -> bool:
+    """v4 record -> v5 record (tempo only). True when a v5 record now exists."""
+    audio_path = Path(audio_path)
+    digest = _file_hash(audio_path)
+    new, old = _cache_path_for(audio_path, digest=digest), _cache_path_for(audio_path, 4, digest)
+    if new.exists():
+        return True
+    if not old.exists():
+        return False
+    from app.music_brain.tempo import loop_tempo
+
+    with open(old, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    y, sr = librosa.load(str(audio_path), sr=SAMPLE_RATE, mono=True)
+    data["bpm"] = float(loop_tempo(y, sr, float(data["bpm"]), data.get("beat_times") or []))
+    tmp = new.with_suffix(".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+    tmp.replace(new)
+    return True
+
+
+def _upgrade_worker() -> None:
+    while True:
+        with _upgrade_lock:
+            if not _upgrade_queue:
+                globals()["_upgrade_started"] = False
+                return
+            path = _upgrade_queue.pop(0)
+        try:
+            upgrade_to_current(path)
+        except Exception as exc:  # a bad file must not stop the rest of the library
+            print(f"[analysis] tempo upgrade failed for {path.name}: {exc}", flush=True)
+
+
+def queue_upgrade(paths) -> int:
+    """Background v4 -> v5 tempo upgrades (library migration). Returns queued count."""
+    global _upgrade_started
+    n = 0
+    with _upgrade_lock:
+        for p in paths:
+            p = Path(p)
+            if p not in _upgrade_queue:
+                _upgrade_queue.append(p)
+                n += 1
+        if _upgrade_queue and not _upgrade_started:
+            _upgrade_started = True
+            threading.Thread(target=_upgrade_worker, daemon=True).start()
+    return n
 
 
 def analyze(
@@ -401,17 +473,30 @@ def analyze(
 ) -> TrackAnalysis:
     """Full analysis pipeline for one track, with JSON disk caching."""
     audio_path = Path(audio_path)
-    cache_path = _cache_path_for(audio_path)
+    # In-memory library index: an analysed file is never re-hashed or re-read
+    # while it's unchanged (same size and mtime).
+    try:
+        st = audio_path.stat()
+        mem_key = (str(audio_path), st.st_size, st.st_mtime_ns)
+    except OSError:
+        mem_key = None
+    if use_cache and vocals_stem_path is None and mem_key in _mem_index:
+        return _mem_index[mem_key]
+    digest = _file_hash(audio_path)
+    cache_path = _cache_path_for(audio_path, digest=digest)
 
-    if use_cache and cache_path.exists() and vocals_stem_path is None:
-        with open(cache_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        key = KeyEstimate(**data["key"]) if data.get("key") else None
-        sections = [StructureSection(**s) for s in data.get("sections", [])]
-        data["key"] = key
-        data["sections"] = sections
-        data["vocal_active_regions"] = [tuple(r) for r in data.get("vocal_active_regions", [])]
-        return TrackAnalysis(**data)
+    if use_cache and vocals_stem_path is None:
+        if cache_path.exists():
+            with open(cache_path, "r", encoding="utf-8") as f:
+                res = _from_dict(json.load(f))
+            if mem_key:
+                _mem_index[mem_key] = res
+            return res
+        old = _cache_path_for(audio_path, 4, digest)
+        if old.exists():                        # analysed before: answer now, refine tempo later
+            queue_upgrade([audio_path])
+            with open(old, "r", encoding="utf-8") as f:
+                return _from_dict(json.load(f))
 
     y, sr = librosa.load(str(audio_path), sr=SAMPLE_RATE, mono=True)
     duration = float(librosa.get_duration(y=y, sr=sr))
@@ -456,6 +541,8 @@ def analyze(
     if use_cache and vocals_stem_path is None:
         with open(cache_path, "w", encoding="utf-8") as f:
             json.dump(result.to_dict(), f, indent=2)
+        if mem_key:
+            _mem_index[mem_key] = result
 
     return result
 
