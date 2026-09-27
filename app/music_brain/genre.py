@@ -10,6 +10,8 @@ passes it in.
 
 from __future__ import annotations
 
+from typing import Optional
+
 GENRE_FAMILIES = {
     "south_asian": ("punjabi", "bhangra", "desi", "bollywood", "hindi", "urdu", "pakistani",
                     "indian", "filmi", "sufi", "qawwali", "haryanvi", "tamil", "telugu"),
@@ -36,6 +38,40 @@ def family_jump(genre_a, genre_b) -> bool:
     """True when both labels are known and share no family (e.g. melodic house -> metal)."""
     a, b = genre_families(genre_a), genre_families(genre_b)
     return bool(a and b) and not (a & b)
+
+
+# Scene-level terms: finer than the families above. "electronic" holds both
+# eurodance and UK breakbeat, so family alone lets Aqua "Barbie Girl" ->
+# Bicep "Glue" through (user). Two labels are NEAR when they share one of these
+# (melodic house / deep house share "house"; eurodance / dance-pop share
+# "dance"). Longer terms are listed first so "drum and bass" wins over "bass".
+SCENES = (
+    "drum and bass", "drum & bass", "future bass", "bass house", "uk garage", "hip hop", "hip-hop",
+    "house", "techno", "trance", "garage", "dubstep", "dnb", "jungle", "breakbeat", "breaks",
+    "electronica", "idm", "ambient", "downtempo", "disco", "funk", "dance", "pop", "rap", "trap",
+    "drill", "grime", "r&b", "rnb", "soul", "reggaeton", "latin", "dembow", "cumbia", "afro",
+    "amapiano", "rock", "punk", "metal", "indie", "country", "folk", "jazz", "bollywood",
+    "punjabi", "bhangra", "synth", "electro",
+    "melodic",   # melodic house <-> melodic techno: a neighbour move the autopilot allows
+)
+
+
+def genre_scenes(label) -> set:
+    g = " " + " ".join(str(label or "").lower().replace("-", " ").split()) + " "
+    found = set()
+    for s in SCENES:
+        if s.replace("-", " ") in g and not any(s != f and s in f for f in found):
+            found.add(s)
+    return found
+
+
+def genre_near(genre_a, genre_b) -> Optional[bool]:
+    """True: same scene (share a scene term). False: both known, no shared
+    scene term. None: at least one label unknown or unrecognised."""
+    a, b = genre_scenes(genre_a), genre_scenes(genre_b)
+    if not a or not b:
+        return None
+    return bool(a & b)
 
 
 GENRE_JUMP_PENALTY = 0.6  # unrelated-family jump knocks the transition score down hard

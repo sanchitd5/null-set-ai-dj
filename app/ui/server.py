@@ -662,20 +662,33 @@ def get_vocal_entry(track_id: str):
 
 
 @app.get("/api/library/lockable")
-def get_library_lockable(bpm: float, key: str = "", exclude: str = "", limit: int = 6, max_gap: float = 0.08):
+def get_library_lockable(bpm: float, key: str = "", exclude: str = "", limit: int = 6, max_gap: float = 0.08,
+                         genre: str = ""):
     """Library songs whose analysed tempo locks to `bpm` (half / double time
     count) within max_gap, best key match first. The autopilot's fallback
-    before it would force a tempo jump."""
+    before it would force a tempo jump.
+
+    `genre` = the playing song's genre. When given, a library song must be
+    known to sit in the same scene (genre.genre_near) - tempo and key alone
+    let Aqua "Barbie Girl" hand over to Bicep "Glue" (user). A song whose
+    genre isn't known yet is left out too: better a genre-right tempo jump
+    than a genre-wrong lock."""
     from app.music_brain import techniques as tq
+    from app.music_brain.genre import genre_near
     from app.ui.download_service import _is_live, _is_mix
+    from app.ui.track_identity import clean_identity
 
     skip = set(filter(None, exclude.split(",")))
+    genre = str(genre or "").strip()[:80]
     out = []
     for tid, path in list(_tracks.items()):
         if tid in skip:
             continue
         name = _track_names.get(tid) or path.stem
         if _is_mix(name) or _is_live(name):
+            continue
+        lib_genre = _suggested_genres.get(_genre_key(clean_identity(name)[1]), "")
+        if genre and genre_near(genre, lib_genre) is not True:
             continue
         try:
             a = analyze_track(path)
@@ -689,7 +702,8 @@ def get_library_lockable(bpm: float, key: str = "", exclude: str = "", limit: in
         k = a.key.camelot if a.key else None
         ks = tq.camelot_score(key, k) if key and k else 0.5
         out.append({"track_id": tid, "name": name, "bpm": a.bpm, "key": k, "gap": round(gap, 4),
-                    "key_score": ks, "duration": a.duration, "stems": _stem_cache.get(tid) is not None})
+                    "key_score": ks, "duration": a.duration, "stems": _stem_cache.get(tid) is not None,
+                    "genre": lib_genre})
     out.sort(key=lambda x: (-x["key_score"], x["gap"]))
     return {"tracks": out[: max(1, min(limit, 20))]}
 
@@ -1570,6 +1584,10 @@ def _autopilot_suggest_impl(req: AutopilotSuggestRequest):
     for s in suggestions:
         if s.get("title") and s.get("genre"):
             _suggested_genres[_genre_key(s["title"])] = str(s["genre"])
+    # The playing song's own genre (the model's current_genre): library songs
+    # get labels as they play, so the library fallback can check genre.
+    if meta.get("current_genre") and not req.lookahead:
+        _suggested_genres[_genre_key(title_part)] = str(meta["current_genre"])
     return {"suggestions": suggestions, "set_position": round(set_position, 2), **meta}
 
 

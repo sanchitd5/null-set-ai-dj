@@ -1428,7 +1428,9 @@
     const key = d.analysis && d.analysis.key && d.analysis.key.camelot || "";
     const exclude = [...playedIds, currentId].join(",");
     try {
-      const res = await fetch(`/api/library/lockable?bpm=${aEff.toFixed(2)}&key=${encodeURIComponent(key)}&exclude=${encodeURIComponent(exclude)}&max_gap=${lockLimit()}`);
+      // genre: the server only offers library songs known to share the playing
+      // song's scene (tempo + key alone paired Barbie Girl with Bicep "Glue")
+      const res = await fetch(`/api/library/lockable?bpm=${aEff.toFixed(2)}&key=${encodeURIComponent(key)}&exclude=${encodeURIComponent(exclude)}&max_gap=${lockLimit()}&genre=${encodeURIComponent(currentGenre || "")}`);
       const lib = (await res.json()).tracks || [];
       for (const t of lib) {
         if (!active || gen !== prepGen) return false;

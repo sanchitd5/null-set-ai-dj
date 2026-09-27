@@ -168,3 +168,16 @@ def test_sequel_is_not_the_song():
     assert not _sequel("Fred again.. - Victory Lap (feat. Skepta & PlaqueBoyMax)", "Victory Lap")
     assert not _sequel("Victory Lap Five", "Victory Lap Five")
     assert not _sequel("22 (Over U)", "22")
+
+
+def test_genre_near_scene_level():
+    from app.music_brain.genre import genre_near
+    # user: Aqua "Barbie Girl" (eurodance) -> Bicep "Glue" (breakbeat/electronica)
+    assert genre_near("eurodance", "breakbeat") is False
+    assert genre_near("eurodance", "electronica") is False
+    assert genre_near("melodic house", "deep house") is True
+    assert genre_near("melodic house", "melodic techno") is True
+    assert genre_near("eurodance", "dance-pop") is True
+    assert genre_near("synth-pop", "pop") is True
+    assert genre_near("drum and bass", "future bass") is False   # longer term wins over "bass"
+    assert genre_near("eurodance", "") is None and genre_near("", "house") is None
