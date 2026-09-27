@@ -304,6 +304,9 @@
     setRange(eqEl(deck, "high"), 0);
     setLoop(deck, false);
     setFx(deck, "none");
+    // A key-locked / tempo-matched blend leaves this deck's pitch off native;
+    // never carry that into its next track (it must load at its own BPM).
+    setRange(document.querySelector(`.pitch-fader[data-deck="${deck}"]`), 0);
   }
 
   const MASHUP_VOX = 0.7;     // B's voice under A's music but never buried (user)
