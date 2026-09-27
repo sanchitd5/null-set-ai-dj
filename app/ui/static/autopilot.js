@@ -766,12 +766,15 @@
     // `avoid` = titles rejected this round (failed download / vibe gate) so the
     // LLM does not propose them again on retry.
     // DJ mind hint: "dip" after a long peak (study rule 9), "callback" late in
-    // the set (rule 7). Null most of the time.
-    const energyNote = window.djMind && !opts.lookAhead ? window.djMind.nextEnergyNote(setPos) : null;
+    // the set (rule 7), "reprise" of the set's recurring hook (set study
+    // mDtud5fLgFQ section 5, with energy_hook naming it). Null most of the time.
+    const hint = window.djMind && !opts.lookAhead ? window.djMind.nextEnergyNote(setPos, history) : null;
+    const energyNote = hint ? hint.note : null;
+    const energyHook = hint ? hint.hook : null;
     const res = await fetch("/api/autopilot/suggest", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ track_id: trackId, occasion: occasionWithBridge(opts), ...leadFields(opts), history: history.slice(-30), avoid: avoid.slice(-6), set_position: setPos, set_mode: setMode(), energy_note: energyNote, lookahead: !!opts.lookAhead,
+      body: JSON.stringify({ track_id: trackId, occasion: occasionWithBridge(opts), ...leadFields(opts), history: history.slice(-30), avoid: avoid.slice(-6), set_position: setPos, set_mode: setMode(), energy_note: energyNote, energy_hook: energyHook, lookahead: !!opts.lookAhead,
         variety_run: varietyRun().run, variety_genre: varietyRun().genre,
         tempo_target: bridgeTarget(opts.lookAhead), tempo_note: bridgeNote(opts.lookAhead) || null,
         elapsed_seconds: setStartedAt ? (Date.now() - setStartedAt) / 1000 : null }),
