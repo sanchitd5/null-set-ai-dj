@@ -116,6 +116,7 @@
     const { events, totalBars } = schedule(plan);
     const TL = plan.timeline || {};
     const BRK = TL.break || 16, MSH = TL.mashup || 24;
+    const BLD = TL.blend || MSH + 16;
     const aGain = (plan.gains && plan.gains.a_gain) || 1;
 
     // A: stop its own playback exactly at t0, the stretched stems take over.
@@ -186,7 +187,7 @@
       if (e.aFade) for (const n of STEMS) ramp(gains[n].gain, 0, T, e.aFade * bar);
       if (e.aRamp) for (const [n, v] of Object.entries(e.aRamp)) if (n !== "bars") ramp(gains[n].gain, v * aGain, T, e.aRamp.bars * bar);
       if (e.aRampOther) { ramp(gains.other.gain, 0, T, e.aRampOther.bars * bar); ramp(gains.vocals.gain, 0, T, e.aRampOther.bars * bar); }
-      if (e.xfToB === 0) later(T, () => ui.xf(innId, 1));
+      if (e.xfToB === 0) { /* the sweep below already landed on B */ }
       if (e.xfToB) later(T, () => {
         const steps = 16;
         for (let i = 1; i <= steps; i++) setTimeout(() => ui.xf(innId, i / steps), (e.xfToB * bar * 1000 * i) / steps);
@@ -194,7 +195,18 @@
       later(T, () => note(`RIFF OVER RAP · bar ${e.bar}`, e.why));
     }
     // both channels open, both lows open (bass ownership is done with the stems)
-    later(t0, () => { ui.xf(innId, 0); ui.eq(outId, "low", 0); ui.eq(innId, "low", 0); ui.eq(innId, "mid", 0); ui.eq(innId, "high", 0); });
+    // EQs flat at the start; the crossfader moves only in smooth sweeps (user):
+    // A side -> centre while A's drop-half plays alone (B still silent), then
+    // centre -> B across the final crossfade. Never a jump.
+    later(t0, () => { ui.eq(outId, "low", 0); ui.eq(innId, "low", 0); ui.eq(innId, "mid", 0); ui.eq(innId, "high", 0); });
+    const sweep = (fromF, toF, T0, secs) => {
+      const steps = 24;
+      for (let i = 1; i <= steps; i++) {
+        later(T0 + (secs * i) / steps, () => ui.xf(innId, fromF + (toF - fromF) * (i / steps)));
+      }
+    };
+    sweep(-1, 0, at(BRK), (MSH - BRK) * bar);
+    sweep(0, 1, at(BLD), (totalBars - BLD) * bar);
     later(t0, () => { oa._meterGain = gains; });
     later(at(totalBars) + 0.1, () => {
       oa._meterGain = null;

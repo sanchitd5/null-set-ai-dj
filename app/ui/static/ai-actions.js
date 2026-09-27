@@ -71,9 +71,12 @@
       ["low", "mid", "high"].forEach((b) => { setRange(eq(c.h, b), 0); setRange(eq(c.nId, b), 0); });
       if (sm && c.d.stemsReady && n.stems) {
         await new Promise((r) => setTimeout(r, 120));        // next's stem sources are booked with its play()
-        setRange(xf, 0);
         if (sm.stemBlend("blend", c.h, c.nId, c.T, 16, barS, "on demand: 16-bar stem blend")) {
-          setTimeout(() => { setRange(xf, c.nId === "b" ? 1 : -1); c.d.stopNow(); }, (c.T - audioCtx.currentTime + 16 * barS) * 1000 + 300);
+          // crossfader sweeps across the blend: no jump to the centre
+          const from = c.h === "a" ? -1 : 1, to = -from, steps = 32;
+          for (let i = 1; i <= steps; i++) setTimeout(() => setRange(xf, from + (to - from) * (i / steps)),
+            (c.T - audioCtx.currentTime) * 1000 + (16 * barS * 1000 * i) / steps);
+          setTimeout(() => c.d.stopNow(), (c.T - audioCtx.currentTime + 16 * barS) * 1000 + 300);
           return;
         }
       }

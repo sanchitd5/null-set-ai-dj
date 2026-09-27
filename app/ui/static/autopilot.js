@@ -365,12 +365,14 @@
       const bars = (kind === "blend" || kind === "filter" || kind === "loop" ? (long ? 32 : 16) : kind === "bass" ? 16 : 8) * scale;
       const barS = bar / 1000;
       ["low", "mid", "high"].forEach((b) => { setRange(eqEl(out, b), 0); setRange(eqEl(inn, b), 0); });
-      setRange(xfEl(), 0);                                   // both channels open; stems do the mixing
+      // The crossfader sweeps A -> B across the whole blend (equal power, on the
+      // audio clock): never a jump to the centre or to the far side (user:
+      // "putting the crossfader in centre sounds really odd"). The stems still
+      // decide which layer plays; the fader just carries the level across.
       if (sm.stemBlend(kind, out, inn, xT0, bars, barS)) {
-        at(bars, () => setRange(xfEl(), toXf));
+        rampParam(xfEl, fromXf, toXf, bars * bar);
         return bars * bar;
       }
-      setRange(xfEl(), fromXf);
     }
 
     // Incoming deck always enters with its sub killed: single bass owner.
@@ -792,12 +794,22 @@
   }
 
   // Match + gates + load + schedule one downloaded candidate. True = scheduled.
-  // Can `cand` be pitch-locked to the playing deck (+/-8%, half/double time)?
+  // Can `cand` be tempo-locked to the playing deck (half/double time counts)?
+  // +/-8 % on pitch; +/-15 % when the playing deck has stems: the next song
+  // then plays on key-locked tempo stems (multi-BPM stem sets), no pitch shift.
+  function stemsOn() { const d = window.decks && window.decks[activeDeck]; return !!(d && d.stems); }
+  function lockLimit() { return stemsOn() ? 0.15 : 0.08; }
+  function tempoLockableAt(cand, lim) {
+    const d = window.decks && window.decks[activeDeck];
+    if (!d || !d.bpm || !cand.bpm) return true;
+    const aEff = d.bpm * d._playbackRate();
+    return [1, 2, 0.5].some((m) => Math.abs(aEff / (cand.bpm * m) - 1) <= lim);
+  }
   function tempoLockable(cand) {
     const d = window.decks && window.decks[activeDeck];
     if (!d || !d.bpm || !cand.bpm) return true; // unknown: let the matcher decide
     const aEff = d.bpm * d._playbackRate();
-    return [1, 2, 0.5].some((m) => Math.abs(aEff / (cand.bpm * m) - 1) <= 0.08);
+    return [1, 2, 0.5].some((m) => Math.abs(aEff / (cand.bpm * m) - 1) <= lockLimit());
   }
   let allowTempoJump = false; // set on the last round so the set never stalls
   // Tempo-jump budget (user: "genre switch once in a while is fine, or in the
@@ -809,6 +821,9 @@
   let songsSinceJump = 0;          // a set starts beat-matched; first jump after JUMP_EVERY songs
   let jumpPending = false;         // the booked transition is a tempo jump
   function tempoJumpBudget() {
+    // One song (user): with stems no planned tempo jumps; only the last-round
+    // fallback may jump, so the set never stalls.
+    if (stemsOn()) return false;
     const peak = currentEnergy != null && currentEnergy >= 8;
     return songsSinceJump >= (peak ? PEAK_JUMP_EVERY : JUMP_EVERY);
   }
@@ -1115,6 +1130,33 @@
     const blob = await audioRes.blob();
     if (!active) return false;
     await loadIntoDeck(stagingDeck(), nextId, nextName, blob);
+    // tempo gap 2-15 %: render its key-locked tempo stems now, long before the blend
+    {
+      const oa1 = window.decks && window.decks[activeDeck], sd1 = window.decks && window.decks[stagingDeck()];
+      if (oa1 && sd1 && oa1.bpm && sd1.useTempoStems) {
+        const waitStems = async () => { for (let i = 0; i < 40 && !sd1.stems; i++) await new Promise((r) => setTimeout(r, 500)); };
+        waitStems().then(() => {
+          if (!sd1.bpm || !sd1.stems) return;
+          const aEff1 = oa1.bpm * oa1._playbackRate();
+          const m1 = [1, 2, 0.5].reduce((b, m) => (Math.abs(aEff1 / (sd1.bpm * m) - 1) < Math.abs(aEff1 / (sd1.bpm * b) - 1) ? m : b));
+          const g1 = Math.abs(aEff1 / (sd1.bpm * m1) - 1);
+          if (g1 > 0.02 && g1 <= 0.15) sd1._tempoStemsJob = sd1.useTempoStems(aEff1 / m1);
+        });
+      }
+    }
+    // Over 8 % the blend needs the key-locked stems: book the song only once they're on.
+    if (cand.bpm && !tempoLockableAt(cand, 0.08) && tempoLockableAt(cand, 0.15)) {
+      const sd2 = window.decks && window.decks[stagingDeck()];
+      apStatus(`Key-locking ${nextName} to this tempo (tempo stems)…`);
+      const t2 = Date.now();
+      while (sd2 && !sd2._tempoStemsJob && Date.now() - t2 < 25000) await new Promise((r) => setTimeout(r, 500));
+      const ok2 = sd2 && sd2._tempoStemsJob ? await Promise.race([sd2._tempoStemsJob, new Promise((r) => setTimeout(() => r(false), 90000))]) : false;
+      if (!ok2 && !forceJump) {
+        apStatus(`Not now: ${nextName} needs key-locked stems that aren't ready — kept for later`);
+        cand.keep = true;
+        return false;
+      }
+    }
     matchGain(activeDeck, stagingDeck(), candidate.vibe && candidate.vibe.gain_match_db);
     const plan = await aiPlan;
     if (!active || currentTrackId !== currentId) return false;
