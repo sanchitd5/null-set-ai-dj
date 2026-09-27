@@ -64,34 +64,210 @@
   function handoffFits(ctx) {
     return !!(ctx.outStems && ctx.inStems && ctx.keyScore >= 0.8 && ctx.outVocal >= 0.3);
   }
+  // ---- intro stem ([[Stems Transition]], user: "at least one appropriate stem
+  // should be playing before crossfade starts"). B never appears through the
+  // crossfader as a full mix: it comes in on ONE layer under A first.
+  //   keys agree   B's `other` (synths/pads) or drums, whichever B really has
+  //                energy in at its entry (measured from the decoded stems)
+  //   keys clash   B's drums (percussion has no key)
+  //   never        B's bass: A owns the sub until the swap line ([[Bass Swap]])
+  //   B's voice    only when B has nothing else there and A is not singing
+  const STEMS = ["drums", "bass", "vocals", "other"];
+  const INTRO_LEVEL = { other: 0.8, drums: 0.7, vocals: 0.8 };
+  const INTRO_MIN_RMS = 0.01;          // ~ -40 dBFS: below this the stem is not really playing
+  // c: {keyClash, aSings, bSings, energy: B's mean RMS per stem over the intro
+  // window ({drums, bass, vocals, other}) or null when unmeasured}
+  function pickIntro(c) {
+    if (c.keyClash) return "drums";
+    const e = c.energy;
+    if (!e) return "other";
+    const lvl = (n) => e[n] || 0;
+    if (lvl("other") >= INTRO_MIN_RMS || lvl("drums") >= INTRO_MIN_RMS) {
+      return lvl("other") >= 0.5 * lvl("drums") ? "other" : "drums";   // a pad beats a kick at equal weight
+    }
+    if (!c.aSings && c.bSings && lvl("vocals") >= INTRO_MIN_RMS) return "vocals";
+    return "other";
+  }
+  // The intro stem plays alone (under A) for one phrase before the crossfade
+  // moves: 8 bars, 4 in a short window.
+  function introBars(bars) { return bars >= 16 ? 8 : Math.max(2, bars / 2); }
+
+  // ---- loudness floor (user: "when crossfading it shouldn't mute stems where
+  // the master goes almost silent"). Through a stem transition the master stays
+  // within LEVEL_FLOOR_DB of A's level just before it (1-beat loudness window).
+  // 8 dB: the equal-power centre (-3 dB) plus a stripped layer still passes;
+  // both beats gone with only a quiet pad left (~ -10 dB and worse) does not.
+  // And some stem, on some deck, is always up at >= -18 dB (AUDIBLE_GAIN).
+  const LEVEL_FLOOR_DB = 8;
+  const AUDIBLE_GAIN = 0.126;
+  const FADER_PARK_BARS = 1;
+  // No decoded stems to measure: typical RMS share of each stem in a mix. An
+  // assumption, not a measurement (only the ratios matter).
+  const TYPICAL_SHARE = { drums: 0.45, bass: 0.45, vocals: 0.35, other: 0.35 };
+  // Moves whose dip IS the move: allowed only when that move was chosen, on a
+  // phrase line. A plan carries `dipAllowed: DIP_ALLOWED.x`; the check reports
+  // it instead of silently skipping.
+  const DIP_ALLOWED = Object.freeze({
+    breakdown: "strip & rebuild (breakdown)",
+    subdrop: "dj-mind subdrop (sub out on purpose)",
+    riffRelease: "riff over rap: release into A's own drumless breakdown",
+    build: "pre-drop build (Drop Swap / Double Drop)",
+    brake: "brake / spin-down",
+    echo: "echo-out tail (the effect carries the energy)",
+  });
+
   // Stem blend: a transition done with stems instead of EQ. Each layer has one
-  // owner at a time. bars = 8 or 16. aSings / bSings: vocals in the window.
+  // owner at a time. bars = 8 or 16 (32 for mashup kinds). aSings / bSings:
+  // vocals in the window. o: {intro (pickIntro), introLevel, keepA (A's synths
+  // stay through the second half: the loudness fix when B's beat is thin)}.
   // Returns [{bar, deck: "out"|"in", stems, ramp (bars)}], bars from B's entry.
-  function stemBlendPlan(kind, bars, aSings, bSings, keyClash = false) {
+  function stemBlendPlan(kind, bars, aSings, bSings, keyClash = false, o = {}) {
     const L = bars, swap = L / 2, ev = [];
     if (kind === "double") {
-      // both drops together: B owns drums + bass, A keeps its tops (and its voice
-      // only if B isn't singing); A leaves on the line after L bars
-      ev.push({ bar: 0, deck: "in", stems: null, ramp: 0 });
-      ev.push({ bar: 0, deck: "out", stems: { drums: 0, bass: 0, vocals: bSings ? 0 : 1, other: 1 }, ramp: 0 });
+      // [[Double Drop]]: both drops land together on bar 0, so B's drums + bass
+      // ARE its entry (the rule's deliberate exception): B owns drums + bass, A
+      // keeps its tops and voice; B's tops and voice take over as A leaves (L-1)
+      ev.push({ bar: 0, deck: "in", stems: { drums: 1, bass: 1, vocals: 0, other: 0 }, ramp: 0 });
+      ev.push({ bar: 0, deck: "out", stems: { drums: 0, bass: 0, vocals: 1, other: 1 }, ramp: 0 });
       ev.push({ bar: L - 1, deck: "out", stems: { drums: 0, bass: 0, vocals: 0, other: 0 }, ramp: 1 });
+      ev.push({ bar: L - 1, deck: "in", stems: { vocals: 1, other: 1 }, ramp: 1 });
+      ev.push({ bar: L, deck: "in", stems: null, ramp: 0.05 });
       return ev;
     }
-    // 0..swap   B's synths/pads fade in under A (no kick, no bass, no voice).
-    // Keys clash: one tonal owner, B's synths wait until A's have faded.
+    const intro = o.intro || (keyClash ? "drums" : "other");
+    const lvl = o.introLevel || INTRO_LEVEL[intro] || 0.8;
+    // 0..swap   B's ONE intro stem under A (no bass; keys clash: no tones yet).
+    // It rises while the fader parks at the centre (1 bar), then sits there
+    // alone for the intro phrase before the crossfade proper moves.
     ev.push({ bar: 0, deck: "in", stems: { drums: 0, bass: 0, vocals: 0, other: 0 }, ramp: 0 });
-    if (!keyClash) ev.push({ bar: 0.01, deck: "in", stems: { drums: 0, bass: 0, vocals: 0, other: 0.8 }, ramp: swap });
-    // swap line  kick + bass change hands together, in one beat
+    ev.push({ bar: 0.01, deck: "in", stems: { [intro]: lvl }, ramp: FADER_PARK_BARS });
+    // swap line  kick + bass change hands together, in one beat (one sub owner)
     ev.push({ bar: swap - 0.25, deck: "out", stems: { drums: 0, bass: 0 }, ramp: 0.25 });
     ev.push({ bar: swap, deck: "in", stems: { drums: 1, bass: 1 }, ramp: 0.05 });
-    // swap..L   A's synths fade; one singer: A finishes its line, then B's voice
-    ev.push({ bar: swap, deck: "out", stems: { other: 0 }, ramp: keyClash ? (L - swap) / 2 : L - swap });
+    // swap..L   A's synths fade (keepA: held full until 2 bars before the end);
+    // one singer: A finishes its line, then B's voice
+    if (o.keepA) ev.push({ bar: L - 2, deck: "out", stems: { other: 0 }, ramp: 2 });
+    else ev.push({ bar: swap, deck: "out", stems: { other: 0 }, ramp: keyClash ? (L - swap) / 2 : L - swap });
     if (keyClash) ev.push({ bar: swap + (L - swap) / 2, deck: "in", stems: { other: 1 }, ramp: (L - swap) / 2 });
+    else if (intro !== "other") ev.push({ bar: swap, deck: "in", stems: { other: 1 }, ramp: (L - swap) / 2 });
     const aVoxOut = aSings ? L - 2 : swap;
     ev.push({ bar: aVoxOut, deck: "out", stems: { vocals: 0 }, ramp: aSings ? 2 : 1 });
-    ev.push({ bar: aSings ? L - 0.5 : swap, deck: "in", stems: keyClash ? { vocals: 1 } : { vocals: 1, other: 1 }, ramp: aSings ? 0.5 : 2 });
+    ev.push({ bar: aSings ? L - 0.5 : swap, deck: "in", stems: keyClash || intro !== "other" ? { vocals: 1 } : { vocals: 1, other: 1 }, ramp: aSings ? 0.5 : 2 });
     ev.push({ bar: L, deck: "in", stems: null, ramp: 0.05 });
-    return ev;
+    return ev.sort((a, b) => a.bar - b.bar);
+  }
+
+  // energy source -> (stem, t) => RMS. null: typical shares; {stem: number};
+  // {stem: [per plan-unit bin]} (stemEnergyBars); or a function.
+  function energyFn(e) {
+    if (typeof e === "function") return e;
+    if (!e) return (n) => TYPICAL_SHARE[n] || 0;
+    return (n, t) => {
+      const v = e[n];
+      if (Array.isArray(v)) return v.length ? v[Math.max(0, Math.min(v.length - 1, Math.floor(t)))] || 0 : 0;
+      return v || 0;
+    };
+  }
+  const evAt = (e) => (e.bar != null ? e.bar : e.t);
+  const FULL = () => ({ drums: 1, bass: 1, vocals: 1, other: 1, bus: 0 });
+  // Stem gains of one deck at plan time t (deck-controller stemMix semantics:
+  // each move ramps from the previous move's target; null = full mix).
+  function gainsAt(events, deck, t) {
+    let logical = FULL(), cur = FULL();
+    const evs = events.filter((e) => e.deck === deck && !e.hold && "stems" in e).sort((a, b) => evAt(a) - evAt(b));
+    for (const e of evs) {
+      const a = evAt(e);
+      if (a > t) break;
+      const tgt = e.stems === null ? FULL() : Object.assign({}, logical, e.stems);
+      const r = e.ramp || 0;
+      const k = r > 0 ? Math.min(1, (t - a) / r) : 1;
+      cur = {};
+      for (const n in tgt) cur[n] = (logical[n] || 0) + ((tgt[n] || 0) - (logical[n] || 0)) * k;
+      logical = tgt;
+    }
+    return cur;
+  }
+  // Crossfader position at plan time t in B-ward units (-1 = A only, +1 = B only).
+  // segs: [{bar|t, from, to, bars|dur}] in raw fader units; dir = +1 when B is right.
+  function faderAt(segs, dir, t) {
+    if (!segs || !segs.length) return -1;
+    const s0 = [...segs].sort((a, b) => evAt(a) - evAt(b));
+    let v = s0[0].from;
+    for (const s of s0) {
+      const a = evAt(s), d = s.bars != null ? s.bars : s.dur || 0;
+      if (t < a) break;
+      v = d > 0 && t < a + d ? s.from + ((s.to - s.from) * (t - a)) / d : s.to;
+    }
+    return v * (dir || 1);
+  }
+  // p: {events, fader, dir, span, inStart, eOut, eIn, step, win, dipAllowed}
+  // -> {ok, minDb, at, reason, dipAllowed}. Level = incoherent sum of each
+  // stem's RMS x its gain x the deck's equal-power fader gain (+ the vocal bus,
+  // which bypasses the fader); 0 dB = A's full mix at the plan's start.
+  function levelCheck(p) {
+    const eo = energyFn(p.eOut), ei = energyFn(p.eIn);
+    const step = p.step || 1 / 16, win = Math.max(1, Math.round((p.win || 0.25) / step));
+    const inStart = p.inStart || 0;
+    let ref = 0;
+    for (const n of STEMS) ref += eo(n, 0) ** 2;
+    const pw = [], audible = [];
+    for (let t = 0; t <= p.span + 1e-9; t += step) {
+      const x = (faderAt(p.fader, p.dir, t) + 1) / 2;
+      const fo = Math.cos((x * Math.PI) / 2), fi = Math.sin((x * Math.PI) / 2);
+      const ga = gainsAt(p.events, "out", t), gb = gainsAt(p.events, "in", t);
+      let sum = (ga.bus * eo("vocals", t)) ** 2, any = ga.bus >= AUDIBLE_GAIN;
+      for (const n of STEMS) {
+        sum += (fo * ga[n] * eo(n, t)) ** 2;
+        if (fo * ga[n] >= AUDIBLE_GAIN && eo(n, t) > 0) any = true;
+      }
+      if (t >= inStart) {
+        sum += (gb.bus * ei("vocals", t)) ** 2;
+        for (const n of STEMS) {
+          sum += (fi * gb[n] * ei(n, t)) ** 2;
+          if (fi * gb[n] >= AUDIBLE_GAIN && ei(n, t) > 0) any = true;
+        }
+      }
+      pw.push(sum);
+      audible.push(any);
+    }
+    let minDb = 0, at = 0, silentAt = null;
+    for (let i = 0; i < pw.length; i++) {
+      const j0 = Math.max(0, i - win + 1);
+      let m = 0;
+      for (let j = j0; j <= i; j++) m += pw[j];
+      const db = ref > 0 ? 10 * Math.log10(Math.max(1e-12, m / (i - j0 + 1)) / ref) : 0;
+      if (db < minDb) { minDb = db; at = i * step; }
+      // one sample of nothing is a hand-over edge; two in a row is a hole
+      if (silentAt == null && i > 0 && !audible[i] && !audible[i - 1]) silentAt = i * step;
+    }
+    const dip = silentAt != null || minDb < -LEVEL_FLOOR_DB;
+    const reason = silentAt != null ? `no stem audible at ${silentAt.toFixed(2)}`
+      : dip ? `master ${minDb.toFixed(1)} dB at ${at.toFixed(2)} (floor -${LEVEL_FLOOR_DB} dB)` : "";
+    if (dip && p.dipAllowed) return { ok: true, minDb, at, reason, dipAllowed: p.dipAllowed };
+    return { ok: !dip, minDb, at, reason, dipAllowed: null };
+  }
+
+  // Plan a stem blend that passes the floor: intro stem from B's measured
+  // energy, then the fixes in order: B's intro louder, A's synths kept up longer
+  // (never A's bass past the swap line: one sub owner), both. None passes ->
+  // refused (the caller falls back to the EQ path: a full mix that stays audible).
+  // c: {aSings, bSings, aSingsIntro, keyClash, introEnergy, eOut, eIn, fader, dir}
+  function fitStemBlend(kind, bars, c) {
+    const intro = kind === "double" ? null
+      : pickIntro({ keyClash: c.keyClash, aSings: c.aSingsIntro != null ? c.aSingsIntro : c.aSings, bSings: c.bSings, energy: c.introEnergy });
+    const tries = kind === "double" ? [{}] : [{}, { introLevel: 1 }, { keepA: true }, { keepA: true, introLevel: 1 }];
+    let last = null;
+    for (const fix of tries) {
+      const events = stemBlendPlan(kind, bars, c.aSings, c.bSings, c.keyClash, Object.assign({ intro }, fix));
+      const check = levelCheck({ events, fader: c.fader, dir: c.dir, span: bars, eOut: c.eOut, eIn: c.eIn });
+      last = { events, intro, fix, check, refused: !check.ok };
+      if (check.ok) return last;
+    }
+    return last;
+  }
+  // BREAKDOWN plan as level-check events (bars; its ramps are in beats).
+  function breakdownEvents(bars) {
+    return (BREAKDOWN[bars] || []).map(([bar, stems, beats]) => ({ bar, deck: "out", stems, ramp: beats / 4 }));
   }
   const STEM_BLEND_KINDS = new Set(["bass", "blend", "filter", "loop", "double"]);
 
@@ -128,28 +304,38 @@
   // No two beats ever overlap, so the tempos never meet:
   //   A bar 0   A's drums out            (strip)
   //   A bar 2   A's bass out: voice + synths, beatless
-  //   A bar 4   HOLD VOX: A's last vocal bar held; B starts, beatless (pads, no drums,
-  //             no bass; its own voice only if the keys agree), crossfader sweeps A->B
+  //   A bar 4   HOLD VOX: A's last vocal bar held; B starts on ONE intro stem (its
+  //             pads when the keys agree; its drums when they clash: A is beatless
+  //             by then, so still one beat), the fader parks at the centre
   //   B entry   B's bass back 2 B-bars before its line, B's drums ON its line: the
-  //             rebuild lands on B's own grid; A has faded out just before
+  //             rebuild lands on B's own grid; A has faded out just before, the
+  //             fader finishes its move over the 2 B-bars into the line
   // Times in seconds from A's bar 0. barA / barB = seconds per bar of each song.
-  function stemBridgePlan(barA, barB, keyClash, aSings) {
+  // o.intro: "other" | "drums" (pickIntro; default by keyClash), o.introLevel.
+  // fader: [{t, from, to, dur}] in B-ward units (-1 = A side; x the side of B).
+  function stemBridgePlan(barA, barB, keyClash, aSings, o = {}) {
     const bStart = 4 * barA, bEntry = bStart + 4 * barB;
     const LIFT = 1.25;                 // ~+2 dB on A's voice + synths once its beat is gone (no sag)
     const swapAt = bEntry - 3 * barB;  // tonal layers change hands here, equal power over 2 B-bars
+    const intro = o.intro === "drums" || (keyClash && o.intro !== "other") ? "drums" : "other";
+    const lvl = o.introLevel || (intro === "drums" ? 0.5 : 0.7);
     const ev = [
       { t: 0, deck: "out", stems: { drums: 0, vocals: LIFT, other: LIFT }, ramp: barA },
       { t: 2 * barA, deck: "out", stems: { bass: 0 }, ramp: barA },
       { t: bStart, deck: "in", start: true, stems: { drums: 0, bass: 0, vocals: 0, other: 0 }, ramp: 0 },
-      // keys agree: B's pads rise under A from the start of the beatless stretch
-      { t: bStart + 0.01, deck: "in", stems: { other: keyClash ? 0 : 0.7, vocals: 0 }, ramp: 2 * barB },
+      // B's intro stem rises under A from the start of the beatless stretch
+      { t: bStart + 0.01, deck: "in", stems: intro === "drums" ? { drums: lvl, vocals: 0 } : { other: lvl, vocals: 0 }, ramp: 2 * barB },
       // the swap: A's tones out while B's bass + tones come in (one crossfade, no gap)
       { t: Math.max(bStart, swapAt), deck: "out", stems: { vocals: 0, other: 0 }, ramp: 2 * barB },
       { t: Math.max(bStart, swapAt), deck: "in", stems: { bass: 1, other: 1 }, ramp: 2 * barB },
       { t: bEntry, deck: "in", stems: null, ramp: 0.03 },   // B's beat, on its own line
     ];
     if (aSings) ev.push({ t: bStart, deck: "out", hold: { stem: "vocals", fromBar: 3, bars: 1 }, until: Math.max(bStart, swapAt) + 2 * barB });
-    return { events: ev.sort((x, y) => x.t - y.t), bStart, bEntry, total: bEntry + barB };
+    const fader = [
+      { t: bStart, from: -1, to: 0, dur: barB },                // park: B only has its intro stem
+      { t: bEntry - 2 * barB, from: 0, to: 1, dur: 2 * barB },  // the crossfade proper, into B's line
+    ];
+    return { events: ev.sort((x, y) => x.t - y.t), bStart, bEntry, total: bEntry + barB, intro, fader };
   }
 
   // ---- remix on the go: stem on/offs and holds inside 16 / 32-bar sections ----
@@ -183,7 +369,9 @@
       : ctx.vocal >= 0.15 ? ["bass_out", "drum_break", "synth_hold"] : ["drum_break", "synth_hold", "bass_out"];
     return menu.find((k) => !used.has(k)) || null;
   }
-  const core = { BREAKDOWN, breakdownFits, handoffFits, vocalShare, stemBlendPlan, STEM_BLEND_KINDS, remixEvents, remixPick, stemBridgePlan, mashupTransitionPlan };
+  const core = { BREAKDOWN, breakdownFits, handoffFits, vocalShare, stemBlendPlan, STEM_BLEND_KINDS, remixEvents, remixPick, stemBridgePlan, mashupTransitionPlan,
+                 pickIntro, introBars, INTRO_LEVEL, levelCheck, gainsAt, faderAt, fitStemBlend, breakdownEvents,
+                 LEVEL_FLOOR_DB, AUDIBLE_GAIN, FADER_PARK_BARS, TYPICAL_SHARE, DIP_ALLOWED };
   if (typeof module !== "undefined" && module.exports) module.exports = core;
   if (typeof root.document === "undefined" || typeof audioCtx === "undefined") return;
 
@@ -208,11 +396,57 @@
     timers[d.id].push(setTimeout(() => { if (d.playing) d.stemMix(target, at, ramp); }, lead));
   }
 
+  // Per-stem RMS of deck d's decoded stems, one bin per `barSong` song seconds
+  // from song time songT (n bins). Measured, not guessed: reads the stem
+  // buffers (strided), mapped like _startStem ((t + lag) * ratio). null when
+  // the deck has no decoded stems (the level check then uses TYPICAL_SHARE).
+  function stemEnergyBars(d, songT, barSong, n) {
+    const st = d && d.stems;
+    if (!st || !(barSong > 0)) return null;
+    const k = st.ratio || 1, lag = st.lag || 0, out = {};
+    for (const name of STEMS) {
+      const b = st[name];
+      if (!b || !b.getChannelData) return null;
+      const ch = b.getChannelData(0), sr = b.sampleRate, arr = [];
+      for (let i = 0; i < n; i++) {
+        const s0 = Math.max(0, Math.floor((songT + i * barSong + lag) * k * sr));
+        const s1 = Math.min(ch.length, Math.floor((songT + (i + 1) * barSong + lag) * k * sr));
+        let sum = 0, c = 0;
+        for (let j = s0; j < s1; j += 64) { sum += ch[j] * ch[j]; c++; }
+        arr.push(c ? Math.sqrt(sum / c) : 0);
+      }
+      out[name] = arr;
+    }
+    return out;
+  }
+  const meanOver = (e, a, b) => {
+    if (!e) return null;
+    const m = {};
+    for (const n of STEMS) { const v = e[n].slice(a, Math.max(a + 1, b)); m[n] = v.reduce((x, y) => x + y, 0) / (v.length || 1); }
+    return m;
+  };
+  function camelotClash(out, inn) {
+    const ka = out.analysis && out.analysis.key && out.analysis.key.camelot, kb = inn.analysis && inn.analysis.key && inn.analysis.key.camelot;
+    const cs = root.djMind && root.djMind.core && root.djMind.core.camelotScore;
+    return !!(cs && ka && kb && cs(ka, kb) < 0.8);
+  }
+
+  // A deliberate one-deck strip: run the floor check with its dipAllowed tag
+  // and log it (the check is not skipped: its result says what dipped).
+  function dipReport(d, label, events, bars, songT, barSong, dipAllowed) {
+    const ev = events.filter((e) => e.stems !== undefined).map((e) => ({ bar: e.bar, deck: "out", stems: e.stems, ramp: e.ramp || 0 }));
+    const lv = levelCheck({ events: ev, span: bars, eOut: stemEnergyBars(d, songT, barSong, bars + 1), dipAllowed });
+    if (lv.dipAllowed) console.info(`${label} ${d.id}: dip allowed (${lv.dipAllowed}): ${lv.reason}`);
+    return lv;
+  }
+
   function breakdown(d, startTrackT, bars, why) {
     const plan = BREAKDOWN[bars];
     if (!plan || !d.stemsReady) return false;
     cancel(d.id);
     const bar = 240 / (d.bpm || 128), rate = (d._playbackRate && d._playbackRate()) || 1;
+    // the strip IS the move: its dip is allowed, and says so
+    dipReport(d, "breakdown", breakdownEvents(bars), bars, startTrackT, bar, DIP_ALLOWED.breakdown);
     const t0 = audioAt(d, startTrackT), beat = bar / 4 / rate;
     for (const [b, target, rampBeats] of plan) book(d, t0 + (b * bar) / rate, target, rampBeats * beat);
     root.dispatchEvent(new CustomEvent("ai-cue", { detail: { at: t0 + (plan[plan.length - 1][0] * bar) / rate, kind: "drop",
@@ -222,19 +456,78 @@
   }
 
   // out/inn: deck ids. t0: audio time the blend starts; totalS: its length (s).
-  function handoff(outId, innId, t0, totalS, why) {
+  // EQ transition with stems on only one side (or a stem blend the floor
+  // refused): still never B's full mix through the fader, still one singer.
+  //   B has stems  B enters on ONE intro stem (no bass: A's sub, EQ-killed on B
+  //                anyway), beat + tones on the swap line, its voice when A's
+  //                is done (end of the blend if A sings, else the swap line)
+  //   A only       A's voice leaves over a beat on bar 0 when both would sing
+  // The EQ path's fader keeps A full-mix, so the master never dips here.
+  function eqIntro(outId, innId, t0, totalS, swapS, why) {
     const out = root.decks[outId], inn = root.decks[innId];
-    if (!out || !inn || !out.stemsReady || !inn.stemsReady) return false;
+    if (!out || !inn || !(totalS >= 2)) return false;
+    const rA = (out._playbackRate && out._playbackRate()) || 1;
+    const bar = 240 / (out.bpm || 128) / rA;
+    const pA = out._positionAt ? out._positionAt(t0) : out._currentPosition();
+    const aSings = vocalShare(out.analysis && out.analysis.vocal_active_regions, pA, pA + totalS * rA) >= 0.3;
+    const pB = inn.cuePoint || 0;
+    const bSings = vocalShare(inn.analysis && inn.analysis.vocal_active_regions, pB, pB + totalS) >= 0.3;
+    if (inn.stemsReady) {
+      cancel(innId);
+      const barB = 240 / (inn.bpm || 128);
+      let intro = pickIntro({ keyClash: camelotClash(out, inn), aSings, bSings, energy: meanOver(stemEnergyBars(inn, pB, barB, 4), 0, 4) });
+      if (intro === "vocals" && aSings) intro = "other";
+      const beatAt = swapS >= 2 * bar ? swapS : Math.max(bar, totalS / 2);
+      inn.stemMix({ drums: 0, bass: 0, vocals: 0, other: 0 }, t0, 0.005);
+      book(inn, t0 + 0.01, { [intro]: INTRO_LEVEL[intro] || 0.8 }, bar);
+      book(inn, t0 + beatAt, { drums: 1, bass: 1, other: 1 }, 0.05);
+      if (intro !== "vocals") book(inn, aSings ? t0 + totalS - bar / 2 : t0 + beatAt, { vocals: 1 }, bar / 2);
+      book(inn, t0 + totalS + bar, null, 0.05);
+      note(innId, `STEM INTRO ${innId.toUpperCase()}`, why ||
+        `B in on its ${intro === "other" ? "synths" : intro} under A, beat on the swap line${aSings ? ", its voice after A's" : ""}`);
+      return "in";
+    }
+    if (!out.stemsReady && out.rearmStems) out.rearmStems("one singer");
+    if (out.stemsReady && aSings && bSings) {
+      cancel(outId);
+      out.stemMix({ vocals: 0 }, t0, bar / 4);
+      note(outId, `VOCAL OUT ${outId.toUpperCase()}`, why || "one singer: A's voice leaves as B's arrives");
+      return "out";
+    }
+    return false;
+  }
+
+  // swapS: seconds from t0 to the EQ recipe's bass-swap line (0 = unknown).
+  // With it, B enters on ONE intro stem (never its bass: A owns the sub) and
+  // its beat + tones join on the swap line, instead of its whole instrumental
+  // appearing through the crossfader.
+  function handoff(outId, innId, t0, totalS, why, swapS = 0) {
+    const out = root.decks[outId], inn = root.decks[innId];
+    if (!out || !inn) return false;
+    if (!out.stemsReady && out.rearmStems) out.rearmStems("vocal handoff");
+    if (!out.stemsReady || !inn.stemsReady) return false;
     cancel(outId); cancel(innId);
     const bar = 240 / (out.bpm || 128) / ((out._playbackRate && out._playbackRate()) || 1);
     // B enters as its instrumental; A's vocal leaves A's strip for the bus.
-    inn.stemMix({ vocals: 0 }, t0, 0.02);
+    let intro = null;
+    if (swapS >= 2 * bar) {
+      const pB = inn.cuePoint || 0, barB = 240 / (inn.bpm || 128);
+      intro = pickIntro({ keyClash: camelotClash(out, inn), aSings: true, bSings: false,
+        energy: meanOver(stemEnergyBars(inn, pB, barB, 4), 0, 4) });
+      if (intro === "vocals") intro = "other";
+      inn.stemMix({ drums: 0, bass: 0, vocals: 0, other: 0 }, t0, 0.005);
+      book(inn, t0 + 0.01, { [intro]: INTRO_LEVEL[intro] }, bar);
+      book(inn, t0 + swapS, { drums: 1, bass: 1, other: 1 }, 0.05);
+    } else {
+      inn.stemMix({ vocals: 0 }, t0, 0.02);
+    }
     out.stemMix({ vocals: 0, bus: 1 }, t0, bar / 4);
     // Last bar: A's voice fades, B's own vocal comes back in.
     book(out, t0 + totalS - bar, { bus: 0 }, bar);
     book(inn, t0 + totalS - bar / 2, { vocals: 1 }, bar / 2);
     book(inn, t0 + totalS + bar, null, 0.05);
-    note(outId, `VOCAL HANDOFF ${outId.toUpperCase()} → ${innId.toUpperCase()}`, why || "one singer: A's vocal rides B's beat, B's vocal enters as A's fades");
+    note(outId, `VOCAL HANDOFF ${outId.toUpperCase()} → ${innId.toUpperCase()}`, (why || "one singer: A's vocal rides B's beat, B's vocal enters as A's fades") +
+      (intro ? `; B in on its ${intro === "other" ? "synths" : intro}, its beat on the swap line` : ""));
     return true;
   }
 
@@ -249,28 +542,49 @@
   // Deck stopped / reloaded: never leave its mix muted.
   function reset(d) { if (d) { cancel(d.id); d.stemMix(null, 0, 0.005); } }
 
-  // Run a stem blend from audio time t0 (B's first downbeat). barS = seconds per bar.
-  function stemBlend(kind, outId, innId, t0, bars, barS, why) {
+  // Run a stem blend from audio time t0 (B's first downbeat). barS = seconds per
+  // bar. opts.fader / opts.dir: the crossfader moves the caller will run
+  // (autopilotCore.stemBlendFader), so the loudness floor is checked against
+  // what the crowd will actually hear. Returns the fitted plan
+  // ({intro, fix, check}) or false: not both decks on live stems, or no plan
+  // keeps the master above the floor (then the caller's EQ path runs instead).
+  function stemBlend(kind, outId, innId, t0, bars, barS, why, opts = {}) {
     const out = root.decks[outId], inn = root.decks[innId];
-    if (!out || !inn || !out.stemsReady || !inn.stemsReady || !STEM_BLEND_KINDS.has(kind)) return false;
-    cancel(outId); cancel(innId);
+    if (!out || !inn || !STEM_BLEND_KINDS.has(kind)) return false;
+    if (!out.stemsReady && out.rearmStems) out.rearmStems("stem blend");
+    if (!inn.stems || !out.stemsReady) return false;
     const pA = out._positionAt ? out._positionAt(t0) : out._currentPosition();
     const aSings = vocalShare(out.analysis && out.analysis.vocal_active_regions, pA, pA + bars * barS) >= 0.3;
     const pB = (inn.cuePoint || 0);
     const bSings = vocalShare(inn.analysis && inn.analysis.vocal_active_regions, pB, pB + bars * barS) >= 0.3;
-    const ka = out.analysis && out.analysis.key && out.analysis.key.camelot, kb = inn.analysis && inn.analysis.key && inn.analysis.key.camelot;
-    const cs = root.djMind && root.djMind.core && root.djMind.core.camelotScore;
-    const keyClash = !!(cs && ka && kb && cs(ka, kb) < 0.8);
-    for (const e of stemBlendPlan(kind, bars, aSings, bSings, keyClash)) {
+    const keyClash = camelotClash(out, inn);
+    const barSongA = 240 / (out.bpm || 128), barSongB = 240 / (inn.bpm || 128);
+    let eOut = stemEnergyBars(out, pA, barSongA, bars + 1), eIn = stemEnergyBars(inn, pB, barSongB, bars + 1);
+    if (!eOut || !eIn) eOut = eIn = null;                 // one scale for both decks, or typical shares
+    const P = introBars(bars);
+    const fit = fitStemBlend(kind, bars, {
+      aSings, bSings, keyClash, eOut, eIn, fader: opts.fader, dir: opts.dir || 1,
+      aSingsIntro: vocalShare(out.analysis && out.analysis.vocal_active_regions, pA, pA + P * barSongA) >= 0.3,
+      introEnergy: meanOver(eIn, 0, P),
+    });
+    if (fit.refused) {
+      console.info(`stem blend ${outId}->${innId} refused: ${fit.check.reason}; EQ path instead`);
+      return false;
+    }
+    cancel(outId); cancel(innId);
+    for (const e of fit.events) {
       const d = e.deck === "out" ? out : inn, at = t0 + e.bar * barS;
       if (e.bar === 0 && e.deck === "in") {
         // B must be silent-in-stems from its very first sample
         setTimeout(() => d.stemMix(e.stems, at - 0.005, 0.005), Math.max(0, (at - audioCtx.currentTime) * 1000 - 400));
       } else book(d, at, e.stems, Math.max(0.005, e.ramp * barS));
     }
+    const fixTxt = fit.fix.keepA ? ", A's synths held longer" : fit.fix.introLevel ? ", intro louder" : "";
+    const introTxt = fit.intro ? `B in on its ${fit.intro === "other" ? "synths" : fit.intro} (${fit.intro === "drums" && keyClash ? "keys clash" : eIn ? "measured" : "typical"})` : "both drops together";
+    console.info(`stem blend ${outId}->${innId}: ${introTxt}${fixTxt}; master floor ${fit.check.minDb.toFixed(1)} dB (${eOut ? "measured stem RMS" : "typical stem shares"})`);
     note(outId, `STEM ${kind === "double" ? "DOUBLE DROP" : "BLEND"} ${outId.toUpperCase()} → ${innId.toUpperCase()}`,
-      why || `${bars} bars: synths first, kick + bass swap on bar ${kind === "double" ? 0 : bars / 2}, one singer${aSings ? " (A finishes its line)" : ""}`);
-    return true;
+      why || `${bars} bars: ${introTxt}${fixTxt}, kick + bass swap on bar ${kind === "double" ? 0 : bars / 2}, one singer${aSings ? " (A finishes its line)" : ""}`);
+    return fit;
   }
 
   // Run one remix move on deck d for the section starting at track time `lineT`.
@@ -291,6 +605,8 @@
       }
     }
     book(d, at(len) + 0.03, null, 0.02);
+    // a strip on purpose, on its section's last quarter: dip allowed, reported
+    dipReport(d, "remix", remixEvents(kind, len), len, lineT, barS, DIP_ALLOWED.breakdown);
     note(d.id, `REMIX · ${REMIX_LABEL[kind] || kind}`, why || `bars ${len * 0.75}-${len} of this ${len}-bar section, back on the line`);
     return true;
   }
@@ -304,6 +620,8 @@
     const keep = hostMuted ? { vocals: 0 } : {};
     book(d, audioAt(d, q), { ...keep, drums: 0, bass: 0 }, barS / 4 / rate);
     book(d, audioAt(d, e) - 0.01, { ...keep, drums: 1, bass: 1 }, 0.01);
+    dipReport(d, "mashup break", [{ bar: bars * 0.75, stems: { ...keep, drums: 0, bass: 0 }, ramp: 0.25 },
+      { bar: bars, stems: { ...keep, drums: 1, bass: 1 }, ramp: 0 }], bars, entryT, barS, DIP_ALLOWED.breakdown);
     note(d.id, "REMIX · MASHUP BREAK", `drums + bass out for the last ${bars / 4} bars of the mashup, back on the line`);
     return true;
   }
@@ -312,17 +630,35 @@
   // bFrom (4 B-bars before its entry line) at native tempo. Returns seconds.
   function stemBridge(outId, innId, t0, bEntryTrack, why) {
     const out = root.decks[outId], inn = root.decks[innId];
-    if (!out || !inn || !out.stemsReady || !inn.stems) return 0;
-    cancel(outId); cancel(innId);
+    if (!out || !inn) return 0;
+    if (!out.stemsReady && out.rearmStems) out.rearmStems("stem bridge");
+    if (!out.stemsReady || !inn.stems) return 0;
     const rA = (out._playbackRate && out._playbackRate()) || 1;
     const barA = 240 / (out.bpm || 128) / rA, barB = 240 / (inn.bpm || 128);
-    const ka = out.analysis && out.analysis.key && out.analysis.key.camelot, kb = inn.analysis && inn.analysis.key && inn.analysis.key.camelot;
-    const cs = root.djMind && root.djMind.core && root.djMind.core.camelotScore;
-    const keyClash = !!(cs && ka && kb && cs(ka, kb) < 0.8);
+    const keyClash = camelotClash(out, inn);
     const pA = out._positionAt ? out._positionAt(t0) : out._currentPosition();
     const aSings = vocalShare(out.analysis && out.analysis.vocal_active_regions, pA, pA + 4 * barA * rA) >= 0.3;
-    const plan = stemBridgePlan(barA, barB, keyClash, aSings);
     const bFrom = Math.max(0, bEntryTrack - 4 * barB);
+    // measured energy, binned in real seconds (plan time): A per its bar, B from bStart
+    const span = 8 * Math.max(barA, barB) + 4 * barA;
+    const eA = stemEnergyBars(out, pA, barA * rA, Math.ceil(span / barA) + 1);
+    const eB = stemEnergyBars(inn, bFrom, barB, Math.ceil(span / barB) + 1);
+    const both = eA && eB;
+    const eOut = both ? (n, t) => eA[n][Math.max(0, Math.min(eA[n].length - 1, Math.floor(t / barA)))] : null;
+    const eInAt = (bStart) => (both ? (n, t) => eB[n][Math.max(0, Math.min(eB[n].length - 1, Math.floor((t - bStart) / barB)))] : null);
+    const intro0 = keyClash ? "drums" : pickIntro({ keyClash, aSings: true, bSings: false, energy: meanOver(eB, 0, 2) });
+    let plan = null, check = null;
+    for (const fix of [{}, { introLevel: 1 }]) {
+      const p = stemBridgePlan(barA, barB, keyClash, aSings, Object.assign({ intro: intro0 === "vocals" ? "other" : intro0 }, fix));
+      check = levelCheck({ events: p.events, fader: p.fader, dir: 1, span: p.total, inStart: p.bStart, eOut, eIn: eInAt(p.bStart),
+        step: barA / 16, win: barA / 4 });
+      if (check.ok) { plan = p; break; }
+    }
+    if (!plan) {
+      console.info(`stem bridge ${outId}->${innId} refused: ${check.reason}`);
+      return 0;
+    }
+    cancel(outId); cancel(innId);
     for (const e of plan.events) {
       const d = e.deck === "out" ? out : inn, at = t0 + e.t;
       if (e.start) {
@@ -338,21 +674,39 @@
     }
     root.dispatchEvent(new CustomEvent("ai-cue", { detail: { at: t0 + plan.bEntry, kind: "drop", deck: innId, bar: barB,
       why: "B's beat lands after the stem bridge" } }));
+    console.info(`stem bridge ${outId}->${innId}: B in on its ${plan.intro === "drums" ? "drums" : "pads"}; master floor ${check.minDb.toFixed(1)} dB`);
     note(outId, `STEM BRIDGE ${outId.toUpperCase()} → ${innId.toUpperCase()}`, why ||
-      `any tempo: strip A, ${aSings ? "hold its voice, " : ""}B's pads in beatless, B's beat drops on its own line`);
+      `any tempo: strip A, ${aSings ? "hold its voice, " : ""}B's ${plan.intro === "drums" ? "drums (keys clash)" : "pads"} in beatless, B's beat drops on its own line`);
+    lastBridgePlan = plan;
     return plan.total;
   }
+  // The crossfader moves of the last stem bridge (seconds from t0, B-ward units).
+  let lastBridgePlan = null;
+  function bridgeFader() { return lastBridgePlan ? lastBridgePlan.fader : null; }
 
   // Run it. t0 = A's phrase line (audio time); bEntry = B's vocal phrase start
   // (track time); B must already carry tempo stems at A's tempo when they differ.
   function mashupTransition(outId, innId, t0, bEntry, M, vox, why) {
     const out = root.decks[outId], inn = root.decks[innId];
-    if (!out || !inn || !out.stemsReady || !inn.stems) return 0;
-    cancel(outId); cancel(innId);
+    if (!out || !inn) return 0;
+    if (!out.stemsReady && out.rearmStems) out.rearmStems("mashup");
+    if (!out.stemsReady || !inn.stems) return 0;
     const barS = 240 / (out.bpm || 128) / ((out._playbackRate && out._playbackRate()) || 1);
     const bRate = (out.bpm * out._playbackRate()) / inn.bpm;          // B follows A's tempo (key-locked stems)
     const plan = mashupTransitionPlan(M, vox);
     const barB = 240 / inn.bpm;
+    // B's voice is its intro stem (A's is out on bar 0: one singer). Floor check
+    // against the fader the autopilot runs: centre over 2 bars, B's side from M.
+    const pA = out._positionAt ? out._positionAt(t0) : out._currentPosition();
+    let eOut = stemEnergyBars(out, pA, 240 / (out.bpm || 128), plan.total + 1), eIn = stemEnergyBars(inn, bEntry, barB, plan.total + 1);
+    if (!eOut || !eIn) eOut = eIn = null;
+    const lv = levelCheck({ events: plan.events, fader: [{ bar: 0, from: -1, to: 0, bars: 2 }, { bar: M, from: 0, to: 1, bars: 8 }],
+      dir: 1, span: plan.total, eOut, eIn });
+    if (!lv.ok) {
+      console.info(`mashup ${outId}->${innId} refused: ${lv.reason}`);
+      return 0;
+    }
+    cancel(outId); cancel(innId);
     for (const e of plan.events) {
       const d = e.deck === "out" ? out : inn, at = t0 + e.bar * barS;
       if (e.start) {
@@ -374,7 +728,8 @@
     return plan.total * barS;
   }
 
-  root.stemMoves = { core, breakdown, handoff, instrumental, reset, audioAt, vocalShare, stemBlend, remix, REMIX_LABEL, mashupBreak, stemBridge, mashupTransition };
+  root.stemMoves = { core, breakdown, handoff, instrumental, reset, audioAt, vocalShare, stemBlend, remix, REMIX_LABEL, mashupBreak, stemBridge, mashupTransition,
+                     bridgeFader, stemEnergyBars, eqIntro };
 
   // ------------------------------------------------------ stem rail UI --
   // Per deck, under the loop rail: separation status + one toggle per stem.

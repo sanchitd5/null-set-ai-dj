@@ -45,9 +45,127 @@ console.log("stem moves core ok");
     assert.ok(bVox.bar >= aVox.bar);
     assert.strictEqual(ev[ev.length - 1].stems, null);
   }
+  // double drop: B's drop (drums + bass) IS its entry, A keeps its tops and
+  // voice; B's voice waits until A's leaves (one singer), never a full mix at bar 0
   const dd = stemBlendPlan("double", 8, true, true);
-  assert.deepStrictEqual(dd.find((e) => e.deck === "out" && e.bar === 0).stems, { drums: 0, bass: 0, vocals: 0, other: 1 });
+  assert.deepStrictEqual(dd.find((e) => e.deck === "out" && e.bar === 0).stems, { drums: 0, bass: 0, vocals: 1, other: 1 });
+  assert.deepStrictEqual(dd.find((e) => e.deck === "in" && e.bar === 0).stems, { drums: 1, bass: 1, vocals: 0, other: 0 });
   console.log("stem blend ok");
+}
+
+// ---- intro stem + loudness floor (Ask 1) ------------------------------------
+{
+  const sm = require("../ui/static/stem-moves.js");
+  const { pickIntro, stemBlendPlan, levelCheck, fitStemBlend, gainsAt, introBars, AUDIBLE_GAIN, LEVEL_FLOOR_DB, DIP_ALLOWED, breakdownEvents } = sm;
+  const { stemBlendFader } = require("../ui/static/autopilot.js");
+  // keys agree: B's synths, or its drums when that is where its energy is
+  assert.strictEqual(pickIntro({ keyClash: false, energy: { drums: 0.2, bass: 0.3, vocals: 0, other: 0.15 } }), "other");
+  assert.strictEqual(pickIntro({ keyClash: false, energy: { drums: 0.3, bass: 0.3, vocals: 0, other: 0.02 } }), "drums");
+  assert.strictEqual(pickIntro({ keyClash: false, energy: null }), "other");
+  // keys clash: percussion only, whatever the energy says
+  assert.strictEqual(pickIntro({ keyClash: true, energy: { drums: 0.01, bass: 0.5, vocals: 0.5, other: 0.5 } }), "drums");
+  // B's voice only when it has nothing else there and A is not singing
+  assert.strictEqual(pickIntro({ keyClash: false, aSings: false, bSings: true, energy: { drums: 0, bass: 0, vocals: 0.2, other: 0 } }), "vocals");
+  assert.strictEqual(pickIntro({ keyClash: false, aSings: true, bSings: true, energy: { drums: 0, bass: 0, vocals: 0.2, other: 0 } }), "other");
+  // never bass, in any case
+  for (const e of [{ drums: 0, bass: 1, vocals: 0, other: 0 }, { drums: 0, bass: 1, vocals: 1, other: 0 }]) {
+    for (const keyClash of [true, false]) for (const aSings of [true, false]) {
+      assert.notStrictEqual(pickIntro({ keyClash, aSings, bSings: true, energy: e }), "bass");
+    }
+  }
+
+  const FULL = { drums: 1, bass: 1, vocals: 1, other: 1 };
+  for (const kind of ["blend", "filter", "loop", "bass"]) {
+    for (const L of [8, 16, 32]) {
+      for (const keyClash of [false, true]) {
+        const fit = fitStemBlend(kind, L, { aSings: true, bSings: true, keyClash, fader: stemBlendFader(kind, L, 1), dir: 1 });
+        assert.ok(!fit.refused, `${kind} ${L} clash=${keyClash}: ${fit.check.reason}`);
+        assert.ok(fit.check.minDb >= -LEVEL_FLOOR_DB, `${kind} ${L} floor ${fit.check.minDb}`);
+        const ev = fit.events, fader = stemBlendFader(kind, L, 1), P = introBars(L);
+        assert.strictEqual(fit.intro, keyClash ? "drums" : "other");
+        // the fader's move toward B starts only after the intro phrase
+        const cross = fader.find((m) => m.to > 0);
+        assert.ok(cross.bar >= P, `${kind} ${L}: crossfade at ${cross.bar} < intro ${P}`);
+        // B's ONE intro stem is audible (through the parked fader) for >= 1 phrase before it
+        const x = (0 + 1) / 2, fi = Math.sin((x * Math.PI) / 2);
+        const heard = (t) => { const g = gainsAt(ev, "in", t); return Object.keys(FULL).filter((n) => fi * g[n] >= AUDIBLE_GAIN); };
+        for (let t = 1; t < cross.bar; t += 0.25) {
+          const h = heard(t);
+          if (t < L / 2 - 1e-9) assert.deepStrictEqual(h, [fit.intro], `${kind} ${L} bar ${t}: ${h}`);
+          assert.ok(!(t < L / 2) || !h.includes("bass"), "never B's bass before the swap");
+        }
+        assert.ok(cross.bar - 1 >= P - 1, "intro alone for a phrase");
+      }
+    }
+  }
+  // double drop too: no silence, no dip
+  const dd2 = fitStemBlend("double", 8, { aSings: true, bSings: true, fader: stemBlendFader("double", 8, 1), dir: 1 });
+  assert.ok(!dd2.refused, dd2.check.reason);
+
+  // the zero-audible invariant is enforced, not assumed: a plan that mutes
+  // everything on both decks is refused
+  const hole = [
+    { bar: 0, deck: "in", stems: { drums: 0, bass: 0, vocals: 0, other: 0 }, ramp: 0 },
+    { bar: 2, deck: "out", stems: { drums: 0, bass: 0, vocals: 0, other: 0 }, ramp: 0.25 },
+    { bar: 4, deck: "in", stems: null, ramp: 0 },
+  ];
+  const hc = levelCheck({ events: hole, fader: [{ bar: 0, from: -1, to: 0, bars: 1 }], dir: 1, span: 8 });
+  assert.ok(!hc.ok && /no stem audible/.test(hc.reason), hc.reason);
+  // ... and B's first stem booked after A's last one leaves
+  const gap = [
+    { bar: 0, deck: "in", stems: { drums: 0, bass: 0, vocals: 0, other: 0 }, ramp: 0 },
+    { bar: 1, deck: "out", stems: { drums: 0, bass: 0, vocals: 0, other: 0 }, ramp: 0.5 },
+    { bar: 3, deck: "in", stems: { other: 1 }, ramp: 1 },
+  ];
+  assert.ok(!levelCheck({ events: gap, fader: [{ bar: 0, from: -1, to: 0, bars: 1 }], dir: 1, span: 8 }).ok);
+
+  // a thin B (quiet pad, no beat at its entry) + A stripped: the plan fixes
+  // itself (louder intro / A's synths held) or is refused, never a near-silent master
+  const eOut = { drums: 0.3, bass: 0.3, vocals: 0.2, other: 0.1 };
+  const eIn = { drums: 0.05, bass: 0.05, vocals: 0.01, other: 0.03 };
+  const thin = fitStemBlend("blend", 16, { aSings: false, bSings: false, keyClash: false, eOut, eIn, introEnergy: eIn, fader: stemBlendFader("blend", 16, 1), dir: 1 });
+  assert.ok(thin.refused || thin.check.minDb >= -LEVEL_FLOOR_DB);
+  assert.ok(thin.refused, `a pad at -20 dB against A's full mix can't hold the floor: ${thin.check.minDb}`);
+  const okish = fitStemBlend("blend", 16, { aSings: false, bSings: false, keyClash: false, eOut, eIn: { drums: 0.25, bass: 0.25, vocals: 0.1, other: 0.06 },
+    fader: stemBlendFader("blend", 16, 1), dir: 1 });
+  assert.ok(!okish.refused, okish.check.reason);
+  assert.ok(okish.check.minDb >= -LEVEL_FLOOR_DB);
+
+  // deliberate dips: allowed only when tagged, and the check still reports them
+  // (a beat-heavy song: measured energy mostly in drums + bass)
+  const heavy = { drums: 0.5, bass: 0.5, vocals: 0.1, other: 0.1 };
+  const bd = breakdownEvents(24);
+  const plain = levelCheck({ events: bd, span: 24, eOut: heavy });
+  assert.ok(!plain.ok, "a breakdown does dip");
+  const tagged = levelCheck({ events: bd, span: 24, eOut: heavy, dipAllowed: DIP_ALLOWED.breakdown });
+  assert.ok(tagged.ok && tagged.dipAllowed === DIP_ALLOWED.breakdown && tagged.reason);
+  // subdrop (sub out on purpose) on one deck: tagged -> allowed, untagged -> not
+  const sub = [{ bar: 0, deck: "out", stems: { bass: 0, drums: 0, other: 0.3 }, ramp: 0 }, { bar: 4, deck: "out", stems: null, ramp: 0 }];
+  assert.ok(!levelCheck({ events: sub, span: 4, eOut: heavy }).ok);
+  assert.ok(levelCheck({ events: sub, span: 4, eOut: heavy, dipAllowed: DIP_ALLOWED.subdrop }).ok);
+  // a plain blend never gets a dip pass even if tagged plans exist
+  const blend = fitStemBlend("blend", 16, { aSings: true, bSings: true, fader: stemBlendFader("blend", 16, 1), dir: 1 });
+  assert.strictEqual(blend.check.dipAllowed, null);
+  console.log("intro stem + loudness floor ok");
+}
+
+// ---- stem bridge + mashup: floor and intro ----------------------------------
+{
+  const { stemBridgePlan, mashupTransitionPlan, levelCheck, LEVEL_FLOOR_DB } = require("../ui/static/stem-moves.js");
+  for (const clash of [false, true]) for (const sings of [false, true]) {
+    const barA = 240 / 128, barB = 240 / 174;
+    const p = stemBridgePlan(barA, barB, clash, sings);
+    const lv = levelCheck({ events: p.events, fader: p.fader, dir: 1, span: p.total, inStart: p.bStart, step: barA / 16, win: barA / 4 });
+    assert.ok(lv.ok, `bridge clash=${clash} sings=${sings}: ${lv.reason}`);
+    // the crossfade proper starts after B's intro stem has had >= 2 of its bars alone
+    const cross = p.fader.find((m) => m.to > 0);
+    assert.ok(cross.t >= p.bStart + 2 * barB - 1e-9);
+    assert.ok(!p.events.some((e) => e.deck === "in" && e.stems && e.stems.bass && e.t < p.bStart + barB));
+  }
+  const mp = mashupTransitionPlan(16, 0.6);
+  const ml = levelCheck({ events: mp.events, fader: [{ bar: 0, from: -1, to: 0, bars: 2 }, { bar: 16, from: 0, to: 1, bars: 8 }], dir: 1, span: mp.total });
+  assert.ok(ml.ok && ml.minDb >= -LEVEL_FLOOR_DB, ml.reason);
+  console.log("bridge + mashup floor ok");
 }
 
 // ---- remix on the go --------------------------------------------------------
@@ -95,8 +213,12 @@ console.log("stem moves core ok");
     const bBeat = p.events.find((e) => e.deck === "in" && e.stems === null);
     // A's beat is gone (drums + bass faded) before B even starts
     assert.ok(aDrumsOut.t + aDrumsOut.ramp <= p.bStart + 1e-9 && aBassOut.t + aBassOut.ramp <= p.bStart + 1e-9);
-    // B has no drums until its entry line (its own grid)
-    assert.ok(p.events.filter((e) => e.deck === "in" && e.stems && e.t < p.bEntry).every((e) => !e.stems.drums));
+    // keys agree: B has no drums until its entry line (its own grid). Keys clash:
+    // B's drums ARE its intro stem (no key), and never before A's beat is gone.
+    const bDrumsEarly = p.events.filter((e) => e.deck === "in" && e.stems && e.t < p.bEntry && e.stems.drums);
+    if (clash) assert.ok(p.intro === "drums" && bDrumsEarly.every((e) => e.t >= p.bStart));
+    else assert.strictEqual(bDrumsEarly.length, 0);
+    assert.ok(p.events.filter((e) => e.deck === "in" && e.stems && e.t < p.bEntry).every((e) => !e.stems.bass || e.t >= p.bStart + barB - 1e-9));
     assert.ok(Math.abs(bBeat.t - p.bEntry) < 1e-9);
     // A's tones are gone by B's entry
     const aOut = p.events.find((e) => e.deck === "out" && e.stems && e.stems.vocals === 0);
