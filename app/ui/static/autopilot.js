@@ -1677,7 +1677,8 @@
     if (!layer && !peakT && riffOn() && window.riffOverRap) {
       const notBefore = deckPosition(activeDeck) + 25;
       window.riffOverRap.prepare(currentId, nextId, notBefore).then((r) => {
-        if (!r || executed || !active || currentTrackId !== currentId) return;
+        if (!r.ok) { console.info("riff over rap: no -", (r.reasons || []).join("; ")); return; }
+        if (executed || !active || currentTrackId !== currentId) return;
         const g0 = r.plan.a_groove[0], pos = deckPosition(activeDeck);
         const sdB = window.decks && window.decks[stagingDeck()];
         if (g0 < pos + 6 || g0 > hi + 60 || !(sdB && sdB.stems)) {

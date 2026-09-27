@@ -23,12 +23,25 @@
     param.setValueAtTime(from, at);
     param.linearRampToValueAtTime(to, at + duration);
   }
+  // data-ai-audio: tells deck-controller.js's own input listener the control's
+  // underlying AudioParam is already clock-scheduled, so it must only animate
+  // the knob, not also set .value directly — a direct .value= set cancels any
+  // running setValueCurveAtTime/ramp automation (Web Audio spec), which is
+  // what made every automated crossfade/EQ move step and stutter: the mirrored
+  // slider's own synthetic "input" event was fighting the smooth curve 60x/s.
+  function markAiAudio(selector) {
+    const el = document.querySelector(selector);
+    if (el) el.dataset.aiAudio = "1";
+    return el;
+  }
   function mirror(selector, from, to, start, duration, token) {
+    const el = markAiAudio(selector);
     const frame = () => {
-      if (!run || run.token !== token) return;
+      if (!run || run.token !== token) { if (el) delete el.dataset.aiAudio; return; }
       const p = Math.min(1, Math.max(0, (audioCtx.currentTime - start) / duration));
       setRange(selector, from + (to - from) * p);
       if (p < 1) requestAnimationFrame(frame);
+      else if (el) delete el.dataset.aiAudio;
     };
     requestAnimationFrame(frame);
   }
@@ -58,6 +71,7 @@
   function finish(token, outcome = "completed") {
     if (!run || run.token !== token) return;
     run.timers.forEach(clearTimeout);
+    document.querySelectorAll("[data-ai-audio]").forEach((el) => { delete el.dataset.aiAudio; });
     try {
       const now = audioCtx.currentTime;
       decks.a.crossfaderGain.gain.cancelScheduledValues(now);
@@ -98,9 +112,13 @@
     if (selected.recipe === "Bass Swap" || selected.recipe === "Drop Swap") {
       curve(decks.a.lowFilter.gain, 0, -26, swap, 0.01);
       curve(decks.b.lowFilter.gain, -26, 0, swap, 0.01);
+      const knobA = markAiAudio('.eq-knob[data-deck="a"][data-band="low"]');
+      const knobB = markAiAudio('.eq-knob[data-deck="b"][data-band="low"]');
       run.timers.push(setTimeout(() => {
         setRange('.eq-knob[data-deck="a"][data-band="low"]', -26);
         setRange('.eq-knob[data-deck="b"][data-band="low"]', 0);
+        if (knobA) delete knobA.dataset.aiAudio;
+        if (knobB) delete knobB.dataset.aiAudio;
       }, Math.max(0, (swap - audioCtx.currentTime) * 1000)));
     } else if (selected.recipe === "Filter Transition") {
       curve(decks.a.lowFilter.gain, 0, -26, start, duration);

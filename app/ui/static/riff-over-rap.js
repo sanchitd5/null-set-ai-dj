@@ -71,23 +71,32 @@
   const note = (label, why) => root.dispatchEvent(new CustomEvent("ai-activity",
     { detail: { kind: "stem-move", deck: "", label, why } }));
 
-  // Plan + render + decode. Resolves {plan, buffers} or null (with the reasons logged).
+  // Plan + render + decode. Resolves {ok:true, plan, buffers} or {ok:false, reasons}
+  // — the reasons are always returned to the caller, not just console-logged, so
+  // the UI can show the actual "why" instead of a bare "see the console".
   async function prepare(aId, bId, notBefore) {
     const k = `${aId}>${bId}`;
     if (cache.has(k)) return cache.get(k);
     const res = await fetch("/api/riff/plan", { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ a_id: aId, b_id: bId, not_before: notBefore || 0 }) });
-    if (!res.ok) return null;
+    if (!res.ok) return { ok: false, reasons: [`plan request failed: HTTP ${res.status}`] };
     const plan = await res.json();
-    if (!plan.ok) { console.info("riff over rap: no -", (plan.reasons || []).join("; ")); return null; }
+    if (!plan.ok) {
+      const reasons = plan.reasons || ["no reason given"];
+      console.info("riff over rap: no -", reasons.join("; "));
+      return { ok: false, reasons };
+    }
     for (let i = 0; i < 90 && plan.state !== "done"; i++) {
       await new Promise((r) => setTimeout(r, 2000));
       const st = await (await fetch(`/api/riff/${plan.key}`)).json();
       plan.state = st.state;
       plan.meta = st.meta;
-      if (String(st.state).startsWith("error")) { console.warn("riff over rap:", st.state); return null; }
+      if (String(st.state).startsWith("error")) {
+        console.warn("riff over rap:", st.state);
+        return { ok: false, reasons: [`render failed: ${st.state}`] };
+      }
     }
-    if (plan.state !== "done") return null;
+    if (plan.state !== "done") return { ok: false, reasons: ["timed out waiting for the render"] };
     if (!plan.meta) plan.meta = (await (await fetch(`/api/riff/${plan.key}`)).json()).meta;
     if (plan.b_levels) {
       const r = await fetch(`/api/riff/${plan.key}/balance`, { method: "POST",
@@ -98,7 +107,7 @@
     await Promise.all(STEMS.map(async (n) => {
       buffers[n] = await audioCtx.decodeAudioData(await (await fetch(plan.stems[n])).arrayBuffer());
     }));
-    const out = { plan, buffers };
+    const out = { ok: true, plan, buffers };
     cache.set(k, out);
     return out;
   }

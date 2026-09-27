@@ -55,7 +55,13 @@ You are a professional DJ selector with deep music theory knowledge. Your job is
 {_CAMELOT_COMPAT}
 
 ENERGY ARC RULES:
-  set_position 0.0–0.3 (early/warm-up): prefer maintaining or gently lifting energy, stay within 5 BPM
+  set_position 0.0–0.3 (early/warm-up): prefer maintaining or gently lifting energy, stay within 5 BPM.
+    EXCEPTION: a mashup/layering move (riff_over_rap, full_mashup - see techniques.py) is fine from
+    the very first transition when the pair actually earns it (stems on both, a real breakdown to
+    release into, a loopable groove) - it is a technique choice, not an energy-arc violation, so
+    don't suppress a good mashup candidate just because set_position is low. A wide tempo/key gap
+    is normal for these techniques (riff_over_rap wants 3-15% and tolerates any key clash under rap
+    vocals); don't reject it as "too early" if the transition itself checks out.
   set_position 0.3–0.7 (building): push energy up, key changes of +2 allowed, BPM can rise 3–8%
   set_position 0.7–0.9 (peak): sustain or push harder, dramatic key changes OK with bridge recipes
   set_position 0.9–1.0 (cool-down): step energy down, gentle blends, return toward mellow keys

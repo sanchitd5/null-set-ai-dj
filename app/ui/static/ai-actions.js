@@ -158,7 +158,7 @@
       if (!root.riffOverRap) return say("RIFF × RAP", "engine not loaded", false);
       say("RIFF × RAP", "planning: key-locking this song's stems to the next song's tempo…");
       const prep = await root.riffOverRap.prepare(trackId(c.h), trackId(c.nId), c.pos + 4);
-      if (!prep) return say("RIFF × RAP", "this pair doesn't fit (see the console for the reasons)", false);
+      if (!prep.ok) return say("RIFF × RAP", `this pair doesn't fit: ${(prep.reasons || []).join("; ")}`, false);
       const g0 = prep.plan.a_groove[0], pos = c.d._currentPosition();
       if (g0 < pos + 1) return say("RIFF × RAP", `this song is past its groove (${fmt(g0)})`, false);
       const t0 = audioCtx.currentTime + (g0 - pos) / c.rate;
