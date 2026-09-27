@@ -723,6 +723,67 @@
 </section>
 
 <!-- ========================================================================= -->
+<!-- REMIX MODE: live single-track remixing of the playing deck                -->
+<!-- ========================================================================= -->
+<section class="panel remix-panel" id="remix-panel">
+  <div class="panel-head">
+    <div class="panel-title">
+      <span class="lamp" id="remix-lamp"></span>
+      <span>REMIX MODE</span>
+      <span class="chip" id="remix-target-chip">NO DECK</span>
+    </div>
+    <div class="sampler-tools">
+      <label class="hud-label" for="remix-target">DECK</label>
+      <select id="remix-target" aria-label="Deck to remix" title="AUTO remixes the loudest playing deck">
+        <option value="auto" selected>AUTO</option>
+        <option value="a">DECK A</option>
+        <option value="b">DECK B</option>
+      </select>
+      <button type="button" class="hw-btn accent-btn" id="remix-toggle" aria-pressed="false" title="Remix the playing record live. OFF puts it back: loop released, filter centred, stems and FX restored">REMIX OFF</button>
+    </div>
+  </div>
+  <fieldset class="remix-controls" id="remix-controls" disabled>
+    <div class="remix-row">
+      <span class="hud-label remix-row-label">LOOP</span>
+      <button type="button" class="hw-btn" data-remix-loop="0.5" title="Loop half a bar, quantized to the bar grid">1/2</button>
+      <button type="button" class="hw-btn" data-remix-loop="1" title="Loop the current bar">1 BAR</button>
+      <button type="button" class="hw-btn" data-remix-loop="2" title="Loop 2 bars, aligned to the 2-bar grid">2 BARS</button>
+      <button type="button" class="hw-btn" data-remix-loop="4" title="Loop 4 bars, aligned to the 4-bar grid">4 BARS</button>
+      <span class="hud-label remix-row-label">FILTER</span>
+      <input type="range" id="remix-filter" min="-1" max="1" step="0.01" value="0" aria-label="DJ filter: left low-pass, right high-pass" title="Left: low-pass. Right: high-pass. Double-click to centre" />
+      <span class="hud-label" id="remix-filter-label">FILTER OFF</span>
+    </div>
+    <div class="remix-row">
+      <span class="hud-label remix-row-label">CHOP</span>
+      <select id="remix-chop-src" aria-label="Chop source" title="MIX: the slice replaces the record. VOX: the separated vocal is chopped over the running track">
+        <option value="mix" selected>MIX</option>
+        <option value="vox">VOX</option>
+      </select>
+      <div class="remix-pads" id="remix-chop-grid" aria-label="Slices of the loop (or the current bar). Hold to repeat"></div>
+    </div>
+    <div class="remix-row">
+      <span class="hud-label remix-row-label">STEMS</span>
+      <button type="button" class="hw-btn" data-remix-stem="drums">DRUMS</button>
+      <button type="button" class="hw-btn" data-remix-stem="bass">BASS</button>
+      <button type="button" class="hw-btn" data-remix-stem="vocals">VOX</button>
+      <button type="button" class="hw-btn" data-remix-stem="other">SYNTH</button>
+      <button type="button" class="hw-btn" data-remix-stem="acapella">ACAPELLA</button>
+      <button type="button" class="hw-btn" data-remix-stem="instrumental">INSTRUMENTAL</button>
+      <span class="hud-label remix-row-label">FX</span>
+      <button type="button" class="hw-btn" data-remix-fx="echo">ECHO</button>
+      <button type="button" class="hw-btn" data-remix-fx="reverb">VERB</button>
+      <button type="button" class="hw-btn" data-remix-fx="flanger">FLANGE</button>
+      <button type="button" class="hw-btn" data-remix-fx="bitcrusher">CRUSH</button>
+    </div>
+    <div class="remix-row">
+      <span class="hud-label remix-row-label">HITS</span>
+      <div class="remix-pads" id="remix-hit-grid" aria-label="Sampler pads, landed on the remixed deck's next beat"></div>
+    </div>
+  </fieldset>
+  <p class="panel-note" id="remix-status" role="status" aria-live="polite">Turn REMIX on to loop, chop, filter and strip the record that is playing.</p>
+</section>
+
+<!-- ========================================================================= -->
 <!-- AI DJ AUTOPILOT                                                           -->
 <!-- ========================================================================= -->
 <section class="panel autopilot-panel" id="autopilot-panel">
@@ -886,6 +947,7 @@
 <script src="/performance.js"></script>
 <script src="/beat-layer.js"></script>
 <script src="/sampler-deck.js"></script>
+<script src="/remix-mode.js"></script>
 <script src="/mashup-layer.js"></script>
 <script src="/browser.js"></script>
 <script src="/stem-moves.js"></script>
