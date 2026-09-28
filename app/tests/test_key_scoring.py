@@ -70,3 +70,10 @@ def test_low_confidence_clash_not_blocked(matcher):
     locked = [c for c in matcher.match(a, b, top_n=100) if c.recipe.camelot_compatible_only]
     assert locked and all(c.score > 0 for c in locked)
     assert all(c.camelot_score == pytest.approx(0.5) for c in locked)
+
+
+def test_clashing_pair_never_outscores_a_compatible_pair(matcher):
+    clash = matcher.match(_track("8A"), _track("2A", bpm=129.0), top_n=100)
+    good = matcher.match(_track("8A"), _track("9A", bpm=129.0), top_n=100)
+    assert BYPASS_KEY_SCORE <= 0.5
+    assert max(c.score for c in clash) < 80 <= max(c.score for c in good)
