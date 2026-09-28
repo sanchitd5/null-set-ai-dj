@@ -117,7 +117,8 @@ TRACK PROFILE (judge the SONG, not the artist):
     mood: euphoric | bittersweet | dark | chill
   A suggestion MUST stay close to the current profile:
     energy within 2 points, tempo_feel not flipped (driving <-> laid-back is forbidden),
-    mood not flipped (euphoric <-> dark, euphoric <-> chill, dark <-> chill are forbidden).
+    mood not flipped (euphoric <-> dark, euphoric <-> chill, dark <-> chill,
+    euphoric <-> bittersweet are forbidden).
   Pick songs you actually know the sound of. If unsure how a song sounds, do not suggest it.
 
 FORBIDDEN SUGGESTIONS (never, regardless of any other rule):
@@ -493,6 +494,7 @@ _MOOD_CLASH = {
     frozenset({"euphoric", "dark"}),
     frozenset({"euphoric", "chill"}),
     frozenset({"dark", "chill"}),
+    frozenset({"euphoric", "bittersweet"}),  # upbeat -> sad/romantic (Wishes -> Tum Hi Ho): not caught before
 }
 _MAX_ENERGY_GAP = 2
 
