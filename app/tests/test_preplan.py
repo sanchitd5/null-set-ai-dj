@@ -67,6 +67,24 @@ def test_no_transition_while_a_is_at_its_energy_high(tmp_path):
         assert not preplan.in_high(spans, c["a_in"], c["handover"] + 8 * BAR)
 
 
+def test_quick_window_still_gets_a_plan(tmp_path):
+    """QUICK window (60-120 s) with the ear only at 37 s: a 16-bar overlap alone fit nowhere."""
+    lv = {"drums": 0.2, "bass": 0.2, "vocals": 0.1, "other": 0.1}
+    sa, sb = _stems(tmp_path, "a", 240, lv), _stems(tmp_path, "b", 240, lv)
+    a, b = _ana(240, 20.0), _ana(240, 32.0)
+    for x in (a, b):
+        x["energy_curve"] = [0.5] * len(x["energy_times"])         # flat: no high point to dodge
+    eA, eB = preplan.energies(sa, BAR), preplan.energies(sb, BAR)
+    cands = preplan.candidates(a, b, BPM, BPM, lo=60, hi=120, now=37, eA=eA, eB=eB, key_score=1.0)
+    assert cands and {c["bars"] for c in cands} <= set(preplan.SHORT_OVERLAPS)
+    assert any(c["bars"] == 8 for c in cands)
+    for c in cands:
+        assert c["a_in"] >= 37 + preplan.MIN_LEAD_S + preplan.PLAN_BUDGET_S
+    # a long window keeps the 16/32-bar overlaps only
+    long_c = preplan.candidates(a, b, BPM, BPM, lo=100, hi=200, now=37, eA=eA, eB=eB, key_score=1.0)
+    assert long_c and {c["bars"] for c in long_c} <= set(preplan.OVERLAPS)
+
+
 def test_flat_or_mostly_loud_songs_have_no_high_to_protect():
     flat = {"energy_times": list(range(100)), "energy_curve": [0.5] * 100}
     mostly = {"energy_times": list(range(100)), "energy_curve": [0.9] * 90 + [0.1] * 10}

@@ -374,3 +374,14 @@ console.log("dj-mind relaxed ok");
   assert.strictEqual(nextLoopStart(100, 105, len, false), 100);        // off the master: may seek
   console.log("loop start on the master ok");
 }
+
+{ // the LLM plan is waited for at least 12 s (plans take 4-13 s; a 3 s floor discarded 13 of 19)
+  const { planWaitMs } = core;
+  assert.strictEqual(planWaitMs(0), 12000);
+  assert.strictEqual(planWaitMs(-30), 12000);
+  assert.strictEqual(planWaitMs(3), 12000);
+  assert.strictEqual(planWaitMs(30), 30000);
+  assert.strictEqual(planWaitMs(undefined), 65000);
+  assert.strictEqual(planWaitMs(1e6), 65000);
+  console.log("plan wait floor ok");
+}

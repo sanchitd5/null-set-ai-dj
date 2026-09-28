@@ -1256,6 +1256,12 @@ def suggest_next_tracks(
         except ValueError as exc:
             print(f"[suggest] earlier-set retry failed: {exc}", flush=True)
     suggestions = artist_spacing(fresh or suggestions, (history_display or history) + list(queue_display or []))[:n]
+    if not suggestions:
+        # the client backs off and falls back to a library pick on repeated empties; the
+        # reply text is what tells a model that answers "[]" from a filter that ate every pick
+        n_raw = len(data.get("suggestions", [])) if isinstance(data, dict) else 0
+        print(f"[suggest] 0 picks ({'LEAD prompt' if lead_to and lead_steps else 'normal prompt'}, "
+              f"model gave {n_raw}, {len(raw or '')} reply chars): {(raw or '')[:300]!r}", flush=True)
     if meta is not None:  # caller wants the model's read of the CURRENT track too
         meta["current_profile"] = data.get("current_profile") or {}
         meta["current_genre"] = data.get("current_genre") or ""

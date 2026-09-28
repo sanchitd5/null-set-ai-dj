@@ -692,7 +692,12 @@
     if (!onAir || !(len > 0) || start >= pos - 0.08) return start;
     return start + Math.ceil((pos - 0.08 - start) / len) * len;
   }
-  const core = { nextLoopStart, decide, mergeSections, sectionAt, phraseAt, vocalShare, subdropBars, energyNote,
+  // How long the client waits for the LLM plan. Measured plans take 4-13 s, so a
+  // 3 s floor threw 13 of 19 away after the model time was already spent.
+  const PLAN_MIN_WAIT_MS = 12000, PLAN_MAX_WAIT_MS = 65000;   // server LLM timeout is 60 s
+  const planWaitMs = (deadlineS) => Math.max(PLAN_MIN_WAIT_MS,
+    Math.min(PLAN_MAX_WAIT_MS, (Number.isFinite(deadlineS) ? deadlineS : Infinity) * 1000));
+  const core = { planWaitMs, PLAN_MIN_WAIT_MS, nextLoopStart, decide, mergeSections, sectionAt, phraseAt, vocalShare, subdropBars, energyNote,
                  hookKey, motifHook, MOTIF_MAX_PLAYS, MOTIF_GAP_SONGS,
                  phraseBounds, phraseLabel, isPreDrop, remixBlock, aiVeto, needsHoldLoop, holdLoopAnchor, holdLoopSpan, holdLoopCandidates, pickHoldLoop,
                  PRECLEAR_DB, LOW_KILL, REMIX_MOVES,
@@ -1257,7 +1262,6 @@
   }
 
   // -- AI plan (one LLM call per song pair; rules re-check every move) -------
-  const PLAN_TIMEOUT_MS = 65000;              // server LLM timeout is 60 s
   const toggleOn = (id) => { const el = document.getElementById(id); return !el || el.checked; };
   const mindOn = () => toggleOn("ap-mind-toggle");
   const aiOn = () => mindOn() && toggleOn("ap-ai-toggle");
@@ -1290,7 +1294,7 @@
     if (!aiOn() || !d || !currentId || !nextId || !win) return null;
     const forTrack = trackIdx, id = deckId;
     const ctrl = new AbortController();
-    const waitMs = Math.max(3000, Math.min(PLAN_TIMEOUT_MS, (win.deadlineS || Infinity) * 1000));
+    const waitMs = planWaitMs(win.deadlineS);
     const t = setTimeout(() => ctrl.abort(), waitMs);
     const mode = document.getElementById("ap-mode");
     renderPlan({ candidate: { recipe: "planning…" }, exit: null, moves: [], reasons: {} });

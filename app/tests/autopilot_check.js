@@ -172,3 +172,18 @@ console.log("autopilot core ok");
   assert.ok(/no_cuts:\s*true/.test(src), "matchTracks must send no_cuts");
   console.log("no hard cuts ok");
 }
+
+{ // empty song searches back off, then fall back to the library; rejected pairs are remembered
+  const { emptyRetryMs, useLibraryFallback, rememberPairReject, pairRejected } = require("../ui/static/autopilot.js");
+  assert.deepStrictEqual([0, 1, 2, 3, 4, 9].map(emptyRetryMs), [20000, 20000, 40000, 80000, 120000, 120000]);
+  assert.ok(!useLibraryFallback(0) && !useLibraryFallback(1) && useLibraryFallback(2) && useLibraryFallback(7));
+  const m = new Map();
+  assert.strictEqual(pairRejected(m, "a", "b", false), null);
+  rememberPairReject(m, "a", "b", "energy 9 -> 3", false);
+  assert.strictEqual(pairRejected(m, "a", "b", false).why, "energy 9 -> 3");
+  assert.strictEqual(pairRejected(m, "a", "b", true), null);       // strict-round reject: the forced round may pass it
+  assert.strictEqual(pairRejected(m, "b", "a", false), null);      // other order / other A: asked again
+  rememberPairReject(m, "a", "c", "vibe", true);
+  assert.ok(pairRejected(m, "a", "c", true) && pairRejected(m, "a", "c", false));
+  console.log("empty backoff + pair rejects ok");
+}

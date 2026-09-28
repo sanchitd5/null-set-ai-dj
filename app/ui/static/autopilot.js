@@ -245,7 +245,23 @@ var autopilotCore = (function () {
     }
     return d || null;
   }
-  const api = { awaitJob, keySafeRecipe, KEY_SAFE_MIN, energyStepOk, hybridWindowKey, highSpans, quantileLinear, median, exitPastHigh, learnedRecipe, vocalRecipe, stemBlendBars, stemBlendFader, phraseWaitS, introBars, FADER_PARK_BARS, homePlan, maskedGlideBars, maskedDropAt, HOME_DROP_PCT, LADDER_STEP_PCT };
+  // Song search that keeps coming back empty (60 empty answers in one session, every 20 s):
+  // wait 20, 40, 80, 120 s (cap) between searches, and from the 2nd empty answer in a row take a
+  // library song instead of asking the model again.
+  const EMPTY_LIBRARY_AFTER = 2;
+  const emptyRetryMs = (streak) => Math.min(120000, 20000 * 2 ** Math.max(0, Math.min(streak, 10) - 1));
+  const useLibraryFallback = (streak) => streak >= EMPTY_LIBRARY_AFTER;
+
+  // (A, B) pairs that already failed a pairwise gate (vibe / energy / plan-fit) are not matched again
+  // while A still plays. A reject made under the relaxed last-round limits holds in every round; one
+  // made under the strict limits does not hold in the forced round (it may pass there).
+  const pairKey = (aId, bId) => `${aId}>${bId}`;
+  function rememberPairReject(store, aId, bId, why, forced) { store.set(pairKey(aId, bId), { why, forced: !!forced }); }
+  function pairRejected(store, aId, bId, forced) {
+    const r = store.get(pairKey(aId, bId));
+    return r && (!forced || r.forced) ? r : null;
+  }
+  const api = { emptyRetryMs, useLibraryFallback, rememberPairReject, pairRejected, awaitJob, keySafeRecipe, KEY_SAFE_MIN, energyStepOk, hybridWindowKey, highSpans, quantileLinear, median, exitPastHigh, learnedRecipe, vocalRecipe, stemBlendBars, stemBlendFader, phraseWaitS, introBars, FADER_PARK_BARS, homePlan, maskedGlideBars, maskedDropAt, HOME_DROP_PCT, LADDER_STEP_PCT };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   return api;
 })();
@@ -1222,6 +1238,8 @@ var autopilotCore = (function () {
   // can often start with no download at all and the playing song never runs
   // out before the next one exists.
   const ready = [];     // { track_id, name, duration, suggestion }
+  const pairRejects = new Map();   // "A>B" -> {why, forced}: pairs that failed a pairwise gate (see autopilotCore.pairRejected)
+  let emptyStreak = 0;             // consecutive song searches that returned no pick (backoff + library fallback)
   const MAX_READY = 4;
 
   // Length check: the server already rejects < 90 s and >= 9 min; LONG mode
@@ -1580,6 +1598,12 @@ var autopilotCore = (function () {
       return false;
     }
 
+    const known = autopilotCore.pairRejected(pairRejects, currentId, nextId, forceJump);
+    if (known) {
+      apStatus(`Not after this song: ${nextName} (${known.why}) — already checked, kept for later`);
+      cand.keep = true;
+      return false;
+    }
     apStatus(`Matching transition → ${nextName}…`);
     let candidate = await matchTracks(currentId, nextId);
     if (!candidate) return false;
@@ -1590,6 +1614,7 @@ var autopilotCore = (function () {
       const why = (candidate.vibe.reasons || []).join("; ") || `distance ${candidate.vibe.distance}`;
       console.warn("Autopilot vibe reject:", nextName, why); window.aiStep && window.aiStep("candidate_reject", { track_id: nextId, phase: "selection", decision: "vibe reject", why });
       apStatus(`Not after this song: ${nextName} (${why}) — kept for later`);
+      autopilotCore.rememberPairReject(pairRejects, currentId, nextId, why, true);   // the vibe gate ignores forceJump
       cand.keep = true; // pairwise: may fit fine after the next song
       return false;
     }
@@ -1605,6 +1630,7 @@ var autopilotCore = (function () {
       if (!verdict.ok) {
         console.warn("Autopilot energy reject:", nextName, verdict.why); window.aiStep && window.aiStep("candidate_reject", { track_id: nextId, phase: "selection", decision: "energy reject", why: verdict.why });
         apStatus(`Not after this song: ${nextName} (${verdict.why}) — kept for later`);
+        autopilotCore.rememberPairReject(pairRejects, currentId, nextId, verdict.why, forceJump);
         cand.keep = true;
         return false;
       }
@@ -1681,6 +1707,7 @@ var autopilotCore = (function () {
           console.warn("Autopilot plan-fit reject:", nextName, fit.why);
           window.aiStep && window.aiStep("candidate_reject", { track_id: nextId, phase: "selection", decision: "plan-fit reject", why: fit.why });
           apStatus(`Not after this song: ${nextName} (${fit.why}) — kept for later`);
+          autopilotCore.rememberPairReject(pairRejects, currentId, nextId, fit.why, forceJump);
           cand.keep = true;
           return false;
         }
@@ -2092,7 +2119,15 @@ var autopilotCore = (function () {
       }
       pendingSugs = suggestions;
       showQueue();
-      if (!suggestions.length) continue;
+      if (!suggestions.length) {
+        emptyStreak++;
+        console.warn(`Autopilot: model returned 0 picks (${emptyStreak} in a row)`);
+        window.aiStep && window.aiStep("suggest_empty", { decision: "0 picks", why: `${emptyStreak} empty answer(s) in a row` });
+        if (autopilotCore.useLibraryFallback(emptyStreak) && await tryLibraryLockable(currentId, gen)) { emptyStreak = 0; return; }
+        if (!active || gen !== prepGen) return;
+        continue;
+      }
+      emptyStreak = 0;
       apStatus(`⬇ Pre-downloading ${suggestions.length} songs…`);
 
       const jobs = suggestions.map((s) => downloadSuggestion(s).catch((e) => {
@@ -2117,8 +2152,9 @@ var autopilotCore = (function () {
     // Never end the set over this: the playing song keeps going (HOLD LOOP near
     // its end) and the search retries. Stopping here turned a 10 s server
     // restart into a dead set.
-    apStatus(`No next song yet after ${MAX_ROUNDS} tries — retrying in 20 s (music keeps playing)`);
-    setTimeout(() => { if (active && gen === prepGen) prepareTransition(currentId); }, 20000);
+    const retryMs = autopilotCore.emptyRetryMs(emptyStreak);
+    apStatus(`No next song yet after ${MAX_ROUNDS} tries — retrying in ${Math.round(retryMs / 1000)} s (music keeps playing)`);
+    setTimeout(() => { if (active && gen === prepGen) prepareTransition(currentId); }, retryMs);
   }
 
   function scheduleTransition(currentId, nextId, nextName, candidate, blend = null, minExit = null, layer = null) {
