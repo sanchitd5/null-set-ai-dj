@@ -362,3 +362,15 @@ console.log("hold loop picker ok");
   if (decide(vox).action === "subdrop") assert.strictEqual(decide(Object.assign({}, vox, { relaxed: true })).action, "ride");
 }
 console.log("dj-mind relaxed ok");
+
+// a deck on the master never jumps back into a loop: it waits for the next loop line
+{
+  const { nextLoopStart } = require("../ui/static/dj-mind.js");
+  const len = 16;                                        // an 8-beat loop at 30 BPM-ish, any length
+  assert.strictEqual(nextLoopStart(100, 90, len, true), 100);          // ahead: as asked
+  assert.strictEqual(nextLoopStart(100, 105, len, true), 116);         // behind: next line ahead
+  assert.strictEqual(nextLoopStart(100, 133, len, true), 148);
+  assert.strictEqual(nextLoopStart(100, 100.05, len, true), 100);      // already there: no jump
+  assert.strictEqual(nextLoopStart(100, 105, len, false), 100);        // off the master: may seek
+  console.log("loop start on the master ok");
+}

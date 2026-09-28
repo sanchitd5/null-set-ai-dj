@@ -122,8 +122,9 @@
     arm.disabled = true;
     cancel.disabled = false;
 
-    decks.a.seek(Math.max(0, selected.a_time - preRoll));
-    decks.b.seek(Math.max(0, selected.b_time - preRoll));
+    // the listener picked this transition card: their own move
+    decks.a.seek(Math.max(0, selected.a_time - preRoll), { user: true });
+    decks.b.seek(Math.max(0, selected.b_time - preRoll), { user: true });
     const pitch = Math.max(-8, Math.min(8, ((decks.a.bpm || 128) / (decks.b.bpm || 128) - 1) * 100));
     decks.b.setPitchPercent(pitch);
     decks.a.play(undefined, false);

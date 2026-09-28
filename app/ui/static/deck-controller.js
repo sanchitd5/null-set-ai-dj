@@ -1087,26 +1087,40 @@ class Deck {
   }
 
   scrubBy(deltaSeconds) {
-    this.seek(this._currentPosition() + deltaSeconds);
+    this.seek(this._currentPosition() + deltaSeconds, { user: true });   // the jog wheel
   }
 
-  seek(position) {
-    if (!this.buffer) return;
+  // opts.user: the listener clicked / scrubbed / beat-jumped: always honoured.
+  // Anything else (the AI) may not move a song that reaches the master (user:
+  // "should not change song position with a track contributing to master, wait
+  // for the position to reach"): refused unless it is no audible jump (under
+  // 80 ms) or a loop's own exit at its end. Returns false when refused.
+  seek(position, opts = {}) {
+    if (!this.buffer) return false;
     const pos = this._clampPos(position);
+    if (this.playing && !opts.user && this._onAir()) {
+      const cur = this._currentPosition(), end = this._loopSpan && this._loopSpan[1];
+      const natural = Math.abs(pos - cur) < 0.08 || (opts.loopExit && end != null && Math.abs(pos - end) < 0.15);
+      if (!natural) {
+        console.warn(`deck ${this.id}: seek to ${pos.toFixed(2)}s refused (on the master at ${cur.toFixed(2)}s: wait for it)`);
+        window.dispatchEvent(new CustomEvent("seek-refused", { detail: { deck: this.id, from: cur, to: pos, why: opts.why || "" } }));
+        return false;
+      }
+    }
     if (this.playing) this.play(pos);
     else {
       this.startOffset = pos;
       this._syncWavesurferCursor();
     }
+    return true;
   }
 
   // Beatjump: move ±n beats at the track's own tempo. A running loop is
   // re-armed at the new position (the loop is length-from-here by design).
-  jumpBeats(n) {
+  jumpBeats(n, opts = {}) {
     if (!this.buffer) return 0;
     const seconds = n * (60 / (this.bpm || 128));
-    this.seek(this._currentPosition() + seconds);
-    return seconds;
+    return this.seek(this._currentPosition() + seconds, opts) ? seconds : 0;
   }
 
   setGain(v) {
@@ -1535,7 +1549,7 @@ document.querySelectorAll(".overview").forEach((strip) => {
     const deck = decks[strip.dataset.deck];
     if (!deck.buffer) return;
     const rect = strip.getBoundingClientRect();
-    deck.seek(((e.clientX - rect.left) / rect.width) * deck.buffer.duration);
+    deck.seek(((e.clientX - rect.left) / rect.width) * deck.buffer.duration, { user: true });
   });
 });
 
@@ -1583,7 +1597,7 @@ if (masterFader) {
 
 document.querySelectorAll(".jump-btn").forEach((btn) => {
   btn.addEventListener("click", () => {
-    decks[btn.dataset.deck].jumpBeats(parseInt(btn.dataset.beats, 10));
+    decks[btn.dataset.deck].jumpBeats(parseInt(btn.dataset.beats, 10), { user: true });
   });
 });
 

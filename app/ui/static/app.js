@@ -191,7 +191,7 @@ function bindWaveformInteraction(waveform, deckId, pointKey, label) {
       return;
     }
     const deck = window.decks && window.decks[deckId];
-    if (deck) deck.seek(newTime);
+    if (deck) deck.seek(newTime, { user: true });
     setStatus(`Deck ${deckId.toUpperCase()} sought to ${formatTime(newTime)}. Shift-click to pin a transition point.`);
   });
 }

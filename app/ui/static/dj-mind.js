@@ -684,7 +684,13 @@
     return null;
   }
 
-  const core = { decide, mergeSections, sectionAt, phraseAt, vocalShare, subdropBars, energyNote,
+  // The loop start a deck on the master can use without jumping back: `start`, or the
+  // first loop line (start + k loops) at or ahead of the playhead.
+  function nextLoopStart(start, pos, len, onAir) {
+    if (!onAir || !(len > 0) || start >= pos - 0.08) return start;
+    return start + Math.ceil((pos - 0.08 - start) / len) * len;
+  }
+  const core = { nextLoopStart, decide, mergeSections, sectionAt, phraseAt, vocalShare, subdropBars, energyNote,
                  hookKey, motifHook, MOTIF_MAX_PLAYS, MOTIF_GAP_SONGS,
                  phraseBounds, phraseLabel, isPreDrop, remixBlock, aiVeto, needsHoldLoop, holdLoopAnchor, holdLoopSpan, holdLoopCandidates, pickHoldLoop,
                  PRECLEAR_DB, LOW_KILL, REMIX_MOVES,
@@ -772,16 +778,26 @@
     if (v) v.textContent = String(d.loopBeats);
   }
   // Loop `beats` from track time `start` (grid point), exact: loopOn + seek.
+  // A deck on the master never jumps back to reach `start` (user): the loop
+  // engages on the first loop line AT or AHEAD of the playhead (start + k loops),
+  // when playback gets there. Returns the loop start used.
   function loopAt(d, id, start, beats) {
-    if (typeof d.setLoopBeats === "function") d.setLoopBeats(beats);
-    d.loopOn = true;
-    d.seek(start);
-    loopUi(id, d);
+    const len = beats * 60 / (d.bpm || 128);
+    const s = nextLoopStart(start, d._currentPosition(), len, !!(d.playing && d._onAir && d._onAir()));
+    const engage = () => {
+      if (typeof d.setLoopBeats === "function") d.setLoopBeats(beats);
+      d.loopOn = true;
+      if (!d.seek(s)) { d.loopOn = false; }
+      loopUi(id, d);
+    };
+    const wait = (s - d._currentPosition()) / ((d._playbackRate && d._playbackRate()) || 1);
+    if (wait > 0.08) setTimeout(engage, Math.max(0, wait * 1000 - 20)); else engage();
+    return s;
   }
   function loopRelease(d, id, to) {
     if (!d.loopOn) return;
     d.loopOn = false;
-    d.seek(to);
+    d.seek(to, { loopExit: true });       // the loop's own end: allowed, else playback just runs on
     loopUi(id, d);
   }
   function fxEcho(id, on) {
