@@ -565,7 +565,7 @@ var autopilotCore = (function () {
     if (!od.stemsReady || !idk.stems || !ve || ve.entry == null || !od.bpm || !idk.bpm) return null;
     const aEff = od.bpm * od._playbackRate();
     const gap = Math.abs(aEff / idk.bpm - 1);
-    if (gap > 0.25) return null;
+    if (gap > keyLockLim()) return null;
     if (gap > 0.02 && !(idk.tempoStems && Math.abs(idk.tempoStems.bpm / aEff - 1) < 0.01)) return null;
     const cs = window.djMind && window.djMind.core && window.djMind.core.camelotScore;
     const ka = od.analysis && od.analysis.key && od.analysis.key.camelot, kb = idk.analysis && idk.analysis.key && idk.analysis.key.camelot;
@@ -585,7 +585,7 @@ var autopilotCore = (function () {
     const ve = idk._vocalEntry;
     if (!od.stemsReady || !idk.stems || !ve || ve.entry == null || !od.bpm || !idk.bpm) return null;
     const aEff = od.bpm * od._playbackRate(), gap = Math.abs(aEff / idk.bpm - 1);
-    if (gap > 0.25) return null;
+    if (gap > keyLockLim()) return null;
     if (gap > 0.02 && !(idk.tempoStems && Math.abs(idk.tempoStems.bpm / aEff - 1) < 0.01)) return null;
     const barS = 240 / aEff;
     const aLeft = od.buffer ? (od.buffer.duration - od._currentPosition()) / od._playbackRate() : 0;
@@ -1232,7 +1232,9 @@ var autopilotCore = (function () {
   // +/-8 % on pitch; +/-15 % when the playing deck has stems: the next song
   // then plays on key-locked tempo stems (multi-BPM stem sets), no pitch shift.
   function stemsOn() { const d = window.decks && window.decks[activeDeck]; return !!(d && d.stems); }
-  function lockLimit() { return stemsOn() ? 0.25 : 0.08; }
+  // key-locked stems range, shared with tempo-rule.js (+-16 %: 174 -> 125 is 28 %, never locks)
+  function keyLockLim() { return ((window.tempoRule && window.tempoRule.KEYLOCK_RANGE_PCT) || 16) / 100; }
+  function lockLimit() { return stemsOn() ? keyLockLim() : 0.08; }
   function tempoLockableAt(cand, lim) {
     const d = window.decks && window.decks[activeDeck];
     if (!d || !d.bpm || !cand.bpm) return true;
@@ -1608,14 +1610,14 @@ var autopilotCore = (function () {
           const aEff1 = oa1.bpm * oa1._playbackRate();
           const m1 = [1, 2, 0.5].reduce((b, m) => (Math.abs(aEff1 / (sd1.bpm * m) - 1) < Math.abs(aEff1 / (sd1.bpm * b) - 1) ? m : b));
           const g1 = Math.abs(aEff1 / (sd1.bpm * m1) - 1);
-          if (g1 > 0.02 && g1 <= 0.25) sd1._tempoStemsJob = sd1.useTempoStems(aEff1 / m1);
+          if (g1 > 0.02 && g1 <= keyLockLim()) sd1._tempoStemsJob = sd1.useTempoStems(aEff1 / m1);
           // where its vocal phrase starts (for a mashup transition)
           fetch(`/api/tracks/${nextId}/vocal_entry`).then((r) => r.json()).then((v) => { sd1._vocalEntry = v; }).catch(() => {});
         });
       }
     }
     // Over 8 % the blend needs the key-locked stems: book the song only once they're on.
-    if (cand.bpm && !tempoLockableAt(cand, 0.08) && tempoLockableAt(cand, 0.25)) {
+    if (cand.bpm && !tempoLockableAt(cand, 0.08) && tempoLockableAt(cand, keyLockLim())) {
       const sd2 = window.decks && window.decks[stagingDeck()];
       apStatus(`Key-locking ${nextName} to this tempo (tempo stems)…`);
       const t2 = Date.now();
@@ -1786,7 +1788,8 @@ var autopilotCore = (function () {
     const d = window.decks && window.decks[deckId];
     if (!d) return;
     const v = Math.max(-range, Math.min(range, pct));
-    d.setPitchPercent(v);
+    // gradient rule: instant only while B is silent, else a glide
+    if (typeof d.aiSetPitch === "function") d.aiSetPitch(v); else d.setPitchPercent(v);
     const fader = document.querySelector(`.pitch-fader[data-deck="${deckId}"]`);
     if (fader) fader.value = String(v.toFixed(1));
     const readout = document.getElementById(`pitch-readout-${deckId}`);
@@ -2095,7 +2098,18 @@ var autopilotCore = (function () {
     const stemsBoth = aStems && bStems;
     const aEffS = odS ? odS.bpm * odS._playbackRate() : 0;
     const gapS = sdS && sdS.bpm ? Math.min(...[1, 2, 0.5].map((m) => Math.abs(aEffS / (sdS.bpm * m) - 1))) : 1;
-    const oneSong = stemsBoth && gapS <= 0.25;
+    // Tempo gate (tempo-rule.js): a beat-to-beat recipe only when B locks to
+    // A's heard tempo right now, inside B's range (+-8 % pitch, or +-16 % on
+    // key-locked stems rendered for exactly this tempo). leavemealone 174 ->
+    // Sexy Magic 125 was a Long Blend because this used to be "gapS <= 0.25"
+    // (tempo stems assumed, never checked), so B then played unlocked.
+    const lockS = window.tempoRule.beatRecipe({ aEff: aEffS, bBpm: sdS && sdS.bpm, stemsBoth,
+      tempoStemsBpm: sdS && sdS.tempoStems && sdS.tempoStems.bpm });
+    const oneSong = lockS.oneSong;
+    if (!lockS.beat) {
+      if (blend || layer) console.info("transition tempo:", `beatless, ${lockS.lock.why}`);
+      blend = null; layer = null;
+    }
     const od0bpm = (window.decks && window.decks[activeDeck] && window.decks[activeDeck].bpm) || 128;
     // Beat-to-beat: when the tempos lock, hand beat to beat. Echo-outs are for
     // tempo gaps; they turned "vocal -> beat" when used between compatible songs.
@@ -2119,7 +2133,7 @@ var autopilotCore = (function () {
         recipe = vr.recipe; vocalShort = vr.short; vocalCut = vr.why;
       }
     } else if (oneSong) {
-      // tempo gap up to 25 %: key-locked tempo stems make it a real blend
+      // tempos lock (key-locked tempo stems attached, or inside the pitch range)
       recipe = "Long Blend";
     } else if (stemsBoth) {
       // tempo can't lock: a stem bridge, never an echo-out (user)
@@ -2138,7 +2152,7 @@ var autopilotCore = (function () {
       vocalShort = true;
     }
     // Mashup -> transition beats every other move when the pair fits (user)
-    if (stemsBoth && odS && sdS && mashupFits(odS, sdS)) recipe = "Mashup → Transition";
+    if (lockS.beat && stemsBoth && odS && sdS && mashupFits(odS, sdS)) recipe = "Mashup → Transition";
     if (layer) { bTime = layer.entry; recipe = `LAYER ${layer.hold_bars}+${layer.unwind_bars} bars`; }
     jumpPending = !blend && !oneSong;
     // why an echo / non-stem recipe: on the status line and in the console,
@@ -2185,7 +2199,7 @@ var autopilotCore = (function () {
     // the line it chose, the merge it heard. Only when the plan is still ahead.
     const pp = candidate.preplan;
     let preplanned = false;
-    if (pp && !layer && !peakT && stemsBoth && odS && sdS && pp.a_in >= nowPos + 15) {
+    if (pp && lockS.beat && !layer && !peakT && stemsBoth && odS && sdS && pp.a_in >= nowPos + 15) {
       effectiveATime = pp.a_in;
       bTime = pp.b_start;
       recipe = "Stem Merge";
@@ -2208,7 +2222,7 @@ var autopilotCore = (function () {
     }
     // Song merge beats the plain mashup (it is its generalization) when a combo fits;
     // never over LAYER / PEAK. The mashup stays the fallback if the merge is refused.
-    if (!preplanned && !layer && !peakT && mergesOn() && stemsBoth && odS && sdS) {
+    if (!preplanned && lockS.beat && !layer && !peakT && mergesOn() && stemsBoth && odS && sdS) {
       const mp = planMerge(currentId, nextId, odS, sdS, effectiveATime);
       if (mp) {
         recipe = "Stem Merge";
@@ -2348,13 +2362,11 @@ var autopilotCore = (function () {
       if (sd && oa && oa.bpm > 0 && sd.bpm > 0) {
         // Live A tempo (A may still be easing back from its own tempo lock);
         // half/double time counts as a match.
-        const aEff = oa.bpm * rateA;
-        const lockRate = [1, 2, 0.5].map((m) => aEff / (sd.bpm * m))
-          .reduce((best, r) => (Math.abs(r - 1) < Math.abs(best - 1) ? r : best));
-        // Key-locked tempo stems (prefetched below): locks up to 15 % keep B's key.
-        const keyLocked = sd.tempoStems && Math.abs(sd.tempoStems.bpm / (sd.bpm * lockRate) - 1) < 0.01;
-        if (keyLocked) setDeckPitch(stagingDeck(), (lockRate - 1) * 100, 26);
-        else if (Math.abs(lockRate - 1) <= 0.08) setDeckPitch(stagingDeck(), (lockRate - 1) * 100);
+        // Same gate as the recipe (tempo-rule.js beatLock): key-locked tempo
+        // stems keep B's key up to +-16 %, the pitched mix stays inside +-8 %.
+        const lk = window.tempoRule.beatLock({ aEff: oa.bpm * rateA, bBpm: sd.bpm,
+          tempoStemsBpm: sd.tempoStems && sd.tempoStems.bpm });
+        if (lk.ok) setDeckPitch(stagingDeck(), lk.pct, lk.range);
       }
       const leadS = Math.max(0.05, (fireAt - deckPosition(activeDeck)) / rateA);
       const t0 = audioCtx.currentTime + leadS;
@@ -2515,7 +2527,7 @@ var autopilotCore = (function () {
     const od = window.decks && window.decks[activeDeck], sd = window.decks && window.decks[stagingDeck()];
     if (!mergesOn() || !od || !sd || !od.stemsReady || !sd.stems || !od.bpm || !sd.bpm) return null;
     const aEff = od.bpm * od._playbackRate(), gap = Math.abs(aEff / sd.bpm - 1);
-    if (gap > 0.25 || (gap > 0.02 && !(sd.tempoStems && Math.abs(sd.tempoStems.bpm / aEff - 1) < 0.01))) return null;
+    if (gap > keyLockLim() || (gap > 0.02 && !(sd.tempoStems && Math.abs(sd.tempoStems.bpm / aEff - 1) < 0.01))) return null;
     const w = playWindow(candidate.score || 50);
     const trackEnd = (od.buffer ? od.buffer.duration : Infinity) - w.xf - 2;
     const lo = Math.min(entryPos + w.min, trackEnd), hi = Math.min(entryPos + w.max, trackEnd);
