@@ -99,6 +99,7 @@
       fetch("/api/session/event", { method: "POST", headers: { "Content-Type": "application/json" }, keepalive: true,
         body: JSON.stringify({ kind: "glitch", data: ev }) }).catch(() => {});
     } catch (e) { /* never break playback */ }
+    root.dispatchEvent(new CustomEvent("glitch", { detail: ev })); // vibe-ui.js event feed
   }
   // The listener's own hands: EQ / fader moves they made recently are never undone.
   const userTouch = {};
