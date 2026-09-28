@@ -40,6 +40,7 @@ from app.music_brain.recipe_matcher import RecipeMatcher
 from app.music_brain.stem_service import separate as separate_stems
 from app.music_brain.transition_renderer import render_full_mix, render_preview
 from app.music_brain.set_log import export_set_log_markdown, validate_set_log
+from app.ui.bg_jobs import DONE as _JOB_DONE, ERROR as _JOB_ERROR, EXPIRED as _JOB_EXPIRED, JobRunner
 from app.ui.library_service import scan_library
 
 UPLOAD_DIR = CACHE_DIR / "uploads"
@@ -495,7 +496,7 @@ def _llm_busy() -> bool:
     from app.ui.llm_gate import gate
 
     snap = gate.snapshot()
-    return bool(snap["in_flight"] or snap["queued"])
+    return bool(snap["in_flight"] or snap["queued"] or snap.get("live"))
 
 
 STEM_IN_FLIGHT = 2        # one separating, one decoding ahead (stem_worker pipeline)
@@ -951,18 +952,48 @@ class PreplanRequest(BaseModel):
                                                                 # the plan is in song time on A's analysed BPM
 
 
-@app.post("/api/transition/preplan")
-def post_transition_preplan(req: PreplanRequest):
-    """The silent ear pre-plans the whole transition (app.music_brain.preplan):
-    when B starts inside A, from which of B's lines, for how long both play and
-    which deck owns each stem; rendered offline and heard before the master plays it."""
+# The silent ear's audio work (render clips from stems + rate them, up to tens of
+# seconds) runs as background jobs, not inside the request thread: the POST starts
+# or joins a job keyed by its inputs and answers {"status": "pending", "job": id} at
+# once (or the result, when that job already finished); GET .../{job} answers the
+# same pending body until the result lands. ONE ear job at a time for both kinds
+# (they share the one model and the CPU), identical requests share one job.
+# ttl 120 s = preplan.UNHEARD_TTL_S: an unheard answer is not reused longer than before
+# (heard ones sit in the preplan / audition disk caches and come back in ms).
+_ear_jobs = JobRunner("ear", workers=1, ttl_s=120.0, queue_ttl_s=120.0, max_pending=8)
+
+
+def _job_answer(job, kind: str, fresh=None):
+    """A job's HTTP answer: the unchanged final result when done, else the pending body."""
+    if job is None or not job.key.startswith(kind + ":"):
+        raise HTTPException(status_code=404, detail="unknown or expired job")
+    if job.status == _JOB_DONE:
+        return fresh(job.result) if fresh else job.result
+    if job.status == _JOB_ERROR:
+        raise HTTPException(status_code=500, detail=f"{kind} failed: {job.error}")
+    if job.status == _JOB_EXPIRED:
+        raise HTTPException(status_code=404, detail="job expired before it ran")
+    return job.pending_body()
+
+
+def _preplan_fresh(now: Optional[float]):
+    """A finished plan whose B start is already too close to A's playhead is no plan."""
+    from app.music_brain.preplan import MIN_LEAD_S
+
+    def check(res: dict) -> dict:
+        p = res.get("plan") if isinstance(res, dict) else None
+        if now is not None and p and float(p.get("a_in") or 0.0) < now + MIN_LEAD_S:
+            return {"ok": False, "plan": None, "candidates": [], "ear": False,
+                    "why": "the planned start is already too close to A's playhead"}
+        return res
+    return check
+
+
+def _run_preplan(req: PreplanRequest, sa: dict, sb: dict) -> dict:
     from app.music_brain import preplan
     from app.music_brain import techniques as tq
-    from app.ui import llm_gate, session_log
+    from app.ui import session_log
 
-    sa, sb = _cached_stems4(req.a_id), _cached_stems4(req.b_id)
-    if not sa or not sb:
-        raise HTTPException(status_code=409, detail="both songs need their 4 stems cached")
     ta, tb = analyze_track(_track_path(req.a_id)), analyze_track(_track_path(req.b_id))
     ka, kb = ta.key.camelot if ta.key else None, tb.key.camelot if tb.key else None
     t0 = time.time()
@@ -979,6 +1010,40 @@ def post_transition_preplan(req: PreplanRequest):
     return res
 
 
+@app.post("/api/transition/preplan")
+def post_transition_preplan(req: PreplanRequest):
+    """The silent ear pre-plans the whole transition (app.music_brain.preplan):
+    when B starts inside A, from which of B's lines, for how long both play and
+    which deck owns each stem; rendered offline and heard before the master plays it.
+    Starts or joins a background job: {"status": "pending", "job": id} until
+    GET /api/transition/preplan/{job} returns the plan (same shape as before)."""
+    sa, sb = _cached_stems4(req.a_id), _cached_stems4(req.b_id)
+    if not sa or not sb:
+        raise HTTPException(status_code=409, detail="both songs need their 4 stems cached")
+    # The window and tempo define the plan (preplan's own cache key); `now` only moves
+    # the earliest usable start, checked against the finished plan below.
+    key = f"preplan:{req.a_id}:{req.b_id}:{round(req.lo)}:{round(req.hi)}:{round(req.bpm_a, 1)}"
+    job = _ear_jobs.submit(key, lambda: _run_preplan(req, sa, sb))
+    if job is None:
+        raise HTTPException(status_code=503, detail="the silent ear is busy: too many queued jobs")
+    fresh = _preplan_fresh(req.now)
+    if job.status == _JOB_DONE and fresh(job.result) is not job.result:
+        _ear_jobs.forget(job.id)          # stale for this playhead: plan again from here
+        job = _ear_jobs.submit(key, lambda: _run_preplan(req, sa, sb))
+        if job is None:
+            raise HTTPException(status_code=503, detail="the silent ear is busy: too many queued jobs")
+    return _job_answer(job, "preplan", fresh)
+
+
+@app.get("/api/transition/preplan/{job_id}")
+def get_transition_preplan(job_id: str, now: Optional[float] = None):
+    """A preplan job: {"status": "pending", "job": id} while it runs, then the plan.
+    `now` (A's current song position) drops a plan whose start is already too close."""
+    if now is not None and not (0.0 <= now <= 36000.0):      # also rejects NaN
+        raise HTTPException(status_code=400, detail="now must be A's song seconds (0-36000)")
+    return _job_answer(_ear_jobs.get(job_id), "preplan", _preplan_fresh(now))
+
+
 class MergeAuditionRequest(BaseModel):
     a_id: str
     b_id: str
@@ -991,7 +1056,9 @@ class MergeAuditionRequest(BaseModel):
 def post_merge_audition(req: MergeAuditionRequest):
     """The silent ear on candidate song merges (app.music_brain.merge): each combo is
     rendered offline from the cached stems (B key-locked to A's tempo) and the local
-    omni model rates it. Advisory and cached; {"results": [...], "ear": bool}."""
+    omni model rates it. Advisory and cached; {"results": [...], "ear": bool}.
+    Starts or joins a background job: {"status": "pending", "job": id} until
+    GET /api/merge/audition/{job} returns that result."""
     from app.music_brain import merge
 
     sa, sb = _cached_stems4(req.a_id), _cached_stems4(req.b_id)
@@ -1000,15 +1067,33 @@ def post_merge_audition(req: MergeAuditionRequest):
     ok = [c for c in req.combos[:3] if set(c) == set(merge.ROLES) and set(c.values()) <= {"a", "b"}]
     if not ok:
         raise HTTPException(status_code=400, detail="combos must map drums/bass/vocals/other to 'a' or 'b'")
-    ta, tb = analyze_track(_track_path(req.a_id)), analyze_track(_track_path(req.b_id))
-    from app.ui import llm_gate, session_log
+    a_time, b_time = max(0.0, req.a_time), max(0.0, req.b_time)
 
-    t0 = time.time()
-    res = merge.audition(sa, sb, ok, max(0.0, req.a_time), max(0.0, req.b_time), ta.bpm or 120.0, tb.bpm or 120.0,
-                         key=f"{req.a_id}:{req.b_id}")
-    session_log.log("ear_merge", elapsed=round(time.time() - t0, 2), combos=len(ok),
-                    heard=sum(1 for r in res if r["ear"]), best=max((r["ear"]["score"] for r in res if r["ear"]), default=None))
-    return {"results": res, "ear": any(r["ear"] for r in res)}
+    def run() -> dict:
+        from app.ui import session_log
+
+        ta, tb = analyze_track(_track_path(req.a_id)), analyze_track(_track_path(req.b_id))
+        t0 = time.time()
+        res = merge.audition(sa, sb, ok, a_time, b_time, ta.bpm or 120.0, tb.bpm or 120.0,
+                             key=f"{req.a_id}:{req.b_id}")
+        session_log.log("ear_merge", elapsed=round(time.time() - t0, 2), combos=len(ok),
+                        heard=sum(1 for r in res if r["ear"]), best=max((r["ear"]["score"] for r in res if r["ear"]), default=None))
+        return {"results": res, "ear": any(r["ear"] for r in res)}
+
+    key = "audition:" + json.dumps([req.a_id, req.b_id, round(a_time, 2), round(b_time, 2), ok], sort_keys=True)
+    job = _ear_jobs.submit(key, run)
+    if job is not None and job.status == _JOB_DONE and not (job.result or {}).get("ear"):
+        _ear_jobs.forget(job.id)          # unheard answers were never reused: ask again
+        job = _ear_jobs.submit(key, run)
+    if job is None:
+        raise HTTPException(status_code=503, detail="the silent ear is busy: too many queued jobs")
+    return _job_answer(job, "audition")
+
+
+@app.get("/api/merge/audition/{job_id}")
+def get_merge_audition(job_id: str):
+    """A merge audition job: {"status": "pending", "job": id} while it runs, then the result."""
+    return _job_answer(_ear_jobs.get(job_id), "audition")
 
 
 @app.get("/api/learned/pick")
