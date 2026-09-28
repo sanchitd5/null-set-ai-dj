@@ -32,7 +32,8 @@ DURATION_TOL_S = 10.0          # an LRC for a different edit/length of the song 
 MAX_OFFSET_S = 20.0            # search range when aligning an LRC to the local file
 MIN_ALIGN_GAIN_DB = 3.0        # sung lines must sit this much louder than the gaps to trust the offset
 
-_LRC = re.compile(r"^\s*\[(\d+):(\d+(?:\.\d+)?)\]\s*(.*)$")
+_LRC = re.compile(r"^\s*((?:\[\d+:\d+(?:\.\d+)?\]\s*)+)(.*)$")
+_LRC_TAG = re.compile(r"\[(\d+):(\d+(?:\.\d+)?)\]")
 
 
 _CJK = re.compile(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\uff00-\uffef]")
@@ -40,12 +41,14 @@ _CREDIT = re.compile(r"^\s*(作词|作曲|编曲|制作人|词|曲|written by|co
 
 
 def parse_lrc(text: str) -> List[dict]:
-    """'[01:02.34] words' -> [{t, end, text}] (end = next line's start); blank and credit lines dropped."""
+    """'[01:02.34] words' -> [{t, end, text}] (end = next line's start); blank and credit lines dropped.
+    A compressed line '[00:10.00][00:30.00] chorus' is the same words at each time."""
     rows = []
     for line in (text or "").splitlines():
         m = _LRC.match(line)
         if m:
-            rows.append((int(m.group(1)) * 60 + float(m.group(2)), m.group(3).strip()))
+            for mm, ss in _LRC_TAG.findall(m.group(1)):
+                rows.append((int(mm) * 60 + float(ss), m.group(2).strip()))
     rows.sort()
     out = []
     for i, (t, words) in enumerate(rows):

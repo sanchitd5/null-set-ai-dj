@@ -204,6 +204,13 @@ def test_render_pulls_the_beat_under_the_line_and_slams_it_back(tmp_path):
             hook_drop.render(stems, bad, 120.0, tmp_path / "bad.wav")
 
 
+def test_compressed_lrc_repeats_a_line_at_each_of_its_times():
+    lines = lyrics.parse_lrc("[00:10.00][00:30.00] take me higher\n[00:20.00] verse\n[00:40.00] end")
+    assert [(l["t"], l["text"]) for l in lines] == [
+        (10.0, "take me higher"), (20.0, "verse"), (30.0, "take me higher"), (40.0, "end")]
+    assert lyrics.hooks(lines)[0]["count"] == 2
+
+
 def test_a_short_hook_never_drops_before_the_voice_is_alone():
     # a 0.6 s shout; a phrase line 0.2 s before it starts is within EARLY_DROP_BARS of its end
     lines = [{"t": 10.0, "end": 10.6, "text": "hey"}, {"t": 20.0, "end": 20.6, "text": "hey"}]
