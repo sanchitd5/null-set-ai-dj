@@ -68,9 +68,11 @@ def parse_json3(data: dict) -> dict:
             words.append({"t": round(t0 + (s.get("tOffsetMs") or 0) / 1000, 2), "w": s["utf8"].strip(), "ev_end": t0 + dur})
     words.sort(key=lambda w: w["t"])
     for i, w in enumerate(words):
-        nxt = words[i + 1]["t"] if i + 1 < len(words) else w.pop("ev_end")
+        nxt = words[i + 1]["t"] if i + 1 < len(words) else w["ev_end"]
         w.pop("ev_end", None)
-        w["end"] = round(min(nxt, w["t"] + 1.5), 2)
+        # an event without dDurationMs (or a word stamped at its very end) leaves no gap
+        # before nxt: the word still lasts, or words_between() never finds it
+        w["end"] = round(min(nxt if nxt > w["t"] else w["t"] + 1.5, w["t"] + 1.5), 2)
     return {"words": words, "phrases": phrases}
 
 
@@ -197,7 +199,11 @@ def _semitones(a: np.ndarray, b: np.ndarray, sr: int) -> Optional[float]:
     import librosa
 
     def f0(y):
-        f, voiced, _ = librosa.pyin(y, fmin=70, fmax=600, sr=sr, frame_length=1024)
+        try:                       # one fragment pyin cannot read (too short, NaN) must not lose the study
+            f, voiced, _ = librosa.pyin(np.nan_to_num(np.asarray(y, np.float32)), fmin=70, fmax=600, sr=sr,
+                                        frame_length=1024)
+        except Exception:
+            return None
         f = f[voiced & np.isfinite(f)]
         return float(np.median(f)) if len(f) >= 5 else None
     fa, fb = f0(a), f0(b)
