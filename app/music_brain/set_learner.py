@@ -756,10 +756,13 @@ def load_learned(path: Path = LEARNED_PATH) -> Dict[str, dict]:
         return {}
 
 
-def merge(observations: List[Observation], path: Path = LEARNED_PATH) -> Dict[str, dict]:
-    """Merge into the store. Re-learning the same set replaces its old observations."""
+def merge(observations: List[Observation], path: Path = LEARNED_PATH,
+          set_ids: Sequence[str] = ()) -> Dict[str, dict]:
+    """Merge into the store. Re-learning the same set replaces its old observations;
+    set_ids names the sets being re-learned, so a re-study that now finds nothing
+    (wrong download caught, every move rejected) still clears what it found before."""
     store = load_learned(path)
-    sets = {o.set_id for o in observations}
+    sets = {o.set_id for o in observations} | set(set_ids)
     for entry in store.values():
         entry["observations"] = [o for o in entry.get("observations", []) if o.get("set_id") not in sets]
     for o in observations:
@@ -772,7 +775,8 @@ def merge(observations: List[Observation], path: Path = LEARNED_PATH) -> Dict[st
         e["ai_rules"] = list(dict.fromkeys(o["detail"]["ai_rule"] for o in obs if o.get("detail", {}).get("ai_rule")))[:8]
         e["tempo_gap_max"] = max([o["tempo_gap"] for o in obs if o.get("tempo_gap") is not None], default=None)
         e["key_score_min"] = min([o["key_score"] for o in obs if o.get("key_score") is not None], default=None)
-    store = {k: v for k, v in store.items() if v["observations"] or v.get("user_rules")}
+    # the user's word (rules, a disable) outlives the observations it was given on
+    store = {k: v for k, v in store.items() if v["observations"] or v.get("user_rules") or v.get("disabled")}
     _save(store, path)
     return store
 
@@ -875,7 +879,10 @@ def verify_songs(rows: List[dict], songs: List[SongData]) -> List[dict]:
         end = next((x.start for x in songs[i + 1:] if x.start > s.start), s.start + 240.0)
         ts = [t for t in heard if s.start <= t < end]
         share = sum(1 for t in ts if i in heard[t]) / len(ts) if ts else 0.0
-        out.append({"heard_share": round(share, 3), "likely_wrong_song": bool(s.env) and share < WRONG_SONG_SHARE})
+        # no window of the slot was analysed (its clip failed to separate): no evidence
+        # either way, so the song is not called wrong and its other slots still count
+        out.append({"heard_share": round(share, 3),
+                    "likely_wrong_song": bool(s.env) and bool(ts) and share < WRONG_SONG_SHARE})
     return out
 
 
@@ -1026,7 +1033,7 @@ def learn_set(source: str, tracklist: Optional[str] = None, download: bool = Tru
         ai_res = set_ai.review(obs, log=log)
         log(f"ai: {ai_res['ai']}, kept {len(ai_res['kept'])}, rejected {len(ai_res['rejected'])}")
         obs = ai_res["kept"]
-    store = merge(obs, store_path)
+    store = merge(obs, store_path, set_ids=(set_id,))
 
     report = {
         "set_id": set_id, "set_path": str(set_path), "missing": missing, "clips": clips,

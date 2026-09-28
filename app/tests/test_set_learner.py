@@ -333,3 +333,31 @@ def test_cached_set_with_corrupt_meta_still_loads(tmp_path, monkeypatch):
     (tmp_path / "rAJ9Es-61ZE.mp3").write_bytes(b"x")
     (tmp_path / "rAJ9Es-61ZE.info.json").write_text("{not json", encoding="utf-8")
     assert sl.fetch_set("https://youtu.be/rAJ9Es-61ZE")[1:] == ("rAJ9Es-61ZE", "")
+
+
+def test_relearning_a_set_that_now_finds_nothing_clears_it(tmp_path):
+    p = tmp_path / "learned.json"
+    o = sl.Observation("bass_swap", "setX", 60.0, "A", "B", 0.01, 1.0, {})
+    keep = sl.Observation("bass_swap", "setY", 90.0, "C", "D", 0.02, 0.9, {})
+    sl.merge([o, keep], p)
+    store = sl.merge([], p, set_ids=("setX",))      # setX re-studied: its move was a wrong download
+    assert [x["set_id"] for x in store["bass_swap"]["observations"]] == ["setY"]
+    assert store["bass_swap"]["count"] == 1 and store["bass_swap"]["tempo_gap_max"] == 0.02
+
+
+def test_a_disable_alone_survives_relearning(tmp_path):
+    p = tmp_path / "learned.json"
+    sl.add_user_rule("vocal_chop", disable=True, path=p)   # never seen yet, disabled up front
+    sl.merge([sl.Observation("vocal_chop", "s", 9.0, "E")], p)
+    sl.merge([], p, set_ids=("s",))
+    assert sl.load_learned(p)["vocal_chop"]["disabled"] is True
+
+
+def test_a_slot_never_analysed_is_not_called_the_wrong_song():
+    songs = [sl.SongData("A", 0.0, 120, None, {"drums": np.zeros(4)}),
+             sl.SongData("B", 600.0, 120, None, {"drums": np.zeros(4)})]
+    rows = [{"t": 10.0, "stem": "drums", "db": -10, "owners": [sl.Hit(0, 0.9, 10.0, 1.0)]}]
+    v = sl.verify_songs(rows, songs)                 # B's clip failed: no window in its slot
+    assert v[0]["likely_wrong_song"] is False and v[1]["likely_wrong_song"] is False
+    rows.append({"t": 610.0, "stem": "drums", "db": -10, "owners": []})
+    assert sl.verify_songs(rows, songs)[1]["likely_wrong_song"] is True
