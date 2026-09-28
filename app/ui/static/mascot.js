@@ -21,7 +21,90 @@
     return "idle";
   }
   const LABEL = { idle: "AI DJ", think: "THINKING", listen: "LISTENING", groove: "MIXING", hype: "DROP!", sweat: "HOLDING" };
-  if (typeof module !== "undefined" && module.exports) module.exports = { mood, LABEL };
+
+  // ---- SUPERMOVE takeover (pure) -------------------------------------------
+  // A supermove is a big, audience-facing moment: NULL flies to the centre and
+  // dances, its biggest hit on the move's audio time. Only events that carry
+  // that time qualify. The "ai-activity" labels (MERGE -> A, HOOK DROP, ...)
+  // are announced when the move is booked, bars before its drop, so they never
+  // start a takeover: the "ai-cue" booked with them carries the drop time.
+  // "ai-supermove" {at, name, deck} is for moves with no cue (LAYER start,
+  // PEAK Double Drop / Drop Swap, announced early by autopilot.js).
+  const SUPERMOVE_WINDOW_S = 8;
+  const CUE_MOVES = [   // [ai-cue kind, test on its why, caption]
+    ["drop", /strip & rebuild/i, "STRIP & REBUILD"],
+    ["drop", /after the merge/i, "MERGE"],
+    ["drop", /after the mashup/i, "MASHUP"],
+    ["drop", /^the beat slams back after "/i, "HOOK DROP"],
+    ["transition", /^Double Drop:/, "DOUBLE DROP"],
+    ["transition", /^Drop Swap:/, "DROP SWAP"],
+    ["line", /^B's rap arrives/, "RIFF OVER RAP"],
+  ];
+  const deckOf = (x) => (x === "a" || x === "b" ? x : "");
+  // evt: {type: "ai-cue" | "ai-supermove" | "ai-activity", detail}. -> {name, at, deck} | null
+  function supermoveFor(evt) {
+    const d = evt && evt.detail;
+    if (!d || !Number.isFinite(d.at)) return null;
+    if (evt.type === "ai-supermove") {
+      const name = String(d.name || "").trim().toUpperCase().slice(0, 24);
+      return name ? { name, at: d.at, deck: deckOf(d.deck) } : null;
+    }
+    if (evt.type !== "ai-cue") return null;
+    const why = String(d.why || "");
+    for (const [kind, re, name] of CUE_MOVES) if (d.kind === kind && re.test(why)) return { name, at: d.at, deck: deckOf(d.deck) };
+    return null;
+  }
+  const isSupermove = (evt) => supermoveFor(evt) !== null;
+  // VFX toggle state: visuals.js stores "on"/"off" under nul.vfx; the button's aria-pressed otherwise.
+  function vfxOn(stored, pressed) {
+    if (stored === "off") return false;
+    if (stored === "on") return true;
+    return pressed !== "false";
+  }
+  // May a supermove whose hit is at hitS (seconds, any one clock) take over?
+  // booked: hit times of takeovers already booked. -> "" (yes) or the reason not.
+  function supermoveGate(g) {
+    if (!g.aiActive) return "AI not driving";
+    if (!g.vfxOn) return "VFX off";
+    if ((g.booked || []).some((h) => Math.abs(h - g.hitS) < SUPERMOVE_WINDOW_S)) return "de-dup";
+    return "";
+  }
+  // performance.now() ms at which audio time `at` is heard. latencyS: output latency.
+  function hitPerfMs(at, audioNow, perfNowMs, latencyS) {
+    return perfNowMs + (at - audioNow + (latencyS > 0 ? latencyS : 0)) * 1000;
+  }
+  // Seconds per beat as heard (bpm * playbackRate), else the cue's bar / 4, else
+  // 124 BPM; halved / doubled into 0.3-0.75 s so the nods stay danceable and
+  // still land on the beat grid.
+  function beatSeconds(bpm, rate, cueBar) {
+    let b = bpm > 0 ? 60 / (bpm * (rate > 0 ? rate : 1)) : cueBar > 0 ? cueBar / 4 : 60 / 124;
+    while (b < 0.3) b *= 2;
+    while (b > 0.75) b /= 2;
+    return b;
+  }
+  const FLY_MS = 550, OUT_MS = 500, PRE_BEATS = 2, POST_BEATS = 3, MAX_MS = 4000, LATE_MS = 250, MAX_LEAD_MS = 120000;
+  // The takeover timeline (all perf ms): fly in, dance PRE_BEATS, the HIT on the
+  // cue, dance up to POST_BEATS, fly back; never longer than MAX_MS. A cue that
+  // gives less lead shortens the pre-dance; one too late or too far out -> null.
+  function takeoverPlan(hitMs, nowMs, beatS) {
+    if (!(hitMs >= nowMs - LATE_MS) || hitMs - nowMs > MAX_LEAD_MS) return null;
+    const b = beatS * 1000;
+    let post = POST_BEATS;
+    while (post > 1 && FLY_MS + PRE_BEATS * b + post * b + OUT_MS > MAX_MS) post--;
+    const hit = Math.max(hitMs, nowMs + FLY_MS);
+    const start = Math.max(nowMs, hit - PRE_BEATS * b - FLY_MS);
+    const outAt = hit + post * b;
+    return { start, hit, outAt, end: outAt + OUT_MS, beatMs: b, flyMs: FLY_MS, outMs: OUT_MS };
+  }
+  // CSS animation-delay (ms, <= 0) that puts a beat-long loop started at nowMs
+  // at progress 0 on the hit (and so on every beat around it).
+  function beatPhaseMs(nowMs, hitMs, beatMs) {
+    return -((((nowMs - hitMs) % beatMs) + beatMs) % beatMs);
+  }
+  if (typeof module !== "undefined" && module.exports) {
+    module.exports = { mood, LABEL, supermoveFor, isSupermove, vfxOn, supermoveGate, hitPerfMs, beatSeconds,
+                       takeoverPlan, beatPhaseMs, SUPERMOVE_WINDOW_S, CUE_MOVES };
+  }
   if (typeof document === "undefined") return;
 
   const el = document.getElementById("nul-mascot");
@@ -60,6 +143,75 @@
     const ms = Math.max(0, (d.at - audioCtx.currentTime) * 1000);
     setTimeout(() => { st.hypeUntil = performance.now() / 1000 + 1.6; }, ms);   // "!" on the drop itself
   });
+
+  // ---- SUPERMOVE takeover (browser) ----------------------------------------
+  // One class on #nul-super runs the whole show (null-bot.css); JS only sets a
+  // few CSS variables once per takeover: no per-frame DOM writes.
+  const sup = document.getElementById("nul-super");
+  if (sup) {
+    const svg = el.querySelector("svg");
+    sup.innerHTML = '<div class="nul-sm-scrim"></div><div class="nul-sm-bot"><div class="nul-sm-halo"></div>' +
+      '<div class="nul-sm-ring"></div><div class="nul-sm-pop"></div><div class="nul-sm-cap"></div></div>';
+    if (svg) sup.querySelector(".nul-sm-pop").appendChild(svg.cloneNode(true));
+    const cap = sup.querySelector(".nul-sm-cap"), bot = sup.querySelector(".nul-sm-bot");
+    const booked = [];               // hit times (perf s) of booked takeovers, for the de-dup window
+    let endTimer = 0;
+    const aiActive = () => !!(root.autopilotState && root.autopilotState.active);
+    const vfx = () => {
+      let s = null;
+      try { s = localStorage.getItem("nul.vfx"); } catch (_) { /* private mode */ }
+      const b = document.getElementById("vfx-toggle");
+      return vfxOn(s, b && b.getAttribute("aria-pressed"));
+    };
+    const hitNow = (at) => hitPerfMs(at, audioCtx.currentTime, performance.now(), audioCtx.outputLatency || 0);
+    const beatFor = (sm) => {
+      const d = root.decks && (root.decks[sm.deck] || ["a", "b"].map((i) => root.decks[i]).find((x) => x && x.playing));
+      const rate = d && typeof d._playbackRate === "function" ? d._playbackRate() : 1;
+      return beatSeconds(d && d.bpm, rate, sm.bar);
+    };
+    function show(sm) {
+      // re-check at the start: the AI or the VFX may have been switched off since booking
+      if (!aiActive() || !vfx()) return;
+      const now = performance.now();
+      const p = takeoverPlan(hitNow(sm.at), now, beatFor(sm));
+      if (!p) return;
+      const r = el.getBoundingClientRect(), size = bot.offsetWidth || 1;      // one read per takeover
+      const s = sup.style;
+      s.setProperty("--sm-fx", `${(r.left + r.width / 2 - root.innerWidth / 2).toFixed(1)}px`);
+      s.setProperty("--sm-fy", `${(r.top + r.height / 2 - root.innerHeight / 2).toFixed(1)}px`);
+      s.setProperty("--sm-fs", (r.width / size).toFixed(3));
+      s.setProperty("--sm-glow", sm.deck ? `var(--${sm.deck})` : "var(--ai)");
+      s.setProperty("--sm-beat", `${p.beatMs.toFixed(0)}ms`);
+      s.setProperty("--sm-phase", `${beatPhaseMs(now, p.hit, p.beatMs).toFixed(0)}ms`);
+      s.setProperty("--sm-fly", `${p.flyMs}ms`);
+      s.setProperty("--sm-hit", `${(p.hit - now).toFixed(0)}ms`);
+      s.setProperty("--sm-out", `${(p.outAt - now).toFixed(0)}ms`);
+      s.setProperty("--sm-outd", `${p.outMs}ms`);
+      cap.textContent = sm.name;
+      clearTimeout(endTimer);
+      sup.classList.remove("nul-sm-on");
+      void sup.offsetWidth;          // restart the animations if one was still running
+      sup.classList.add("nul-sm-on");
+      el.classList.add("nul-away");
+      endTimer = setTimeout(() => { sup.classList.remove("nul-sm-on"); el.classList.remove("nul-away"); }, p.end - now);
+    }
+    function book(evt) {
+      const sm = supermoveFor(evt);
+      if (!sm || typeof audioCtx === "undefined") return;
+      sm.bar = evt.detail.bar;
+      const now = performance.now(), hitS = hitNow(sm.at) / 1000;
+      while (booked.length && booked[0] < now / 1000 - SUPERMOVE_WINDOW_S) booked.shift();
+      const no = supermoveGate({ aiActive: aiActive(), vfxOn: vfx(), booked, hitS });
+      if (no) return;
+      const p = takeoverPlan(hitS * 1000, now, beatFor(sm));
+      if (!p) return;
+      booked.push(hitS);
+      booked.sort((x, y) => x - y);
+      setTimeout(() => show(sm), Math.max(0, p.start - now));
+    }
+    root.addEventListener("ai-cue", (e) => book({ type: "ai-cue", detail: e.detail }));
+    root.addEventListener("ai-supermove", (e) => book({ type: "ai-supermove", detail: e.detail }));
+  }
 
   el.addEventListener("click", () => {
     const hud = document.querySelector(".ai-hud");
