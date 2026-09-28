@@ -485,8 +485,10 @@
   // Which move fits this section. ctx: {vocal (share 0..1), used [kinds this song], count, barsOnTrack, barsLeft, lastAtBar, atBar}
   const REMIX_MAX_PER_SONG = 3, REMIX_GAP_BARS = 32;
   // Vibe floor (user: drums alone on Get Lucky "killed the vibe"): an AI remix move
-  // never leaves a song without a tonal layer (bass, voice or synths). A beat alone
-  // strips the groove a disco / house record lives on. -> true when the move keeps one.
+  // never leaves the MASTER without a tonal layer (bass, voice or synths). A drum
+  // break is fine while the other deck is also playing into the master (it carries
+  // the tones: ctx.othersCarry), never when this song is all the room hears.
+  // -> true when the move keeps a tonal stem of its own.
   function keepsVibe(kind, len = 16) {
     return remixEvents(kind, len).every((e) => !e.stems || ["bass", "vocals", "other"].some((n) => e.stems[n] !== 0));
   }
@@ -496,8 +498,8 @@
     if (ctx.lastAtBar != null && ctx.atBar - ctx.lastAtBar < REMIX_GAP_BARS) return null;
     const used = new Set(ctx.used || []);
     const menu = ctx.vocal >= 0.5 ? ["vocal_hold", "acapella", "bass_out"]
-      : ctx.vocal >= 0.15 ? ["bass_out", "synth_hold"] : ["synth_hold", "bass_out"];
-    return menu.find((k) => !used.has(k) && keepsVibe(k)) || null;
+      : ctx.vocal >= 0.15 ? ["bass_out", "drum_break", "synth_hold"] : ["drum_break", "synth_hold", "bass_out"];
+    return menu.find((k) => !used.has(k) && (ctx.othersCarry || keepsVibe(k))) || null;
   }
   // Hook drop (app/music_brain/hook_drop.py plan items: {cut_at, drop_at, text}):
   // drums + bass leave over a quarter bar ending on cut_at, synths duck to
@@ -863,8 +865,17 @@
     const at = (b) => audioAt(d, lineT + b * barS);
     // stem mode from the section start (inaudible switch), full mix again after
     book(d, at(0), {}, 0.01);
+    const tonal = ["bass", "vocals", "other"];
     for (const e of remixEvents(kind, len)) {
-      if (e.stems !== undefined) book(d, at(e.bar), e.stems, Math.max(0.005, (e.ramp * barS) / rate));
+      const strips = e.stems && tonal.every((n) => e.stems[n] === 0);
+      if (strips) {
+        // vibe floor at the moment it plays: only while another deck carries the tones
+        const T = at(e.bar), ramp = Math.max(0.005, (e.ramp * barS) / rate);
+        timers[d.id].push(setTimeout(() => {
+          if (d.playing && d._othersCarry && d._othersCarry()) d.stemMix(e.stems, T, ramp);
+          else console.info(`remix ${d.id}: ${kind} skipped, nothing else is playing into the master`);
+        }, Math.max(0, (T - audioCtx.currentTime) * 1000 - 200)));
+      } else if (e.stems !== undefined) book(d, at(e.bar), e.stems, Math.max(0.005, (e.ramp * barS) / rate));
       if (e.hold) {
         const h = e.hold, T0 = at(e.bar), T1 = at(h.untilBar);
         timers[d.id].push(setTimeout(() => { if (d.playing) d.holdStem(h.stem, lineT + h.fromBar * barS, h.bars, T0, T1); },

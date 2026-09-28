@@ -184,8 +184,9 @@ console.log("stem moves core ok");
   const base = { vocal: 0.8, used: [], count: 0, barsOnTrack: 40, barsLeft: 80, lastAtBar: null, atBar: 40 };
   assert.strictEqual(remixPick(base), "vocal_hold");
   assert.strictEqual(remixPick({ ...base, used: ["vocal_hold"] }), "acapella");
-  assert.strictEqual(remixPick({ ...base, vocal: 0 }), "synth_hold");          // never drums alone (vibe floor)
+  assert.strictEqual(remixPick({ ...base, vocal: 0 }), "synth_hold");          // alone on the master: never drums alone
   assert.strictEqual(remixPick({ ...base, vocal: 0.3 }), "bass_out");
+  assert.strictEqual(remixPick({ ...base, vocal: 0, othersCarry: true }), "drum_break");   // the other deck carries the tones
   const { keepsVibe } = require("../ui/static/stem-moves.js");
   assert.ok(!keepsVibe("drum_break") && keepsVibe("synth_hold") && keepsVibe("bass_out") && keepsVibe("acapella"));
   for (const v of [0, 0.1, 0.3, 0.6, 0.9]) {

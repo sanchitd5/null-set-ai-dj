@@ -1186,6 +1186,7 @@
     const kind = sm.core.remixPick({
       vocal: sm.vocalShare(d.analysis && d.analysis.vocal_active_regions, lineT, lineT + 16 * bar),
       used: r.used, count: r.count, barsOnTrack: atBar, barsLeft: (exitT - lineT) / bar, lastAtBar: r.lastAtBar, atBar,
+      othersCarry: !!(d._othersCarry && d._othersCarry()),     // a drum break only while the other deck plays too
     });
     if (!kind || !sm.remix(d, lineT, kind, 16)) return false;
     r.used.push(kind); r.count++; r.lastAtBar = atBar;
