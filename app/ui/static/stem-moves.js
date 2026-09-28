@@ -171,20 +171,29 @@
   }
   const evAt = (e) => (e.bar != null ? e.bar : e.t);
   const FULL = () => ({ drums: 1, bass: 1, vocals: 1, other: 1, bus: 0 });
-  // Stem gains of one deck at plan time t (deck-controller stemMix semantics:
-  // each move ramps from the previous move's target; null = full mix).
+  // Stem gains of one deck at plan time t (deck-controller stemMix semantics: a
+  // move re-ramps only the stems it changes, each from the previous move's
+  // target; the others keep the ramp an earlier move gave them; null = full mix,
+  // which re-ramps every stem).
   function gainsAt(events, deck, t) {
-    let logical = FULL(), cur = FULL();
+    let logical = FULL();
+    const seg = {};                                   // stem -> the last ramp that moved it
     const evs = events.filter((e) => e.deck === deck && !e.hold && "stems" in e).sort((a, b) => evAt(a) - evAt(b));
     for (const e of evs) {
       const a = evAt(e);
       if (a > t) break;
       const tgt = e.stems === null ? FULL() : Object.assign({}, logical, e.stems);
-      const r = e.ramp || 0;
-      const k = r > 0 ? Math.min(1, (t - a) / r) : 1;
-      cur = {};
-      for (const n in tgt) cur[n] = (logical[n] || 0) + ((tgt[n] || 0) - (logical[n] || 0)) * k;
+      for (const n in tgt) {
+        if (e.stems !== null && (tgt[n] || 0) === (logical[n] || 0)) continue;
+        seg[n] = { from: logical[n] || 0, to: tgt[n] || 0, a, r: e.ramp || 0 };
+      }
       logical = tgt;
+    }
+    const cur = {};
+    for (const n in logical) {
+      const s = seg[n];
+      const k = !s ? 1 : s.r > 0 ? Math.min(1, (t - s.a) / s.r) : 1;
+      cur[n] = s ? s.from + (s.to - s.from) * k : logical[n];
     }
     return cur;
   }
