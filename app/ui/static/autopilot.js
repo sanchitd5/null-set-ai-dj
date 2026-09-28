@@ -140,13 +140,27 @@ var autopilotCore = (function () {
   // A's high-energy sections [[t0, t1]] (song s), same rule as preplan.high_spans:
   // energy >= its 85th percentile AND >= median + 0.3 x range, joined across gaps
   // under 2 bars, padded HIGH_LEAD_BARS before (at the high OR about to reach it:
-  // the build into it) and 1 bar after.
+  // the build into it) and 1 bar after. Quantiles are numpy's exactly (percentile
+  // "linear", median = mean of the middle two): golden vectors in
+  // app/tests/fixtures/rule_vectors.json check both sides.
   const HIGH_LEAD_BARS = 16;
+  // np.percentile(x, 100 * p) on an ascending array, same float operations
+  function quantileLinear(sorted, p) {
+    const n = sorted.length, vi = (n - 1) * p;
+    if (vi >= n - 1) return sorted[n - 1];
+    const lo = Math.floor(vi), g = vi - lo, a = sorted[lo], d = sorted[lo + 1] - a;
+    return g >= 0.5 ? sorted[lo + 1] - d * (1 - g) : a + d * g;
+  }
+  // np.median on an ascending array
+  function median(sorted) {
+    const n = sorted.length, h = n >> 1;
+    return n % 2 ? sorted[h] : (sorted[h - 1] + sorted[h]) / 2;
+  }
   function highSpans(times, curve, bar) {
     if (!times || !curve || times.length < 4 || times.length !== curve.length) return [];
     const sorted = [...curve].sort((x, y) => x - y);
-    const q = (p) => sorted[Math.min(sorted.length - 1, Math.floor(p * (sorted.length - 1)))];
-    const med = q(0.5), range = sorted[sorted.length - 1] - sorted[0];
+    const q = (p) => quantileLinear(sorted, p);
+    const med = median(sorted), range = sorted[sorted.length - 1] - sorted[0];
     if (!(range > 1e-6)) return [];                       // flat: no high point to protect
     const thr = Math.max(q(0.85), med + 0.3 * range);
     const spans = [];
@@ -166,7 +180,8 @@ var autopilotCore = (function () {
     while (hits(t) && t + phraseS <= limit && moved < 12) { t += phraseS; moved++; }
     return hits(t) ? { t: exit, clear: false, moved: 0 } : { t, clear: true, moved };
   }
-  // Same rule as app/music_brain/energy.next_ok: at most 2 levels a song (1 relaxed,
+  // The live rule; app/music_brain/energy.next_ok mirrors it (same golden vectors,
+  // app/tests/fixtures/rule_vectors.json): at most 2 levels a song (1 relaxed,
   // +1 on the last-round fallback); early in the set (< 30 %) it may not fall more
   // than 1, near the end (> 85 %) not rise more than 1. -> {ok, step, why}
   const ENERGY_MIN_RAW = 0.1;      // raw 0-1: below this the two songs measure the same, whatever the levels say
@@ -184,7 +199,7 @@ var autopilotCore = (function () {
     if (!o.force && arc === "cool" && step > 1) return { ok: false, step, why: `energy rises ${cur} -> ${nxt} while the set is cooling down` };
     return { ok: true, step, why: `energy ${cur} -> ${nxt}` };
   }
-  const api = { energyStepOk, highSpans, exitPastHigh, learnedRecipe, vocalRecipe, stemBlendBars, stemBlendFader, phraseWaitS, introBars, FADER_PARK_BARS, homePlan, maskedGlideBars, maskedDropAt, HOME_DROP_PCT, LADDER_STEP_PCT };
+  const api = { energyStepOk, highSpans, quantileLinear, median, exitPastHigh, learnedRecipe, vocalRecipe, stemBlendBars, stemBlendFader, phraseWaitS, introBars, FADER_PARK_BARS, homePlan, maskedGlideBars, maskedDropAt, HOME_DROP_PCT, LADDER_STEP_PCT };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   return api;
 })();

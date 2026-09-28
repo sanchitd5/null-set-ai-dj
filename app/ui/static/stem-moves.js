@@ -410,7 +410,8 @@
   // ---- SONG MERGE (user: "A drums, A bass, B vox, B synth; different combinations
   // where possible"). For M bars each role plays from ONE deck (one sub owner,
   // one singer), then B takes everything on the line. Same rules as
-  // app/music_brain/merge.py rank(); the silent ear (/api/merge/audition) re-ranks.
+  // app/music_brain/merge.py rank() (golden vectors: app/tests/fixtures/rule_vectors.json);
+  // the silent ear (/api/merge/audition) re-ranks.
   const TONAL = ["bass", "vocals", "other"];
   const MERGE_KEY_OK = 0.8;
   function mergeCombos() {
@@ -439,7 +440,7 @@
       score += 10;                                                            // a voice carries it (stems play: checked above)
       if (tonal.size === 2 && c.keyScore != null) score += 10 * c.keyScore;
       let ea = 0, eb = 0;
-      for (const n of STEMS) { if (m[n] === "a") ea += eA[n] ** 2; else eb += eB[n] ** 2; }
+      for (const n of STEMS) { if (m[n] === "a") ea += eA[n] * eA[n]; else eb += eB[n] * eB[n]; }
       if (ea + eb > 0) score += 10 * (1 - Math.abs(ea - eb) / (ea + eb));
       out.push({ combo: m, label: mergeLabel(m), score: Math.round(score * 10) / 10, reasons: why });
     }

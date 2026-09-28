@@ -134,15 +134,32 @@ def level(audio_path, bpm: float) -> dict:
     return {"level": level_from_raw(d["raw"], library_raws()), **d}
 
 
-def next_ok(cur: int, nxt: int, relaxed: bool = False, arc: str = "") -> dict:
-    """May `nxt` follow `cur`? {ok, step, why}. arc: 'build' (only up or level),
-    'cool' (only down or level), else either way."""
+ENERGY_MIN_RAW = 0.1       # raw 0-1: below this the two songs measure the same, whatever the levels say
+WARMUP_SONGS = 5           # the set builds over its first songs; open-ended after (no known end)
+
+
+def next_ok(cur: int, nxt: int, relaxed: bool = False, force: bool = False,
+            songs: Optional[int] = None, set_pos: Optional[float] = None,
+            raw_delta: Optional[float] = None) -> dict:
+    """May `nxt` follow `cur`? {ok, step, why}. The live rule is the console's
+    autopilot.js energyStepOk(); this mirrors it exactly (golden vectors in
+    app/tests/fixtures/rule_vectors.json check both).
+    force: last-round fallback, one more level and no arc rule. songs: songs played
+    so far (the first WARMUP_SONGS build: no fall of more than 1). set_pos 0-1, used
+    only without songs: < 0.3 builds, > 0.85 cools. raw_delta: raw_b - raw_a; under
+    ENERGY_MIN_RAW the songs measure the same, whatever the levels say."""
     step = nxt - cur
-    lim = RELAXED_STEP if relaxed else MAX_STEP
+    lim = (RELAXED_STEP if relaxed else MAX_STEP) + (1 if force else 0)
+    if raw_delta is not None and abs(raw_delta) < ENERGY_MIN_RAW:
+        return {"ok": True, "step": step, "why": f"energy {cur} -> {nxt} (measured almost the same)"}
+    if songs is not None:
+        arc = "build" if songs < WARMUP_SONGS else ""
+    else:
+        arc = "build" if set_pos is not None and set_pos < 0.3 else "cool" if set_pos is not None and set_pos > 0.85 else ""
     if abs(step) > lim:
         return {"ok": False, "step": step, "why": f"energy {'jump' if step > 0 else 'drop'} {cur} -> {nxt} (max {lim} a song)"}
-    if arc == "build" and step < -1:
+    if not force and arc == "build" and step < -1:
         return {"ok": False, "step": step, "why": f"energy falls {cur} -> {nxt} while the set is building"}
-    if arc == "cool" and step > 1:
+    if not force and arc == "cool" and step > 1:
         return {"ok": False, "step": step, "why": f"energy rises {cur} -> {nxt} while the set is cooling down"}
     return {"ok": True, "step": step, "why": f"energy {cur} -> {nxt}"}
