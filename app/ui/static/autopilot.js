@@ -1555,7 +1555,7 @@ var autopilotCore = (function () {
     // onset density / energy sit too far from what is playing right now.
     if (candidate.vibe && candidate.vibe.ok === false) {
       const why = (candidate.vibe.reasons || []).join("; ") || `distance ${candidate.vibe.distance}`;
-      console.warn("Autopilot vibe reject:", nextName, why);
+      console.warn("Autopilot vibe reject:", nextName, why); window.aiStep && window.aiStep("candidate_reject", { track_id: nextId, phase: "selection", decision: "vibe reject", why });
       apStatus(`Not after this song: ${nextName} (${why}) — kept for later`);
       cand.keep = true; // pairwise: may fit fine after the next song
       return false;
@@ -1570,7 +1570,7 @@ var autopilotCore = (function () {
         relaxed: !!(window.djSession && window.djSession.relaxed), songs: history.length, force: forceJump,
         rawDelta: Number.isFinite(ev.energy_raw_a) && Number.isFinite(ev.energy_raw_b) ? ev.energy_raw_b - ev.energy_raw_a : null });
       if (!verdict.ok) {
-        console.warn("Autopilot energy reject:", nextName, verdict.why);
+        console.warn("Autopilot energy reject:", nextName, verdict.why); window.aiStep && window.aiStep("candidate_reject", { track_id: nextId, phase: "selection", decision: "energy reject", why: verdict.why });
         apStatus(`Not after this song: ${nextName} (${verdict.why}) — kept for later`);
         cand.keep = true;
         return false;
@@ -2160,7 +2160,7 @@ var autopilotCore = (function () {
     if (!layer && !stemsBoth) {
       const why = `${recipe}: A stems ${aStemsWhy || "live"}, B stems ${bStems ? "loaded" : "not loaded"}` +
         `${vocalCut ? `, ${vocalCut}` : ""}${blend ? "" : `, tempo gap ${(gapS * 100).toFixed(1)}%`}`;
-      console.info("transition recipe:", why);
+      console.info("transition recipe:", why); window.aiStep && window.aiStep("recipe", { deck: activeDeck, decision: recipe, why });
       apStatus(why);
     } else if (vocalCut) console.info("transition recipe:", `${recipe}: ${vocalCut}`);
     const overlapStyle = layer ? "layer"
@@ -2216,7 +2216,7 @@ var autopilotCore = (function () {
       const spans = autopilotCore.highSpans(od.analysis.energy_times, od.analysis.energy_curve, 240 / od0bpm);
       const ex = autopilotCore.exitPastHigh(effectiveATime, 16 * 240 / od0bpm, spans, phraseS, trackEnd);
       if (ex.moved) {
-        console.info("transition timing:", `exit moved ${ex.moved} phrase(s) to ${fmtTime(ex.t)}: A is at its energy high`);
+        console.info("transition timing:", `exit moved ${ex.moved} phrase(s) to ${fmtTime(ex.t)}: A is at its energy high`); window.aiStep && window.aiStep("exit_moved", { deck: activeDeck, decision: `exit +${ex.moved} phrase(s)`, why: "A is at its energy high", result: { from: effectiveATime, to: ex.t } });
         effectiveATime = ex.t;
       }
     }

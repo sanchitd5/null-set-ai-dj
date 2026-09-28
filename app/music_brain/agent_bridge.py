@@ -253,6 +253,10 @@ def _build_parser() -> argparse.ArgumentParser:
     g.add_argument("--disable", action="store_const", const=True, dest="disable", help="keep it out of the autopilot")
     g.add_argument("--enable", action="store_const", const=False, dest="disable")
 
+    p_sr = sub.add_parser("session-report", help="Songs of a set session with their AI step counts (newest session by default).")
+    p_sr.add_argument("--session", default=None, help="session id, e.g. 2026-09-28_212853")
+    p_sr.add_argument("--render", action="store_true", help="(re)render waveform.png for every song, synchronously")
+
     return parser
 
 
@@ -317,6 +321,12 @@ def main(argv: Optional[list[str]] = None) -> int:
             from app.music_brain.set_learner import add_user_rule
 
             payload = {"technique": add_user_rule(args.kind, args.rule, disable=args.disable)}
+        elif args.command == "session-report":
+            from app.ui import song_log
+
+            payload = song_log.report(args.session)
+            if args.render and payload["session"]:
+                payload["rendered"] = song_log.render_all(payload["session"])
         else:  # pragma: no cover - argparse enforces valid choices
             parser.error(f"Unknown command: {args.command}")
             return 2
