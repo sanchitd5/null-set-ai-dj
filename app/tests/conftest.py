@@ -2,10 +2,16 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
-def _no_song_lookup(monkeypatch):
-    """Suggest tests fake the LLM; the real-song check would hit YouTube. None = unknown -> kept."""
+def _no_song_lookup(monkeypatch, tmp_path_factory):
+    """Suggest tests fake the LLM; the real-song check would hit YouTube. None = unknown -> kept.
+    Each test starts with no remembered lookups, and the bot-check breaker reads a
+    private state file, so a real YouTube cooldown on this machine can't switch the check off."""
     import app.ui.autopilot_service as svc
+    from app.music_brain import yt_guard
     monkeypatch.setattr(svc, "_verify_song", lambda artist, title: None)
+    monkeypatch.setattr(yt_guard, "STATE_PATH", tmp_path_factory.mktemp("yt_guard") / "yt_guard.json")
+    svc._verify_cache.clear()
+    svc._verify_inflight.clear()
 
 
 @pytest.fixture(autouse=True)

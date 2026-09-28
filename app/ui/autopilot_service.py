@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, wait
 
@@ -178,8 +179,18 @@ SUGGEST_TEMPERATURE = 0.75
 SUGGEST_BUDGET_S = float(os.environ.get("SUGGEST_BUDGET_S", "15"))
 RETRY_COST_S = 7.0
 EXTRA_CANDIDATES = 2  # ask for n+2: ~1 in 2 local-model picks is invented or off-tempo
-VERIFY_TIMEOUT_S = 4.0  # parallel YouTube lookups (~1.5 s each); slower = unknown, kept
+VERIFY_TIMEOUT_S = 4.0  # one suggest call's budget for YouTube lookups (~1.5 s each); slower = unknown, kept
 VERIFY_SONGS = os.environ.get("SUGGEST_VERIFY", "1") != "0"
+# One small pool for the whole process. A pool per suggest call returned on time
+# but left its late lookups running, so back-to-back calls piled requests on
+# YouTube and fed its bot check (app/music_brain/yt_guard.py).
+VERIFY_MAX_INFLIGHT = 3
+VERIFY_CACHE_MAX = 512
+VERIFY_CACHE_TTL_S = 6 * 3600.0
+_verify_pool = ThreadPoolExecutor(max_workers=VERIFY_MAX_INFLIGHT, thread_name_prefix="song-verify")
+_verify_lock = threading.Lock()
+_verify_cache: dict[tuple[str, str], tuple[float, bool]] = {}   # song -> (checked at, exists)
+_verify_inflight: set[tuple[str, str]] = set()                   # songs being looked up right now
 
 
 def _verify_song(artist: str, title: str):
@@ -187,19 +198,80 @@ def _verify_song(artist: str, title: str):
     return verify_song(artist, title)
 
 
+def _verify_key(artist, title) -> tuple[str, str]:
+    return " ".join(str(artist or "").lower().split()), " ".join(str(title or "").lower().split())
+
+
+def _yt_cooling() -> bool:
+    """YouTube paused by the bot-check breaker. An unreadable state counts as not
+    paused: yt_guard.call() checks again and the lookup then fails to unknown."""
+    from app.music_brain import yt_guard
+    try:
+        return bool(yt_guard.status().get("cooling"))
+    except Exception:
+        return False
+
+
+def _cached_verdict(key: tuple[str, str]):
+    """True / False from an earlier lookup of this song; None when never asked or expired."""
+    with _verify_lock:
+        hit = _verify_cache.get(key)
+        if hit and time.time() - hit[0] < VERIFY_CACHE_TTL_S:
+            return hit[1]
+        _verify_cache.pop(key, None)
+    return None
+
+
+def _lookup(key: tuple[str, str], artist: str, title: str):
+    """One pooled lookup. A definite answer is remembered even when it lands after
+    the caller's budget, so the next suggest call does not ask YouTube again."""
+    if _yt_cooling():              # the breaker opened while this pick waited for a slot
+        return None
+    ok = _verify_song(artist, title)
+    if isinstance(ok, bool):
+        with _verify_lock:
+            _verify_cache.pop(key, None)
+            _verify_cache[key] = (time.time(), ok)
+            while len(_verify_cache) > VERIFY_CACHE_MAX:
+                _verify_cache.pop(next(iter(_verify_cache)))      # oldest first
+    return ok
+
+
+def _release(key: tuple[str, str]) -> None:
+    with _verify_lock:
+        _verify_inflight.discard(key)
+
+
 def _verify_picks(picks: list[dict]) -> tuple[list[dict], list[dict]]:
-    """(real, invented). A pick whose lookup fails or runs past VERIFY_TIMEOUT_S
-    counts as real: a slow network must not empty the queue."""
+    """(real, invented). A pick whose lookup fails, runs past VERIFY_TIMEOUT_S or is
+    already being looked up by another call counts as real: a slow network must
+    not empty the queue. At most VERIFY_MAX_INFLIGHT lookups run process-wide, none
+    while YouTube cools down, and each answer is remembered for VERIFY_CACHE_TTL_S."""
     if not VERIFY_SONGS or not picks:
         return list(picks), []
-    pool = ThreadPoolExecutor(max_workers=min(6, len(picks)))
-    futs = [pool.submit(_verify_song, p.get("artist", ""), p.get("title", "")) for p in picks]
-    wait(futs, timeout=VERIFY_TIMEOUT_S)
-    pool.shutdown(wait=False, cancel_futures=True)
+    keys = [_verify_key(p.get("artist", ""), p.get("title", "")) for p in picks]
+    verdict = {k: _cached_verdict(k) for k in keys}
+    futs = {}
+    if not _yt_cooling():
+        for p, k in zip(picks, keys):
+            if verdict[k] is not None or k in futs:
+                continue
+            with _verify_lock:
+                if k in _verify_inflight:
+                    continue
+                _verify_inflight.add(k)
+            f = _verify_pool.submit(_lookup, k, p.get("artist", ""), p.get("title", ""))
+            f.add_done_callback(lambda _f, k=k: _release(k))       # also runs when cancelled
+            futs[k] = f
+    if futs:
+        wait(list(futs.values()), timeout=VERIFY_TIMEOUT_S)
+    for k, f in futs.items():
+        f.cancel()                 # still queued: never starts. Running: finishes into the cache.
+        if f.done() and not f.cancelled() and f.exception() is None:
+            verdict[k] = f.result()
     real, fake = [], []
-    for p, f in zip(picks, futs):
-        ok = f.result() if f.done() and not f.cancelled() and f.exception() is None else None
-        (fake if ok is False else real).append(p)
+    for p, k in zip(picks, keys):
+        (fake if verdict[k] is False else real).append(p)
     return real, fake
 
 
