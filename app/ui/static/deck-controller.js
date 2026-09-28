@@ -792,6 +792,30 @@ class Deck {
     this._applyRate();
   }
 
+  // Does this deck reach the master (tempo-rule.js isAudible)?
+  onMaster() {
+    const rule = window.tempoRule;
+    const s = { playing: !!this.playing, side: this.crossfaderGain ? this.crossfaderGain.gain.value : 1,
+      volume: this.volumeGain ? this.volumeGain.gain.value : 1 };
+    return rule ? rule.isAudible(s) : s.playing;
+  }
+
+  // Seconds a glide to `pct` must take under the gradient rule (0: may be instant).
+  tempoGlideSeconds(pct) {
+    const rule = window.tempoRule;
+    if (!rule || !this.onMaster()) return 0;
+    return rule.glideSeconds(this._pitchPercent, pct, this.bpm, this._playbackRate());
+  }
+
+  // Every AI tempo change goes through here: instant on a silent deck, a
+  // gradient on one the room hears. The user's own fader keeps setPitchPercent.
+  aiSetPitch(pct) {
+    const g = this.tempoGlideSeconds(pct);
+    if (g > 0 && typeof this.rampPitchPercent === "function") this.rampPitchPercent(pct, g);
+    else this.setPitchPercent(pct);
+    return g;
+  }
+
   // Temporary tempo nudge (press-and-hold), layered on top of the fader.
   setBendPercent(pct) {
     this._bendPercent = pct;
@@ -1015,7 +1039,12 @@ class Deck {
     const T = Math.max(audioCtx.currentTime + 0.16, at || 0);
     const nat = this._nativeStems || (this.tempoStems ? null : this.stems);
     if (!bufs && !nat) return false;
-    this.rampPitchPercent(pct, 0.01, T - 0.01);
+    // Gradient rule: the heard tempo glides into the step (ending on the line,
+    // or as soon after as the max rate allows) instead of a 10 ms jump. The
+    // swap itself is then tempo-neutral: only the stems' key snaps back.
+    const g = this.tempoGlideSeconds(pct);
+    if (g > 0) this.rampPitchPercent(pct, g, Math.max(audioCtx.currentTime, T - g));
+    else this.rampPitchPercent(pct, 0.01, T - 0.01);
     if (bufs) {
       this._nativeStems = nat;
       this.tempoStems = { bpm: bufs.bpm, ratio: bufs.ratio };
