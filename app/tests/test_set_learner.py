@@ -341,6 +341,17 @@ def test_artist_collab_x_is_one_song_mashup_x_is_layers():
         (540.0, "Fred again.. x Skrillex x Four Tet - Baby again")]
 
 
+def test_accented_titles_find_their_ascii_files_and_videos(tmp_path):
+    d = tmp_path / "songs"
+    d.mkdir()
+    (d / "Bad_Bunny_-_Quiereme.mp3").write_bytes(b"x")                # yt-dlp restricted name: accents dropped
+    assert sl.find_or_fetch_song("Quiéreme", d, library=tmp_path / "lib", download=False).name == "Bad_Bunny_-_Quiereme.mp3"
+    hit = sl.pick_result([{"title": "Bad Bunny - Quiereme (Official Video)", "channel": "Bad Bunny", "id": "q"}],
+                         "Bad Bunny", "Quiéreme")
+    assert hit and hit["id"] == "q"
+    assert sl.find_or_fetch_song("夜に駆ける", d, library=tmp_path / "lib", download=False) is None   # no false hit
+
+
 def test_fetch_set_refuses_an_id_that_escapes_the_sets_dir(tmp_path, monkeypatch):
     import sys, types, pytest
     from app.music_brain import yt_guard

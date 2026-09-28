@@ -192,8 +192,17 @@ def fetch_set(source: str) -> Tuple[Path, str, str]:
     return path, str(info["id"]), info.get("description") or ""
 
 
+def _fold(s: str) -> str:
+    """Lowercase, accents off: a tracklist's 'Quiéreme' is YouTube's 'Quiereme' and
+    yt-dlp's restricted file name 'Quiereme.mp3'."""
+    import unicodedata
+
+    s = unicodedata.normalize("NFKD", s or "")
+    return "".join(c for c in s if not unicodedata.combining(c)).lower()
+
+
 def _norm(s: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "", s.lower())
+    return re.sub(r"[^a-z0-9]+", "", _fold(s))
 
 
 def find_or_fetch_song(title: str, download_dir: Path, library: Path = SONGS_DIR, download: bool = True,
@@ -248,7 +257,7 @@ def _words(s: str) -> set:
 
 
 def _norm_words(s: str) -> List[str]:
-    return re.sub(r"[^\w]+", " ", re.sub(r"\(.*?\)|\[.*?\]", "", s or "").lower()).split()
+    return re.sub(r"[^\w]+", " ", _fold(re.sub(r"\(.*?\)|\[.*?\]", "", s or ""))).split()
 
 
 _MASHUP = re.compile(r"(?i)\s[x×]\s|\bmash-?up\b|\bmegamix\b|\bdj set\b|\bboiler room\b|\bset\b|\bedit\b|\bflip\b")
