@@ -79,9 +79,11 @@ OCCASION FIRST (overrides VIBE CONTINUITY, SAME-ARTIST and CREDITS when they con
     anthems. The occasion line
     tells you which step you are on - at step N be about N/6 of the way there.
   Once inside that world, apply VIBE CONTINUITY within it. Examples of canons:
-    "punjabi wedding" / "bhangra" -> Diljit Dosanjh, AP Dhillon, Karan Aujla, Sidhu Moose Wala,
-      Panjabi MC, Imran Khan, Yo Yo Honey Singh, Guru Randhawa, Jazzy B, Malkit Singh
+    "punjabi wedding" / "bhangra" -> Diljit Dosanjh, AP Dhillon, Karan Aujla, Panjabi MC,
+      Imran Khan, Yo Yo Honey Singh, Guru Randhawa, Jazzy B, Malkit Singh
       (bridges from electronic: Panjabi MC "Mundian To Bach Ke", Diljit x Sia, bhangra remixes)
+      Sidhu Moose Wala is a DIFFERENT scene (pendu, rural Punjabi) from Karan Aujla
+      (urban Punjabi): never suggest one right after the other, even in this canon.
     "bollywood night" -> Bollywood dance hits; "latin party" -> reggaeton / salsa / dembow;
     "afrobeats" -> Burna Boy, Wizkid, Rema; "90s hip-hop" -> 90s rap classics.
   THEME LOCK: once inside the occasion's world, EVERY suggestion must itself fit the occasion
@@ -498,6 +500,24 @@ _MOOD_CLASH = {
 }
 _MAX_ENERGY_GAP = 2
 
+# Artists whose scenes clash even inside the same broad genre tag (both are
+# just "punjabi" in genre.py, but the scenes don't mix): user, 2026-09-29 --
+# Sidhu Moose Wala is pendu (rural Punjabi), Karan Aujla is urban Punjabi.
+_ARTIST_CLASH = {
+    frozenset({"sidhu moose wala", "karan aujla"}),
+}
+
+
+def _artist_key(name: str) -> str:
+    return " ".join(str(name or "").lower().split())
+
+
+def _artist_clash(current_artist: str, sug_artist: str) -> str | None:
+    a, b = _artist_key(current_artist), _artist_key(sug_artist)
+    if a and b and frozenset({a, b}) in _ARTIST_CLASH:
+        return f"scene clash ({current_artist} -> {sug_artist})"
+    return None
+
 
 def _profile_clash(cur: dict, sug: dict) -> str | None:
     """Return a reason string if the suggestion's profile clashes with the current track's."""
@@ -585,7 +605,7 @@ from app.music_brain.genre import MAX_ERA_GAP, era_gap  # noqa: E402
 
 def _filter_suggestions(
     data: dict, history: list[str], occasion_set: bool = False, current_key: str | None = None,
-    allow_genre_change: bool = False,
+    allow_genre_change: bool = False, current_artist: str = "",
 ) -> list[dict]:
     """Drop sets/interviews, exact repeats, profile clashes and (unless steering)
     suggestions whose expected_key clashes with `current_key`. Never returns empty
@@ -665,7 +685,9 @@ def _filter_suggestions(
             s["rejected_reason"] = key_reason
             key_clashes.append(s)
             continue
-        reason = None if steer else _profile_clash(cur, s.get("track_profile"))
+        reason = _artist_clash(current_artist, s.get("artist", ""))
+        if reason is None and not steer:
+            reason = _profile_clash(cur, s.get("track_profile"))
         (clashes if reason else ok).append(s)
         if reason:
             s["rejected_reason"] = reason
@@ -1082,7 +1104,7 @@ def suggest_next_tracks(
         data["steering"] = "move"  # the user's destination: no continuity / key filters against it
     suggestions = _filter_suggestions(
         data, history, occasion_set=bool((occasion or "").strip()) and not lead_to, current_key=camelot,
-        allow_genre_change=bool(lead_to),
+        allow_genre_change=bool(lead_to), current_artist=artist,
     )
     # Genre transitions, it never jumps (user: Pal Pal -> Delilah). When every pick
     # jumped, ask once more with the rejected picks named, rather than play a jump.
@@ -1102,7 +1124,7 @@ def suggest_next_tracks(
             data2.setdefault("current_era", data.get("current_era"))
             retry = _filter_suggestions(
                 data2, history, occasion_set=bool((occasion or "").strip()) and not lead_to,
-                current_key=camelot, allow_genre_change=bool(lead_to))
+                current_key=camelot, allow_genre_change=bool(lead_to), current_artist=artist)
             if retry and not str(retry[0].get("rejected_reason", "")).startswith(("genre jump", "era jump")):
                 data, suggestions = data2, retry
         except ValueError as exc:
@@ -1131,7 +1153,7 @@ def suggest_next_tracks(
                 data2.setdefault("current_era", data.get("current_era"))
                 retry = _filter_suggestions(
                     data2, history, occasion_set=bool((occasion or "").strip()) and not lead_to,
-                    current_key=camelot, allow_genre_change=bool(lead_to))
+                    current_key=camelot, allow_genre_change=bool(lead_to), current_artist=artist)
                 retry = [x for x in retry if _tempo_locks(target, x.get("expected_bpm")) is not False]
                 if retry:
                     data, suggestions = data2, retry
@@ -1159,7 +1181,7 @@ def suggest_next_tracks(
             data2.setdefault("current_era", data.get("current_era"))
             retry = _filter_suggestions(
                 data2, history, occasion_set=bool((occasion or "").strip()) and not lead_to,
-                current_key=camelot, allow_genre_change=bool(lead_to))
+                current_key=camelot, allow_genre_change=bool(lead_to), current_artist=artist)
             if not moving:
                 retry = [x for x in retry if _tempo_locks(target, x.get("expected_bpm")) is not False]
             retry = [x for x in retry if _bare_title(x.get("title", "")) != seed]
@@ -1200,7 +1222,7 @@ def suggest_next_tracks(
             data3.setdefault("current_era", data.get("current_era"))
             retry = _filter_suggestions(
                 data3, history, occasion_set=bool((occasion or "").strip()) and not lead_to,
-                current_key=camelot, allow_genre_change=bool(lead_to))
+                current_key=camelot, allow_genre_change=bool(lead_to), current_artist=artist)
             retry = [x for x in retry if _bare_title(x.get("title", "")) != seed]
             real3, _ = _verify_picks(retry)
             fresh = [x for x in real3 if _bare_title(x.get("title", "")) not in heard]
