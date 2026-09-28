@@ -142,8 +142,16 @@ Kinds: bass_swap, stem_intro, acapella_over, hard_cut, loop_extend,
 vocal_resequence (lines played out of order into a new lyric), vocal_loop
 (one line repeated), vocal_chop (short fragments re-triggered),
 acapella_drop (beat out under a sung line, then the drop).
-For kept items write the rule a DJ could reuse, one sentence, concrete
-(what, when, why it works). Answer JSON:
+vocal_resequence, vocal_loop, vocal_chop and acapella_drop are moves on ONE
+song: "b" is null by design, never a reason to reject. "source" lists the
+song positions (seconds) the set played, in set order.
+Reject only when the evidence itself looks wrong: no words where words are
+claimed, a jump between two copies of the same chorus, stem levels that
+contradict the move, a duplicate of another item.
+For kept items write the rule a DJ could reuse, ONE concrete sentence built
+from this item's evidence: name the stems and their order, the bars or seconds,
+the words, and what the two records were doing. Not a definition of the move
+("fade in stems one by one" says nothing). Answer JSON:
 {"items": [{"id": <int>, "keep": true|false, "rule": "<sentence or empty>", "why": "<short>"}]}"""
 
 
@@ -152,9 +160,11 @@ def _brief(i: int, o) -> dict:
     words = d.get("words")
     if isinstance(words, list):
         words = [w for w in words if w][:6]
+    src = d.get("source_lines") or d.get("fragments") or ([d["src_span"]] if d.get("src_span") else None)
     return {"id": i, "kind": o.kind, "at_s": round(o.at, 1), "a": o.track_a, "b": o.track_b or None,
             "tempo_gap": o.tempo_gap, "key_score": o.key_score, "words": words or None,
-            **{k: d[k] for k in ("held_s", "hook", "order", "lead_s", "vocal_from", "repeats", "jumps", "levels_db") if k in d}}
+            "source": [[round(float(x), 1) for x in s][:2] for s in src][:8] if src else None,
+            **{k: d[k] for k in ("held_s", "hook", "order", "lead_s", "vocal_from", "repeats", "jumps", "levels_db", "drop_at") if k in d}}
 
 
 def review(observations: list, chat: Optional[Chat] = None, log: Callable[[str], None] = lambda m: None) -> dict:

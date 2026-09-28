@@ -84,3 +84,12 @@ def test_find_model_prefers_a_loaded_one_and_skips_dead_ports():
             return io.BytesIO(json.dumps(body).encode())
     assert set_ai.find_model(["http://127.0.0.1:8081/v1", "http://127.0.0.1:8901/v1"], Op()) == ("http://127.0.0.1:8901/v1", "omni")
     assert set_ai.find_model(["http://127.0.0.1:8081/v1"], Op()) is None
+
+
+def test_review_prompt_explains_single_song_moves_and_sends_positions():
+    seen = []
+    o = sl.Observation("vocal_resequence", "s", 90.0, "A - B", detail={"source_lines": [[65.4, 72.7], [10.0, 13.0]], "words": ["x", "y"]})
+    set_ai.review([o], chat=lambda s, u: seen.append((s, u)) or json.dumps({"items": [{"id": 0, "keep": True, "rule": "r"}]}))
+    system, user = seen[0]
+    assert '"b" is null by design' in system and "Not a definition of the move" in system
+    assert json.loads(user)["items"][0]["source"] == [[65.4, 72.7], [10.0, 13.0]]
