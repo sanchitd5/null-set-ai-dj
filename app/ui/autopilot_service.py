@@ -727,6 +727,21 @@ def cut_off(raw: str) -> bool:
     return start != -1 and _balanced_end(text, start) is None
 
 
+CONTEXT_RESET_SONGS = int(os.environ.get("AUTOPILOT_CONTEXT_RESET", "6") or 6)
+
+
+def prompt_history(names: list | None, block: int = CONTEXT_RESET_SONGS) -> str:
+    """The songs the model is shown: only this block of `block` songs. Every `block`
+    songs the model's context starts fresh (short prompt, no drift from a long list);
+    the repeat filters (_filter_suggestions) still see the whole set."""
+    names = list(names or [])
+    if block <= 0:
+        shown = names[-30:]
+    else:
+        shown = names[-(len(names) % block or block):] if names else []
+    return ", ".join(shown) if shown else "none"
+
+
 def _chat_call(system, user, temperature, timeout, model, max_tokens) -> str:
     """The HTTP call itself. Supports openai v0.x/3.x (ChatCompletion.create)
     and v1.x/v2.x (OpenAI client). response_format may be ignored by the
@@ -835,7 +850,7 @@ def suggest_next_tracks(
         energy=avg_energy,
         occasion=occasion or "general DJ set",
         set_mode_line=SET_MODE_LINES.get(set_mode, SET_MODE_LINES["hybrid"]),
-        history=", ".join((history_display or history)[-30:]) if history else "none",
+        history=prompt_history(history_display or history),
         recent_artists=_recent_artists(history_display or history),
         earlier_sets=", ".join(earlier_sets or []) or "none",
         favourite_artists=", ".join(favourite_artists or []) or "none",
@@ -864,7 +879,7 @@ def suggest_next_tracks(
             title=title, artist=artist, bpm=bpm, camelot=camelot,
             lead=lead_line(lead_to, lead_step, lead_steps, lead_bpm).strip(),
             tempo_line=tempo_line.strip(),
-            history=", ".join((history_display or history)[-30:]) if history else "none",
+            history=prompt_history(history_display or history),
             n=n,
         )
 

@@ -117,3 +117,23 @@ def test_cut_off_detection():
     assert not svc.cut_off('{"a": 1}')
     assert not svc.cut_off("no json at all")
     assert not svc.cut_off('<think>{"half"</think>{"a": 1}')
+
+
+def test_prompt_history_resets_every_6_songs():
+    songs = [f"S{i}" for i in range(1, 15)]
+    assert svc.prompt_history(songs[:3]) == "S1, S2, S3"
+    assert svc.prompt_history(songs[:6]) == "S1, S2, S3, S4, S5, S6"
+    assert svc.prompt_history(songs[:7]) == "S7"                                  # song 7: fresh context
+    assert svc.prompt_history(songs[:14]) == "S13, S14"
+    assert svc.prompt_history([]) == "none"
+    assert svc.prompt_history(songs, block=0) == ", ".join(songs)                 # 0 = old behaviour (last 30)
+
+
+def test_reset_prompt_still_never_repeats_a_played_song(monkeypatch):
+    seen = []
+    monkeypatch.setattr(svc, "chat_raw", lambda s, u, **k: seen.append(u) or
+                        '{"current_genre": "house", "suggestions": [{"artist": "A0", "title": "T0", "expected_bpm": 124}]}')
+    history = [f"A{i} - T{i}" for i in range(6)] + ["Old - Played"]           # 7th song: context just reset
+    out = svc.suggest_next_tracks("T", "A", 124.0, "8A", 200.0, 0.7, "", history)
+    assert "A0 - T0" not in seen[0]                                            # not shown to the model
+    assert not any(s.get("title") == "T0" for s in out)                         # hidden, but still filtered as played
