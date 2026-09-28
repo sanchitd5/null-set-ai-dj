@@ -1445,5 +1445,6 @@
   window.djMind = { follow, stop, reset, setPlan, fireAt, onTransition, fxAllowed,
                     noteEnergy, nextEnergyNote, requestPlan, planPeak, setProfileEnergy,
                     planLayer, layering, get layerActive() { return !!layerRun; }, core,
-                    holdLoopInfo, holdLoopAct, overlayState };
+                    holdLoopInfo, holdLoopAct, overlayState,
+                    get transitioning() { return inTransition; } };
 })(typeof window !== "undefined" ? window : globalThis);

@@ -983,6 +983,8 @@ var autopilotCore = (function () {
   // downloaded and waiting (READY), and songs still downloading (⬇).
   let scheduledNext = null;   // candidate booked for the coming transition
   let scheduledFireAt = null; // track time of the booked transition on the playing deck
+  let preplanFor = null;      // song name while the silent ear pre-plans (read by vibe-ui.js)
+  let bookedRecipe = null;    // recipe the booked transition will play (read by vibe-ui.js)
   let pendingSugs = [];       // suggestions whose downloads are in flight
   let aiPicking = false;
 
@@ -1572,6 +1574,8 @@ var autopilotCore = (function () {
         return false;
       }
       console.info("energy:", nextName, verdict.why);
+      // vibe-ui.js: measured energy of the pair the gate just passed
+      window.dispatchEvent(new CustomEvent("ai-energy", { detail: { a: ev.energy_a, b: ev.energy_b, next: nextName } }));
     }
 
     // Show match score on the NEXT queue card.
@@ -1650,8 +1654,9 @@ var autopilotCore = (function () {
       apStatus(`Ear pre-planning the mix into ${nextName}…`);
       // the plan may take a while (renders + the ear): never hold the booking past
       // PREPLAN_WAIT_MS; the server keeps going and caches a heard plan for next time
+      preplanFor = nextName;
       const pp = await Promise.race([requestPreplan(currentId, nextId, candidate),
-        new Promise((r) => setTimeout(() => r(null), PREPLAN_WAIT_MS))]);
+        new Promise((r) => setTimeout(() => r(null), PREPLAN_WAIT_MS))]).finally(() => { preplanFor = null; });
       if (!active || currentTrackId !== currentId || (gen !== undefined && gen !== prepGen)) return false;
       if (pp) candidate = Object.assign({}, candidate, { preplan: pp });
     }
@@ -2211,6 +2216,7 @@ var autopilotCore = (function () {
       }
     }
 
+    bookedRecipe = recipe;
     let executed = false;
     let filled = false;
     let fireAt = effectiveATime; // B's entry lands exactly on this phrase line
@@ -2245,6 +2251,7 @@ var autopilotCore = (function () {
           if (!ch || executed || !active || currentTrackId !== currentId) return;
           learned = pick;
           recipe = ch.recipe;
+          bookedRecipe = recipe;
           console.info("transition recipe (learned):", `${ch.recipe}: ${ch.why}`, pick.reasons);
           window.dispatchEvent(new CustomEvent("ai-activity", { detail: {
             kind: "learned", deck: activeDeck, label: `LEARNED · ${ch.recipe}`, why: ch.why } }));
@@ -2816,6 +2823,8 @@ var autopilotCore = (function () {
     get energy() { return currentEnergy; },
     get fireAt() { return scheduledNext ? scheduledFireAt : null; },
     get layering() { return !!(window.djMind && window.djMind.layerActive); },
+    get preplanning() { return preplanFor; },
+    get next() { return scheduledNext ? { name: scheduledNext.name || null, recipe: bookedRecipe } : null; },
   };
 
   const leadGo = document.getElementById("ap-lead-go");

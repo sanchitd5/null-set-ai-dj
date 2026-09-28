@@ -1,0 +1,235 @@
+/* VIBE strip (vibe-ui.js): what the AI hears, plans and does. Sits in the page
+   flow under the top bar, so it never covers the transport or the mixer.
+   Reuses the theme variables from style.css. */
+
+.vibe-bar {
+  --vb-h: 60px;
+  display: flex;
+  align-items: stretch;
+  gap: var(--sp-sm);
+  padding: var(--sp-xs) var(--sp-md);
+  background: var(--s-lowest);
+  border-bottom: 1px solid var(--outline-var);
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 13px;
+  color: var(--on-surface);
+}
+.vb-toggle { align-self: center; flex: none; }
+.vb-toggle[aria-pressed="true"] { color: var(--ai); box-shadow: inset 0 0 0 1px var(--ai); }
+.vibe-bar.vb-hidden { padding-top: 2px; padding-bottom: 2px; }
+.vibe-bar.vb-hidden .vb-body { display: none; }
+
+.vb-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: var(--sp-sm);
+}
+.vb-cell {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-xs);
+  min-height: 40px;
+  padding: var(--sp-xs) var(--sp-sm);
+  background: var(--s-low);
+  border: 1px solid var(--outline-var);
+  border-radius: var(--r-lg);
+}
+.vb-cell[hidden] { display: none; }
+.vb-col { display: flex; flex-direction: column; min-width: 0; }
+.vb-row { display: flex; align-items: center; gap: var(--sp-xs); min-width: 0; }
+.vb-k { font-size: 9px; font-weight: 700; letter-spacing: 0.12em; color: var(--outline); }
+.vb-k.vb-a { color: var(--a); }
+.vb-k.vb-b { color: var(--b); }
+.vb-num { font-weight: 700; font-variant-numeric: tabular-nums; color: var(--on-surface); }
+.vb-sub {
+  color: var(--on-surface-var);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 1. AI state orb */
+.vb-orb { min-width: 190px; max-width: 280px; }
+.vb-dot {
+  flex: none;
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  background: var(--outline);
+  box-shadow: 0 0 0 0 transparent;
+  transition: background 300ms, box-shadow 300ms;
+}
+.vb-state { font-weight: 700; letter-spacing: 0.1em; }
+.vb-detail { max-width: 210px; }
+.vb-q { color: var(--warn); font-weight: 700; white-space: nowrap; }
+.vb-orb[data-state="idle"] .vb-dot { background: var(--outline); animation: vb-breathe 4s ease-in-out infinite; }
+.vb-orb[data-state="listening"] .vb-dot { background: var(--ai); box-shadow: 0 0 10px var(--ai); animation: vb-breathe 1.6s ease-in-out infinite; }
+.vb-orb[data-state="thinking"] .vb-dot { background: var(--ai-soft); box-shadow: 0 0 12px var(--ai); animation: vb-spin 1.2s linear infinite; border: 3px solid var(--ai); border-top-color: transparent; background: transparent; }
+.vb-orb[data-state="planning"] .vb-dot { background: var(--warn); box-shadow: 0 0 10px var(--warn); animation: vb-breathe 1s ease-in-out infinite; }
+.vb-orb[data-state="mixing"] .vb-dot { background: linear-gradient(90deg, var(--a), var(--b)); box-shadow: 0 0 12px var(--ai); animation: vb-breathe 0.8s ease-in-out infinite; }
+.vb-orb[data-state="listening"] .vb-state,
+.vb-orb[data-state="thinking"] .vb-state { color: var(--ai); }
+.vb-orb[data-state="planning"] .vb-state { color: var(--warn); }
+.vb-orb[data-state="mixing"] .vb-state { color: var(--ok); }
+
+/* 2. next-transition timeline */
+.vb-next { flex: 1 1 300px; flex-direction: column; align-items: stretch; gap: 2px; min-width: 240px; }
+.vb-cd { font-weight: 700; color: var(--ai); font-variant-numeric: tabular-nums; min-width: 48px; }
+.vb-recipe { flex: 1; }
+.vb-badge {
+  flex: none;
+  padding: 0 var(--sp-xs);
+  border: 1px solid currentColor;
+  border-radius: var(--r);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+}
+.vb-badge[hidden] { display: none; }
+.vb-planned, .vb-badge.vb-ai { color: var(--ai); }
+.vb-badge.vb-warn { color: var(--warn); }
+.vb-track {
+  position: relative;
+  height: 6px;
+  background: var(--s-high);
+  border-radius: var(--r);
+  overflow: hidden;
+}
+.vb-track.vb-merge { height: 34px; margin-left: 24px; overflow: visible; background: transparent; }
+.vb-fill {
+  position: absolute; left: 0; top: 0; bottom: 0;
+  width: 100%;
+  transform-origin: left;
+  transform: scaleX(var(--vb-p, 0));
+  background: linear-gradient(90deg, var(--ai-soft), var(--ai));
+  opacity: 0.8;
+  transition: transform 120ms linear;
+}
+.vb-track.vb-merge .vb-fill { display: none; }
+.vb-lanes { position: absolute; inset: 0; display: flex; flex-direction: column; gap: 1px; }
+.vb-lane { position: relative; flex: 1; background: var(--s-high); border-radius: 1px; }
+.vb-lane > b { position: absolute; right: 100%; margin-right: 3px; top: 50%; transform: translateY(-50%); font-size: 7px; line-height: 7px; color: var(--outline); }
+.vb-seg { position: absolute; top: 0; bottom: 0; }
+.vb-own-a { background: var(--a-dim); }
+.vb-own-b { background: var(--b-deep); }
+.vb-handover {
+  position: absolute; top: -2px; bottom: -2px;
+  width: 2px;
+  background: var(--warn);
+}
+/* the playhead: a tiny absolutely placed line, so moving it never reflows the page */
+.vb-head { position: absolute; top: -3px; bottom: -3px; left: 0; right: 0; pointer-events: none; }
+.vb-head::after {
+  content: "";
+  position: absolute; top: 0; bottom: 0;
+  left: calc(var(--vb-p, 0) * 100%);
+  width: 2px;
+  background: var(--on-surface);
+  box-shadow: 0 0 6px var(--ai);
+}
+.vb-track:not(.vb-merge) .vb-head, .vb-head[hidden] { display: none; }
+.vb-why { font-size: 9px; }
+
+/* 3. phrase / bar counter */
+.vb-phrase { min-width: 150px; }
+.vb-barn { font-size: 14px; min-width: 30px; }
+.vb-beats { display: inline-flex; gap: 2px; }
+.vb-beats i { width: 6px; height: 6px; border-radius: 50%; background: var(--s-high); transition: background 80ms; }
+.vb-beats i.on { background: var(--ai); }
+.vb-beats i.on:first-child { background: var(--ok); }
+.vb-phrase.vb-one-0 { animation: vb-pulse-0 600ms ease-out; }
+.vb-phrase.vb-one-1 { animation: vb-pulse-1 600ms ease-out; }
+
+/* 4. energy */
+.vb-energy { flex-direction: column; align-items: stretch; gap: 2px; min-width: 150px; }
+.vb-chips { display: inline-flex; gap: 1px; }
+.vb-chips i { width: 7px; height: 7px; border-radius: 1px; background: var(--s-high); transition: background 200ms; }
+.vb-cur i.on { background: var(--a); }
+.vb-nxt i.on { background: var(--b); }
+.vb-trail { display: flex; align-items: flex-end; gap: 1px; height: 10px; }
+.vb-trail i {
+  width: 5px; height: 10px;
+  background: var(--ai);
+  opacity: 0.7;
+  transform-origin: bottom;
+  transform: scaleY(var(--vb-e, 0));
+}
+
+/* 7. key / harmony */
+.vb-key { min-width: 140px; }
+.vb-key[data-harm="ok"] .vb-harm { color: var(--ok); }
+.vb-key[data-harm="clash"] .vb-harm { color: var(--err); }
+.vb-key[data-harm="clash"] { border-color: var(--err); }
+
+/* 5. stem activity */
+.vb-stemcell { gap: var(--sp-sm); }
+.vb-stems { display: flex; align-items: flex-end; gap: 2px; padding: 1px 2px; border-radius: var(--r); }
+.vb-stems .vb-k { align-self: center; margin-right: 2px; }
+.vb-meter { display: flex; flex-direction: column; align-items: center; gap: 1px; }
+.vb-meter i {
+  width: 8px; height: 18px;
+  background: var(--accent, var(--ai));
+  transform-origin: bottom;
+  transform: scaleY(var(--vb-l, 1));
+  transition: transform 250ms ease-out;
+  border-radius: 1px;
+}
+.vb-stems[data-deck="a"] .vb-meter i { background: var(--a); }
+.vb-stems[data-deck="b"] .vb-meter i { background: var(--b); }
+.vb-meter b { font-size: 7px; line-height: 8px; font-weight: 600; color: var(--outline); }
+.vb-stems.vb-off .vb-meter i { opacity: 0.25; }
+.vb-stems.vb-split .vb-meter b { color: var(--ai); }
+.vb-stems.vb-flash-0 { animation: vb-flash-0 700ms ease-out; }
+.vb-stems.vb-flash-1 { animation: vb-flash-1 700ms ease-out; }
+
+/* hook / drop countdown */
+.vb-hook { max-width: 280px; border-color: var(--ai); }
+.vb-hookcd { color: var(--ai); }
+
+.vb-badges { background: transparent; border: none; padding: 0; flex-wrap: wrap; }
+.vb-badges:empty { display: none; }
+
+/* 6. event feed */
+.vb-feed {
+  flex: 1 1 260px;
+  min-width: 220px;
+  max-height: 44px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow: hidden;
+}
+.vb-ev {
+  display: flex;
+  gap: var(--sp-xs);
+  align-items: baseline;
+  white-space: nowrap;
+  animation: vb-in 250ms ease-out;
+}
+.vb-ev > b { color: var(--ai); font-weight: 700; }
+.vb-ev > em { font-style: normal; color: var(--outline); }
+.vb-ev .vb-sub { min-width: 0; }
+.vb-ev.vb-warn > b { color: var(--warn); }
+.vb-ev.vb-warn { background: rgba(255, 204, 0, 0.08); }
+.vb-ev:nth-child(n + 2) { opacity: 0.75; }
+.vb-ev:nth-child(n + 3) { opacity: 0.5; }
+
+@keyframes vb-breathe { 0%, 100% { opacity: 0.55; transform: scale(0.85); } 50% { opacity: 1; transform: scale(1); } }
+@keyframes vb-spin { to { transform: rotate(360deg); } }
+@keyframes vb-pulse-0 { from { box-shadow: 0 0 0 2px var(--ok); } to { box-shadow: 0 0 0 0 transparent; } }
+@keyframes vb-pulse-1 { from { box-shadow: 0 0 0 2px var(--ok); } to { box-shadow: 0 0 0 0 transparent; } }
+@keyframes vb-flash-0 { from { background: var(--ai-soft); } to { background: transparent; } }
+@keyframes vb-flash-1 { from { background: var(--ai-soft); } to { background: transparent; } }
+@keyframes vb-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+
+@media (max-width: 900px) {
+  .vb-orb, .vb-next, .vb-feed { flex-basis: 100%; max-width: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vibe-bar *, .vibe-bar *::after { animation: none !important; transition: none !important; }
+}
