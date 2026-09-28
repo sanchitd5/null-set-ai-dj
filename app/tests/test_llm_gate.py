@@ -151,3 +151,146 @@ def test_queued_songs_are_shown_and_never_suggested(monkeypatch):
                                   history_display=["P - 1"], queue_display=["Q - One"])
     assert "last played: P - 1 | queued next: Q - One" in seen[0]
     assert not any(s.get("title") == "One" for s in out)
+
+
+# -- live ear policy (one shared model: start.sh --single-omni) ------------------------
+
+def _hold(gate, prio, started, release, **kw):
+    try:
+        with gate.slot(prio, **kw):
+            started.append((prio, time.monotonic()))
+            release.wait(3)
+    except GateTimeout:
+        started.append((prio, None))
+
+
+def test_live_ear_never_waits_behind_a_long_suggest():
+    gate, started, release = PriorityGate(), [], threading.Event()
+    t = threading.Thread(target=_hold, args=(gate, SUGGEST, started, release))
+    t.start()
+    time.sleep(0.05)
+    t0 = time.monotonic()
+    with gate.slot(llm_gate.LIVE, wait_timeout=0.1) as waited:  # runs BESIDE the suggest
+        assert gate.snapshot()["live"] is True
+        assert gate.snapshot()["in_flight"] == "suggest"
+    assert waited < 0.5 and time.monotonic() - t0 < 0.5
+    release.set(); t.join()
+    assert "live" not in gate.snapshot()
+
+
+def test_live_hold_keeps_new_work_from_starting_mid_loop():
+    gate = PriorityGate(suggest_max_hold_s=0.3, behind_ear_s=0.0)
+    gate.note_live(hold_s=5.0)
+    with pytest.raises(GateTimeout):  # look-ahead refused outright
+        with gate.slot(LOOKAHEAD, wait_timeout=1):
+            pass
+    with pytest.raises(GateTimeout):  # the silent ear is advisory: it gives up
+        with gate.slot(llm_gate.EAR, wait_timeout=0.2):
+            pass
+    t0 = time.monotonic()
+    with gate.slot(PLAN, wait_timeout=1) as waited:  # a plan is never held
+        pass
+    assert waited < 0.1
+    with gate.slot(SUGGEST, wait_timeout=2) as waited:  # held, but never starved
+        pass
+    assert 0.25 <= waited < 1.0 and time.monotonic() - t0 < 1.5
+
+
+def test_held_work_may_start_right_after_a_live_answer():
+    gate = PriorityGate(suggest_max_hold_s=10.0, behind_ear_s=1.0)
+    gate.note_live(hold_s=5.0)
+    with gate.slot(llm_gate.LIVE):
+        pass
+    with gate.slot(SUGGEST, wait_timeout=0.5) as waited:  # the gap after the answer is ours
+        pass
+    assert waited < 0.3
+
+
+def test_a_waiting_live_call_goes_before_queued_work():
+    gate, started, release = PriorityGate(), [], threading.Event()
+    first = threading.Thread(target=_hold, args=(gate, PLAN, started, release))
+    first.start(); time.sleep(0.05)
+    sug = threading.Thread(target=_hold, args=(gate, SUGGEST, started, threading.Event()),
+                           kwargs={"wait_timeout": 2})
+    live_done = []
+
+    def live():
+        with gate.slot(llm_gate.LIVE, wait_timeout=1.0):
+            live_done.append(time.monotonic())
+
+    lv = threading.Thread(target=live)
+    lv.start(); time.sleep(0.02); sug.start(); time.sleep(0.05)
+    assert [p for p, _ in started] == [PLAN]  # suggest may not start while live waits
+    lv.join(2)
+    assert live_done  # live ran beside the plan after LIVE_WAIT_S
+    release.set(); first.join()
+    sug.join(3)
+    assert [p for p, _ in started] == [PLAN, SUGGEST]
+
+
+def test_live_ear_takes_the_gate_only_on_the_shared_model(monkeypatch):
+    from app.ui import live_ear
+
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://127.0.0.1:8901/v1")
+    assert live_ear.shares_text_model({"base_url": "http://localhost:8901/v1"})
+    assert not live_ear.shares_text_model({"base_url": "http://127.0.0.1:8902/v1"})
+    assert not live_ear.shares_text_model({"base_url": "http://127.0.0.1:8901/v1", "cloud": True})
+    monkeypatch.setattr(live_ear, "config", lambda: {"configured": True, "cloud": False, "model": "m",
+                                                     "base_url": "http://127.0.0.1:8901/v1"})
+    monkeypatch.setattr(llm_gate, "gate", PriorityGate())  # its 25 s hold stays in this test
+    seen = []
+    monkeypatch.setattr(live_ear, "_ask_omni", lambda c, w, m: (seen.append(llm_gate.gate.snapshot()),
+                                                                '{"verdict":"clean","action":"keep"}')[1])
+    res = live_ear.decide(b"RIFF", {"deck": "a"})
+    assert seen and seen[0].get("live") is True and res.get("model") == "m"
+
+
+def test_fake_shared_model_hold_loop_keeps_the_ear_fast():
+    """A fake continuous-batching model: an ear call takes 0.05 s alone and 0.25 s
+    beside a decode; a suggest decodes 0.6 s. A suggest asked for mid-loop must not
+    overlap the next phrase's ear call, and still runs within the hold bound."""
+    gate = PriorityGate(suggest_max_hold_s=0.8, behind_ear_s=0.0, poll_s=0.02)
+    decoding = threading.Event()
+    ear_lat, sug_start = [], []
+
+    def ear_call():
+        t0 = time.monotonic()
+        gate.note_live(hold_s=1.0)
+        with gate.slot(llm_gate.LIVE, wait_timeout=0.05):
+            time.sleep(0.25 if decoding.is_set() else 0.05)
+        ear_lat.append(time.monotonic() - t0)
+
+    def suggest():
+        t0 = time.monotonic()
+        with gate.slot(SUGGEST, wait_timeout=5):
+            sug_start.append(time.monotonic() - t0)
+            decoding.set()
+            time.sleep(0.6)
+            decoding.clear()
+
+    ear_call()                                  # phrase 1: the hold starts
+    s = threading.Thread(target=suggest)
+    s.start()                                   # asked mid-loop
+    for _ in range(3):                          # phrases 2-4, one every 0.2 s
+        time.sleep(0.2)
+        ear_call()
+    s.join(3)
+    assert max(ear_lat[:3]) < 0.2, ear_lat      # no ear call ran beside the decode
+    assert sug_start and sug_start[0] <= 1.0    # bounded: the suggestion still ran
+
+
+# -- slimmer suggest schema -----------------------------------------------------------
+
+def test_slim_suggest_reply_still_parses_and_fills_display_fields(monkeypatch):
+    slim = ('{"steering":"stay","occasion_fit":0,"current_genre":"house","current_era":"2020s",'
+            '"current_profile":{"energy":6,"tempo_feel":"driving","mood":"bittersweet"},'
+            '"suggestions":[{"artist":"Q","title":"Two","reason":"same rolling bass","genre":"house",'
+            '"era":"2020s","expected_bpm":124,"expected_key":"8A","energy_delta":"maintain","genre_hop":0,'
+            '"occasion_fit":0,"track_profile":{"energy":6,"tempo_feel":"driving","mood":"bittersweet"}}]}')
+    monkeypatch.setattr(svc, "chat_raw", lambda *a, **k: slim)
+    monkeypatch.setattr(svc, "VERIFY_SONGS", False)
+    out = svc.suggest_next_tracks("T", "A", 124.0, "8A", 200.0, 0.7, "", [])
+    assert out and out[0]["title"] == "Two"
+    s = out[0]
+    for field in ("mix_moment", "vibe_link", "energy_delta", "track_profile", "search_query", "reason"):
+        assert field in s  # console (autopilot.js) still reads these

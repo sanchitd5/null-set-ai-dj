@@ -252,10 +252,18 @@ def decide(wav: Optional[bytes], m: dict) -> dict:
         return out
     from app.ui import llm_gate, session_log
 
-    llm_gate.gate.note_ear()
+    shared = shares_text_model(c)
+    # One model for everything (start.sh --single-omni): take the gate's LIVE slot
+    # (never queued behind a suggest) and hold new text work off mid-loop.
+    (llm_gate.gate.note_live if shared else llm_gate.gate.note_ear)()
     t0 = time.monotonic()
+    waited = None
     try:
-        text = _ask_omni(c, wav, m)
+        if shared:
+            with llm_gate.gate.slot(llm_gate.LIVE, wait_timeout=llm_gate.LIVE_WAIT_S) as waited:
+                text = _ask_omni(c, wav, m)
+        else:
+            text = _ask_omni(c, wav, m)
         res = validate(_extract_json(text), m)
         res["model"] = c["model"]
     except Exception as exc:  # network, auth, bad JSON: rules answer instead
@@ -266,5 +274,22 @@ def decide(wav: Optional[bytes], m: dict) -> dict:
         _busy.release()
     res["latency_seconds"] = round(time.monotonic() - t0, 2)
     session_log.log("ear", latency=res["latency_seconds"], source="rules" if res.get("fallback") else "model", action=res.get("action"),
-                    error=res.get("fallback"), precheck=bool(m.get("precheck")))
+                    error=res.get("fallback"), precheck=bool(m.get("precheck")),
+                    waited=round(waited, 2) if waited is not None else None)
     return res
+
+
+def _server(url: str) -> tuple:
+    from urllib.parse import urlparse
+
+    p = urlparse(url or "")
+    host = (p.hostname or "").lower()
+    return ("127.0.0.1" if host in ("localhost", "::1") else host, p.port)
+
+
+def shares_text_model(c: dict) -> bool:
+    """True when the live ear and the text LLM (OLLAMA_BASE_URL, set by model_runtime)
+    are the same local server: then they contend and the ear goes through the gate."""
+    if c.get("cloud"):
+        return False
+    return _server(c.get("base_url", "")) == _server(os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1"))
