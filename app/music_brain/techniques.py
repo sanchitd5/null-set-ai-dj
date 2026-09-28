@@ -280,6 +280,17 @@ TECHNIQUES = [
 ]
 
 
+NEAR_GAP = 0.03             # a learned move fits pairs within this tempo gap of a pair it was seen on
+NEAR_KEY = 0.15             # ... and within this key score
+
+
+def _fold_gap(bpm_a: float, bpm_b: float) -> float:
+    """Tempo gap with half/double time folded, as the set learner records it."""
+    if bpm_a <= 0 or bpm_b <= 0:
+        return 1.0
+    return min(abs(bpm_b * k / bpm_a - 1) for k in (1.0, 2.0, 0.5))
+
+
 TEMPO_GAP_SLACK = 0.02      # a learned move fits pairs up to this much further apart than seen
 KEY_SCORE_SLACK = 0.05
 
@@ -300,17 +311,21 @@ def learned_techniques(store: Optional[Dict[str, dict]] = None) -> List[Techniqu
         gap_max, key_min, stems = e.get("tempo_gap_max"), e.get("key_score_min"), bool(e.get("stems"))
         vocal_from = {o.get("detail", {}).get("vocal_from") for o in obs} - {None}
 
-        def checks(f: PairFeatures, gap_max=gap_max, key_min=key_min, stems=stems, vocal_from=vocal_from, n=len(obs), rules=rules, kind=kind, ai_rules=ai_rules):
+        def checks(f: PairFeatures, obs_all=obs, gap_max=gap_max, key_min=key_min, stems=stems, vocal_from=vocal_from, n=len(obs), rules=rules, kind=kind, ai_rules=ai_rules):
             res: List[Check] = ([(True, f"seen {n}x in studied sets")] + [(True, f"user rule: {r}") for r in rules]
                                 + [(True, f"ai rule: {r}") for r in ai_rules])
             if stems:
                 res.append((f.stems_a and f.stems_b, "stems on both" if f.stems_a and f.stems_b else "needs stems on both"))
-            if gap_max is not None:
-                lim = gap_max + TEMPO_GAP_SLACK
-                res.append((f.tempo_gap <= lim, f"tempo gap {f.tempo_gap:.1%} (seen up to {gap_max:.1%})"))
-            if key_min is not None:
-                lim = max(0.0, key_min - KEY_SCORE_SLACK)
-                res.append((f.key >= lim, f"key score {f.key:.2f} (seen down to {key_min:.2f})"))
+            # "pairs like this one": the nearest pair the move was seen on must be close
+            # in tempo gap and key. A range (min..max over every sighting) ends up
+            # covering every pair and says nothing about this one.
+            pairs = [(o["tempo_gap"], o.get("key_score")) for o in obs_all if o.get("tempo_gap") is not None]
+            if pairs:
+                gap = _fold_gap(f.bpm_a, f.bpm_b)
+                near = min(pairs, key=lambda p: abs(p[0] - gap) / NEAR_GAP + (abs((p[1] if p[1] is not None else f.key) - f.key) / NEAR_KEY))
+                ok = abs(near[0] - gap) <= NEAR_GAP and (near[1] is None or abs(near[1] - f.key) <= NEAR_KEY)
+                res.append((ok, f"like a pair seen at tempo gap {near[0]:.1%}" + (f", key {near[1]:.2f}" if near[1] is not None else "")
+                            + f" (this pair: {gap:.1%}, key {f.key:.2f})"))
             if vocal_from == {"A"}:
                 res.append((f.vocal_a_exit >= 0.3, f"A sings {f.vocal_a_exit:.0%} of the exit (needs 30 %)"))
             elif vocal_from == {"B"}:

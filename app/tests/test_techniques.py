@@ -113,9 +113,9 @@ def test_only_the_opening_hook_is_skipped_not_later_rhymes():
 def test_learned_pick_maps_live_moves_to_console_recipes():
     store = {
         "bass_swap": {"kind": "bass_swap", "what": "x", "stems": False, "live": True, "count": 2, "tempo_gap_max": 0.05,
-                      "key_score_min": 0.8, "observations": [{"set_id": "s", "at": 60, "track_a": "A", "track_b": "B", "detail": {}}] * 2},
+                      "key_score_min": 0.8, "observations": [{"set_id": "s", "at": 60, "track_a": "A", "track_b": "B", "tempo_gap": 0.02, "key_score": 0.9, "detail": {}}] * 2},
         "stem_intro": {"kind": "stem_intro", "what": "x", "stems": True, "live": True, "count": 5, "tempo_gap_max": 0.05,
-                       "key_score_min": 0.8, "observations": [{"set_id": "s", "at": 90, "track_a": "C", "track_b": "D", "detail": {}}] * 5},
+                       "key_score_min": 0.8, "observations": [{"set_id": "s", "at": 90, "track_a": "C", "track_b": "D", "tempo_gap": 0.02, "key_score": 0.9, "detail": {}}] * 5},
         "vocal_chop": {"kind": "vocal_chop", "what": "x", "stems": True, "live": False, "count": 9,
                        "observations": [{"set_id": "s", "at": 9, "track_a": "E", "detail": {}}] * 9},
     }
@@ -125,3 +125,14 @@ def test_learned_pick_maps_live_moves_to_console_recipes():
     no_stems = tq.learned_pick(tq.rank(tq.PairFeatures(124, 126, "8A", "9A"), learned=store), store)
     assert no_stems["kind"] == "bass_swap"                                                 # stem_intro needs stems
     assert tq.learned_pick(tq.rank(tq.PairFeatures(124, 174, "8A", "9A"), learned=store), store) is None  # out of range
+
+
+def test_learned_move_fits_pairs_like_the_ones_it_was_seen_on():
+    obs = [{"set_id": "s", "at": 1, "track_a": "A", "track_b": "B", "tempo_gap": g, "key_score": k, "detail": {}}
+           for g, k in ((0.0, 1.0), (0.33, 0.0))]                     # two very different sightings
+    store = {"bass_swap": {"kind": "bass_swap", "what": "x", "stems": False, "live": True, "count": 2,
+                           "tempo_gap_max": 0.33, "key_score_min": 0.0, "observations": obs}}
+    fit = lambda f: next(x for x in tq.rank(f, learned=store) if x["name"] == "learned:bass_swap")["fits"]
+    assert fit(tq.PairFeatures(124, 124, "8A", "8A"))                  # like sighting 1
+    assert not fit(tq.PairFeatures(124, 140, "8A", "8A"))              # 13 %: like neither (a range would say yes)
+    assert fit(tq.PairFeatures(87, 174, "8A", "8A"))                   # half time folds to 0 %
