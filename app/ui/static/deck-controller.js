@@ -247,6 +247,8 @@ class Deck {
     this.stemMix(null, 0, 0.005);
     this.setStems(null);
     this._breakdownDone = false;
+    this._hookDropDone = false;
+    this.hookDrops = null;
     this._remix = null;
     this.trimEnd = this.buffer.duration;
     this.cuePoint = 0;
@@ -265,6 +267,10 @@ class Deck {
           this.fame = null;
           fetch(`/api/tracks/${trackId}/fame`).then((r) => (r.ok ? r.json() : null))
             .then((f) => { if (this.analysis === analysis) this.fame = f; }).catch(() => {});
+          // where to go acapella on this song's emotional line and drop back in
+          // (app/music_brain/hook_drop.py; lyrics + the local model's picks, cached)
+          fetch(`/api/tracks/${trackId}/hook-drops?top_n=3`).then((r) => (r.ok ? r.json() : null))
+            .then((h) => { if (this.analysis === analysis) this.hookDrops = (h && h.hook_drops) || []; }).catch(() => {});
         }
       } catch (e) { /* keep default bpm */ }
     }

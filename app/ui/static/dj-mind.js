@@ -1116,6 +1116,23 @@
     return true;
   }
 
+  // Hook drop: once per song, the beat leaves under the song's emotional lyric
+  // line (hook_drop.plan: lyrics, the local model's pick, learned hold length)
+  // and slams back on the phrase line after it. Needs live stems; not in a
+  // relaxed session; never within 4 bars of the planned exit.
+  function hookDropTick(d, pos, bar) {
+    const sm = window.stemMoves;
+    if (!sm || !sm.hookDrop || !d.stemsReady || d._hookDropDone || !(d.hookDrops && d.hookDrops.length)) return false;
+    if (root.djSession && root.djSession.relaxed) return false;
+    const it = sm.core.hookDropDue(d.hookDrops, pos, bar, plan ? plan.fireAt : null);
+    if (!it || !sm.hookDrop(d, it, (it.why || []).join("; "))) return false;
+    d._hookDropDone = true;
+    busyUntil = nowS() + (it.drop_at - pos + bar) / ((d._playbackRate && d._playbackRate()) || 1);
+    say({ action: "hook_drop", source: it.ai ? "AI" : "LYRICS",
+          why: `HOOK DROP on "${it.text}": beat out ${(it.drop_at - it.cut_at).toFixed(1)}s, drop on the line` }, pos);
+    return true;
+  }
+
   // Remix on the go: on 16-bar lines (every 2nd phrase from the song's entry),
   // a stem move in that section (stem-moves.js remixPick / remixEvents).
   function stemRemixTick(d, pos, bar, phrase) {
@@ -1175,6 +1192,8 @@
     holdLoopTick(d, pos);
     if (holdLoop || nowS() < busyUntil) return;   // a loop is running: no new phrase moves
     const bar = barSecsOf(d);
+    // checked every tick, not once per phrase: the cut sits on a lyric line, not a phrase line
+    if (lastPhrase !== null && mindOn() && hookDropTick(d, pos, bar)) return;
     const phrase = phraseAt(d.analysis && d.analysis.downbeat_times, pos, bar);
     if (phrase === lastPhrase) return;
     const first = lastPhrase === null;

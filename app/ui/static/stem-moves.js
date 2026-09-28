@@ -114,6 +114,7 @@
     build: "pre-drop build (Drop Swap / Double Drop)",
     brake: "brake / spin-down",
     echo: "echo-out tail (the effect carries the energy)",
+    hookDrop: "hook drop: beat out under the emotional line, voice alone, then the drop",
   });
 
   // Stem blend: a transition done with stems instead of EQ. Each layer has one
@@ -369,7 +370,32 @@
       : ctx.vocal >= 0.15 ? ["bass_out", "drum_break", "synth_hold"] : ["drum_break", "synth_hold", "bass_out"];
     return menu.find((k) => !used.has(k)) || null;
   }
-  const core = { BREAKDOWN, breakdownFits, handoffFits, vocalShare, stemBlendPlan, STEM_BLEND_KINDS, remixEvents, remixPick, stemBridgePlan, mashupTransitionPlan,
+  // Hook drop (app/music_brain/hook_drop.py plan items: {cut_at, drop_at, text}):
+  // drums + bass leave over a quarter bar ending on cut_at, synths duck to
+  // HOOK_OTHER, the voice carries the line alone, everything slams back on
+  // drop_at (5 ms: no click). Same shape as hook_drop.render(), the audition file.
+  const HOOK_OTHER = 0.35;
+  function hookDropEvents(item, bar) {
+    const fade = bar / 4;
+    return [
+      { t: item.cut_at - fade, stems: { drums: 0, bass: 0, other: HOOK_OTHER }, ramp: fade },
+      { t: item.drop_at, stems: { drums: 1, bass: 1, other: 1 }, ramp: 0.005 },
+    ];
+  }
+  // The plan item to play now, or null: the next item whose cut is 1-2 bars
+  // ahead (room to book it on the audio clock), whose drop lands at least 4
+  // bars before the planned exit, and whose hold is 1-8 bars.
+  function hookDropDue(items, pos, bar, exitAt) {
+    for (const it of items || []) {
+      const lead = it.cut_at - pos, hold = it.drop_at - it.cut_at;
+      if (lead < bar || lead > 2 * bar) continue;
+      if (!(hold >= bar * 0.75 && hold <= 8 * bar)) continue;
+      if (exitAt != null && it.drop_at > exitAt - 4 * bar) continue;
+      return it;
+    }
+    return null;
+  }
+  const core = { hookDropEvents, hookDropDue, HOOK_OTHER, BREAKDOWN, breakdownFits, handoffFits, vocalShare, stemBlendPlan, STEM_BLEND_KINDS, remixEvents, remixPick, stemBridgePlan, mashupTransitionPlan,
                  pickIntro, introBars, INTRO_LEVEL, levelCheck, gainsAt, faderAt, fitStemBlend, breakdownEvents,
                  LEVEL_FLOOR_DB, AUDIBLE_GAIN, FADER_PARK_BARS, TYPICAL_SHARE, DIP_ALLOWED };
   if (typeof module !== "undefined" && module.exports) module.exports = core;
@@ -728,7 +754,18 @@
     return plan.total * barS;
   }
 
-  root.stemMoves = { core, breakdown, handoff, instrumental, reset, audioAt, vocalShare, stemBlend, remix, REMIX_LABEL, mashupBreak, stemBridge, mashupTransition,
+  function hookDrop(d, item, why) {
+    if (!d || !d.stemsReady || !item) return false;
+    cancel(d.id);
+    const bar = 240 / (d.bpm || 128), rate = (d._playbackRate && d._playbackRate()) || 1;
+    for (const e of hookDropEvents(item, bar)) book(d, audioAt(d, e.t), e.stems, e.ramp / rate);
+    root.dispatchEvent(new CustomEvent("ai-cue", { detail: { at: audioAt(d, item.drop_at), kind: "drop",
+      deck: d.id, bar: bar / rate, why: `the beat slams back after "${item.text}"` } }));
+    note(d.id, `HOOK DROP · "${item.text}"`, why || "beat out under the emotional line, then the drop");
+    return true;
+  }
+
+  root.stemMoves = { core, hookDrop, breakdown, handoff, instrumental, reset, audioAt, vocalShare, stemBlend, remix, REMIX_LABEL, mashupBreak, stemBridge, mashupTransition,
                      bridgeFader, stemEnergyBars, eqIntro };
 
   // ------------------------------------------------------ stem rail UI --

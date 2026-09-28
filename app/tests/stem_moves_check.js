@@ -251,3 +251,21 @@ console.log("stem moves core ok");
   }
   console.log("mashup transition ok");
 }
+
+// hook drop: beat out under the emotional line, slam back on the drop
+{
+  const sm = require("../ui/static/stem-moves.js");
+  const bar = 240 / 104;                                   // Sabrina: ~2.31 s
+  const item = { cut_at: 88.26, drop_at: 93.51, text: "I am a party" };
+  const ev = sm.hookDropEvents(item, bar);
+  assert.deepStrictEqual(ev[0].stems, { drums: 0, bass: 0, other: sm.HOOK_OTHER });
+  assert.ok(Math.abs(ev[0].t + ev[0].ramp - item.cut_at) < 1e-9);          // gone exactly on the cut
+  assert.deepStrictEqual(ev[1], { t: item.drop_at, stems: { drums: 1, bass: 1, other: 1 }, ramp: 0.005 });
+  assert.strictEqual(sm.hookDropDue([item], 88.26 - 1.5 * bar, bar, 180), item);          // 1.5 bars ahead: book it
+  assert.strictEqual(sm.hookDropDue([item], 88.26 - 0.5 * bar, bar, 180), null);          // too late to book cleanly
+  assert.strictEqual(sm.hookDropDue([item], 88.26 - 3 * bar, bar, 180), null);            // not yet
+  assert.strictEqual(sm.hookDropDue([item], 88.26 - 1.5 * bar, bar, 93.51 + 2 * bar), null);   // the exit is too close
+  assert.strictEqual(sm.hookDropDue([{ ...item, drop_at: item.cut_at + 30 }], 88.26 - 1.5 * bar, bar, null), null);  // hold too long
+  assert.strictEqual(sm.hookDropDue([], 10, bar, null), null);
+  console.log("hook drop ok");
+}
