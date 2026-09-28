@@ -284,3 +284,13 @@ def test_local_set_needs_no_youtube(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, "yt_dlp", None)                   # any import of yt_dlp would fail
     p, sid, desc = sl.fetch_set("https://www.youtube.com/watch?v=rAJ9Es-61ZE&si=x")
     assert (p.name, sid, desc) == ("rAJ9Es-61ZE.mp3", "rAJ9Es-61ZE", "")
+
+
+def test_set_download_found_by_title_when_named_by_youtube(tmp_path):
+    d = tmp_path / "songs"
+    d.mkdir()
+    (d / "A_New_Error.mp3").write_bytes(b"x")
+    (d / "Technologic.mp3").write_bytes(b"x"); (d / "Technologic_Live.mp3").write_bytes(b"x")
+    lib = tmp_path / "lib"
+    assert sl.find_or_fetch_song("Moderat - A New Error", d, library=lib, download=False).name == "A_New_Error.mp3"
+    assert sl.find_or_fetch_song("Daft Punk - Technologic", d, library=lib, download=False) is None   # ambiguous

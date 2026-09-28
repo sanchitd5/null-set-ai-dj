@@ -179,11 +179,21 @@ def find_or_fetch_song(title: str, download_dir: Path, library: Path = SONGS_DIR
     a yt-dlp search download into download_dir. Downloads stay out of the library:
     a search on a bare title can land on the wrong song."""
     key = _norm(re.sub(r"\(.*?\)|\[.*?\]", "", title))
+    audio = (".mp3", ".wav", ".flac", ".m4a")
     for d in (library, download_dir):
         if d.is_dir() and key:
             for p in d.iterdir():
-                if p.suffix.lower() in (".mp3", ".wav", ".flac", ".m4a") and key in _norm(p.stem):
+                if p.suffix.lower() in audio and key in _norm(p.stem):
                     return p
+    # this set's own downloads are named by YouTube ("A_New_Error.mp3"): the title alone
+    # identifies them there (they passed pick_result's artist check when fetched)
+    from app.music_brain.lyrics import split_title
+
+    tkey = _norm(re.sub(r"\(.*?\)|\[.*?\]", "", split_title(title)[1]))
+    if download_dir.is_dir() and len(tkey) >= 4:
+        hits = [p for p in download_dir.iterdir() if p.suffix.lower() in audio and tkey in _norm(p.stem)]
+        if len(hits) == 1:
+            return hits[0]
     if not download:
         return None
     import yt_dlp
