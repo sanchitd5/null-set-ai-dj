@@ -162,8 +162,10 @@ def fetch_set(source: str) -> Tuple[Path, str, str]:
         return p, hashlib.sha256(str(p).encode()).hexdigest()[:12], ""
     m = re.search(r"(?:v=|youtu\.be/|shorts/|live/)([\w-]{11})", source)
     if m and (SETS_DIR / f"{m.group(1)}.mp3").exists():            # already here: no YouTube request
-        meta = SETS_DIR / f"{m.group(1)}.info.json"
-        desc = json.loads(meta.read_text(encoding="utf-8")).get("description", "") if meta.exists() else ""
+        try:
+            desc = json.loads((SETS_DIR / f"{m.group(1)}.info.json").read_text(encoding="utf-8")).get("description", "")
+        except (OSError, ValueError, AttributeError):
+            desc = ""
         return SETS_DIR / f"{m.group(1)}.mp3", m.group(1), desc
     import yt_dlp
 
@@ -174,6 +176,10 @@ def fetch_set(source: str) -> Tuple[Path, str, str]:
             info = ydl.extract_info(source, download=False)
             if not info:
                 raise ValueError(f"could not read {source}")
+            # the id names files and the set's cache dir: a non-YouTube extractor can
+            # return anything ("../x" from a URL's last path segment)
+            if not re.fullmatch(r"[\w-]{1,64}", str(info.get("id") or "")):
+                raise ValueError(f"unusable video id {info.get('id')!r} for {source}")
             path = SETS_DIR / f"{info['id']}.mp3"
             if not path.exists():
                 ydl.download([source])

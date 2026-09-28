@@ -307,3 +307,29 @@ def test_artist_collab_x_is_one_song_mashup_x_is_layers():
         (180.0, "Skrillex - Rumble"), (180.0, "Fred again.. - Kyle"),
         (360.0, "Aerodynamic"), (360.0, "Victory Lap Five"),
         (540.0, "Fred again.. x Skrillex x Four Tet - Baby again")]
+
+
+def test_fetch_set_refuses_an_id_that_escapes_the_sets_dir(tmp_path, monkeypatch):
+    import sys, types, pytest
+    from app.music_brain import yt_guard
+    downloads = []
+
+    class FakeYDL:
+        def __init__(self, opts): pass
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def extract_info(self, url, download=False): return {"id": "../../evil", "title": "t"}
+        def download(self, urls): downloads.append(urls)
+    monkeypatch.setitem(sys.modules, "yt_dlp", types.SimpleNamespace(YoutubeDL=FakeYDL))
+    monkeypatch.setattr(yt_guard, "call", lambda fn: fn({}))
+    monkeypatch.setattr(sl, "SETS_DIR", tmp_path / "sets")
+    with pytest.raises(ValueError, match="unusable video id"):
+        sl.fetch_set("https://example.com/x/%2e%2e%2f%2e%2e%2fevil")
+    assert downloads == [] and not (tmp_path / "evil.info.json").exists()
+
+
+def test_cached_set_with_corrupt_meta_still_loads(tmp_path, monkeypatch):
+    monkeypatch.setattr(sl, "SETS_DIR", tmp_path)
+    (tmp_path / "rAJ9Es-61ZE.mp3").write_bytes(b"x")
+    (tmp_path / "rAJ9Es-61ZE.info.json").write_text("{not json", encoding="utf-8")
+    assert sl.fetch_set("https://youtu.be/rAJ9Es-61ZE")[1:] == ("rAJ9Es-61ZE", "")
