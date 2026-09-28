@@ -907,7 +907,21 @@ def get_hook_drops(track_id: str, top_n: int = 3, ai: bool = True):
     """Where to go acapella on the track's emotional hook and bring the drop back in:
     [{text, cut_at, drop_at, hold_s, score, ai, why[]}] best first (app.music_brain.hook_drop).
     ai=True asks the local model which lines carry the emotion (cached per song)."""
-    return {"track_id": track_id, "hook_drops": _hook_drops(track_id, max(1, min(top_n, 10)), ai_call=ai)}
+    drops = _hook_drops(track_id, max(1, min(top_n, 10)), ai_call=ai)
+    _song_step("hook_drop_plan", track_id, decision=f"{len(drops)} hook drop(s)",
+               why=(drops[0].get("why") if drops and isinstance(drops[0], dict) else "no synced lyrics / no hook"),
+               result=[{k: d.get(k) for k in ("text", "cut_at", "drop_at", "score", "ai")} for d in drops[:3]
+                       if isinstance(d, dict)])
+    return {"track_id": track_id, "hook_drops": drops}
+
+
+def _song_step(kind: str, track_id: Optional[str], **fields) -> None:
+    """One AI step into the per-song log (app/ui/song_log.py). Never raises."""
+    try:
+        from app.ui import song_log
+        song_log.step(kind, track_id, **fields)
+    except Exception:
+        pass
 
 
 class SessionEvent(BaseModel):
@@ -926,6 +940,8 @@ def post_session_event(ev: SessionEvent):
     # those are kept as "<name>_" instead of clashing
     fields = {(f"{k}_" if k in ("kind", "t", "at") else k): v for k, v in list(ev.data.items())[:20] if isinstance(k, str)}
     session_log.log(ev.kind, **fields)
+    from app.ui import song_log
+    song_log.on_session_event(ev.kind, fields)   # transitions / glitches also land on the song
     return {"ok": True, "session": session_log.SESSION_ID}
 
 
@@ -941,6 +957,85 @@ def get_session_log(session: Optional[str] = None, limit: int = 500):
         raise HTTPException(status_code=400, detail=str(exc))
     return {"session": session or session_log.SESSION_ID, "sessions": session_log.sessions()[:30],
             "summary": session_log.summary(events), "events": events}
+
+
+class StepBatch(BaseModel):
+    steps: list = Field(default_factory=list)  # bad items are skipped, not a 422 for the batch
+
+
+def _song_resolvers() -> None:
+    """How song_log finds a track's file, analysis, stems, name and energy (for waveforms)."""
+    from app.ui import song_log
+
+    def energy(path: Path, bpm: float) -> dict:
+        from app.music_brain import energy as en
+        return en.level(path, bpm)
+
+    def track_path(tid: str) -> Optional[Path]:
+        try:
+            return _track_path(tid)
+        except HTTPException:
+            return None
+
+    song_log.configure(path=track_path, analysis=lambda p: analyze_track(p).to_dict(),
+                       stems=_cached_stems4, name=lambda tid: _track_names.get(tid), energy=energy)
+
+
+_song_resolvers()
+
+
+@app.post("/api/session/steps")
+def post_session_steps(batch: StepBatch):
+    """A batch of AI steps from the console (app/ui/static/step-log.js), filed per song."""
+    from app.ui import song_log
+
+    if len(batch.steps) > song_log.MAX_BATCH:
+        raise HTTPException(status_code=413, detail=f"at most {song_log.MAX_BATCH} steps per batch")
+    return {"ok": True, "accepted": song_log.ingest(batch.steps)}
+
+
+@app.get("/api/session/songs")
+def get_session_songs(session: Optional[str] = None):
+    """Songs of a session (this run unless ?session=) with step counts per phase / kind."""
+    from app.ui import session_log, song_log
+
+    try:
+        return {"session": session or session_log.SESSION_ID, "songs": song_log.songs(session)}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.get("/api/session/songs/{session}/{nn}")
+def get_session_song(session: str, nn: int, limit: int = 2000):
+    """One song's meta + every AI step, in time order."""
+    from app.ui import song_log
+
+    try:
+        s = song_log.song(session, nn, limit)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if s is None:
+        raise HTTPException(status_code=404, detail="no such song in that session")
+    return s
+
+
+@app.get("/api/session/songs/{session}/{nn}/waveform.png")
+def get_session_song_png(session: str, nn: int, refresh: bool = False):
+    """The song's rendered waveform with AI steps; rendered in the background on first ask (202)."""
+    from fastapi.responses import JSONResponse
+    from app.ui import song_log
+
+    try:
+        d = song_log.song_dir(session, nn)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if d is None:
+        raise HTTPException(status_code=404, detail="no such song in that session")
+    png = d / "waveform.png"
+    if png.exists() and not refresh:
+        return FileResponse(png, media_type="image/png")
+    song_log.render_async(d)
+    return JSONResponse({"pending": True}, status_code=202)
 
 
 class PreplanRequest(BaseModel):
@@ -1008,6 +1103,10 @@ def _run_preplan(req: PreplanRequest, sa: dict, sb: dict) -> dict:
     session_log.log("ear_preplan", elapsed=round(time.time() - t0, 2), ok=res["ok"], heard=res.get("ear"),
                     candidates=len(res.get("candidates") or []), a_in=p.get("a_in"), b_start=p.get("b_start"),
                     bars=p.get("bars"), label=p.get("label"), direction=p.get("direction"))
+    _song_step("preplan", req.b_id, phase="planning", decision=p.get("label") if res.get("ok") else "no plan",
+               why=res.get("why") or p.get("direction"), inputs={"a_id": req.a_id, "lo": req.lo, "hi": req.hi},
+               result={"a_in": p.get("a_in"), "b_start": p.get("b_start"), "bars": p.get("bars"),
+                       "ear": bool(res.get("ear")), "candidates": len(res.get("candidates") or [])})
     return res
 
 
@@ -1079,6 +1178,9 @@ def post_merge_audition(req: MergeAuditionRequest):
                              key=f"{req.a_id}:{req.b_id}")
         session_log.log("ear_merge", elapsed=round(time.time() - t0, 2), combos=len(ok),
                         heard=sum(1 for r in res if r["ear"]), best=max((r["ear"]["score"] for r in res if r["ear"]), default=None))
+        _song_step("merge_audition", req.b_id, phase="planning", decision=f"{len(ok)} combo(s) auditioned",
+                   inputs={"a_id": req.a_id, "a_time": a_time, "b_time": b_time, "combos": ok},
+                   result=[(r.get("ear") or {}).get("score") for r in res])
         return {"results": res, "ear": any(r["ear"] for r in res)}
 
     key = "audition:" + json.dumps([req.a_id, req.b_id, round(a_time, 2), round(b_time, 2), ok], sort_keys=True)
@@ -1105,7 +1207,11 @@ def get_learned_pick(a: str, b: str, keylock: bool = False):
     from app.music_brain import techniques as tq
 
     f = _pair_features_cached(a, b, keylock)
-    return {"pick": tq.learned_pick(tq.rank(f))}
+    pick = tq.learned_pick(tq.rank(f))
+    _song_step("learned_pick", b, phase="planning", decision=(pick or {}).get("recipe") or "none",
+               why="; ".join(map(str, (pick or {}).get("reasons") or []))[:300] or None,
+               inputs={"a_id": a, "keylock": keylock})
+    return {"pick": pick}
 
 
 @app.get("/api/techniques")
@@ -1289,7 +1395,12 @@ def post_match(req: MatchRequest):
                                "energy_raw_a": la["raw"], "energy_raw_b": lb["raw"]}
     except Exception as exc:          # best-effort, but say why
         print(f"WARNING [match] energy level unavailable: {type(exc).__name__}: {exc}", flush=True)
-    return {"candidates": [c.to_dict() for c in candidates], "vibe": vibe}
+    out = [c.to_dict() for c in candidates]
+    _song_step("match", req.track_b_id, decision=(out[0].get("recipe") if out else "no candidates"),
+               why=(out[0].get("explanation") if out else None), inputs={"a_id": req.track_a_id},
+               result={"candidates": [{k: c.get(k) for k in ("recipe", "score", "a_time", "b_time")} for c in out[:5]],
+                       "vibe": vibe})
+    return {"candidates": out, "vibe": vibe}
 
 
 class MashupRequest(BaseModel):
@@ -1954,6 +2065,11 @@ def _autopilot_suggest_impl(req: AutopilotSuggestRequest):
         _suggested_genres[_genre_key(title_part)] = str(meta["current_genre"])
     if meta.get("current_era") and not req.lookahead:
         _suggested_eras[_genre_key(title_part)] = str(meta["current_era"])
+    _song_step("suggest", req.track_id,
+               decision=f"{len(suggestions)} next-song pick(s)" + (" (look-ahead)" if req.lookahead else ""),
+               why=meta.get("current_genre"),
+               result=[{k: s.get(k) for k in ("artist", "title", "reason", "why") if k in s}
+                       for s in suggestions[:8] if isinstance(s, dict)])
     return {"suggestions": suggestions, "set_position": round(set_position, 2), **meta}
 
 
@@ -1999,6 +2115,10 @@ def autopilot_plan(req: MindPlanRequest):
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"LLM plan error: {exc}") from exc
     plan["exit_options"] = facts["exit_options"]
+    _song_step("mind_plan", req.track_b_id, phase="planning",
+               decision=str((plan.get("candidate") or {}).get("recipe") if isinstance(plan.get("candidate"), dict) else plan.get("candidate")),
+               why=plan.get("why") or plan.get("reason"), inputs={"a_id": req.track_a_id, "now": req.now},
+               result={k: plan.get(k) for k in list(plan)[:12] if k != "exit_options"})
     return plan
 
 
