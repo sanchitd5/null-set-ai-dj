@@ -1,0 +1,132 @@
+/* NULL-BOT SUPERMOVE takeover (mascot.js). One class, .nul-sm-on, runs the
+   whole show; mascot.js sets the timing once per takeover:
+     --sm-fx / --sm-fy / --sm-fs  top-bar mascot offset from the centre + scale
+     --sm-fly   fly-in length       --sm-hit   start -> the hit (the cue's audio time)
+     --sm-out   start -> fly-back   --sm-outd  fly-back length
+     --sm-beat  one beat as heard   --sm-phase delay that puts beat loops on the hit
+     --sm-glow  the incoming deck's colour
+   Transforms and opacity only; pointer-events none everywhere, so every
+   control under it keeps working. */
+
+.nul-super {
+  position: fixed; inset: 0; z-index: 880; pointer-events: none;
+  visibility: hidden;                         /* hidden, not display:none: mascot.js measures the bot */
+  --sm-fx: 0px; --sm-fy: -40vh; --sm-fs: 0.1; --sm-glow: var(--ai);
+  --sm-fly: 550ms; --sm-hit: 1500ms; --sm-out: 2900ms; --sm-outd: 500ms;
+  --sm-beat: 480ms; --sm-phase: 0ms;
+}
+.nul-super * { pointer-events: none; }
+.nul-super.nul-sm-on { visibility: visible; }
+
+.nul-sm-scrim {
+  position: absolute; inset: 0; opacity: 0;
+  background: radial-gradient(circle at 50% 50%, color-mix(in srgb, var(--sm-glow) 16%, transparent) 0,
+              rgba(0, 0, 0, 0.42) 38%, rgba(0, 0, 0, 0.18) 100%);
+}
+.nul-sm-bot {
+  position: absolute; left: 50%; top: 50%;
+  width: min(44vmin, 380px); height: min(44vmin, 380px);
+  margin: calc(min(44vmin, 380px) / -2) 0 0 calc(min(44vmin, 380px) / -2);
+  color: var(--ai); will-change: transform;
+}
+.nul-sm-pop, .nul-sm-halo, .nul-sm-ring { position: absolute; inset: 0; }
+.nul-sm-pop svg { width: 100%; height: 100%; overflow: visible; }
+.nul-sm-halo {
+  inset: -30%; border-radius: 50%; opacity: 0;
+  background: radial-gradient(circle, color-mix(in srgb, var(--sm-glow) 55%, transparent) 0, transparent 62%);
+}
+.nul-sm-ring { border-radius: 50%; border: 6px solid var(--sm-glow); opacity: 0; }
+.nul-sm-cap {
+  position: absolute; left: 50%; top: 100%; transform: translateX(-50%);
+  white-space: nowrap; font: 800 clamp(22px, 5vmin, 48px) var(--mono, monospace); letter-spacing: 0.08em;
+  color: #fff; text-shadow: 0 0 14px var(--sm-glow), 0 0 3px var(--sm-glow); opacity: 0;
+}
+/* the big NULL: phones and band always on, the "!" waits for the hit */
+.nul-super .nul-phones, .nul-super .nul-band { opacity: 1; }
+.nul-super .nul-phones { fill: var(--sm-glow); transform-box: fill-box; transform-origin: center; }
+.nul-super .nul-bang { opacity: 0; transform-box: fill-box; transform-origin: center; }
+
+/* the top-bar NULL is "away" while the big one is out */
+.nul-mascot.nul-away svg { opacity: 0; transition: opacity 0.15s ease; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .nul-sm-on .nul-sm-scrim {
+    animation: nul-sm-fade-in var(--sm-fly) ease-out both, nul-sm-fade-out var(--sm-outd) ease-in var(--sm-out) forwards;
+  }
+  /* fly: top-bar spot -> centre (overshoot, settle), then back */
+  .nul-sm-on .nul-sm-bot {
+    animation: nul-sm-in var(--sm-fly) cubic-bezier(0.2, 0.9, 0.3, 1.15) both,
+               nul-sm-back var(--sm-outd) cubic-bezier(0.6, 0, 0.8, 0.4) var(--sm-out) forwards;
+  }
+  /* the hit: one big pop exactly on the cue */
+  .nul-sm-on .nul-sm-pop { animation: nul-sm-pop 420ms cubic-bezier(0.2, 1.6, 0.4, 1) var(--sm-hit) both; }
+  .nul-sm-on .nul-sm-halo {
+    animation: nul-sm-fade-in var(--sm-fly) ease-out both, nul-sm-throb var(--sm-beat) ease-out var(--sm-phase) infinite;
+  }
+  .nul-sm-on .nul-sm-ring { animation: nul-sm-ring 700ms ease-out var(--sm-hit) both; }
+  .nul-sm-on .nul-sm-cap { animation: nul-sm-cap 380ms cubic-bezier(0.2, 1.5, 0.4, 1) var(--sm-hit) both; }
+  /* dance on the beat: head nods, phones bounce, eyes flash */
+  .nul-sm-on .nul-head { animation: nul-sm-nod var(--sm-beat) ease-out var(--sm-phase) infinite; }
+  .nul-sm-on .nul-phones { animation: nul-sm-bounce var(--sm-beat) ease-out var(--sm-phase) infinite; }
+  .nul-sm-on .nul-eye { animation: nul-sm-flash var(--sm-beat) steps(1, end) var(--sm-phase) infinite; }
+  .nul-sm-on .nul-mouth { animation: nul-sm-mouth var(--sm-beat) ease-out var(--sm-phase) infinite; }
+  .nul-sm-on .nul-bang { animation: nul-sm-bang 900ms ease-out var(--sm-hit) both; }
+}
+
+@keyframes nul-sm-in {
+  0%   { transform: translate(var(--sm-fx), var(--sm-fy)) scale(var(--sm-fs)) rotate(-12deg); }
+  75%  { transform: translate(0, 0) scale(1.06) rotate(3deg); }
+  100% { transform: translate(0, 0) scale(1) rotate(0); }
+}
+@keyframes nul-sm-back {
+  0%   { transform: translate(0, 0) scale(1) rotate(0); }
+  20%  { transform: translate(0, 2%) scale(1.05) rotate(-3deg); }
+  100% { transform: translate(var(--sm-fx), var(--sm-fy)) scale(var(--sm-fs)) rotate(10deg); }
+}
+@keyframes nul-sm-pop {        /* biggest on the hit itself, easing back */
+  0%   { transform: scale(1.3) rotate(-5deg); }
+  100% { transform: scale(1) rotate(0); }
+}
+/* beat loops: progress 0 = the beat (down / big), easing back up */
+@keyframes nul-sm-nod {
+  0%   { transform: translateY(2.2px) rotate(-5deg); }
+  55%  { transform: translateY(-0.6px) rotate(3deg); }
+  100% { transform: translateY(2.2px) rotate(-5deg); }
+}
+@keyframes nul-sm-bounce {
+  0%   { transform: translateY(1.6px) scaleY(0.82); }
+  50%  { transform: translateY(-1.2px) scaleY(1.08); }
+  100% { transform: translateY(1.6px) scaleY(0.82); }
+}
+@keyframes nul-sm-flash { 0% { transform: scale(1.45); } 30% { transform: scale(1); } }
+@keyframes nul-sm-mouth { 0% { transform: scale(1.4, 2.6); } 60%, 100% { transform: scale(1.2, 1); } }
+@keyframes nul-sm-throb { 0% { transform: scale(1.08); } 100% { transform: scale(0.94); } }
+@keyframes nul-sm-ring {
+  0%   { transform: scale(0.5); opacity: 0.95; }
+  100% { transform: scale(2.3); opacity: 0; }
+}
+@keyframes nul-sm-cap {
+  0%   { transform: translateX(-50%) scale(2.2); opacity: 0; }
+  100% { transform: translateX(-50%) scale(1); opacity: 1; }
+}
+@keyframes nul-sm-bang {
+  0%   { transform: scale(0.4); opacity: 0; }
+  25%  { transform: scale(1.6); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+@keyframes nul-sm-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes nul-sm-fade-out { from { opacity: 1; } to { opacity: 0; } }
+
+/* reduced motion: a still, centred NULL badge that fades in and out */
+@media (prefers-reduced-motion: reduce) {
+  .nul-sm-bot {
+    width: min(22vmin, 180px); height: min(22vmin, 180px);
+    margin: calc(min(22vmin, 180px) / -2) 0 0 calc(min(22vmin, 180px) / -2);
+  }
+  .nul-sm-halo { opacity: 0.8; }
+  .nul-sm-cap { opacity: 1; font-size: clamp(16px, 3vmin, 28px); }
+  .nul-super .nul-bang { opacity: 1; }
+  .nul-sm-on .nul-sm-bot, .nul-sm-on .nul-sm-scrim {
+    animation: nul-sm-fade-in 300ms ease-out both, nul-sm-fade-out 400ms ease-in var(--sm-out) forwards;
+  }
+}
