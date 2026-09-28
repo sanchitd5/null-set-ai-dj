@@ -152,7 +152,7 @@ def call(fn: Callable[[dict], T]) -> T:
 
 def wait_and_call(fn: Callable[[dict], T], max_wait_s: float = MAX_COOLDOWN_S,
                   on_wait: Callable[[float], None] = lambda until: None,
-                  sleep: Callable[[float], None] = time.sleep) -> T:
+                  sleep: Optional[Callable[[float], None]] = None) -> T:
     """call(), but ride out cooldowns (for background jobs): wait until the circuit
     closes, then retry, up to max_wait_s in total."""
     deadline = time.time() + max_wait_s
@@ -163,4 +163,4 @@ def wait_and_call(fn: Callable[[dict], T], max_wait_s: float = MAX_COOLDOWN_S,
             if c.until > deadline:
                 raise
             on_wait(c.until)
-            sleep(max(1.0, c.until - time.time()))
+            (sleep or time.sleep)(max(1.0, c.until - time.time()))

@@ -366,7 +366,6 @@ def download_to_dir(url: str, output_dir: Path, progress: Optional[Progress] = N
     progress(stage, percent) is called from the download thread: percent is a
     real byte ratio while downloading, None (indeterminate) for search / convert steps.
     """
-    background = progress is not None           # a job (with progress) waits out a YouTube pause
     progress = progress or _noop_progress
     output_dir.mkdir(parents=True, exist_ok=True)
     if _YTMSEARCH_RE.match(url):
@@ -402,6 +401,7 @@ def _words_of(query: str) -> list[str]:
 def _ytdlp(url: str, output_dir: Path, progress: Optional[Progress] = None,
            words: Optional[list[str]] = None,
            song: Optional[tuple[list[str], list[str], str]] = None) -> list[Path]:
+    background = progress is not None           # a job (with progress) waits out a YouTube pause
     progress = progress or _noop_progress
 
     def _dl_hook(d: dict) -> None:

@@ -107,3 +107,27 @@ def test_bot_errors_are_reported_once_not_per_attempt(capsys):
         g.call(blocked)
     err = capsys.readouterr().err
     assert "Sign in to confirm" not in err and err.count("[yt_guard]") == 1 and "paused until" in err
+
+
+@pytest.mark.parametrize("with_progress", [False, True])
+def test_download_to_dir_runs_end_to_end(tmp_path, monkeypatch, with_progress):
+    """The real download path (no network): both the request path and the job path."""
+    from app.ui import download_service as ds
+    if ds._yt_dlp is None:
+        pytest.skip("yt-dlp not installed")
+
+    class FakeYDL:
+        def __init__(self, opts):
+            self.opts = opts
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            return False
+        def download(self, urls):
+            (tmp_path / "Artist - Song.flac").write_bytes(b"x")
+    monkeypatch.setattr(ds._yt_dlp, "YoutubeDL", FakeYDL)
+    monkeypatch.setattr(ds, "_reject_non_tracks", lambda files, check_live=True: files)
+    seen = []
+    out = ds.download_to_dir("https://www.youtube.com/watch?v=aqu4ezLQEUA", tmp_path,
+                             progress=(lambda st, pct=None: seen.append(st)) if with_progress else None)
+    assert [p.name for p in out] == ["Artist - Song.flac"]
