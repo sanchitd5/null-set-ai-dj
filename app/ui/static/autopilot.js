@@ -2069,7 +2069,10 @@ var autopilotCore = (function () {
     // (multi-BPM stem sets, cached on the server), so the blend keeps B's key.
     {
       const oa0 = window.decks && window.decks[activeDeck], sd0 = window.decks && window.decks[stagingDeck()];
-      if (oa0 && sd0 && oa0.bpm > 0 && sd0.bpm > 0 && sd0.useTempoStems) {
+      // Never on a deck already reaching the master: a stem swap there is an instant
+      // tempo jump (chanel on B jumped to 122.5 BPM 10 s after landing).
+      const live0 = sd0 && (sd0 === oa0 || (sd0.onMaster && sd0.onMaster()));
+      if (oa0 && sd0 && !live0 && oa0.bpm > 0 && sd0.bpm > 0 && sd0.useTempoStems) {
         const aEff0 = oa0.bpm * oa0._playbackRate();
         const m0 = [1, 2, 0.5].reduce((b, m) => (Math.abs(aEff0 / (sd0.bpm * m) - 1) < Math.abs(aEff0 / (sd0.bpm * b) - 1) ? m : b));
         const gap0 = Math.abs(aEff0 / (sd0.bpm * m0) - 1);

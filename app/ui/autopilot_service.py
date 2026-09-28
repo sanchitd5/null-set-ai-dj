@@ -1184,6 +1184,26 @@ def suggest_next_tracks(
         suggestions = _relaxed_only(suggestions, data.get("current_profile"))
     heard = {_bare_title(str(x).split(" - ", 1)[-1]) for x in (earlier_sets or [])}
     fresh = [x for x in suggestions if _is_fav(x) or _bare_title(x.get("title", "")) not in heard]
+    # Every pick was an earlier-set song: falling back to them replayed the same
+    # song set after set ("chanel x a new error" every set). One retry with them
+    # rejected; only if that finds nothing new does a repeat play (never empty).
+    if suggestions and not fresh:
+        names = "; ".join(f"{x.get('artist', '')} - {x.get('title', '')}" for x in suggestions)[:400]
+        print(f"[suggest] all picks from earlier sets: {names}", flush=True)
+        try:
+            data3 = _extract_json(chat_raw(system_msg, user_msg + (
+                f"\n\nREJECTED - played in earlier sets: {names}. Suggest different songs."),
+                temperature=0.6, max_tokens=mt, priority=prio))
+            data3.setdefault("current_genre", data.get("current_genre"))
+            data3.setdefault("current_era", data.get("current_era"))
+            retry = _filter_suggestions(
+                data3, history, occasion_set=bool((occasion or "").strip()) and not lead_to,
+                current_key=camelot, allow_genre_change=bool(lead_to))
+            retry = [x for x in retry if _bare_title(x.get("title", "")) != seed]
+            real3, _ = _verify_picks(retry)
+            fresh = [x for x in real3 if _bare_title(x.get("title", "")) not in heard]
+        except ValueError as exc:
+            print(f"[suggest] earlier-set retry failed: {exc}", flush=True)
     suggestions = artist_spacing(fresh or suggestions, (history_display or history) + list(queue_display or []))[:n]
     if meta is not None:  # caller wants the model's read of the CURRENT track too
         meta["current_profile"] = data.get("current_profile") or {}
