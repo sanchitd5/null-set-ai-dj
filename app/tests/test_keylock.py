@@ -129,6 +129,13 @@ def test_stem_liveness_js():
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_merge_silence_js():
+    res = subprocess.run([shutil.which("node"), str(Path(__file__).with_name("merge_silence_check.js"))],
+                         capture_output=True, text=True, timeout=60)
+    assert res.returncode == 0, res.stderr or res.stdout
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
 def test_visuals_js():
     res = subprocess.run([shutil.which("node"), str(Path(__file__).with_name("visuals_check.js"))],
                          capture_output=True, text=True, timeout=30)

@@ -646,16 +646,22 @@ var autopilotCore = (function () {
     // SONG MERGE (user): for M bars each stem plays from one deck (e.g. A drums +
     // A bass + B vox + B synth), the combo the algorithm + silent ear picked when
     // B was booked; then B takes every stem on the line, 8-bar crossfade.
+    // The crossfader runs stem-moves' mergeFader, the curve the booking checked
+    // (rawFader: B-ward units -> this direction's fader values).
+    const runMergeFader = (sm, M, barS) => {
+      for (const s of sm.core.rawFader(sm.core.mergeFader(M), out)) {
+        if (s.bar === 0) { rampParam(xfEl, s.from, s.to, s.bars * barS * 1000); continue; }
+        later(Math.max(0, (xT0 + s.bar * barS - audioCtx.currentTime) * 1000), () => rampParam(xfEl, s.from, s.to, s.bars * barS * 1000));
+      }
+    };
     {
       const smM = window.stemMoves, odM = window.decks && window.decks[out], idM = window.decks && window.decks[inn];
       const mp = idM && idM._mergePlan;
       if (recipe === "Stem Merge" && smM && smM.mergeTransition && mp && odM && kind !== "cut") {
         ["low", "mid", "high"].forEach((b) => { setRange(eqEl(out, b), 0); setRange(eqEl(inn, b), 0); });
-        const secs = smM.mergeTransition(out, inn, xT0, mp.entry, mp.M, mp.pick);
+        const secs = smM.mergeTransition(out, inn, xT0, mp.entry, mp.M, mp.pick, undefined, mp.ranked);
         if (secs > 0) {
-          const barS = 240 / (odM.bpm || 128) / odM._playbackRate();
-          rampParam(xfEl, fromXf, 0, 2 * barS * 1000);
-          later(Math.max(0, (xT0 + mp.M * barS - audioCtx.currentTime) * 1000), () => rampParam(xfEl, 0, toXf, 8 * barS * 1000));
+          runMergeFader(smM, mp.M, 240 / (odM.bpm || 128) / odM._playbackRate());
           return secs * 1000;
         }
       }
@@ -672,9 +678,7 @@ var autopilotCore = (function () {
         ["low", "mid", "high"].forEach((b) => { setRange(eqEl(out, b), 0); setRange(eqEl(inn, b), 0); });
         const secs = sm1.mashupTransition(out, inn, xT0, mt.entry, mt.M, MASHUP_VOX, mt.why);
         if (secs > 0) {
-          const barS = 240 / (od1.bpm || 128) / od1._playbackRate();
-          rampParam(xfEl, fromXf, 0, 2 * barS * 1000);                     // B's voice fades in with the fader
-          later(Math.max(0, (xT0 + mt.M * barS - audioCtx.currentTime) * 1000), () => rampParam(xfEl, 0, toXf, 8 * barS * 1000));
+          runMergeFader(sm1, mt.M, 240 / (od1.bpm || 128) / od1._playbackRate());   // B's voice fades in with the fader
           return secs * 1000;
         }
       }
