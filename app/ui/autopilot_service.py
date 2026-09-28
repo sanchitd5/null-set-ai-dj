@@ -717,6 +717,16 @@ def chat_raw(
 CHAT_STOPS = ["\nUSER:", "\nASSISTANT", "ASSISTANT's RULE", "<end_of_turn>"]
 
 
+MAX_SUGGEST_TOKENS = 3000
+
+
+def cut_off(raw: str) -> bool:
+    """True when a reply opens a JSON object that never closes: the model hit max_tokens."""
+    text = re.sub(r"<think>.*?</think>", "", raw or "", flags=re.S)
+    start = text.find("{")
+    return start != -1 and _balanced_end(text, start) is None
+
+
 def _chat_call(system, user, temperature, timeout, model, max_tokens) -> str:
     """The HTTP call itself. Supports openai v0.x/3.x (ChatCompletion.create)
     and v1.x/v2.x (OpenAI client). response_format may be ignored by the
@@ -866,11 +876,12 @@ def suggest_next_tracks(
         return time.monotonic() - t_start < SUGGEST_BUDGET_S - RETRY_COST_S
 
     data = None
+    mt = 1100 if lead_to else 900   # lead JSON is longer; grows when a reply is cut off
     for attempt in range(3):  # two retries when the JSON is past repair (gemma-4 slips now and then)
         # 0.75: song picks should vary between runs (0.5 replayed the same set from
         # the same seed); the transition PLAN stays at a low temperature.
         raw = chat_raw(system_msg, user_msg, temperature=SUGGEST_TEMPERATURE if attempt == 0 else 0.4,
-                       max_tokens=1100 if lead_to else 900, priority=prio)  # lead JSON is longer
+                       max_tokens=mt, priority=prio)
         try:
             data = _extract_json(raw)
             if _parroted(data, title):
@@ -879,7 +890,13 @@ def suggest_next_tracks(
         except ValueError as exc:  # JSONDecodeError is a ValueError
             if attempt >= 2:
                 raise
-            print(f"[suggest] bad JSON (attempt {attempt + 1}/3), retrying: {exc}", flush=True)
+            # Cut off by max_tokens (Qwen3-Omni writes longer reasons): the same limit
+            # would cut the retry at the same place, so give it room instead.
+            cut = cut_off(raw)
+            if cut:
+                mt = min(MAX_SUGGEST_TOKENS, mt * 2)
+            print(f"[suggest] bad JSON (attempt {attempt + 1}/3), retrying"
+                  f"{f' with max_tokens={mt} (reply was cut off)' if cut else ''}: {exc}", flush=True)
     if lead_to:
         data["steering"] = "move"  # the user's destination: no continuity / key filters against it
     suggestions = _filter_suggestions(
@@ -899,7 +916,7 @@ def suggest_next_tracks(
                      f"{cur_era}, or a crossover song one step away that still belongs to it.")
         try:
             data2 = _extract_json(chat_raw(system_msg, retry_msg, temperature=0.4,
-                                           max_tokens=1100 if lead_to else 900, priority=prio))
+                                           max_tokens=mt, priority=prio))
             data2.setdefault("current_genre", data.get("current_genre"))
             data2.setdefault("current_era", data.get("current_era"))
             retry = _filter_suggestions(
@@ -928,7 +945,7 @@ def suggest_next_tracks(
                          "Keep the same mood, vocals and energy as the current song.")
             try:
                 data2 = _extract_json(chat_raw(system_msg, retry_msg, temperature=0.4,
-                                               max_tokens=1100 if lead_to else 900, priority=prio))
+                                               max_tokens=mt, priority=prio))
                 data2.setdefault("current_genre", data.get("current_genre"))
                 data2.setdefault("current_era", data.get("current_era"))
                 retry = _filter_suggestions(
@@ -956,7 +973,7 @@ def suggest_next_tracks(
                      "Suggest real released songs you are sure of, credited to their real artist.")
         try:
             data2 = _extract_json(chat_raw(system_msg, retry_msg, temperature=0.4,
-                                           max_tokens=1100 if lead_to else 900, priority=prio))
+                                           max_tokens=mt, priority=prio))
             data2.setdefault("current_genre", data.get("current_genre"))
             data2.setdefault("current_era", data.get("current_era"))
             retry = _filter_suggestions(

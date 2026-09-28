@@ -97,3 +97,23 @@ def test_lookahead_never_piles_up():
         with gate.slot(g.LOOKAHEAD, wait_timeout=1):
             pass
     release.set(); t.join(); waiter.join()
+
+
+def test_suggest_cut_off_reply_retries_with_more_tokens(monkeypatch):
+    asked = []
+
+    def model(*a, **k):
+        asked.append(k["max_tokens"])
+        if k["max_tokens"] < 1800:                                   # too verbose to fit: cut mid-object
+            return '{"current_genre": "house", "suggestions": [{"artist": "A", "reason": "long reason that goes on'
+        return '{"current_genre": "house", "suggestions": []}'
+    monkeypatch.setattr(svc, "chat_raw", model)
+    assert svc.suggest_next_tracks("T", "A", 124.0, "8A", 200.0, 0.7, "", []) == []
+    assert asked == [900, 1800]                                        # not 900, 900, 900 -> 500
+
+
+def test_cut_off_detection():
+    assert svc.cut_off('{"a": [1, 2')
+    assert not svc.cut_off('{"a": 1}')
+    assert not svc.cut_off("no json at all")
+    assert not svc.cut_off('<think>{"half"</think>{"a": 1}')
