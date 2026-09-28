@@ -421,11 +421,11 @@ _USER_TEMPLATE = (
     "track_profile stays close to it. Stay in this genre neighbourhood AND within one decade of this "
     "song's era unless the occasion demands a shift.\n"
     "Around this song (never suggest any of these; nothing already played this set either): {history}\n"
-    "Artists heard in the last few songs (pick someone else unless it is a deliberate "
-    "same-artist moment early in the set, or one of the listener's favourite artists below): {recent_artists}\n"
+    "Artists heard in the last few songs (pick someone else: never the same artist two songs in a row, "
+    "and no artist more than twice in any 6 songs, favourites included): {recent_artists}\n"
     "The listener's FAVOURITE artists (they come back to them set after set): {favourite_artists}. "
-    "Their songs are WELCOME whenever they fit the vibe - other tracks, remixes, edits, collaborations - "
-    "never avoid them for having been heard before; just don't repeat this set's history.\n"
+    "Their songs are WELCOME when they fit the vibe and the artist has not played in the last 2 songs - "
+    "never avoid them for having been heard in earlier sets. Every suggestion must be by a DIFFERENT artist.\n"
     "Played in the listener's EARLIER sets - they have heard these recently, so prefer fresh "
     "songs over them (only reuse one if it is clearly the perfect fit; favourite artists' songs "
     "are exempt): {earlier_sets}\n"
@@ -860,6 +860,48 @@ def energy_line(avg: float, measured: int | None, relaxed: bool = False) -> str:
             f"MUST be {lo}-{hi}: no swings between low and high energy songs")
 
 
+ARTIST_GAP_SONGS = 2         # an artist may not come back within this many songs (played + queued)
+ARTIST_MAX_IN_WINDOW = 2     # ... nor more than this often in ARTIST_WINDOW songs, favourites included
+ARTIST_WINDOW = 6
+
+
+def _artists_of(name_or_pick) -> set:
+    from app.ui.set_memory import artist_key
+    from app.ui.track_identity import credited_artists
+
+    if isinstance(name_or_pick, dict):
+        artist, title = name_or_pick.get("artist", ""), name_or_pick.get("title", "")
+        names = [artist] + credited_artists(f"{artist} - {title}")
+    else:
+        names = credited_artists(str(name_or_pick))
+    return {k for k in (artist_key(n) for n in names if n) if k}
+
+
+def artist_spacing(picks: list, recent: list) -> list:
+    """Artist variety, enforced (the prompt alone let every pick be Fred again..):
+    no artist from the last ARTIST_GAP_SONGS songs (played + queued), none past
+    ARTIST_MAX_IN_WINDOW in the last ARTIST_WINDOW, one pick per artist. Never empty
+    when picks exist: if everything breaks the rule, the least-repeated pick is kept."""
+    recent = [r for r in (recent or []) if r][-ARTIST_WINDOW:]
+    near = set().union(*[_artists_of(r) for r in recent[-ARTIST_GAP_SONGS:]]) if recent else set()
+    counts: dict = {}
+    for r in recent:
+        for a in _artists_of(r):
+            counts[a] = counts.get(a, 0) + 1
+    out, used = [], set()
+    for x in picks:
+        arts = _artists_of(x)
+        if arts & near or arts & used or any(counts.get(a, 0) >= ARTIST_MAX_IN_WINDOW for a in arts):
+            continue
+        out.append(x)
+        used |= arts
+    if out or not picks:
+        return out
+    best = min(picks, key=lambda x: sum(counts.get(a, 0) for a in _artists_of(x)))
+    print(f"WARNING [suggest] every pick repeats a recent artist; kept {best.get('artist', '')} - {best.get('title', '')}", flush=True)
+    return [best]
+
+
 def _chat_call(system, user, temperature, timeout, model, max_tokens) -> str:
     """The HTTP call itself. Supports openai v0.x/3.x (ChatCompletion.create)
     and v1.x/v2.x (OpenAI client). response_format may be ignored by the
@@ -1148,7 +1190,7 @@ def suggest_next_tracks(
         suggestions = _relaxed_only(suggestions, data.get("current_profile"))
     heard = {_bare_title(str(x).split(" - ", 1)[-1]) for x in (earlier_sets or [])}
     fresh = [x for x in suggestions if _is_fav(x) or _bare_title(x.get("title", "")) not in heard]
-    suggestions = (fresh or suggestions)[:n]
+    suggestions = artist_spacing(fresh or suggestions, (history_display or history) + list(queue_display or []))[:n]
     if meta is not None:  # caller wants the model's read of the CURRENT track too
         meta["current_profile"] = data.get("current_profile") or {}
         meta["current_genre"] = data.get("current_genre") or ""

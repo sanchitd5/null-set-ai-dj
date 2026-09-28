@@ -294,3 +294,15 @@ def test_slim_suggest_reply_still_parses_and_fills_display_fields(monkeypatch):
     s = out[0]
     for field in ("mix_moment", "vibe_link", "energy_delta", "track_profile", "search_query", "reason"):
         assert field in s  # console (autopilot.js) still reads these
+
+
+def test_artist_spacing_breaks_a_one_artist_loop():
+    fred = lambda t: {"artist": "Fred again..", "title": t}
+    picks = [fred("Delilah"), fred("Marea"), {"artist": "Four Tet", "title": "Baby"}, {"artist": "Ben Böhmer", "title": "Beyond Beliefs"},
+             {"artist": "Four Tet", "title": "Two Thousand"}]
+    out = svc.artist_spacing(picks, ["Fred again.. - Kyle", "Bicep - Glue"])
+    assert [p["title"] for p in out] == ["Baby", "Beyond Beliefs"]            # no Fred (just played), one Four Tet
+    assert svc.artist_spacing(picks, ["X - a", "Y - b", "Z - c"])[0]["title"] == "Delilah"   # Fred ok after a gap...
+    many = ["Fred again.. - a", "Q - x", "Fred again.. - b", "R - y", "S - z", "T - w"]
+    assert all(p["artist"] != "Fred again.." for p in svc.artist_spacing(picks, many))  # ...not a 3rd time in 6
+    assert svc.artist_spacing([fred("Delilah")], ["Fred again.. - Kyle"]) == [fred("Delilah")]   # never empty

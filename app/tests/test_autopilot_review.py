@@ -22,7 +22,7 @@ def _capture(monkeypatch, reply):
 
 
 def _sug(title, key, bpm=124, steer=None):
-    return {"artist": "X", "title": title, "expected_key": key, "expected_bpm": bpm}
+    return {"artist": f"Artist {title}", "title": title, "expected_key": key, "expected_bpm": bpm}   # one artist each: picks are spaced by artist
 
 
 # --- 6 loudness -------------------------------------------------------------
