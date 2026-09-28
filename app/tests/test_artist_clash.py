@@ -19,7 +19,7 @@ def test_filter_suggestions_drops_the_clashing_artist():
         {"artist": "Karan Aujla", "title": "Softly", "occasion_fit": 8},
     ]}
     kept = _filter_suggestions(data, [], current_artist="Sidhu Moose Wala")
-    assert kept and kept[0].get("rejected_reason", "").startswith("scene clash")
+    assert kept == []  # no last-resort clash pick: the caller re-asks
 
 
 def test_filter_suggestions_keeps_it_for_other_artists():
@@ -35,4 +35,4 @@ def test_artist_clash_applies_even_while_steering():
         {"artist": "Karan Aujla", "title": "Softly", "occasion_fit": 8},
     ]}
     kept = _filter_suggestions(data, [], occasion_set=True, current_artist="Sidhu Moose Wala")
-    assert kept and kept[0].get("rejected_reason", "").startswith("scene clash")
+    assert kept == []

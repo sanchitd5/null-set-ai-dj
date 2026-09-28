@@ -189,7 +189,7 @@ var autopilotCore = (function () {
   const LOW_ENERGY_SET_MAX = 4;    // cur at or below this: the set is already playing low (sufi, relaxing) -- warmup's "build" assumption doesn't apply, don't force it up
   // o: {relaxed, force, songs (played so far), rawDelta (raw_b - raw_a)}
   function energyStepOk(cur, nxt, o = {}) {
-    const step = nxt - cur, lim = (o.relaxed ? 1 : 2) + (o.force ? 1 : 0);
+    const step = nxt - cur, lim = (o.relaxed ? 1 : 2) + (o.force && step > 0 ? 1 : 0); // force widens rises only, never falls
     if (o.rawDelta != null && Math.abs(o.rawDelta) < ENERGY_MIN_RAW) {
       return { ok: true, step, why: `energy ${cur} -> ${nxt} (measured almost the same)` };
     }
@@ -205,6 +205,15 @@ var autopilotCore = (function () {
     if (!o.force && arc === "build" && step < -1) return { ok: false, step, why: `energy falls ${cur} -> ${nxt} while the set is building` };
     if (!o.force && arc === "cool" && step > 1) return { ok: false, step, why: `energy rises ${cur} -> ${nxt} while the set is cooling down` };
     return { ok: true, step, why: `energy ${cur} -> ${nxt}` };
+  }
+
+  // HYBRID window class by measured energy. Very low energy (<= 3) rides MID, not LONG:
+  // an E2 song in a fading set ran 283 s with no exit (015929).
+  function hybridWindowKey(energy) {
+    if (energy == null) return "medium";
+    if (energy >= 7) return "quick";
+    if (energy <= 3) return "medium";
+    return energy <= 5 ? "long" : "medium";
   }
 
   // A background job's final answer (app/ui/bg_jobs.py: the silent ear's preplan /
@@ -227,7 +236,7 @@ var autopilotCore = (function () {
     }
     return d || null;
   }
-  const api = { awaitJob, energyStepOk, highSpans, quantileLinear, median, exitPastHigh, learnedRecipe, vocalRecipe, stemBlendBars, stemBlendFader, phraseWaitS, introBars, FADER_PARK_BARS, homePlan, maskedGlideBars, maskedDropAt, HOME_DROP_PCT, LADDER_STEP_PCT };
+  const api = { awaitJob, energyStepOk, hybridWindowKey, highSpans, quantileLinear, median, exitPastHigh, learnedRecipe, vocalRecipe, stemBlendBars, stemBlendFader, phraseWaitS, introBars, FADER_PARK_BARS, homePlan, maskedGlideBars, maskedDropAt, HOME_DROP_PCT, LADDER_STEP_PCT };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   return api;
 })();
@@ -2534,9 +2543,7 @@ var autopilotCore = (function () {
     if (mode === "long") return WINDOWS.long;
     if (mode === "quick") return weak ? WINDOWS.bail : WINDOWS.quick;
     if (weak) return WINDOWS.bail;
-    if (currentEnergy != null && currentEnergy >= 7) return WINDOWS.quick;
-    if (currentEnergy != null && currentEnergy <= 5) return WINDOWS.long;
-    return WINDOWS.medium;
+    return WINDOWS[autopilotCore.hybridWindowKey(currentEnergy)];
   }
 
   // ── live mashup ("A x B") ─────────────────────────────────────────────────

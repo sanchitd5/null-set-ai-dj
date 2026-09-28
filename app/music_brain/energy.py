@@ -152,7 +152,9 @@ def next_ok(cur: int, nxt: int, relaxed: bool = False, force: bool = False,
     > 0.85 cools. raw_delta: raw_b - raw_a; under ENERGY_MIN_RAW the songs measure
     the same, whatever the levels say."""
     step = nxt - cur
-    lim = (RELAXED_STEP if relaxed else MAX_STEP) + (1 if force else 0)
+    base = RELAXED_STEP if relaxed else MAX_STEP
+    # the last-round force only widens RISES: widening falls let 9 > 7 > 4 > 2 slide through
+    lim = base + (1 if force and step > 0 else 0)
     if raw_delta is not None and abs(raw_delta) < ENERGY_MIN_RAW:
         return {"ok": True, "step": step, "why": f"energy {cur} -> {nxt} (measured almost the same)"}
     if songs is not None:
