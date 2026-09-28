@@ -361,6 +361,12 @@ def test_artist_collab_x_is_one_song_mashup_x_is_layers():
         (540.0, "Fred again.. x Skrillex x Four Tet - Baby again")]
 
 
+def test_numbered_tracklist_lines_keep_their_songs():
+    e = sl.parse_tracklist("1. 00:00 Fred again.. - Kyle\n2) [03:05] Four Tet - Baby\n10. 1:02:10 Daft Punk - Touch")
+    assert [(x.start, x.title) for x in e] == [(0.0, "Fred again.. - Kyle"), (185.0, "Four Tet - Baby"),
+                                               (3730.0, "Daft Punk - Touch")]
+
+
 def test_accented_titles_find_their_ascii_files_and_videos(tmp_path):
     d = tmp_path / "songs"
     d.mkdir()

@@ -87,7 +87,8 @@ class TrackEntry:
     path: Optional[str] = None   # local audio once fetched
 
 
-_TS = re.compile(r"^\s*[\[(]?((?:\d{1,2}:)?\d{1,2}:\d{2})[\])]?\s*(?:[-–—.|)]\s*)?(.+?)\s*$")
+# an optional track number first ("12. 03:05 Artist - Title", "03) [1:02:10] ...")
+_TS = re.compile(r"^\s*(?:\d{1,3}[.)]\s+)?[\[(]?((?:\d{1,2}:)?\d{1,2}:\d{2})[\])]?\s*(?:[-–—.|)]\s*)?(.+?)\s*$")
 
 
 def _secs(ts: str) -> float:
