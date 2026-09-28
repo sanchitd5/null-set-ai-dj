@@ -722,6 +722,7 @@
 
   let remixUsed = [], lastRemixPhrase = null, busyUntil = 0;
   let holdLoop = null;                          // {start, bars, passes} safety loop
+  let inTransition = false;                     // onTransition() .. follow(): no moves
   let lastFillTransition = -9, transitions = 0;
   let lastLayerTransition = -9;                 // LAYER ledger (one every LAYER_EVERY)
   let layerRun = null;                          // {until (nowS), source, why} while a LAYER plays
@@ -1220,6 +1221,11 @@
   function tick() {
     const d = deck();
     if (!d || !d.playing) return;
+    // The transition owns both decks from onTransition() until follow() hands the
+    // mind the new song: with the plan gone the exit guards are gone too, and a
+    // hook drop / breakdown here cancelled the merge's booked moves on A, a remix
+    // put A's full mix back mid-merge, a strip left A silent under B's fader.
+    if (inTransition) return;
     const pos = d._currentPosition();
     if (layerRun) {
       // LAYER running: A unwinds on its own EQ plan; no hold loop, no moves.
@@ -1324,7 +1330,7 @@
 
   // -- public API (called by autopilot.js) -----------------------------------
   function follow(id) {
-    deckId = id; lastPhrase = null;
+    deckId = id; lastPhrase = null; inTransition = false;
     trackIdx++; holdsUsed = 0; preCleared = false; instantShown = false; plan = null; profileE = null;
     remixUsed = []; lastRemixPhrase = null; busyUntil = 0; holdLoop = null; layerRun = null;
     if (!timer) timer = setInterval(tick, TICK_MS);
@@ -1345,7 +1351,7 @@
   function stop() {
     cancelMoves();
     if (timer) { clearInterval(timer); timer = null; }
-    deckId = null; plan = null; aiMoves = []; aiFor = null; holdLoop = null; layerRun = null;
+    deckId = null; plan = null; aiMoves = []; aiFor = null; holdLoop = null; layerRun = null; inTransition = false;
     renderPlan(null);
     render({ action: "ride", rule: "", why: "idle" });
   }
@@ -1378,6 +1384,7 @@
       if (plan.peakKind === "drop_swap") { if (plan.brake) brakesUsed++; lastSwapBraked = !!plan.brake; }
     }
     cancelMoves(); transitions++; plan = null; aiMoves = []; aiFor = null; holdLoop = null;
+    inTransition = true;
     renderPlan(null);
   }
   // Rule 8: a pre-crossfade drum fill every other transition at most, never on

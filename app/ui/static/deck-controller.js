@@ -679,8 +679,11 @@ class Deck {
     // Ramp from the LOGICAL level (the previous stem state), not param.value:
     // a move booked right after one that hasn't played yet would otherwise
     // start from the stale value (a rap meant to land would fade in).
+    // Moves are booked ~200 ms ahead: cancelScheduledValues(t) would drop a ramp
+    // still running then and snap the stem back to where that ramp started until
+    // t (B's synths vanished for 200 ms before the merge's last line). Hold it.
     const set = (param, from, v) => {
-      param.cancelScheduledValues(t);
+      if (param.cancelAndHoldAtTime) param.cancelAndHoldAtTime(t); else param.cancelScheduledValues(t);
       param.setValueAtTime(from, t);
       param.linearRampToValueAtTime(v, end);
     };
@@ -709,10 +712,14 @@ class Deck {
       next = r.next;
     }
     // from the full mix: stems start where the mix was (1) and the mix hands over
-    // instantly-ish, so the switch itself is inaudible
-    set(this.mixGain.gain, prev ? 0 : 1, 0);
-    for (const n of STEM_NAMES) set(this.stemGain[n].gain, prev ? was(n) : 1, next[n]);
-    set(this.vocalBusGain.gain, was("bus"), next.bus || 0);
+    // instantly-ish, so the switch itself is inaudible. Already in stem mode: only
+    // the stems this move changes are re-ramped; the others keep the ramp an
+    // earlier move gave them (two moves on one bar, A's synths over 8 bars and its
+    // voice over 2, cut the 8-bar fade: the master lost A's synths on the line
+    // while B's were still at 0). stem-moves.js gainsAt models the same.
+    if (!prev) set(this.mixGain.gain, 1, 0);
+    for (const n of STEM_NAMES) if (!prev || next[n] !== was(n)) set(this.stemGain[n].gain, prev ? was(n) : 1, next[n]);
+    if (!prev || (next.bus || 0) !== was("bus")) set(this.vocalBusGain.gain, was("bus"), next.bus || 0);
     this.stemState = next;
     this._emitStem(next);
     return true;
