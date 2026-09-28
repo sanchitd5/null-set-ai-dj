@@ -402,6 +402,26 @@ def test_a_stem_already_playing_when_the_clip_starts_did_not_arrive():
     assert [(o.kind, o.at) for o in obs] == [("bass_swap", 100.0)]    # before: also a stem_intro "at 60"
 
 
+def test_straight_play_through_a_vocal_pause_is_no_resequence():
+    C = sl.SongData("C - Three", 0.0, 124.0, "8A", {"vocals": sl.onset_env(_clicks(60, 3))})
+    # sung 0..12, the song's own 11 s instrumental gap, sung again from 23: played straight
+    vrows = _rows({"vocals": [(0, 0, 10, lambda t: t), (0, 20, 40, lambda t: t)]}, 0, 40, hop=sl.VHOP_S)
+    assert not any(o.kind == "vocal_resequence" for o in sl.vocal_recuts(vrows, [C], "s"))
+    # the same pause, then a line from much later in the song: a real re-cut
+    vrows = _rows({"vocals": [(0, 0, 10, lambda t: t), (0, 20, 30, lambda t: t + 25)]}, 0, 30, hop=sl.VHOP_S)
+    assert any(o.kind == "vocal_resequence" for o in sl.vocal_recuts(vrows, [C], "s"))
+
+
+def test_the_other_chorus_copy_after_a_pause_is_no_resequence():
+    voc = _clicks(60, 5)
+    voc[int(32 * SR):int(40 * SR)] = 0.0                                # instrumental 32..40
+    voc[int(40 * SR):int(52 * SR)] = voc[int(20 * SR):int(32 * SR)]     # chorus 20..32 again at 40..52
+    C = sl.SongData("C - Chorus", 0.0, 124.0, "8A", {"vocals": sl.onset_env(voc)})
+    # set: 24..31 then, after the pause, chorus 2 (40..51) matched to its first copy (20..31)
+    vrows = _rows({"vocals": [(0, 0, 8, lambda t: 24 + t), (0, 16, 28, lambda t: t + 4)]}, 0, 28, hop=sl.VHOP_S)
+    assert not any(o.kind == "vocal_resequence" for o in sl.vocal_recuts(vrows, [C], "s"))
+
+
 def test_a_stuck_position_on_repeating_drums_is_no_loop():
     bar = sl.onset_env(_clicks(2.0, 7))[:-1]
     loop_song = np.tile(bar, 60)                                      # the same bar for two minutes

@@ -647,10 +647,20 @@ def vocal_runs(vrows: List[dict], hop_s: float = VHOP_S, songs: Optional[List[So
         if near and abs(h.src_t - expect) <= JUMP_S:
             c["set_t1"], c["src_t1"] = t, h.src_t
         else:
-            cur[h.track] = {"set_t0": t, "set_t1": t, "src_t0": h.src_t, "src_t1": h.src_t}
+            cur[h.track] = {"set_t0": t, "set_t1": t, "src_t0": h.src_t, "src_t1": h.src_t, "rate": h.rate}
             runs.setdefault(h.track, []).append(cur[h.track])
     # a position held by fewer than MIN_RUN_WINDOWS agreeing windows is a chance match, not a line
     return {k: [r for r in v if r["set_t1"] - r["set_t0"] >= (MIN_RUN_WINDOWS - 1) * hop_s - 1e-6] for k, v in runs.items()}
+
+
+def _vocal_jump(song: SongData, a: dict, b: dict, win_s: float) -> bool:
+    """Does run b start somewhere straight play from run a would not have reached?
+    Straight play resumes at a's end plus the set time between them: a vocal pause
+    in the song (the set runs on, the source runs on) is not a jump, and neither is
+    landing on the other copy of the same chorus."""
+    expect = a["src_t1"] + (b["set_t0"] - a["set_t1"]) * a.get("rate", 1.0)
+    moved = b["src_t0"] < a["src_t0"] - JUMP_S or b["src_t0"] > max(a["src_t1"] + win_s, expect) + 4 * JUMP_S
+    return moved and not same_material(song, b["src_t0"], expect, win_s)
 
 
 def vocal_recuts(vrows: List[dict], songs: List[SongData], set_id: str, win_s: float = VWIN_S,
@@ -667,9 +677,7 @@ def vocal_recuts(vrows: List[dict], songs: List[SongData], set_id: str, win_s: f
             if len(passage) >= 2:
                 lines = [(round(p["src_t0"], 1), round(p["src_t1"] + win_s, 1)) for p in passage]
                 repeats = sum(1 for i in range(1, len(lines)) if abs(lines[i][0] - lines[i - 1][0]) <= JUMP_S)
-                order = [p["src_t0"] for p in passage]
-                resequenced = any(b < a - JUMP_S or b > a + (lines[i][1] - lines[i][0]) + 4 * JUMP_S
-                                  for i, (a, b) in enumerate(zip(order, order[1:])))
+                resequenced = any(_vocal_jump(songs[tr], p, q, win_s) for p, q in zip(passage, passage[1:]))
                 detail = {"set_span": [passage[0]["set_t0"], passage[-1]["set_t1"] + win_s], "source_lines": lines}
                 if songs[tr].lyrics:                  # the new lyric the DJ built, in the song's own words
                     from app.music_brain.lyrics import words_between
