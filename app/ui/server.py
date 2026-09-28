@@ -924,6 +924,41 @@ def get_session_log(session: Optional[str] = None, limit: int = 500):
             "summary": session_log.summary(events), "events": events}
 
 
+class PreplanRequest(BaseModel):
+    a_id: str
+    b_id: str
+    lo: float                        # A's song seconds: earliest handover line
+    hi: float                        # latest handover line
+    now: float                       # A's current song position
+    bpm_a: float                     # A's tempo as it plays (pitch fader included)
+
+
+@app.post("/api/transition/preplan")
+def post_transition_preplan(req: PreplanRequest):
+    """The silent ear pre-plans the whole transition (app.music_brain.preplan):
+    when B starts inside A, from which of B's lines, for how long both play and
+    which deck owns each stem; rendered offline and heard before the master plays it."""
+    from app.music_brain import preplan
+    from app.music_brain import techniques as tq
+    from app.ui import llm_gate, session_log
+
+    sa, sb = _cached_stems4(req.a_id), _cached_stems4(req.b_id)
+    if not sa or not sb:
+        raise HTTPException(status_code=409, detail="both songs need their 4 stems cached")
+    ta, tb = analyze_track(_track_path(req.a_id)), analyze_track(_track_path(req.b_id))
+    ka, kb = ta.key.camelot if ta.key else None, tb.key.camelot if tb.key else None
+    llm_gate.gate.note_ear(90)
+    t0 = time.time()
+    res = preplan.preplan(ta.to_dict(), tb.to_dict(), sa, sb, req.bpm_a or ta.bpm, tb.bpm or 120.0,
+                          req.lo, req.hi, req.now, tq.camelot_score(ka, kb) if ka and kb else None,
+                          b_rap=any(r.get("rap") for r in (_voiced_cache.get((req.b_id, "style")) or [])), cache_key=f"{req.a_id}:{req.b_id}")
+    p = res.get("plan") or {}
+    session_log.log("ear_preplan", elapsed=round(time.time() - t0, 2), ok=res["ok"], heard=res.get("ear"),
+                    candidates=len(res.get("candidates") or []), a_in=p.get("a_in"), b_start=p.get("b_start"),
+                    bars=p.get("bars"), label=p.get("label"), direction=p.get("direction"))
+    return res
+
+
 class MergeAuditionRequest(BaseModel):
     a_id: str
     b_id: str

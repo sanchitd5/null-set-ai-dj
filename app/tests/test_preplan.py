@@ -1,0 +1,53 @@
+"""Pre-planned transitions: timing candidates in both directions, scoring, the ear's re-rank."""
+import numpy as np
+import soundfile as sf
+
+from app.music_brain import preplan
+
+BPM = 120.0
+BAR = 240 / BPM
+
+
+def _stems(tmp_path, name, secs, levels):
+    sr = preplan.SR
+    out = {}
+    for i, r in enumerate(("drums", "bass", "vocals", "other")):
+        p = tmp_path / f"{name}_{r}.wav"
+        t = np.arange(int(secs * sr)) / sr
+        sf.write(p, levels[r] * np.sin(2 * np.pi * (110 + 50 * i) * t), sr)
+        out[r] = str(p)
+    return out
+
+
+def _ana(secs, vocal_at):
+    return {"duration": secs, "phrase_boundaries_8bar": [float(x) for x in np.arange(0, secs, 8 * BAR)],
+            "vocal_active_regions": [[vocal_at, vocal_at + 30]],
+            "energy_times": [float(x) for x in np.arange(0, secs, 1.0)],
+            "energy_curve": [0.3 if x < 48 else 0.9 for x in np.arange(0, secs, 1.0)]}
+
+
+def test_both_directions_are_searched_and_the_ear_reranks(tmp_path):
+    lv = {"drums": 0.2, "bass": 0.2, "vocals": 0.1, "other": 0.1}
+    sa, sb = _stems(tmp_path, "a", 240, lv), _stems(tmp_path, "b", 240, lv)
+    a, b = _ana(240, 20.0), _ana(240, 32.0)
+    eA, eB = preplan.energies(sa, BAR), preplan.energies(sb, BAR)
+    cands = preplan.candidates(a, b, BPM, BPM, lo=140, hi=200, now=60, eA=eA, eB=eB, key_score=1.0)
+    dirs = {c["direction"] for c in cands}
+    assert "B's intro under A's outro" in dirs and any(d.startswith("A's tail over") for d in dirs)
+    for c in cands:                                    # on the grid, inside A, B starts before the line
+        assert abs((c["handover"] - c["a_in"]) - c["bars"] * BAR) < 1e-6 and c["a_in"] >= 60 + preplan.MIN_LEAD_S
+        assert c["handover"] in a["phrase_boundaries_8bar"] and c["b_start"] in b["phrase_boundaries_8bar"]
+    worst = cands[preplan.EAR_TOP - 1]
+    ask = lambda system, wav, text: '{"score": 10, "why": "locks"}' if worst["label"] in text and worst["direction"] in text else '{"score": 1, "why": "no"}'
+    res = preplan.preplan(a, b, sa, sb, BPM, BPM, 140, 200, 60, 1.0, ask=ask, cache_key="t", cache_dir=tmp_path / "c")
+    assert res["ok"] and res["ear"] and res["plan"]["ear"]["score"] == 10               # the ear's favourite wins
+    again = preplan.preplan(a, b, sa, sb, BPM, BPM, 140, 200, 60, 1.0, ask=lambda *x: 1 / 0, cache_key="t", cache_dir=tmp_path / "c")
+    assert again["plan"] == res["plan"]                                                  # heard once, cached
+
+
+def test_nothing_fits_says_why(tmp_path):
+    lv = {"drums": 0.2, "bass": 0.2, "vocals": 0.1, "other": 0.1}
+    sa, sb = _stems(tmp_path, "a", 120, lv), _stems(tmp_path, "b", 120, lv)
+    res = preplan.preplan(_ana(120, 20.0), _ana(120, 32.0), sa, sb, BPM, BPM, 110, 118, 100, 1.0,
+                          ask=lambda *x: None, cache_dir=tmp_path / "c")
+    assert not res["ok"] and "no phrase line" in res["why"]

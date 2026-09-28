@@ -154,6 +154,8 @@ var autopilotCore = (function () {
     if (u.includes("/api/blend/plan") || u.includes("/api/mashup/plan")) return 180000;
     if (u.includes("/api/layer/plan")) return 60000;   // vocal maps already cached by the blend plan
     if (u.includes("/api/bridge/plan")) return 10000;
+    if (u.includes("/api/transition/preplan")) return 120000;   // renders + the ear hears up to 4 clips
+    if (u.includes("/api/merge/audition")) return 90000;
     if (u.includes("/api/autopilot/suggest")) return 240000; // ~50 s per call, may queue behind a plan
     if (u.includes("/api/audio/")) return 120000;
     if (u.includes("/api/match") || u.includes("/analysis")) return 90000;
@@ -164,6 +166,11 @@ var autopilotCore = (function () {
     const ctl = new AbortController();
     const ms = deadlineFor(url);
     const timer = setTimeout(() => ctl.abort(), ms);
+    // the caller's own signal (a flushed merge audition) still aborts the request
+    if (opts.signal) {
+      if (opts.signal.aborted) ctl.abort();
+      else opts.signal.addEventListener("abort", () => ctl.abort(), { once: true });
+    }
     return _fetch(url, Object.assign({}, opts, { signal: ctl.signal }))
       .catch((e) => { throw e.name === "AbortError" ? new Error(`timed out after ${ms / 1000}s: ${url}`) : e; })
       .finally(() => clearTimeout(timer));
@@ -1528,6 +1535,14 @@ var autopilotCore = (function () {
     if (layer && !(layer.start >= deckPosition(activeDeck) + 16)) layer = null; // start slipped past
 
     if (gen !== undefined && gen !== prepGen) return false; // superseded by a restarted search
+    // The silent ear pre-plans the transition (when B starts inside A, from which
+    // of B's lines, how long both play, who owns each stem); the master plays it.
+    if (!layer) {
+      apStatus(`Ear pre-planning the mix into ${nextName}…`);
+      const pp = await requestPreplan(currentId, nextId, candidate);
+      if (!active || currentTrackId !== currentId || (gen !== undefined && gen !== prepGen)) return false;
+      if (pp) candidate = Object.assign({}, candidate, { preplan: pp });
+    }
     const fireAt = scheduleTransition(currentId, nextId, nextName, candidate, blend, minExit, layer);
     scheduledFireAt = fireAt;
     if (!layer) tryMashup(currentId, nextId, nextName, fireAt); // fire-and-forget; B itself enters under a LAYER
@@ -2044,9 +2059,24 @@ var autopilotCore = (function () {
     // (Bass Swap 8 -> 4 bars) so the overlap ends before B's vocal.
     const xfDuration = oneSong ? Math.max(16, w.xf) : vocalShort ? Math.min(8, w.xf) : peakT ? Math.max(16, w.xf) : w.xf;
     playPlanTag = ` | ${w.label} ${fmtTime(effectiveATime - entryPos)}`;
+    // Pre-planned by the silent ear: B starts where the ear chose (inside A), from
+    // the line it chose, the merge it heard. Only when the plan is still ahead.
+    const pp = candidate.preplan;
+    let preplanned = false;
+    if (pp && !layer && !peakT && stemsBoth && odS && sdS && pp.a_in >= nowPos + 15) {
+      effectiveATime = pp.a_in;
+      bTime = pp.b_start;
+      recipe = "Stem Merge";
+      preplanned = true;
+      sdS._mergePlan = { entry: pp.b_start, M: pp.bars, aT: pp.a_in, heard: !!pp.ear, preplanned: true,
+        pick: { combo: pp.combo, label: pp.label, reasons: pp.why || [], ear: pp.ear || null } };
+      playPlanTag = ` | ${w.label} ${fmtTime(effectiveATime - entryPos)} · ear plan`;
+      console.info("transition recipe:", `Stem Merge (pre-planned): ${pp.direction}, B from ${fmtTime(pp.b_start)} at A ${fmtTime(pp.a_in)}, ` +
+        `${pp.bars} bars, ${pp.label}${pp.ear ? `, ear ${pp.ear.score}/10` : ""}`);
+    }
     // Song merge beats the plain mashup (it is its generalization) when a combo fits;
     // never over LAYER / PEAK. The mashup stays the fallback if the merge is refused.
-    if (!layer && !peakT && mergesOn() && stemsBoth && odS && sdS) {
+    if (!preplanned && !layer && !peakT && mergesOn() && stemsBoth && odS && sdS) {
       const mp = planMerge(currentId, nextId, odS, sdS, effectiveATime);
       if (mp) {
         recipe = "Stem Merge";
@@ -2066,7 +2096,7 @@ var autopilotCore = (function () {
         fireAt,
         // a vocal-free blend window is exact: the mind must not hold past it
         // vocal-aware plans are exact: a DJ-mind hold would move the overlap into a vocal
-        maxFireAt: peakT || layer || (blend && (blend.instrumental || blend.vocals_known)) ? fireAt
+        maxFireAt: peakT || layer || preplanned || (blend && (blend.instrumental || blend.vocals_known)) ? fireAt
           : Math.max(fireAt, Math.min(trackEnd, hi + 16 * barS)),
         style: peakT ? "peak" : overlapStyle,
         peakKind: peakT ? peakT.kind : null, peakWhy: peakT ? peakT.why : null, brake: !!(peakT && peakT.brake),
@@ -2334,6 +2364,25 @@ var autopilotCore = (function () {
     } catch (e) { /* logging never breaks the set */ }
   }
   window.addEventListener("ear-flush", (e) => sessionEvent("ear_flush", e.detail));
+
+  // POST /api/transition/preplan (app/music_brain/preplan.py) for the booked pair:
+  // the exit window of this song, now, and A's live tempo. null when stems are
+  // missing, B can't sit on A's tempo, the toggle is off, or nothing fits.
+  async function requestPreplan(currentId, nextId, candidate) {
+    const od = window.decks && window.decks[activeDeck], sd = window.decks && window.decks[stagingDeck()];
+    if (!mergesOn() || !od || !sd || !od.stemsReady || !sd.stems || !od.bpm || !sd.bpm) return null;
+    const aEff = od.bpm * od._playbackRate(), gap = Math.abs(aEff / sd.bpm - 1);
+    if (gap > 0.25 || (gap > 0.02 && !(sd.tempoStems && Math.abs(sd.tempoStems.bpm / aEff - 1) < 0.01))) return null;
+    const w = playWindow(candidate.score || 50);
+    const trackEnd = (od.buffer ? od.buffer.duration : Infinity) - w.xf - 2;
+    const lo = Math.min(entryPos + w.min, trackEnd), hi = Math.min(entryPos + w.max, trackEnd);
+    try {
+      const r = await fetch("/api/transition/preplan", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ a_id: currentId, b_id: nextId, lo, hi, now: deckPosition(activeDeck), bpm_a: aEff }) });
+      const d = r.ok ? await r.json() : null;
+      return d && d.ok && d.plan ? d.plan : null;
+    } catch (e) { return null; }
+  }
 
   function mergesOn() {
     if (window.djSession && window.djSession.relaxed) return false;
