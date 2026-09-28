@@ -66,6 +66,9 @@ else
   unset YTDLP_COOKIES_FILE
   echo "yt-dlp: no cookies file at ~/.config/ai-dj/youtube-cookies.txt (bot checks back off and heal on their own)"
 fi
+# API request lines are debug: LOG_LEVEL=debug brings them back (with uvicorn's debug).
+LOG_LEVEL="${LOG_LEVEL:-info}"
+if [[ "$LOG_LEVEL" == "debug" ]]; then UVICORN_ARGS=(--log-level debug); else UVICORN_ARGS=(--log-level info --no-access-log); fi
 LOG_APP="${LOG:-/tmp/ai-dj-server.log}"
 LOG_LLM="${MLX_LOG:-/tmp/ai-dj-mlx-server.log}"
 LOG_EAR="/tmp/ai-dj-omni-server.log"
@@ -135,20 +138,33 @@ start_app() {
   if (( SINGLE_OMNI )); then
     MLX_SUPERVISED=1 MLX_PORT="$OMNI_PORT" MLX_MODEL="$OMNI_MODEL" \
       OMNI_BASE_URL="http://127.0.0.1:$OMNI_PORT/v1" OMNI_MODEL="$OMNI_MODEL" \
-      "$PY" -m uvicorn app.ui.server:app --port "$PORT" >>"$LOG_APP" 2>&1 &
+      "$PY" -m uvicorn app.ui.server:app --port "$PORT" "${UVICORN_ARGS[@]}" >>"$LOG_APP" 2>&1 &
   else
     MLX_SUPERVISED="$RUN_LLM" OMNI_BASE_URL="http://127.0.0.1:$OMNI_PORT/v1" OMNI_MODEL="$OMNI_MODEL" \
-      "$PY" -m uvicorn app.ui.server:app --port "$PORT" >>"$LOG_APP" 2>&1 &
+      "$PY" -m uvicorn app.ui.server:app --port "$PORT" "${UVICORN_ARGS[@]}" >>"$LOG_APP" 2>&1 &
   fi
   PID_APP=$!
   say "app  pid $PID_APP  http://localhost:$PORT"
 }
 
+# Live console: warnings and errors only (CONSOLE_LEVEL=info shows everything the
+# services log; the full logs are always in /tmp). A traceback is shown whole.
+CONSOLE_LEVEL="${CONSOLE_LEVEL:-warn}"
 stream() {  # live, prefixed view of a service's log
   local name="$1" file="$2" colour="$3"
   : >>"$file"
   tail -n 0 -F "$file" 2>/dev/null | while IFS= read -r line; do
-    printf '\033[%sm[%s]\033[0m %s\n' "$colour" "$name" "${line//$'\r'/ }"
+    line="${line//$'\r'/ }"
+    if [[ "$CONSOLE_LEVEL" != "info" ]]; then
+      if [[ "$line" =~ (WARN|ERROR|CRITICAL|Traceback|Exception|FATAL) ]]; then
+        in_tb=0; [[ "$line" == *Traceback* ]] && in_tb=1
+      elif (( ${in_tb:-0} )) && [[ "$line" =~ ^[[:space:]] || "$line" =~ ^[A-Za-z_.]+(Error|Exception) ]]; then
+        :   # traceback body
+      else
+        in_tb=0; continue
+      fi
+    fi
+    printf '\033[%sm[%s]\033[0m %s\n' "$colour" "$name" "$line"
   done &
   TAILS+=("$!")
 }

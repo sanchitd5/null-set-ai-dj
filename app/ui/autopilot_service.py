@@ -708,16 +708,39 @@ def chat_raw(
     a time, PLAN before SUGGEST before LOOKAHEAD. A plan's `timeout` covers
     its wait in the queue plus the call itself.
     """
+    from app.ui import session_log
+
     wait = timeout if timeout is not None else GATE_WAIT_S
-    with llm_gate.gate.slot(priority, wait_timeout=wait) as waited:
-        left = None if timeout is None else max(5.0, timeout - waited)
-        return _chat_call(system, user, temperature, left, model, max_tokens)
+    waited, t0 = None, None
+    try:
+        with llm_gate.gate.slot(priority, wait_timeout=wait) as waited:
+            left = None if timeout is None else max(5.0, timeout - waited)
+            t0 = time.monotonic()
+            raw = _chat_call(system, user, temperature, left, model, max_tokens)
+    except Exception as exc:
+        session_log.log("llm", priority=llm_gate.NAMES.get(priority), max_tokens=max_tokens, ok=False,
+                        waited=round(waited, 2) if waited is not None else None,
+                        elapsed=round(time.monotonic() - t0, 2) if t0 else None,
+                        prompt_chars=len(system) + len(user), error=f"{type(exc).__name__}: {exc}")
+        raise
+    session_log.log("llm", priority=llm_gate.NAMES.get(priority), max_tokens=max_tokens, ok=True,
+                    waited=round(waited, 2), elapsed=round(time.monotonic() - t0, 2),
+                    prompt_chars=len(system) + len(user), reply_chars=len(raw or ""), cut_off=cut_off(raw))
+    return raw
 
 
 CHAT_STOPS = ["\nUSER:", "\nASSISTANT", "ASSISTANT's RULE", "<end_of_turn>"]
 
 
 MAX_SUGGEST_TOKENS = 3000
+_suggest_need = 900             # tokens recent suggest replies needed (grows / shrinks with them)
+
+
+def _learn_need(raw: str) -> None:
+    """Remember what a complete reply needed: ~3.3 chars per token, +25 % headroom."""
+    global _suggest_need
+    est = int(len(raw or "") / 3.3 * 1.25)
+    _suggest_need = max(900, min(MAX_SUGGEST_TOKENS, est))
 
 
 def cut_off(raw: str) -> bool:
@@ -902,7 +925,9 @@ def suggest_next_tracks(
         return time.monotonic() - t_start < SUGGEST_BUDGET_S - RETRY_COST_S
 
     data = None
-    mt = 1100 if lead_to else 900   # lead JSON is longer; grows when a reply is cut off
+    # Budget: what recent replies needed (a first call cut at 900 then redone at 1800
+    # cost ~2x the model time, and starved the live ear that shares the model).
+    mt = max(1100 if lead_to else 900, _suggest_need)
     for attempt in range(3):  # two retries when the JSON is past repair (gemma-4 slips now and then)
         # 0.75: song picks should vary between runs (0.5 replayed the same set from
         # the same seed); the transition PLAN stays at a low temperature.
@@ -912,10 +937,13 @@ def suggest_next_tracks(
             data = _extract_json(raw)
             if _parroted(data, title):
                 raise ValueError("copied the few-shot example answers")
+            _learn_need(raw)
             break
         except ValueError as exc:  # JSONDecodeError is a ValueError
             if attempt >= 2:
+                print(f"ERROR [suggest] no usable reply after 3 attempts: {exc}", flush=True)
                 raise
+            # (the retry below also teaches the next call its budget)
             # Cut off by max_tokens (Qwen3-Omni writes longer reasons): the same limit
             # would cut the retry at the same place, so give it room instead.
             cut = cut_off(raw)

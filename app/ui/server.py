@@ -894,6 +894,36 @@ def get_hook_drops(track_id: str, top_n: int = 3, ai: bool = True):
     return {"track_id": track_id, "hook_drops": _hook_drops(track_id, max(1, min(top_n, 10)), ai_call=ai)}
 
 
+class SessionEvent(BaseModel):
+    kind: str
+    data: Dict = {}
+
+
+@app.post("/api/session/event")
+def post_session_event(ev: SessionEvent):
+    """The console's side of this session's log (track changes, ear flushes)."""
+    from app.ui import session_log
+
+    if ev.kind not in ("track", "ear_flush", "note"):
+        raise HTTPException(status_code=400, detail="kind must be track, ear_flush or note")
+    session_log.log(ev.kind, **{k: v for k, v in list(ev.data.items())[:20] if isinstance(k, str)})
+    return {"ok": True, "session": session_log.SESSION_ID}
+
+
+@app.get("/api/session/log")
+def get_session_log(session: Optional[str] = None, limit: int = 500):
+    """This session's events (track changes, every LLM / ear call with its timing),
+    a summary, and the list of past sessions. ?session=<id> for an earlier one."""
+    from app.ui import session_log
+
+    try:
+        events = session_log.read(session, max(1, min(limit, 5000)))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"session": session or session_log.SESSION_ID, "sessions": session_log.sessions()[:30],
+            "summary": session_log.summary(events), "events": events}
+
+
 class MergeAuditionRequest(BaseModel):
     a_id: str
     b_id: str
@@ -916,8 +946,14 @@ def post_merge_audition(req: MergeAuditionRequest):
     if not ok:
         raise HTTPException(status_code=400, detail="combos must map drums/bass/vocals/other to 'a' or 'b'")
     ta, tb = analyze_track(_track_path(req.a_id)), analyze_track(_track_path(req.b_id))
+    from app.ui import llm_gate, session_log
+
+    llm_gate.gate.note_ear()                  # look-aheads wait: the ear is on the model
+    t0 = time.time()
     res = merge.audition(sa, sb, ok, max(0.0, req.a_time), max(0.0, req.b_time), ta.bpm or 120.0, tb.bpm or 120.0,
                          key=f"{req.a_id}:{req.b_id}")
+    session_log.log("ear_merge", elapsed=round(time.time() - t0, 2), combos=len(ok),
+                    heard=sum(1 for r in res if r["ear"]), best=max((r["ear"]["score"] for r in res if r["ear"]), default=None))
     return {"results": res, "ear": any(r["ear"] for r in res)}
 
 

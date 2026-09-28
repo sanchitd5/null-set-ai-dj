@@ -116,10 +116,10 @@ class _Quiet:
             print(msg, file=sys.stderr)
 
 
-def _log(msg: str) -> None:
+def _log(msg: str, level: str = "INFO") -> None:
     import sys
 
-    print(f"[yt_guard] {msg}", file=sys.stderr, flush=True)
+    print(f"{level} [yt_guard] {msg}", file=sys.stderr, flush=True)
 
 
 def call(fn: Callable[[dict], T]) -> T:
@@ -146,7 +146,7 @@ def call(fn: Callable[[dict], T]) -> T:
         return out
     c = _trip(last or RuntimeError("bot check"))
     _log(f"bot check on every client{' (cookies refused too: re-export them)' if cookies else ''}; "
-         f"YouTube paused until {time.strftime('%H:%M:%S', time.localtime(c.until))}, then retried automatically")
+         f"YouTube paused until {time.strftime('%H:%M:%S', time.localtime(c.until))}, then retried automatically", "WARNING")
     raise c
 
 

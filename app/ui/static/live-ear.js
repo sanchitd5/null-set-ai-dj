@@ -269,7 +269,33 @@
     m.seam_click_ratio = round1(seamClickRatio(clip.samples, idx, RATE / 200)); // 5 ms frames
   }
 
-  let loopKey = null, lastAsk = 0, lastFlags = "", inFlight = null;
+  let loopKey = null, lastAsk = 0, lastFlags = "", inFlight = null, inFlightCtl = null, songKey = null;
+  // Flush (user: "previous item flush" like the suggestion window): when the on-air
+  // song changes nothing from the last one reaches the model. The pending request
+  // is aborted (it would still hold the one shared model), the captured audio and
+  // peaks are cleared (the next clip must not start in the previous song), and the
+  // last decision is dropped. Returns what was flushed.
+  function flush(reason) {
+    const had = { request: !!inFlightCtl, samples: filled, peaks: peaks.length };
+    if (inFlightCtl) inFlightCtl.abort();
+    inFlightCtl = null; inFlight = null;
+    filled = 0; peaks.length = 0;
+    loopKey = null; lastAsk = 0; lastFlags = "";
+    if (root.liveEar) root.liveEar.last = null;
+    root.dispatchEvent(new CustomEvent("ear-flush", { detail: { reason: reason || "", ...had } }));
+    return had;
+  }
+  // the on-air song: the deck with its crossfader side open (the louder one while both are)
+  function onAirSong() {
+    const ds = root.decks || {};
+    let best = null, g = 0.1;
+    for (const id of Object.keys(ds)) {
+      const d = ds[id];
+      const v = d && d.playing && d.crossfaderGain ? d.crossfaderGain.gain.value : 0;
+      if (v > g && d.analysis) { g = v; best = `${id}:${d.analysis.path || d.analysis.duration}`; }
+    }
+    return best;
+  }
   async function ask(info) {
     const m = metrics(info);
     const clip = lastSamples(CLIP_S);
@@ -278,6 +304,7 @@
     fd.append("metrics", JSON.stringify(m));
     if (clip.samples.length >= RATE) fd.append("clip", new Blob([wavBytes(clip.samples, RATE)], { type: "audio/wav" }), "ear.wav");
     const ctl = new AbortController(), key = loopKey;
+    inFlightCtl = ctl;
     const to = setTimeout(() => ctl.abort(), REQ_TIMEOUT_MS);
     try {
       const res = await fetch("/api/live/ear", { method: "POST", body: fd, signal: ctl.signal });
@@ -291,9 +318,12 @@
       }
     } catch (err) {
       if (err.name !== "AbortError") console.warn("live ear:", err.message);
-    } finally { clearTimeout(to); }
+    } finally { clearTimeout(to); if (inFlightCtl === ctl) inFlightCtl = null; }
   }
   function tick() {
+    const song = onAirSong();
+    if (song && songKey && song !== songKey) flush("on-air song changed");
+    if (song) songKey = song;
     if (!enabled() || !root.djMind || !root.djMind.holdLoopInfo) return;
     const info = root.djMind.holdLoopInfo();
     if (!info) { loopKey = null; return; }
@@ -333,5 +363,5 @@
     } catch (e) { return null; } finally { clearTimeout(to); }
   }
 
-  root.liveEar = { core, last: null, lastSamples, precheck, silentEar };
+  root.liveEar = { core, last: null, lastSamples, precheck, silentEar, flush };
 })(typeof window !== "undefined" ? window : globalThis);

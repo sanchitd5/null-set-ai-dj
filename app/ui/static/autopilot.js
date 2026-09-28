@@ -521,7 +521,9 @@ var autopilotCore = (function () {
     if (!ranked.length) return null;
     const plan = { ...mf, ranked, pick: ranked[0], aT, heard: false };
     idk._mergePlan = plan;
-    fetch("/api/merge/audition", { method: "POST", headers: { "Content-Type": "application/json" },
+    if (idk._mergeCtl) idk._mergeCtl.abort();          // flush the audition for the previous booking
+    const ctl = idk._mergeCtl = new AbortController();
+    fetch("/api/merge/audition", { method: "POST", headers: { "Content-Type": "application/json" }, signal: ctl.signal,
       body: JSON.stringify({ a_id: aId, b_id: bId, a_time: aT, b_time: mf.entry, combos: ranked.slice(0, 3).map((r) => r.combo) }) })
       .then((r) => (r.ok ? r.json() : null))
       .then((res) => {
@@ -2224,6 +2226,8 @@ var autopilotCore = (function () {
           }
         } else {
           totalMs = executeTransition(recipe, outgoing, incoming, xfDuration, t0) + XF_LOOKAHEAD_MS;
+          sessionEvent("track", { event: "transition_start", from: history[history.length - 1] || null, to: nextName, recipe,
+                                  out: outgoing, in: incoming, seconds: Math.round(totalMs / 100) / 10 });
           window.dispatchEvent(new CustomEvent("ai-cue", { detail: { at: t0, kind: recipeKind(recipe) === "cut" ? "drop" : "transition",
             deck: incoming, bar: 240 / ((window.decks[incoming] && window.decks[incoming].bpm) || 128), why: `${recipe}: B's first downbeat` } }));
         }
@@ -2242,6 +2246,8 @@ var autopilotCore = (function () {
         resetDeck(outgoing);
 
         history.push(nextName);
+        sessionEvent("track", { event: "transition_end", now_playing: nextName, deck: incoming, set_songs: history.length });
+        if (window.liveEar && window.liveEar.flush) window.liveEar.flush("transition done");
         advanceLead();
         playedIds.push(nextId);
         unmuteBeatLayer();
@@ -2320,6 +2326,15 @@ var autopilotCore = (function () {
   // 8/16-bar phrase of the current track (the Fred again.. "x" move: tease the
   // next record's voice over this beat, then bring the record itself in).
   // Restraint: at most one layer per track; skipped unless key and tempo fit.
+  // One line in this session's event log (app/ui/session_log.py). Fire and forget.
+  function sessionEvent(kind, data) {
+    try {
+      fetch("/api/session/event", { method: "POST", headers: { "Content-Type": "application/json" }, keepalive: true,
+        body: JSON.stringify({ kind, data }) }).catch(() => {});
+    } catch (e) { /* logging never breaks the set */ }
+  }
+  window.addEventListener("ear-flush", (e) => sessionEvent("ear_flush", e.detail));
+
   function mergesOn() {
     if (window.djSession && window.djSession.relaxed) return false;
     const t = document.getElementById("ap-merge-toggle");

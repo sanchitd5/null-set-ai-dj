@@ -250,6 +250,9 @@ def decide(wav: Optional[bytes], m: dict) -> dict:
         out = rule_decision(m)
         out["fallback"] = "Qwen-Omni busy with the previous phrase"
         return out
+    from app.ui import llm_gate, session_log
+
+    llm_gate.gate.note_ear()
     t0 = time.monotonic()
     try:
         text = _ask_omni(c, wav, m)
@@ -258,7 +261,10 @@ def decide(wav: Optional[bytes], m: dict) -> dict:
     except Exception as exc:  # network, auth, bad JSON: rules answer instead
         res = rule_decision(m)
         res["fallback"] = f"Qwen-Omni error: {type(exc).__name__}: {str(exc)[:160]}"
+        print(f"WARNING [ear] {res['fallback']} (rules answered)", flush=True)
     finally:
         _busy.release()
     res["latency_seconds"] = round(time.monotonic() - t0, 2)
+    session_log.log("ear", latency=res["latency_seconds"], source="rules" if res.get("fallback") else "model", action=res.get("action"),
+                    error=res.get("fallback"), precheck=bool(m.get("precheck")))
     return res
