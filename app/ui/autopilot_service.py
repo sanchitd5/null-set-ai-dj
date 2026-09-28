@@ -46,8 +46,8 @@ A = minor keys, B = major keys. Hour arithmetic wraps: 12+1=1."""
 _FEW_SHOT = """\
 EXAMPLE (output shape only - placeholder names, never suggest these):
 Current: "Song Zero" by Artist Zero | 124 BPM | 8A | Energy 0.6 | Genre: melodic house
-{"steering":"stay","occasion_fit":0,"current_genre":"melodic house","current_era":"2020s","current_profile":{"energy":6,"tempo_feel":"driving","drums":"steady","vocals":"chopped","mood":"bittersweet","texture":"raw"},"suggestions":[
-  {"artist":"Artist One","title":"Song One","reason":"9A (+1 hour), 122 BPM; same chopped vocal over a steady kick.","genre":"melodic house","era":"2020s","expected_bpm":122,"expected_key":"9A","mix_moment":"exit at outro ~bar 64","energy_delta":"maintain","vibe_link":"chopped vocal loop over rolling bass","genre_hop":0,"occasion_fit":0,"track_profile":{"energy":6,"tempo_feel":"driving","drums":"steady","vocals":"chopped","mood":"bittersweet","texture":"raw"}}
+{"steering":"stay","occasion_fit":0,"current_genre":"melodic house","current_era":"2020s","current_profile":{"energy":6,"tempo_feel":"driving","mood":"bittersweet"},"suggestions":[
+  {"artist":"Artist One","title":"Song One","reason":"same chopped vocal over rolling bass","genre":"melodic house","era":"2020s","expected_bpm":122,"expected_key":"9A","energy_delta":"maintain","genre_hop":0,"occasion_fit":0,"track_profile":{"energy":6,"tempo_feel":"driving","mood":"bittersweet"}}
 ]}"""
 
 _SYSTEM = f"""\
@@ -96,9 +96,9 @@ VIBE CONTINUITY (critical rule):
   Suggestions MUST stay within 1–2 genre hops maximum.
   Allowed genre hops: deep house → tech house → minimal techno (ok), melodic house → melodic techno (ok).
   Forbidden jumps without a bridge: house → drum & bass, pop → techno, ambient → peak-hour trance.
-  vibe_link MUST describe specific sonic characteristics, NOT genre labels:
-    Good: "same granular vocal chops and melodic 4-bar drops"
-    Good: "punchy UK bass kick and pitched vocal chop cadence"
+  "reason" MUST name the specific sonic characteristic both songs share, NOT a genre label:
+    Good: "same granular vocal chops, melodic drops"
+    Good: "punchy UK bass kick, pitched vocal chops"
     Bad: "same genre", "similar style", "UK bass DNA"
 
 ERA CONTINUITY (as important as genre):
@@ -114,10 +114,7 @@ TRACK PROFILE (judge the SONG, not the artist):
   First describe the CURRENT track in "current_profile", then give every suggestion its own "track_profile":
     energy: integer 1-10 (how hard THIS song hits on a dancefloor; the MEASURED energy above is the truth for the current song)
     tempo_feel: driving | mid | laid-back
-    drums: none | sparse | steady | busy
-    vocals: none | chopped | sung
     mood: euphoric | bittersweet | dark | chill
-    texture: raw | polished
   A suggestion MUST stay close to the current profile:
     energy within 2 points, tempo_feel not flipped (driving <-> laid-back is forbidden),
     mood not flipped (euphoric <-> dark, euphoric <-> chill, dark <-> chill are forbidden).
@@ -142,9 +139,6 @@ SAME-ARTIST RULE (important):
   NEVER penalize a suggestion just because the artist matches. Only avoid repeating the exact same
   TRACK TITLE that appears in the history list.
 
-MIX MOMENT: For each suggestion specify WHERE in the outgoing track to begin the transition.
-  Use format: "exit at [section] ~bar [N]" e.g. "exit at outro ~bar 64" or "exit at breakdown 2 ~bar 32"
-
 AVOID TRACKS: The history list contains track names already played. Do NOT suggest any track whose
   title appears in that list. Same artist is fine — only the exact title is banned.
 
@@ -157,10 +151,10 @@ FACTS (critical):
   checked against YouTube; invented titles are thrown away.
   expected_bpm and expected_key are THAT song's own tempo and key as released. NEVER copy
   the current song's BPM or key into a suggestion; if you don't know a song's tempo, skip it.
-  reason: ONE short sentence.
+  reason: at most 8 words (key and BPM are shown beside it: do not repeat them).
 
 OUTPUT FORMAT — return ONLY valid JSON, no markdown, no explanation:
-{{"steering":"stay|move","occasion_fit":0,"current_genre":"","current_era":"release decade e.g. 1990s","current_profile":{{"energy":0,"tempo_feel":"","drums":"","vocals":"","mood":"","texture":""}},"suggestions":[{{"artist":"","title":"","reason":"one sentence: harmonic move + how THIS song's sound matches","genre":"inferred genre of suggested track","era":"its release decade","expected_bpm":0,"expected_key":"","mix_moment":"exit at [section] ~bar N","energy_delta":"up|down|maintain","vibe_link":"specific sonic characteristic shared — NOT a genre label","genre_hop":0,"occasion_fit":0,"track_profile":{{"energy":0,"tempo_feel":"","drums":"","vocals":"","mood":"","texture":""}}}}]}}
+{{"steering":"stay|move","occasion_fit":0,"current_genre":"","current_era":"release decade e.g. 1990s","current_profile":{{"energy":0,"tempo_feel":"","mood":""}},"suggestions":[{{"artist":"","title":"","reason":"the shared sound, max 8 words","genre":"inferred genre of suggested track","era":"its release decade","expected_bpm":0,"expected_key":"","energy_delta":"up|down|maintain","genre_hop":0,"occasion_fit":0,"track_profile":{{"energy":0,"tempo_feel":"","mood":""}}}}]}}
 
 {_FEW_SHOT}"""
 
@@ -178,7 +172,9 @@ SUGGEST_TEMPERATURE = 0.75
 # it still finishes inside the budget. Bad-JSON retries always run: no JSON, no pick.
 SUGGEST_BUDGET_S = float(os.environ.get("SUGGEST_BUDGET_S", "15"))
 RETRY_COST_S = 7.0
-EXTRA_CANDIDATES = 2  # ask for n+2: ~1 in 2 local-model picks is invented or off-tempo
+# ask for n+2: ~1 in 2 local-model picks is invented or off-tempo. Kept at 2 in the
+# output diet: the server log still shows calls losing 3 of 5 picks as invented.
+EXTRA_CANDIDATES = 2
 VERIFY_TIMEOUT_S = 4.0  # one suggest call's budget for YouTube lookups (~1.5 s each); slower = unknown, kept
 VERIFY_SONGS = os.environ.get("SUGGEST_VERIFY", "1") != "0"
 # One small pool for the whole process. A pool per suggest call returned on time
@@ -359,11 +355,10 @@ _LEAD_TEMPLATE = (
     "(shared producers, crossover collabs, fusion remixes, similar rhythm), then give {n} songs "
     "for THIS step.\n"
     'JSON: {{"steering":"move","occasion_fit":0,"current_genre":"","current_profile":{{"energy":0,'
-    '"tempo_feel":"","drums":"","vocals":"","mood":"","texture":""}},"suggestions":[{{"artist":"",'
-    '"title":"","reason":"why it is this step of the journey","genre":"","expected_bpm":0,'
-    '"expected_key":"","mix_moment":"","energy_delta":"up|down|maintain","vibe_link":"",'
-    '"occasion_fit":0,"track_profile":{{"energy":0,"tempo_feel":"","drums":"","vocals":"",'
-    '"mood":"","texture":""}}}}]}}'
+    '"tempo_feel":"","mood":""}},"suggestions":[{{"artist":"",'
+    '"title":"","reason":"why it is this step, max 8 words","genre":"","expected_bpm":0,'
+    '"expected_key":"","energy_delta":"up|down|maintain",'
+    '"occasion_fit":0,"track_profile":{{"energy":0,"tempo_feel":"","mood":""}}}}]}}'
 )
 
 
@@ -443,8 +438,8 @@ _USER_TEMPLATE = (
     "Punjabi pop -> Punjabi hip-hop -> hip-hop; melodic house -> organic house -> afro house -> afrobeats), "
     "so each song shares its genre with the one before it. This holds even when heading to a DESTINATION.\n\n"
     "Suggest {n} tracks. Prioritise: vibe continuity → harmonic compatibility → energy arc for {arc_phase} → diversity.\n"
-    "Reply ONLY with the JSON object, compact (no line breaks or indentation). Keep every "
-    "reason under 20 words, vibe_link under 8 words, mix_moment under 6 words."
+    "Reply ONLY with the JSON object, compact (no line breaks or indentation), only the fields "
+    "shown. Keep every reason under 8 words."
 )
 _KNOWLEDGE_TEMPLATE = "\n\nDJ KNOWLEDGE (from the ./DJ wiki):\n{brief}"
 
@@ -777,8 +772,10 @@ def chat_raw(
     """One JSON-mode chat call to the local model; returns the raw text.
 
     Every call passes the priority gate (app/ui/llm_gate.py): one LLM call at
-    a time, PLAN before SUGGEST before LOOKAHEAD. A plan's `timeout` covers
-    its wait in the queue plus the call itself.
+    a time, PLAN before EAR before SUGGEST before LOOKAHEAD, and none starts
+    mid-phrase while the live ear holds the shared model (bounded for SUGGEST;
+    see the gate's docstring). A plan's `timeout` covers its wait in the queue
+    plus the call itself.
     """
     from app.ui import session_log
 
@@ -805,7 +802,13 @@ CHAT_STOPS = ["\nUSER:", "\nASSISTANT", "ASSISTANT's RULE", "<end_of_turn>"]
 
 
 MAX_SUGGEST_TOKENS = 3000
-_suggest_need = 900             # tokens recent suggest replies needed (grows / shrinks with them)
+# Tokens recent suggest replies needed (grows / shrinks with them). Measured on
+# Qwen3-Omni (omni server log, 178 suggest calls): the old 13-field picks ran ~150
+# tokens each, 164 of 178 replies hit max_tokens=900 and were redone at ~1800. The
+# slim schema (_FEW_SHOT: 8-word reason, no vibe_link / mix_moment, 3-field
+# profiles) writes ~97 tokens a pick, ~540 for n+2 = 5, so 900 is now a ceiling
+# with room rather than a cut.
+_suggest_need = 900
 
 
 def _learn_need(raw: str) -> None:
@@ -934,8 +937,9 @@ def suggest_next_tracks(
     """
     Call local Ollama (gemma3:4b) to suggest next n tracks.
     Returns list of dicts with keys:
-      artist, title, reason, genre, expected_bpm, expected_key,
-      mix_moment, energy_delta, search_query.
+      artist, title, reason, genre, era, expected_bpm, expected_key,
+      energy_delta, track_profile, search_query (+ mix_moment / vibe_link, now
+      always "": the model no longer writes display-only fields).
 
     set_position: 0.0 = start of set, 1.0 = end of set.
     genre: this track's genre from an earlier suggestion ("" = generic DJ rules).

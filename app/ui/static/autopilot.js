@@ -199,7 +199,28 @@ var autopilotCore = (function () {
     if (!o.force && arc === "cool" && step > 1) return { ok: false, step, why: `energy rises ${cur} -> ${nxt} while the set is cooling down` };
     return { ok: true, step, why: `energy ${cur} -> ${nxt}` };
   }
-  const api = { energyStepOk, highSpans, quantileLinear, median, exitPastHigh, learnedRecipe, vocalRecipe, stemBlendBars, stemBlendFader, phraseWaitS, introBars, FADER_PARK_BARS, homePlan, maskedGlideBars, maskedDropAt, HOME_DROP_PCT, LADDER_STEP_PCT };
+
+  // A background job's final answer (app/ui/bg_jobs.py: the silent ear's preplan /
+  // merge audition). `first` is the POST's body; while it reads {status: "pending",
+  // job}, poll(job) is asked every `everyMs` until the result lands. Past `budgetMs`,
+  // when alive() turns false, or on a failed poll: null, and the caller carries on
+  // exactly as it does without the ear. A body without "pending" IS the result.
+  async function awaitJob(first, poll, o = {}) {
+    const every = o.everyMs || 1500, budget = o.budgetMs == null ? 35000 : o.budgetMs;
+    const clock = o.now || Date.now, sleep = o.sleep || ((ms) => new Promise((r) => setTimeout(r, ms)));
+    const alive = o.alive || (() => true);
+    const t0 = clock();
+    let d = first;
+    while (d && d.status === "pending" && d.job) {
+      const left = budget - (clock() - t0);
+      if (left <= 0 || !alive()) return null;
+      await sleep(Math.min(every, left));
+      if (!alive()) return null;
+      try { d = await poll(d.job); } catch (e) { return null; }
+    }
+    return d || null;
+  }
+  const api = { awaitJob, energyStepOk, highSpans, quantileLinear, median, exitPastHigh, learnedRecipe, vocalRecipe, stemBlendBars, stemBlendFader, phraseWaitS, introBars, FADER_PARK_BARS, homePlan, maskedGlideBars, maskedDropAt, HOME_DROP_PCT, LADDER_STEP_PCT };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   return api;
 })();
@@ -217,8 +238,8 @@ var autopilotCore = (function () {
     if (u.includes("/api/blend/plan") || u.includes("/api/mashup/plan")) return 180000;
     if (u.includes("/api/layer/plan")) return 60000;   // vocal maps already cached by the blend plan
     if (u.includes("/api/bridge/plan")) return 10000;
-    if (u.includes("/api/transition/preplan")) return 120000;   // renders + the ear hears up to 4 clips
-    if (u.includes("/api/merge/audition")) return 90000;
+    // background jobs (app/ui/bg_jobs.py): the POST starts one, the GET polls it; both answer at once
+    if (u.includes("/api/transition/preplan") || u.includes("/api/merge/audition")) return 20000;
     if (u.includes("/api/autopilot/suggest")) return 240000; // ~50 s per call, may queue behind a plan
     if (u.includes("/api/audio/")) return 120000;
     if (u.includes("/api/match") || u.includes("/analysis")) return 90000;
@@ -597,6 +618,12 @@ var autopilotCore = (function () {
     fetch("/api/merge/audition", { method: "POST", headers: { "Content-Type": "application/json" }, signal: ctl.signal,
       body: JSON.stringify({ a_id: aId, b_id: bId, a_time: aT, b_time: mf.entry, combos: ranked.slice(0, 3).map((r) => r.combo) }) })
       .then((r) => (r.ok ? r.json() : null))
+      // a background job on the server: poll until heard (budget as the old request's
+      // 90 s deadline); a newer booking aborts ctl and ends the polling
+      .then((first) => autopilotCore.awaitJob(first, async (job) => {
+        const g = await fetch(`/api/merge/audition/${encodeURIComponent(job)}`, { signal: ctl.signal });
+        return g.ok ? g.json() : null;
+      }, { budgetMs: 90000, everyMs: 2000, alive: () => !ctl.signal.aborted && idk._mergePlan === plan }))
       .then((res) => {
         if (!res || !res.ear || idk._mergePlan !== plan) return;
         plan.ranked = sm.core.mergeWithEar(plan.ranked, res.results);
@@ -2475,7 +2502,12 @@ var autopilotCore = (function () {
     try {
       const r = await fetch("/api/transition/preplan", { method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ a_id: currentId, b_id: nextId, lo, hi, now: deckPosition(activeDeck), bpm_a: aEff }) });
-      const d = r.ok ? await r.json() : null;
+      // the server answers {status: "pending", job} at once and renders + asks the ear
+      // in the background; poll it inside the same PREPLAN_WAIT_MS budget as before
+      const d = await autopilotCore.awaitJob(r.ok ? await r.json() : null, async (job) => {
+        const g = await fetch(`/api/transition/preplan/${encodeURIComponent(job)}?now=${deckPosition(activeDeck)}`);
+        return g.ok ? g.json() : null;
+      }, { budgetMs: PREPLAN_WAIT_MS, alive: () => active && currentTrackId === currentId });
       return d && d.ok && d.plan ? d.plan : null;
     } catch (e) { return null; }
   }
