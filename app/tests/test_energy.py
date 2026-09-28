@@ -21,8 +21,11 @@ def test_next_song_step_rule():
     assert energy.next_ok(6, 8)["ok"] and not energy.next_ok(3, 8)["ok"]
     assert "jump 3 -> 8" in energy.next_ok(3, 8)["why"]
     assert not energy.next_ok(6, 8, relaxed=True)["ok"] and energy.next_ok(6, 7, relaxed=True)["ok"]
-    assert not energy.next_ok(7, 5, arc="build")["ok"] and energy.next_ok(7, 6, arc="build")["ok"]
-    assert not energy.next_ok(5, 7, arc="cool")["ok"]
+    assert not energy.next_ok(7, 5, set_pos=0.1)["ok"] and energy.next_ok(7, 6, set_pos=0.1)["ok"]
+    assert not energy.next_ok(5, 7, set_pos=0.9)["ok"]
+    assert energy.next_ok(3, 6, force=True)["ok"] and not energy.next_ok(3, 7, force=True)["ok"]
+    assert energy.next_ok(3, 8, raw_delta=0.05)["ok"] and not energy.next_ok(3, 8, raw_delta=0.3)["ok"]
+    assert not energy.next_ok(7, 5, songs=2)["ok"] and energy.next_ok(7, 5, songs=12)["ok"]
 
 
 def test_prompt_states_the_measured_energy_and_the_range():

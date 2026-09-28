@@ -89,7 +89,7 @@ def test_api_match_uses_cached_vocal_stem_without_separating(monkeypatch, tmp_pa
     monkeypatch.setattr(analyzer, "vocal_presence_map", lambda p: [(0.0, 240.0)])
     monkeypatch.setattr(server, "separate_stems", lambda *a, **k: pytest.fail("must not separate"))
     monkeypatch.setattr(server, "_vocal_regions", {})
-    out = server.post_match(server.MatchRequest(track_a_id="a", track_b_id="b", top_n=28))
+    out = server.post_match(server.MatchRequest(track_a_id="a", track_b_id="b", top_n=len(KnowledgeParser())))
     assert any(c["vocal_penalty"] > 0.5 for c in out["candidates"])
     assert tracks["a"].vocal_active_regions == []  # cached analysis not mutated
 

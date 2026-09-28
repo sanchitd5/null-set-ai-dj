@@ -108,7 +108,9 @@ HIGH_LEAD_BARS = 16        # "at its high OR about to reach it": the build into 
 
 def high_spans(ana: dict, bar_s: float) -> List[tuple]:
     """A's high-energy sections [(t0, t1)] (song s): energy >= its HIGH_PCT percentile,
-    joined across gaps under 2 bars, padded HIGH_LEAD_BARS before (the build) and 1 bar after."""
+    joined across gaps under 2 bars, padded HIGH_LEAD_BARS before (the build) and 1 bar after.
+    The console's autopilot.js highSpans() is the same rule with numpy's quantiles;
+    app/tests/fixtures/rule_vectors.json checks both."""
     et, ec = ana.get("energy_times") or [], ana.get("energy_curve") or []
     if len(et) < 4 or len(et) != len(ec):
         return []

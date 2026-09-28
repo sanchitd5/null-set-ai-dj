@@ -17,7 +17,9 @@ A's bass + B's vocals + B's synths, then B takes everything on the line.
 
 The console (static/stem-moves.js mergeTransitionPlan) plays the chosen combo.
 The same scoring rules live there as mergeRank() so a merge can be planned with
-no server round trip; this module adds the listening.
+no server round trip; this module adds the listening. Both must give the same
+combos, order and scores: app/tests/fixtures/rule_vectors.json checks both
+(test_rule_vectors.py, rule_vectors_check.js). Reasons and labels are wording only.
 """
 from __future__ import annotations
 
@@ -26,6 +28,7 @@ import hashlib
 import io
 import itertools
 import json
+import math
 import re
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence
@@ -85,11 +88,18 @@ def rank(e_a: Dict[str, float], e_b: Dict[str, float], key_score: Optional[float
         if key_score is not None and len(tonal_src) == 2:
             score += 10 * key_score
         # balance: roughly half the energy from each side
-        ea = sum((e_a.get(r, 0) ** 2) for r in ROLES if c[r] == "a")
-        eb = sum((e_b.get(r, 0) ** 2) for r in ROLES if c[r] == "b")
+        # plain left-to-right adds and x * x, as mergeRank() does (Python's sum() of
+        # floats is compensated since 3.12 and would drift from the JS by an ulp)
+        ea = eb = 0.0
+        for r in ROLES:
+            if c[r] == "a":
+                ea += e_a.get(r, 0) * e_a.get(r, 0)
+            else:
+                eb += e_b.get(r, 0) * e_b.get(r, 0)
         if ea + eb > 0:
             score += 10 * (1 - abs(ea - eb) / (ea + eb))
-        out.append({"combo": c, "label": label(c), "score": round(score, 1), "reasons": why})
+        # Math.round(score * 10) / 10 (half up, as the console does; round() is half-even)
+        out.append({"combo": c, "label": label(c), "score": math.floor(score * 10 + 0.5) / 10, "reasons": why})
     return sorted(out, key=lambda x: -x["score"])
 
 

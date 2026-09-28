@@ -13,6 +13,7 @@ import pytest
 
 from app.music_brain.agent_bridge import analyze, list_recipes, main, match, preview
 from app.music_brain.config import ROOT_DIR
+from app.music_brain.knowledge_parser import KnowledgeParser
 
 SAMPLE_A = ROOT_DIR / "data" / "songs" / "input.mp3"
 SAMPLE_B = ROOT_DIR / "data" / "songs" / "input2.mp3"
@@ -50,9 +51,9 @@ def test_preview_with_unknown_recipe_raises():
         preview(str(SAMPLE_A), str(SAMPLE_B), recipe_name="Not A Real Recipe")
 
 
-def test_list_recipes_returns_all_28():
+def test_list_recipes_returns_all():
     payload = list_recipes()
-    assert len(payload["recipes"]) == 28
+    assert len(payload["recipes"]) == len(KnowledgeParser())
 
 
 # --- CLI (in-process, via main()) --------------------------------------------
@@ -82,7 +83,7 @@ def test_cli_main_list_recipes(capsys):
     exit_code = main(["list-recipes"])
     assert exit_code == 0
     output = json.loads(capsys.readouterr().out)
-    assert len(output["recipes"]) == 28
+    assert len(output["recipes"]) == len(KnowledgeParser())
 
 
 # --- True subprocess invocation (exactly as an external agent would call it) --

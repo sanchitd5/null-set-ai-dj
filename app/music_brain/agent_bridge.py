@@ -166,7 +166,7 @@ def learned() -> dict:
 
 
 def list_recipes() -> dict:
-    """All 28 parsed transition recipes with their tags/prerequisites."""
+    """Every parsed transition recipe with its tags/prerequisites."""
     return {"recipes": [r.to_dict() for r in _get_knowledge().get_all()]}
 
 
@@ -206,7 +206,7 @@ def _build_parser() -> argparse.ArgumentParser:
         p.add_argument("--era-a", default=None, help="Release era for track_a (e.g. '1990s'); penalises a multi-decade jump.")
         p.add_argument("--era-b", default=None, help="Release era for track_b.")
 
-    sub.add_parser("list-recipes", help="List all 28 parsed transition recipes.")
+    sub.add_parser("list-recipes", help="List every parsed transition recipe.")
 
     p_learn = sub.add_parser("learn-set", help="Learn transition + vocal techniques from a DJ set (URL or file).")
     p_learn.add_argument("source", help="YouTube/SoundCloud URL or local set audio file.")

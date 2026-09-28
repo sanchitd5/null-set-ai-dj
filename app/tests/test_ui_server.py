@@ -4,9 +4,10 @@ match -> preview.
 """
 
 import pytest
-from fastapi.testclient import TestClient
 
 from app.music_brain.config import ROOT_DIR
+from app.music_brain.knowledge_parser import KnowledgeParser
+from app.tests.testclient_compat import TestClient
 from app.ui.server import app
 
 SAMPLE_A = ROOT_DIR / "data" / "songs" / "input.mp3"
@@ -26,10 +27,10 @@ def _upload(path) -> str:
     return res.json()["track_id"]
 
 
-def test_get_recipes_returns_all_28():
+def test_get_recipes_returns_all():
     res = client.get("/api/recipes")
     assert res.status_code == 200
-    assert len(res.json()["recipes"]) == 28
+    assert len(res.json()["recipes"]) == len(KnowledgeParser())
 
 
 def test_upload_returns_track_id():
