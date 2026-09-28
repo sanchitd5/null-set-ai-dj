@@ -22,10 +22,13 @@ off), so queueing the ear behind one would miss the phrase. Policy:
   than behind it. While a LIVE call waits or runs, nothing else starts.
 * Hold: each live call (note_live) holds the model for LIVE_HOLD_S, one phrase
   ahead. During the hold LOOKAHEAD is refused outright (it is optional
-  pre-fetching), and EAR / SUGGEST do not START, except in the BEHIND_EAR_S
-  window just after a live answer: the next phrase is then most of a phrase
-  away, the longest gap a call gets before the ear asks again.
-* No starvation: a SUGGEST held this way starts after SUGGEST_MAX_HOLD_S
+  pre-fetching), and EAR does not START, except in the BEHIND_EAR_S window
+  just after a live answer: the next phrase is then most of a phrase away,
+  the longest gap a call gets before the ear asks again. SUGGEST (song
+  selection) is NOT held: it was missing its selection window waiting on the
+  live ear, so it now queues normally and starts as soon as the model is
+  free, same as PLAN.
+* No starvation: an EAR held this way starts after SUGGEST_MAX_HOLD_S
   whatever (the hold loop may be waiting for exactly that song). EAR clip
   ratings are advisory and give up on their own wait_timeout. PLAN is never
   held: it is short (~4 s) and the transition depends on it.
@@ -45,7 +48,7 @@ LIVE_WAIT_S = 1.0          # the live ear waits this long for the call in flight
 LIVE_HOLD_S = 25.0         # one 8-bar phrase (~15 s at 128 BPM, ~21 s at 90) plus margin
 BEHIND_EAR_S = 3.0         # right after a live answer a held EAR / SUGGEST may start
 SUGGEST_MAX_HOLD_S = 20.0  # never hold a needed suggestion longer than this
-_HELD = (EAR, SUGGEST)
+_HELD = (EAR,)  # SUGGEST no longer paused for the live ear: selection was missing its window
 
 
 def _skip(why: str) -> None:

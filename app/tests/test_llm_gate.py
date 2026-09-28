@@ -191,9 +191,9 @@ def test_live_hold_keeps_new_work_from_starting_mid_loop():
     with gate.slot(PLAN, wait_timeout=1) as waited:  # a plan is never held
         pass
     assert waited < 0.1
-    with gate.slot(SUGGEST, wait_timeout=2) as waited:  # held, but never starved
+    with gate.slot(SUGGEST, wait_timeout=2) as waited:  # not held: starts as soon as the model is free
         pass
-    assert 0.25 <= waited < 1.0 and time.monotonic() - t0 < 1.5
+    assert waited < 0.1
 
 
 def test_held_work_may_start_right_after_a_live_answer():
@@ -245,20 +245,19 @@ def test_live_ear_takes_the_gate_only_on_the_shared_model(monkeypatch):
     assert seen and seen[0].get("live") is True and res.get("model") == "m"
 
 
-def test_fake_shared_model_hold_loop_keeps_the_ear_fast():
+def test_fake_shared_model_hold_loop_does_not_delay_suggest():
     """A fake continuous-batching model: an ear call takes 0.05 s alone and 0.25 s
-    beside a decode; a suggest decodes 0.6 s. A suggest asked for mid-loop must not
-    overlap the next phrase's ear call, and still runs within the hold bound."""
+    beside a decode; a suggest decodes 0.6 s. SUGGEST is no longer held for the
+    live ear (it was missing its selection window): a suggest asked for mid-loop
+    starts immediately, even if that means an ear call overlaps the decode."""
     gate = PriorityGate(suggest_max_hold_s=0.8, behind_ear_s=0.0, poll_s=0.02)
     decoding = threading.Event()
-    ear_lat, sug_start = [], []
+    sug_start = []
 
     def ear_call():
-        t0 = time.monotonic()
         gate.note_live(hold_s=1.0)
         with gate.slot(llm_gate.LIVE, wait_timeout=0.05):
             time.sleep(0.25 if decoding.is_set() else 0.05)
-        ear_lat.append(time.monotonic() - t0)
 
     def suggest():
         t0 = time.monotonic()
@@ -275,8 +274,7 @@ def test_fake_shared_model_hold_loop_keeps_the_ear_fast():
         time.sleep(0.2)
         ear_call()
     s.join(3)
-    assert max(ear_lat[:3]) < 0.2, ear_lat      # no ear call ran beside the decode
-    assert sug_start and sug_start[0] <= 1.0    # bounded: the suggestion still ran
+    assert sug_start and sug_start[0] < 0.1     # starts right away, not held for the ear
 
 
 # -- slimmer suggest schema -----------------------------------------------------------
