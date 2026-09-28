@@ -119,21 +119,32 @@ def test_cut_off_detection():
     assert not svc.cut_off('<think>{"half"</think>{"a": 1}')
 
 
-def test_prompt_history_resets_every_6_songs():
-    songs = [f"S{i}" for i in range(1, 15)]
-    assert svc.prompt_history(songs[:3]) == "S1, S2, S3"
-    assert svc.prompt_history(songs[:6]) == "S1, S2, S3, S4, S5, S6"
-    assert svc.prompt_history(songs[:7]) == "S7"                                  # song 7: fresh context
-    assert svc.prompt_history(songs[:14]) == "S13, S14"
+def test_prompt_shows_a_rolling_window_of_3_played_and_3_queued():
+    played = [f"P{i}" for i in range(1, 11)]
+    queued = ["Q1", "Q2", "Q3", "Q4"]
+    assert svc.prompt_history(played, queued) == "last played: P8, P9, P10 | queued next: Q1, Q2, Q3"
+    assert svc.prompt_history(played[:2]) == "last played: P1, P2"
+    assert svc.prompt_history([], ["Q1"]) == "queued next: Q1"
+    assert svc.prompt_history(played, ["P10", "Q1"]) == "last played: P8, P9, P10 | queued next: Q1"   # no double
+    assert svc.prompt_history(played, [], ["X - Y", "P9"]) == "last played: P8, P9, P10 | rejected: X - Y"
     assert svc.prompt_history([]) == "none"
-    assert svc.prompt_history(songs, block=0) == ", ".join(songs)                 # 0 = old behaviour (last 30)
 
 
-def test_reset_prompt_still_never_repeats_a_played_song(monkeypatch):
+def test_window_prompt_still_never_repeats_a_played_song(monkeypatch):
     seen = []
     monkeypatch.setattr(svc, "chat_raw", lambda s, u, **k: seen.append(u) or
                         '{"current_genre": "house", "suggestions": [{"artist": "A0", "title": "T0", "expected_bpm": 124}]}')
-    history = [f"A{i} - T{i}" for i in range(6)] + ["Old - Played"]           # 7th song: context just reset
+    history = [f"A{i} - T{i}" for i in range(6)] + ["Old - Played"]           # A0 falls outside the 3-song window
     out = svc.suggest_next_tracks("T", "A", 124.0, "8A", 200.0, 0.7, "", history)
     assert "A0 - T0" not in seen[0]                                            # not shown to the model
     assert not any(s.get("title") == "T0" for s in out)                         # hidden, but still filtered as played
+
+
+def test_queued_songs_are_shown_and_never_suggested(monkeypatch):
+    seen = []
+    monkeypatch.setattr(svc, "chat_raw", lambda s, u, **k: seen.append(u) or
+                        '{"current_genre": "house", "suggestions": [{"artist": "Q", "title": "One", "expected_bpm": 124}]}')
+    out = svc.suggest_next_tracks("T", "A", 124.0, "8A", 200.0, 0.7, "", ["P - 1", "Q - One"],
+                                  history_display=["P - 1"], queue_display=["Q - One"])
+    assert "last played: P - 1 | queued next: Q - One" in seen[0]
+    assert not any(s.get("title") == "One" for s in out)

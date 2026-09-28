@@ -947,6 +947,12 @@ var autopilotCore = (function () {
     }
   }
 
+  // What plays after the current song, in order (booked, then ready): the model
+  // sees the last 3 played + these 3 (autopilot_service.prompt_history).
+  function queueNames() {
+    return [scheduledNext && scheduledNext.name, ...ready.map((c) => c.name)].filter(Boolean).slice(0, 3);
+  }
+
   async function getSuggestionsOnce(trackId, avoid = [], opts = {}) {
     const setPos = Math.min(history.length / 10, 1.0);
     // `avoid` = titles rejected this round (failed download / vibe gate) so the
@@ -960,7 +966,7 @@ var autopilotCore = (function () {
     const res = await fetch("/api/autopilot/suggest", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ set_id: setId, track_id: trackId, occasion: occasionWithBridge(opts), ...leadFields(opts), history: history.slice(-30), avoid: avoid.slice(-6), set_position: setPos, set_mode: setMode(), relaxed: !!window.djSession.relaxed, energy_note: energyNote, energy_hook: energyHook, lookahead: !!opts.lookAhead,
+      body: JSON.stringify({ set_id: setId, track_id: trackId, occasion: occasionWithBridge(opts), ...leadFields(opts), history: history.slice(-30), avoid: avoid.slice(-6), queue: queueNames(), set_position: setPos, set_mode: setMode(), relaxed: !!window.djSession.relaxed, energy_note: energyNote, energy_hook: energyHook, lookahead: !!opts.lookAhead,
         variety_run: varietyRun().run, variety_genre: varietyRun().genre,
         tempo_target: bridgeTarget(opts.lookAhead), tempo_note: bridgeNote(opts.lookAhead) || null,
         elapsed_seconds: setStartedAt ? (Date.now() - setStartedAt) / 1000 : null }),

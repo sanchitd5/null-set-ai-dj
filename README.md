@@ -112,7 +112,7 @@ All settings are optional.
 | `OLLAMA_MODEL` | `gemma3:27b` | Ollama fallback model |
 | `AUTOPILOT_MODEL`, `OLLAMA_BASE_URL` | set by the runtime | override the OpenAI-compatible endpoint/model the autopilot calls |
 | `AUTOPILOT_PLAN_MODEL` | `AUTOPILOT_MODEL` | model for the per-pair DJ-mind plan |
-| `AUTOPILOT_CONTEXT_RESET` | `6` | song suggestions: the model sees only the current block of this many songs, then starts fresh (repeat filters still use the whole set; `0` = last 30 songs) |
+| `AUTOPILOT_CONTEXT_PLAYED`, `AUTOPILOT_CONTEXT_QUEUED` | `3`, `3` | song suggestions: the model sees a rolling window of the last N played and the next N queued songs (repeat filters still use the whole set) |
 | `SUGGEST_BUDGET_S` | `15` | time budget for a suggestion |
 | `SUGGEST_VERIFY` | `1` | set `0` to skip checking suggestions against YouTube |
 | `DJ_LIBRARY_DIRS` | none | semicolon-separated local music folders to scan |

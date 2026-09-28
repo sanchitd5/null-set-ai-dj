@@ -1463,6 +1463,9 @@ class AutopilotSuggestRequest(BaseModel):
     # titles rejected this round (download failed / vibe gate): never suggested
     # again this round, but NOT played - kept out of the cross-set memory
     avoid: list[str] = []
+    # Songs already booked after this one (the console's queue, in play order): shown
+    # to the model beside the last 3 played (autopilot_service.prompt_history).
+    queue: list[str] = []
     lead_step: int = 0
     lead_steps: int = 0
     lead_bpm: Optional[float] = None
@@ -1650,6 +1653,7 @@ def _autopilot_suggest_impl(req: AutopilotSuggestRequest):
     history_display = [" - ".join(clean_identity(h)).removeprefix("Unknown - ") for h in req.history]
     # rejected titles: excluded from suggestions like played ones, never recorded as played
     avoid_display = [" - ".join(clean_identity(h)).removeprefix("Unknown - ") for h in req.avoid]
+    queue_display = [" - ".join(clean_identity(h)).removeprefix("Unknown - ") for h in req.queue[:6]]
     genre = _suggested_genres.get(_genre_key(title_part), "")
 
     # set_position: by clock when elapsed_seconds is sent (elapsed / set length);
@@ -1695,13 +1699,15 @@ def _autopilot_suggest_impl(req: AutopilotSuggestRequest):
             occasion=_occasion_with_note(req.occasion, req.energy_note,
                                          _variety_note(req.variety_run, req.variety_genre),
                                          hook=req.energy_hook),
-            history=req.history + req.avoid,
+            history=req.history + req.avoid + req.queue[:6],
             set_position=set_position,
             set_mode=req.set_mode if req.set_mode in SET_MODES else "hybrid",
             relaxed=bool(req.relaxed),
             meta=meta,
             genre=genre,
-            history_display=history_display + avoid_display,
+            history_display=history_display,
+            queue_display=queue_display,
+            avoid_display=avoid_display,
             lookahead=req.lookahead,
             earlier_sets=earlier,
             favourite_artists=_set_memory.favourite_artists(),

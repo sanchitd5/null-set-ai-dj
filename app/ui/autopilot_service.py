@@ -282,7 +282,7 @@ _LEAD_TEMPLATE = (
     'NOW PLAYING: "{title}" by {artist} | {bpm:.0f} BPM | key {camelot}\n'
     "{lead}\n"
     "{tempo_line}\n"
-    "Already played (never again): {history}\n\n"
+    "Around this song (never again): {history}\n\n"
     "Think of the path: what connects the current song's world to the destination's world "
     "(shared producers, crossover collabs, fusion remixes, similar rhythm), then give {n} songs "
     "for THIS step.\n"
@@ -353,7 +353,7 @@ _USER_TEMPLATE = (
     "First fill current_genre, current_era and current_profile for THIS song, then pick songs whose own "
     "track_profile stays close to it. Stay in this genre neighbourhood AND within one decade of this "
     "song's era unless the occasion demands a shift.\n"
-    "Already played this set - NEVER suggest these again: {history}\n"
+    "Around this song (never suggest any of these; nothing already played this set either): {history}\n"
     "Artists heard in the last few songs (pick someone else unless it is a deliberate "
     "same-artist moment early in the set, or one of the listener's favourite artists below): {recent_artists}\n"
     "The listener's FAVOURITE artists (they come back to them set after set): {favourite_artists}. "
@@ -727,19 +727,28 @@ def cut_off(raw: str) -> bool:
     return start != -1 and _balanced_end(text, start) is None
 
 
-CONTEXT_RESET_SONGS = int(os.environ.get("AUTOPILOT_CONTEXT_RESET", "6") or 6)
+CONTEXT_PLAYED = int(os.environ.get("AUTOPILOT_CONTEXT_PLAYED", "3") or 3)
+CONTEXT_QUEUED = int(os.environ.get("AUTOPILOT_CONTEXT_QUEUED", "3") or 3)
 
 
-def prompt_history(names: list | None, block: int = CONTEXT_RESET_SONGS) -> str:
-    """The songs the model is shown: only this block of `block` songs. Every `block`
-    songs the model's context starts fresh (short prompt, no drift from a long list);
-    the repeat filters (_filter_suggestions) still see the whole set."""
-    names = list(names or [])
-    if block <= 0:
-        shown = names[-30:]
-    else:
-        shown = names[-(len(names) % block or block):] if names else []
-    return ", ".join(shown) if shown else "none"
+def prompt_history(played: list | None, queued: list | None = None, skip: list | None = None,
+                   back: int = CONTEXT_PLAYED, ahead: int = CONTEXT_QUEUED) -> str:
+    """The songs the model is shown: a rolling window of the last `back` played and
+    the next `ahead` queued (default 3 + 3). A long list made the prompt ~4.5k tokens
+    and the picks drift; the repeat filters (_filter_suggestions) still see the whole set."""
+    played = [x for x in (played or []) if x][-back:] if back > 0 else []
+    played_set = {x.lower() for x in played}
+    queued = [x for x in (queued or []) if x and x.lower() not in played_set][:ahead] if ahead > 0 else []
+    parts = []
+    if played:
+        parts.append("last played: " + ", ".join(played))
+    if queued:
+        parts.append("queued next: " + ", ".join(queued))
+    shown = played_set | {x.lower() for x in queued}
+    skip = [x for x in (skip or []) if x and x.lower() not in shown][-6:]
+    if skip:                          # picks just rejected (download failed, off tempo): not again
+        parts.append("rejected: " + ", ".join(skip))
+    return " | ".join(parts) if parts else "none"
 
 
 def _chat_call(system, user, temperature, timeout, model, max_tokens) -> str:
@@ -802,6 +811,8 @@ def suggest_next_tracks(
     meta: dict | None = None,
     genre: str = "",
     history_display: list[str] | None = None,
+    queue_display: list[str] | None = None,
+    avoid_display: list[str] | None = None,
     lookahead: bool = False,
     earlier_sets: list[str] | None = None,
     favourite_artists: list[str] | None = None,
@@ -850,7 +861,7 @@ def suggest_next_tracks(
         energy=avg_energy,
         occasion=occasion or "general DJ set",
         set_mode_line=SET_MODE_LINES.get(set_mode, SET_MODE_LINES["hybrid"]),
-        history=prompt_history(history_display or history),
+        history=prompt_history(history_display or history, queue_display, avoid_display),
         recent_artists=_recent_artists(history_display or history),
         earlier_sets=", ".join(earlier_sets or []) or "none",
         favourite_artists=", ".join(favourite_artists or []) or "none",
@@ -879,7 +890,7 @@ def suggest_next_tracks(
             title=title, artist=artist, bpm=bpm, camelot=camelot,
             lead=lead_line(lead_to, lead_step, lead_steps, lead_bpm).strip(),
             tempo_line=tempo_line.strip(),
-            history=prompt_history(history_display or history),
+            history=prompt_history(history_display or history, queue_display, avoid_display),
             n=n,
         )
 
