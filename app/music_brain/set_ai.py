@@ -25,7 +25,9 @@ from typing import Callable, Dict, List, Optional, Sequence
 from app.music_brain.config import CACHE_DIR
 
 AI_CACHE_DIR = CACHE_DIR / "set_ai"
-MLX_URL = f"http://127.0.0.1:{os.environ.get('MLX_PORT', '8081')}/v1"
+# the text model (start.sh) first, then the live ear's omni model (start.sh --single-omni serves both jobs)
+MODEL_URLS = [f"http://127.0.0.1:{os.environ.get('MLX_PORT', '8081')}/v1",
+              f"http://127.0.0.1:{os.environ.get('OMNI_PORT', '8901')}/v1"]
 REVIEW_BATCH = 12             # observations per model call
 TIMEOUT_S = 120.0
 
@@ -39,20 +41,34 @@ def _default_chat() -> Optional[Chat]:
 
     base = os.environ.get("OLLAMA_BASE_URL")
     if not base:
-        try:
-            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-            with opener.open(f"{MLX_URL}/models", timeout=2) as r:
-                models = json.loads(r.read()).get("data") or []
-        except Exception:
+        found = find_model()
+        if found is None:
             return None
-        os.environ["OLLAMA_BASE_URL"] = MLX_URL
-        if models and not os.environ.get("AUTOPILOT_MODEL"):
-            os.environ["AUTOPILOT_MODEL"] = models[0]["id"]
+        os.environ["OLLAMA_BASE_URL"], model = found
+        os.environ.setdefault("AUTOPILOT_MODEL", model)
     from app.ui import autopilot_service as ap
     from app.ui import llm_gate
 
     return lambda system, user: ap.chat_raw(system, user, temperature=0.2, timeout=TIMEOUT_S,
                                             max_tokens=1500, priority=llm_gate.LOOKAHEAD)
+
+
+def find_model(urls: Optional[List[str]] = None, opener=None) -> Optional[tuple]:
+    """(base_url, model id) of the first local server answering, preferring a model it
+    reports as already loaded (asking an unloaded one makes the server load 16 GB)."""
+    import urllib.request
+
+    opener = opener or urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    for url in urls or MODEL_URLS:
+        try:
+            with opener.open(f"{url}/models", timeout=2) as r:
+                models = json.loads(r.read()).get("data") or []
+        except Exception:
+            continue
+        if models:
+            best = next((m for m in models if m.get("loaded")), models[0])
+            return url, best["id"]
+    return None
 
 
 def _ask(system: str, user: str, chat: Optional[Chat], cache_key: str, call: bool = True) -> Optional[dict]:

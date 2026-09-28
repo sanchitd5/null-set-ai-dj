@@ -143,6 +143,11 @@ def fetch_set(source: str) -> Tuple[Path, str, str]:
         if not p.is_file():
             raise FileNotFoundError(p)
         return p, hashlib.sha256(str(p).encode()).hexdigest()[:12], ""
+    m = re.search(r"(?:v=|youtu\.be/|shorts/|live/)([\w-]{11})", source)
+    if m and (SETS_DIR / f"{m.group(1)}.mp3").exists():            # already here: no YouTube request
+        meta = SETS_DIR / f"{m.group(1)}.info.json"
+        desc = json.loads(meta.read_text(encoding="utf-8")).get("description", "") if meta.exists() else ""
+        return SETS_DIR / f"{m.group(1)}.mp3", m.group(1), desc
     import yt_dlp
 
     from app.music_brain import yt_guard
@@ -157,6 +162,8 @@ def fetch_set(source: str) -> Tuple[Path, str, str]:
                 ydl.download([source])
             return info, path
     info, path = yt_guard.call(run)
+    (SETS_DIR / f"{info['id']}.info.json").write_text(json.dumps(
+        {"title": info.get("title"), "description": info.get("description") or ""}, ensure_ascii=False), encoding="utf-8")
     if not path.exists():
         raise ValueError(f"download finished but {path.name} is missing (ffmpeg installed?)")
     return path, str(info["id"]), info.get("description") or ""

@@ -275,3 +275,12 @@ def test_layered_songs_are_not_handovers_and_half_time_folds():
     songs = [sl.SongData(t, s, 120, None, {}) for t, s in (("A", 0), ("B", 0), ("C", 300), ("D", 600), ("E", 600))]
     assert sl.handover_pairs(songs) == [(0, 2), (1, 2), (2, 3), (2, 4)]      # never A->B or D->E
     assert sl.tempo_gap(87.0, 174.0) == 0.0 and sl.tempo_gap(120.0, 126.0) == 0.05 and sl.tempo_gap(0, 120) is None
+
+
+def test_local_set_needs_no_youtube(tmp_path, monkeypatch):
+    import sys
+    monkeypatch.setattr(sl, "SETS_DIR", tmp_path)
+    (tmp_path / "rAJ9Es-61ZE.mp3").write_bytes(b"x")
+    monkeypatch.setitem(sys.modules, "yt_dlp", None)                   # any import of yt_dlp would fail
+    p, sid, desc = sl.fetch_set("https://www.youtube.com/watch?v=rAJ9Es-61ZE&si=x")
+    assert (p.name, sid, desc) == ("rAJ9Es-61ZE.mp3", "rAJ9Es-61ZE", "")

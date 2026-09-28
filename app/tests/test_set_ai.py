@@ -71,3 +71,16 @@ def test_sample_source_reaches_the_model(tmp_path, monkeypatch):
     chat = lambda s, u: seen.append(u) or json.dumps({"lines": [{"text": "I am a party", "intensity": 9, "why": "irony"}]})
     got = set_ai.emotional_lines("Fred again.. - Sabrina (i am a party)", lyrics.fetch("Fred again.. - Sabrina (i am a party)"), chat=chat)
     assert "Explaining My Depression to My Mother (Button Poetry) (poem about depression)" in seen[0] and got[0]["intensity"] == 9
+
+
+def test_find_model_prefers_a_loaded_one_and_skips_dead_ports():
+    import io
+
+    class Op:
+        def open(self, url, timeout=0):
+            if "8081" in url:
+                raise OSError("refused")
+            body = {"data": [{"id": "text", "loaded": False}, {"id": "omni", "loaded": True}]}
+            return io.BytesIO(json.dumps(body).encode())
+    assert set_ai.find_model(["http://127.0.0.1:8081/v1", "http://127.0.0.1:8901/v1"], Op()) == ("http://127.0.0.1:8901/v1", "omni")
+    assert set_ai.find_model(["http://127.0.0.1:8081/v1"], Op()) is None
