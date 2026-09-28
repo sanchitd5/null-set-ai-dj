@@ -363,5 +363,5 @@
     } catch (e) { return null; } finally { clearTimeout(to); }
   }
 
-  root.liveEar = { core, last: null, lastSamples, precheck, silentEar, flush };
+  root.liveEar = { core, last: null, lastSamples, precheck, silentEar, flush, startTap };
 })(typeof window !== "undefined" ? window : globalThis);

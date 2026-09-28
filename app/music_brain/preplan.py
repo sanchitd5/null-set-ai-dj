@@ -89,6 +89,38 @@ def b_starts(b: dict, bar_b: float, dur_b: float) -> List[dict]:
     return uniq
 
 
+HIGH_PCT = 85              # A's energy at or above this percentile of the song = its high point
+HIGH_OVER_MEDIAN = 0.3     # ... and this share of the song's range above its median
+HIGH_LEAD_BARS = 16        # "at its high OR about to reach it": the build into it is protected too
+
+
+def high_spans(ana: dict, bar_s: float) -> List[tuple]:
+    """A's high-energy sections [(t0, t1)] (song s): energy >= its HIGH_PCT percentile,
+    joined across gaps under 2 bars, padded HIGH_LEAD_BARS before (the build) and 1 bar after."""
+    et, ec = ana.get("energy_times") or [], ana.get("energy_curve") or []
+    if len(et) < 4 or len(et) != len(ec):
+        return []
+    ec_arr = np.asarray(ec, float)
+    # the high must stand out: top percentile AND well above the song's typical level
+    # (a record loud from start to end has no "high point" to protect)
+    med, rng = float(np.median(ec_arr)), float(ec_arr.max() - ec_arr.min())
+    if rng <= 1e-6:
+        return []                         # flat: no high point to protect
+    thr = max(float(np.percentile(ec_arr, HIGH_PCT)), med + HIGH_OVER_MEDIAN * rng)
+    spans: List[list] = []
+    for t, c in zip(et, ec):
+        if c >= thr and c > med:          # must stand above the song's typical level
+            if spans and t - spans[-1][1] <= 2 * bar_s:
+                spans[-1][1] = t
+            else:
+                spans.append([t, t])
+    return [(max(0.0, x - HIGH_LEAD_BARS * bar_s), y + bar_s) for x, y in spans]
+
+
+def in_high(spans: Sequence[tuple], t0: float, t1: float) -> bool:
+    return any(t0 < y and t1 > x for x, y in spans)
+
+
 def candidates(a: dict, b: dict, bpm_a: float, bpm_b: float, lo: float, hi: float, now: float,
                eA: Dict[str, np.ndarray], eB: Dict[str, np.ndarray], key_score: Optional[float],
                b_rap: bool = False) -> List[dict]:
@@ -96,6 +128,7 @@ def candidates(a: dict, b: dict, bpm_a: float, bpm_b: float, lo: float, hi: floa
     bar_a, bar_b = 240.0 / bpm_a, 240.0 / bpm_b
     dur_a, dur_b = float(a.get("duration") or 0), float(b.get("duration") or 0)
     lines_a = [t for t in (a.get("phrase_boundaries_8bar") or []) if lo <= t <= hi]
+    highs = high_spans(a, bar_a)          # never transition out of A while A is at its high
     if len(lines_a) > MAX_HANDOVERS:                        # spread over the window
         idx = np.linspace(0, len(lines_a) - 1, MAX_HANDOVERS).round().astype(int)
         lines_a = [lines_a[i] for i in sorted(set(idx))]
@@ -104,6 +137,8 @@ def candidates(a: dict, b: dict, bpm_a: float, bpm_b: float, lo: float, hi: floa
         for L in OVERLAPS:
             a_in = h - L * bar_a
             if a_in < now + MIN_LEAD_S or h + 8 * bar_a > dur_a:
+                continue
+            if in_high(highs, a_in, h + 8 * bar_a):   # B would come in / A leave during A's high
                 continue
             for bs in b_starts(b, bar_b, dur_b):
                 b_line = bs["t"] + L * bar_b                # B's song time on the handover line
@@ -146,7 +181,8 @@ def preplan(a: dict, b: dict, stems_a: Dict[str, str], stems_b: Dict[str, str], 
     eA, eB = energies(stems_a, 240.0 / bpm_a), energies(stems_b, 240.0 / bpm_b)
     cands = candidates(a, b, bpm_a, bpm_b, lo, hi, now, eA, eB, key_score, b_rap)
     if not cands:
-        return {"ok": False, "plan": None, "candidates": [], "ear": False, "why": "no phrase line in the window fits a merge"}
+        return {"ok": False, "plan": None, "candidates": [], "ear": False,
+                "why": "no phrase line in the window fits a merge outside A's energy high"}
     top = cands[:EAR_TOP]
     heard = False
     for c in top:

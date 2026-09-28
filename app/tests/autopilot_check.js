@@ -52,7 +52,8 @@ assert.strictEqual(introBars(32), 8); assert.strictEqual(introBars(16), 8); asse
 // vocal-driven recipe: stems on either side never cut (Open Eye Signal -> Delilah)
 assert.strictEqual(vocalRecipe({ vIn: 3, oneSong: false, aStems: false, bStems: true }).recipe, "Bass Swap");
 assert.strictEqual(vocalRecipe({ vIn: 3, oneSong: false, aStems: true, bStems: false }).recipe, "Bass Swap");
-assert.strictEqual(vocalRecipe({ vIn: 3, oneSong: false, aStems: false, bStems: false }).recipe, "Quick Cut");
+assert.strictEqual(vocalRecipe({ vIn: 3, oneSong: false, aStems: false, bStems: false }).recipe, "Bass Swap");   // never a hard cut
+assert.strictEqual(vocalRecipe({ vIn: 3, oneSong: false, aStems: false, bStems: false }).short, true);
 assert.strictEqual(vocalRecipe({ vIn: 6, oneSong: false, aStems: false, bStems: true }).short, false, "B's voice is held: no shortening");
 assert.strictEqual(vocalRecipe({ vIn: 6, oneSong: false, aStems: false, bStems: false }).short, true);
 assert.strictEqual(vocalRecipe({ vIn: 3, oneSong: true, aStems: true, bStems: true }), null);
@@ -109,4 +110,23 @@ console.log("autopilot core ok");
   assert.strictEqual(learnedRecipe(pick("Bass Swap", "bass_swap"), { ...base, recipe: "Mashup → Transition" }), null);  // mashup outranks
   assert.strictEqual(learnedRecipe(null, base), null);
   console.log("learned recipe ok");
+}
+
+// never transition while A is at, or building into, its energy high
+{
+  const { highSpans, exitPastHigh } = require("../ui/static/autopilot.js");
+  const bar = 2, times = [], curve = [];
+  for (let t = 0; t < 240; t++) { times.push(t); curve.push(t >= 150 && t < 190 ? 0.9 : 0.3); }
+  const sp = highSpans(times, curve, bar);
+  assert.strictEqual(sp.length, 1);
+  assert.strictEqual(sp[0][0], 150 - 16 * bar);                                 // the 16-bar build is protected
+  assert.ok(sp[0][1] >= 190);
+  const phrase = 16;                                                             // 8 bars
+  const r = exitPastHigh(110, 16 * bar, sp, phrase, 230);                        // 110..142 runs into the build
+  assert.ok(r.clear && r.moved > 0 && r.t >= sp[0][1]);
+  assert.deepStrictEqual(exitPastHigh(60, 16 * bar, sp, phrase, 230), { t: 60, clear: true, moved: 0 });   // clear already
+  assert.strictEqual(exitPastHigh(110, 16 * bar, sp, phrase, 150).clear, false); // no room past it: not moved
+  const loud = times.map(() => 0.9);
+  assert.deepStrictEqual(highSpans(times, loud, bar), []);                       // loud all through: no "high" to protect
+  console.log("energy high timing ok");
 }

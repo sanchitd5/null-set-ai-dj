@@ -139,3 +139,10 @@ def test_tempo_key_rounds_and_ratio():
     key, t = keylock.tempo_key("a" * 64, 122.88, 140.02)
     assert t == 140.0 and key.startswith("t" + "a" * 24) and "p" in key
     assert keylock.ensure_tempo("a" * 64, {}, 100.0, 130.0)["state"].startswith("error")   # 30 %: refused
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_master_watch_js():
+    res = subprocess.run([shutil.which("node"), str(Path(__file__).with_name("master_watch_check.js"))],
+                         capture_output=True, text=True, timeout=30)
+    assert res.returncode == 0, res.stderr or res.stdout

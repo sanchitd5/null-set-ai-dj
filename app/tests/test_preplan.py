@@ -51,3 +51,23 @@ def test_nothing_fits_says_why(tmp_path):
     res = preplan.preplan(_ana(120, 20.0), _ana(120, 32.0), sa, sb, BPM, BPM, 110, 118, 100, 1.0,
                           ask=lambda *x: None, cache_dir=tmp_path / "c")
     assert not res["ok"] and "no phrase line" in res["why"]
+
+
+def test_no_transition_while_a_is_at_its_energy_high(tmp_path):
+    lv = {"drums": 0.2, "bass": 0.2, "vocals": 0.1, "other": 0.1}
+    sa, sb = _stems(tmp_path, "a", 240, lv), _stems(tmp_path, "b", 240, lv)
+    a, b = _ana(240, 20.0), _ana(240, 32.0)
+    a["energy_curve"] = [0.9 if 150 <= x < 190 else 0.3 for x in np.arange(0, 240, 1.0)]   # A's high: 150-190 s
+    spans = preplan.high_spans(a, BAR)
+    assert spans and abs(spans[0][0] - (150 - preplan.HIGH_LEAD_BARS * BAR)) < 1.01 and spans[0][1] >= 189   # build protected
+    eA, eB = preplan.energies(sa, BAR), preplan.energies(sb, BAR)
+    cands = preplan.candidates(a, b, BPM, BPM, lo=100, hi=230, now=30, eA=eA, eB=eB, key_score=1.0)
+    assert cands
+    for c in cands:                                   # nothing from B's entry to 8 bars after the line touches it
+        assert not preplan.in_high(spans, c["a_in"], c["handover"] + 8 * BAR)
+
+
+def test_flat_or_mostly_loud_songs_have_no_high_to_protect():
+    flat = {"energy_times": list(range(100)), "energy_curve": [0.5] * 100}
+    mostly = {"energy_times": list(range(100)), "energy_curve": [0.9] * 90 + [0.1] * 10}
+    assert preplan.high_spans(flat, BAR) == [] and preplan.high_spans(mostly, BAR) == []

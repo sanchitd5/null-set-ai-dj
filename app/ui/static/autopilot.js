@@ -115,7 +115,8 @@ var autopilotCore = (function () {
     if (o.oneSong || v == null || !(v < 16)) return null;
     if (o.bStems) return { recipe: "Bass Swap", short: false, why: `B sings in ${Math.round(v)} bars: its voice held on its stems until A's is out` };
     if (o.aStems) return { recipe: "Bass Swap", short: false, why: `B sings in ${Math.round(v)} bars: A's voice leaves on its stems` };
-    if (v < 4) return { recipe: "Quick Cut", short: false, why: `no stems, B sings in ${Math.round(v)} bars: cut on the downbeat before B's vocal` };
+    // never a hard cut (user): no stems and B sings very soon -> the shortest EQ swap
+    if (v < 4) return { recipe: "Bass Swap", short: true, why: `no stems, B sings in ${Math.round(v)} bars: 4-bar swap, A's voice out before B's` };
     if (v < 8) return { recipe: "Bass Swap", short: true, why: `4-bar swap: B sings in ${Math.round(v)} bars` };
     return { recipe: "Bass Swap", short: false, why: `8-bar swap: B sings in ${Math.round(v)} bars` };
   }
@@ -136,7 +137,36 @@ var autopilotCore = (function () {
     if (!allowed[pick.recipe] || pick.recipe === o.recipe) return null;
     return { recipe: pick.recipe, why: `learned ${pick.kind.replace("_", " ")} (seen ${pick.seen}x, ${pick.source})` };
   }
-  const api = { learnedRecipe, vocalRecipe, stemBlendBars, stemBlendFader, phraseWaitS, introBars, FADER_PARK_BARS, homePlan, maskedGlideBars, maskedDropAt, HOME_DROP_PCT, LADDER_STEP_PCT };
+  // A's high-energy sections [[t0, t1]] (song s), same rule as preplan.high_spans:
+  // energy >= its 85th percentile AND >= median + 0.3 x range, joined across gaps
+  // under 2 bars, padded HIGH_LEAD_BARS before (at the high OR about to reach it:
+  // the build into it) and 1 bar after.
+  const HIGH_LEAD_BARS = 16;
+  function highSpans(times, curve, bar) {
+    if (!times || !curve || times.length < 4 || times.length !== curve.length) return [];
+    const sorted = [...curve].sort((x, y) => x - y);
+    const q = (p) => sorted[Math.min(sorted.length - 1, Math.floor(p * (sorted.length - 1)))];
+    const med = q(0.5), range = sorted[sorted.length - 1] - sorted[0];
+    if (!(range > 1e-6)) return [];                       // flat: no high point to protect
+    const thr = Math.max(q(0.85), med + 0.3 * range);
+    const spans = [];
+    for (let i = 0; i < times.length; i++) {
+      if (curve[i] < thr || curve[i] <= med) continue;    // must stand above the song's typical level
+      const last = spans[spans.length - 1];
+      if (last && times[i] - last[1] <= 2 * bar) last[1] = times[i];
+      else spans.push([times[i], times[i]]);
+    }
+    return spans.map(([x, y]) => [Math.max(0, x - HIGH_LEAD_BARS * bar), y + bar]);
+  }
+  // Exit time moved by whole phrases until [exit, exit + span) is clear of A's highs
+  // (user: never transition as A reaches its energy high). Gives up past `limit`.
+  function exitPastHigh(exit, spanS, spans, phraseS, limit) {
+    let t = exit, moved = 0;
+    const hits = (x) => spans.some(([a, b]) => x < b && x + spanS > a);
+    while (hits(t) && t + phraseS <= limit && moved < 12) { t += phraseS; moved++; }
+    return hits(t) ? { t: exit, clear: false, moved: 0 } : { t, clear: true, moved };
+  }
+  const api = { highSpans, exitPastHigh, learnedRecipe, vocalRecipe, stemBlendBars, stemBlendFader, phraseWaitS, introBars, FADER_PARK_BARS, homePlan, maskedGlideBars, maskedDropAt, HOME_DROP_PCT, LADDER_STEP_PCT };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   return api;
 })();
@@ -550,7 +580,9 @@ var autopilotCore = (function () {
     if (r.includes("bass swap") || r.includes("drop swap")) return "bass";
     if (r.includes("echo")) return "echo";
     if (r.includes("filter")) return "filter";
-    if (r.includes("hard cut") || r.includes("quick cut") || r.includes("cut")) return "cut";
+    // no hard cuts (user: "hard cuts are a big no"): a cut recipe that slips through
+    // still runs as a bass swap on the audio clock
+    if (r.includes("hard cut") || r.includes("quick cut") || r.includes("cut")) return "bass";
     if (r.includes("loop")) return "loop";
     if (r.includes("blend")) return "blend";
     return "default";
@@ -2015,6 +2047,11 @@ var autopilotCore = (function () {
       // ([[Echo Out]]). Rare now: every library song is pre-separated.
       recipe = "Echo Out";
     }
+    // Never a hard cut (user): a cut the matcher or the AI plan proposed is a Bass Swap.
+    if (/\bcut\b/i.test(String(recipe || ""))) {
+      console.info("transition recipe:", `${recipe} -> Bass Swap (no hard cuts)`);
+      recipe = "Bass Swap";
+    }
     // Mashup -> transition beats every other move when the pair fits (user)
     if (stemsBoth && odS && sdS && mashupFits(odS, sdS)) recipe = "Mashup → Transition";
     if (layer) { bTime = layer.entry; recipe = `LAYER ${layer.hold_bars}+${layer.unwind_bars} bars`; }
@@ -2073,6 +2110,16 @@ var autopilotCore = (function () {
       playPlanTag = ` | ${w.label} ${fmtTime(effectiveATime - entryPos)} · ear plan`;
       console.info("transition recipe:", `Stem Merge (pre-planned): ${pp.direction}, B from ${fmtTime(pp.b_start)} at A ${fmtTime(pp.a_in)}, ` +
         `${pp.bars} bars, ${pp.label}${pp.ear ? `, ear ${pp.ear.score}/10` : ""}`);
+    }
+    // Never transition out of A while it's at its energy high: push the exit past it
+    // by whole phrases (not for PEAK / LAYER / pre-planned: they chose their line).
+    if (!peakT && !layer && !preplanned && od && od.analysis) {
+      const spans = autopilotCore.highSpans(od.analysis.energy_times, od.analysis.energy_curve, 240 / od0bpm);
+      const ex = autopilotCore.exitPastHigh(effectiveATime, 16 * 240 / od0bpm, spans, phraseS, trackEnd);
+      if (ex.moved) {
+        console.info("transition timing:", `exit moved ${ex.moved} phrase(s) to ${fmtTime(ex.t)}: A is at its energy high`);
+        effectiveATime = ex.t;
+      }
     }
     // Song merge beats the plain mashup (it is its generalization) when a combo fits;
     // never over LAYER / PEAK. The mashup stays the fallback if the merge is refused.
