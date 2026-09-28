@@ -506,21 +506,34 @@ def transitions(rows: List[dict], songs: List[SongData], set_id: str, hop_s: flo
     grid = _owner_grid(rows)
     times = sorted(grid)
     hits = {(r["t"], r["stem"], h.track): h for r in rows for h in r.get("owners", [])}
-    out: List[Observation] = []
+    out: List[Tuple[float, Observation]] = []            # (incoming slot, observation)
     for ia, ib in handover_pairs(songs):
         A, B = songs[ia], songs[ib]
+        if _norm(A.title) == _norm(B.title) or (A.env and A.env is B.env):
+            continue                                     # a song listed again is a return, not a handover
         gap = tempo_gap(A.bpm, B.bpm)                                   # unknown: no range learned
         ks = camelot_score(A.key, B.key) if A.key and B.key else None
         base = dict(set_id=set_id, track_a=A.title, track_b=B.title, tempo_gap=gap, key_score=ks)
         win = [t for t in times if B.start - SLOT_PAD_S <= t <= B.start + SLOT_PAD_S]
-        a_last, b_first = {}, {}
+        # an arrival / a departure is only seen when an analysed window just before
+        # (after) it lacks the song: heard in the first (last) window of the analysed
+        # span, the song was already (still) there
+        seen_before = lambda t: any(t - 2 * hop_s <= x < t for x in win)
+        seen_after = lambda t: any(t < x <= t + 2 * hop_s for x in win)
+        a_last, b_first, a_stays, b_already = {}, {}, set(), set()
         for n in STEMS:
             ta = [t for t in win if ia in grid[t].get(n, ())]
             tb = [t for t in win if ib in grid[t].get(n, ())]
             if ta:
-                a_last[n] = max(ta)
+                if seen_after(max(ta)):
+                    a_last[n] = max(ta)
+                else:
+                    a_stays.add(n)
             if tb:
-                b_first[n] = min(tb)
+                if seen_before(min(tb)):
+                    b_first[n] = min(tb)
+                else:
+                    b_already.add(n)
         if not b_first or not a_last:
             continue
         at = min(b_first.values())
@@ -528,35 +541,40 @@ def transitions(rows: List[dict], songs: List[SongData], set_id: str, hop_s: flo
         if "bass" in a_last and "bass" in b_first and -hop_s <= b_first["bass"] - a_last["bass"] <= hop_s * 1.5:
             t = b_first["bass"]
             if grid.get(t, {}).get("drums", set()) & {ia, ib}:
-                out.append(Observation("bass_swap", at=t, **base, detail={"swap_at": t}))
+                out.append((B.start, Observation("bass_swap", at=t, **base, detail={"swap_at": t})))
         # stem intro: B's drums or top arrive at least two windows before B's bass
         early = [n for n in ("drums", "other") if n in b_first and b_first[n] <= b_first.get("bass", 1e9) - 2 * hop_s]
         if early and "bass" in a_last:
-            out.append(Observation("stem_intro", at=at, **base, detail={
-                "order": sorted(b_first, key=b_first.get), "lead_s": round(b_first.get("bass", at) - at, 1)}))
+            out.append((B.start, Observation("stem_intro", at=at, **base, detail={
+                "order": sorted(b_first, key=b_first.get), "lead_s": round(b_first.get("bass", at) - at, 1)})))
         # acapella over: one record's vocal alone over the other's drums + bass
         for t in win:
             g = grid[t]
             v, d, bs = g.get("vocals", set()), g.get("drums", set()), g.get("bass", set())
             for vv, dd in ((ia, ib), (ib, ia)):
                 if v == {vv} and d == {dd} and bs == {dd}:
-                    out.append(Observation("acapella_over", at=t, **base, detail={"vocal_from": "A" if vv == ia else "B"}))
+                    out.append((B.start, Observation("acapella_over", at=t, **base,
+                                                     detail={"vocal_from": "A" if vv == ia else "B"})))
                     break
             else:
                 continue
             break
         # hard cut: A's stems all gone the window B's all arrive, no overlap
-        if a_last and max(a_last.values()) < min(b_first.values()) + hop_s \
+        if a_last and not a_stays and not b_already and max(a_last.values()) < min(b_first.values()) + hop_s \
                 and max(b_first.values()) - min(b_first.values()) <= hop_s:
-            out.append(Observation("hard_cut", at=at, **base))
-        # loop: A's drums keep returning to the same source spot across windows
-        src = [hits[(t, "drums", ia)].src_t for t in win if (t, "drums", ia) in hits]
-        if len(src) >= 3 and max(src[-3:]) - min(src[-3:]) < hop_s:
-            out.append(Observation("loop_extend", at=at, **base, detail={"src_t": src[-1]}))
-    # a slot entered by several layered songs: keep one observation per kind (the earliest)
+            out.append((B.start, Observation("hard_cut", at=at, **base)))
+        # loop: A's drums keep returning to the same source spot across windows. Where the
+        # song's own drums repeat (a 4-to-the-floor bar), a search sticks to one copy of the
+        # bar while the song plays on: a stuck position there is no evidence of a loop
+        dh = [hits[(t, "drums", ia)] for t in win if (t, "drums", ia) in hits]
+        src = [h.src_t for h in dh]
+        if len(src) >= 3 and max(src[-3:]) - min(src[-3:]) < hop_s \
+                and not same_material(A, src[-1], src[-1] + hop_s * dh[-1].rate, WIN_S, stem="drums"):
+            out.append((B.start, Observation("loop_extend", at=at, **base, detail={"src_t": src[-1]})))
+    # a slot entered by several layered songs: keep one observation per kind (the earliest).
+    # The slot is the incoming entry's own start: a song listed twice has two slots
     seen, kept = set(), []
-    for o in sorted(out, key=lambda o: o.at):
-        slot = next((s.start for s in songs if s.title == o.track_b), None)
+    for slot, o in sorted(out, key=lambda x: x[1].at):
         if (o.kind, slot) not in seen:
             seen.add((o.kind, slot))
             kept.append(o)

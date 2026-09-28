@@ -361,3 +361,55 @@ def test_a_slot_never_analysed_is_not_called_the_wrong_song():
     assert v[0]["likely_wrong_song"] is False and v[1]["likely_wrong_song"] is False
     rows.append({"t": 610.0, "stem": "drums", "db": -10, "owners": []})
     assert sl.verify_songs(rows, songs)[1]["likely_wrong_song"] is True
+
+
+def _rows(spans, t0, t1, hop=sl.HOP_S):
+    """Owner rows from {stem: [(track, from, to, src_at(t))]}: heard at t when from <= t < to."""
+    rows = []
+    for t in np.arange(t0, t1 + 1e-9, hop):
+        for n in sl.STEMS:
+            hs = [sl.Hit(tr, 0.9, round(src(t), 2), 1.0) for tr, a, b, src in spans.get(n, []) if a <= t < b]
+            rows.append({"t": float(t), "stem": n, "db": -20.0 if hs else -80.0, "owners": hs,
+                         "owner": hs[0] if hs else None})
+    return rows
+
+
+def test_a_song_listed_twice_keeps_the_moves_of_both_its_slots():
+    songs = [sl.SongData(t, s, 120.0, None, {"drums": np.ones(8)}) for t, s in
+             (("A - One", 0.0), ("Q - Song", 100.0), ("C - Three", 300.0), ("Q - Song", 400.0))]
+    spans = {n: [(0, 0, 100, lambda t: t), (1, 100, 300, lambda t: t - 100),
+                 (2, 300, 400, lambda t: t - 300), (3, 400, 520, lambda t: t - 400)] for n in sl.STEMS}
+    obs = sl.transitions(_rows(spans, 0, 520), songs, "s")
+    swaps = [(o.at, o.track_a, o.track_b) for o in obs if o.kind == "hard_cut"]
+    # before: the second slot of "Q - Song" was deduped against its first one
+    assert swaps == [(100.0, "A - One", "Q - Song"), (300.0, "Q - Song", "C - Three"), (400.0, "C - Three", "Q - Song")]
+
+
+def test_a_song_listed_again_right_after_is_no_handover():
+    songs = [sl.SongData("Quiereme", 0.0, 120.0, None, {"drums": np.ones(8)}),
+             sl.SongData("Quiereme", 100.0, 120.0, None, {"drums": np.ones(8)})]
+    spans = {n: [(0, 0, 100, lambda t: t), (1, 100, 200, lambda t: t)] for n in sl.STEMS}
+    assert sl.transitions(_rows(spans, 0, 200), songs, "s") == []
+
+
+def test_a_stem_already_playing_when_the_clip_starts_did_not_arrive():
+    songs = [sl.SongData("A - One", 0.0, 120.0, None, {}), sl.SongData("B - Two", 100.0, 120.0, None, {})]
+    lin = lambda t: t
+    spans = {"drums": [(0, 60, 100, lin), (1, 60, 160, lin)],       # B's drums in from the clip's first window
+             "other": [(0, 60, 100, lin), (1, 60, 160, lin)],
+             "bass": [(0, 60, 100, lin), (1, 100, 160, lin)]}
+    obs = sl.transitions(_rows(spans, 60, 160), songs, "s")          # the clip covers 60..160 only
+    assert [(o.kind, o.at) for o in obs] == [("bass_swap", 100.0)]    # before: also a stem_intro "at 60"
+
+
+def test_a_stuck_position_on_repeating_drums_is_no_loop():
+    bar = sl.onset_env(_clicks(2.0, 7))[:-1]
+    loop_song = np.tile(bar, 60)                                      # the same bar for two minutes
+    songs = [sl.SongData("A - One", 0.0, 120.0, None, {"drums": loop_song}),
+             sl.SongData("B - Two", 100.0, 120.0, None, {"drums": sl.onset_env(_clicks(120, 8))})]
+    stuck = lambda t: 40.0                                            # every window matched the same bar
+    spans = {"drums": [(0, 0, 100, stuck), (1, 100, 200, lambda t: t - 100)],
+             "bass": [(0, 0, 100, stuck), (1, 100, 200, lambda t: t - 100)]}
+    assert not any(o.kind == "loop_extend" for o in sl.transitions(_rows(spans, 0, 200), songs, "s"))
+    songs[0] = sl.SongData("A - One", 0.0, 120.0, None, {"drums": sl.onset_env(_clicks(120, 9))})
+    assert any(o.kind == "loop_extend" for o in sl.transitions(_rows(spans, 0, 200), songs, "s"))
