@@ -1776,3 +1776,9 @@ body::after {
 /* ---- stem-shaded waveform (stem-wave.js) ------------------------------------ */
 .stem-wave { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 0; }
 .waveform > div:not(.beatgrid):not(.cue-markers) { position: relative; z-index: 1; }
+
+/* ---- full-screen visuals (visuals.js) ----------------------------------------- */
+/* under the AI HUD (900) and the scanlines (1000); never takes a click */
+.vfx { position: fixed; inset: 0; width: 100vw; height: 100vh; pointer-events: none; z-index: 850; mix-blend-mode: screen; }
+.vfx-btn { color: var(--on-surface-var); }
+.vfx-btn.vfx-on { color: var(--ai); border-color: color-mix(in srgb, var(--ai) 45%, transparent); }

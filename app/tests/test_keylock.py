@@ -128,6 +128,13 @@ def test_stem_liveness_js():
     assert res.returncode == 0, res.stderr or res.stdout
 
 
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_visuals_js():
+    res = subprocess.run([shutil.which("node"), str(Path(__file__).with_name("visuals_check.js"))],
+                         capture_output=True, text=True, timeout=30)
+    assert res.returncode == 0, res.stderr or res.stdout
+
+
 def test_tempo_key_rounds_and_ratio():
     key, t = keylock.tempo_key("a" * 64, 122.88, 140.02)
     assert t == 140.0 and key.startswith("t" + "a" * 24) and "p" in key
