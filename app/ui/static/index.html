@@ -249,7 +249,7 @@
 <!-- AI TRANSITION BRAIN — sits right above the mixer/crossfader, where the   -->
 <!-- suggestions are actually used, instead of buried below the console.      -->
 <!-- ========================================================================= -->
-<section class="panel ai-panel" id="ai-panel">
+<section class="panel ai-panel" id="ai-panel" hidden>  <!-- hidden: AI drives transitions; markup kept so app.js / automation.js lookups still resolve -->
   <div class="panel-head">
     <div class="panel-title"><span class="lamp lamp-a"></span><span>AI TRANSITION BRAIN</span></div>
     <span class="hud-label" id="ai-hint">Load both decks — suggestions appear automatically</span>
@@ -976,5 +976,6 @@
 <script src="/autopilot.js"></script>
 <script src="/beat-grid-ai.js"></script>
 <script src="/vibe-ui.js"></script>
+<script src="/marquee.js"></script>
 </body>
 </html>

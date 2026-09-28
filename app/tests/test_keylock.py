@@ -160,3 +160,10 @@ def test_master_watch_js():
     res = subprocess.run([shutil.which("node"), str(Path(__file__).with_name("master_watch_check.js"))],
                          capture_output=True, text=True, timeout=30)
     assert res.returncode == 0, res.stderr or res.stdout
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_marquee_js():
+    res = subprocess.run([shutil.which("node"), str(Path(__file__).with_name("marquee_check.js"))],
+                         capture_output=True, text=True, timeout=30)
+    assert res.returncode == 0, res.stderr or res.stdout

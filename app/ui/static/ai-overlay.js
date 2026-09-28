@@ -38,7 +38,15 @@
   hud.innerHTML = `<div class="ai-hud-head"><span class="ai-hud-dot"></span>NULL AT WORK<button class="ai-hud-min" title="Hide / show">–</button></div><ol class="ai-hud-list"></ol>`;
   document.body.appendChild(hud);
   const list = hud.querySelector(".ai-hud-list");
-  hud.querySelector(".ai-hud-min").addEventListener("click", () => hud.classList.toggle("ai-hud-collapsed"));
+  // Starts collapsed so it never covers deck B's transport (SYNC/REV/BRAKE/CUE/PLAY); choice is remembered.
+  const HUD_KEY = "nullset.aiHudOpen";
+  let hudOpen = false;
+  try { hudOpen = localStorage.getItem(HUD_KEY) === "1"; } catch (e) {}
+  hud.classList.toggle("ai-hud-collapsed", !hudOpen);
+  hud.querySelector(".ai-hud-min").addEventListener("click", () => {
+    const open = hud.classList.toggle("ai-hud-collapsed") === false;
+    try { localStorage.setItem(HUD_KEY, open ? "1" : "0"); } catch (e) {}
+  });
 
   const rows = new Map();          // id -> {el, t0, done}
   let seq = 0;

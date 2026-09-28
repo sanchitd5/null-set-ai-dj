@@ -1782,3 +1782,7 @@ body::after {
 .vfx { position: fixed; inset: 0; width: 100vw; height: 100vh; pointer-events: none; z-index: 850; mix-blend-mode: screen; }
 .vfx-btn { color: var(--on-surface-var); }
 .vfx-btn.vfx-on { color: var(--ai); border-color: color-mix(in srgb, var(--ai) 45%, transparent); }
+
+/* AI TRANSITION BRAIN panel hidden from the UI (user request); .panel sets display so force it. */
+#ai-panel[hidden] { display: none !important; }
+.ai-hud.ai-hud-collapsed { min-width: 0; }
