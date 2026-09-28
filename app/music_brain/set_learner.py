@@ -890,18 +890,22 @@ def _attach_lyrics(songs: List[SongData], entries: List[TrackEntry], verdict: Li
                    vocal_paths: Dict[str, str], log: Callable[[str], None]) -> None:
     from app.music_brain import lyrics as ly
 
-    cache: Dict[str, List[dict]] = {}
+    cache: Dict[Tuple[str, str], List[dict]] = {}      # lines are aligned to one file's vocal
     for i, (s, e, v) in enumerate(zip(songs, entries, verdict)):
         if not s.env or v["likely_wrong_song"] or e.path not in vocal_paths:
             continue
-        q = lyric_query(e.title, e.path, v["heard_share"])
-        if q is None:
-            log(f"{e.title}: no artist known, lyrics not looked up (pin with: agent_bridge lyrics)")
+        try:                      # one song's lyrics (a stem gone, a cache write) must not sink the study
+            q = lyric_query(e.title, e.path, v["heard_share"])
+            if q is None:
+                log(f"{e.title}: no artist known, lyrics not looked up (pin with: agent_bridge lyrics)")
+                continue
+            if (q, e.path) not in cache:
+                y = _load(vocal_paths[e.path])
+                cache[(q, e.path)] = ly.for_file(q, y, SR, duration=len(y) / SR, log=log)
+        except Exception as exc:
+            log(f"{e.title}: lyrics failed ({exc}): learned without words")
             continue
-        if q not in cache:
-            y = _load(vocal_paths[e.path])
-            cache[q] = ly.for_file(q, y, SR, duration=len(y) / SR, log=log)
-        s.lyrics = cache[q]
+        s.lyrics = cache[(q, e.path)]
         v["lyrics"] = {"query": q, "lines": len(s.lyrics), "estimated": bool(s.lyrics and s.lyrics[0].get("estimated"))}
 
 
@@ -1092,7 +1096,10 @@ def learn_set(source: str, tracklist: Optional[str] = None, download: bool = Tru
     if ai:
         from app.music_brain import set_ai
 
-        ai_res = set_ai.review(obs, log=log)
+        try:                      # the review is advice: its failure keeps the measurement
+            ai_res = set_ai.review(obs, log=log)
+        except Exception as exc:
+            ai_res = {"kept": obs, "rejected": [], "ai": f"skipped (review failed: {exc})"[:200]}
         log(f"ai: {ai_res['ai']}, kept {len(ai_res['kept'])}, rejected {len(ai_res['rejected'])}")
         obs = ai_res["kept"]
     store = merge(obs, store_path, set_ids=(set_id,))

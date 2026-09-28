@@ -216,6 +216,26 @@ def test_a_clip_that_fails_to_cut_does_not_sink_the_study(tmp_path, monkeypatch)
     assert separated == []                              # no song went to Demucs for nothing
 
 
+def test_lyrics_or_review_failing_late_keeps_the_study(tmp_path, monkeypatch):
+    import shutil
+    if not shutil.which("ffmpeg"):
+        return
+    from app.music_brain import lyrics, set_ai
+    _stub_study(tmp_path, monkeypatch)
+    words = {"A - One": [{"t": 0.0, "end": 4.0, "text": "one"}]}
+
+    def for_file(q, y, sr, **kw):
+        if q.startswith("B"):
+            raise OSError("No space left on device")                  # the lyrics cache write
+        return words[q]
+    monkeypatch.setattr(lyrics, "for_file", for_file)
+    monkeypatch.setattr(set_ai, "review", lambda obs, **kw: 1 / 0)
+    rep = sl.learn_set("x", tracklist="0:00 A - One\n0:36 B - Two", store_path=tmp_path / "l.json", ai=True)
+    assert {"bass_swap", "stem_intro"} <= {o["kind"] for o in rep["observations"]}
+    assert rep["ai"].startswith("skipped (review failed") and rep["tracks"][0]["lyrics"]["lines"] == 1
+    assert "lyrics" not in rep["tracks"][1]
+
+
 def _stub_study(tmp_path, monkeypatch) -> list:
     """A synthetic 80 s two-song set with Demucs, analysis, lyrics and YouTube stubbed.
     Returns the list of paths sent to (stub) Demucs."""
