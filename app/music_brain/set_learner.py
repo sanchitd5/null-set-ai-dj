@@ -999,7 +999,14 @@ def learn_set(source: str, tracklist: Optional[str] = None, download: bool = Tru
     duration = float(librosa.get_duration(path=str(set_path)))
     clips = plan_clips([e.start for e in entries], duration)
     log(f"clipping {len(clips)} blend windows ({sum(b - a for a, b in clips) / 60:.0f} of {duration / 60:.0f} min)")
-    clip_paths = [clip_audio(set_path, a, b, SETS_DIR / set_id / "clips") for a, b in clips]
+    cut: List[Tuple[Tuple[float, float], Path]] = []
+    for a, b in clips:
+        try:                                    # one undecodable stretch must not sink the study
+            cut.append(((a, b), clip_audio(set_path, a, b, SETS_DIR / set_id / "clips")))
+        except Exception as exc:
+            log(f"failed to cut clip {a:.0f}-{b:.0f} s: {exc}")
+    if not cut:                                 # before any song is sent to Demucs
+        raise ValueError(f"no clip of {set_path.name} could be cut (ffmpeg installed? file decodes?)")
 
     vocal_paths: Dict[str, str] = {}
 
@@ -1017,9 +1024,21 @@ def learn_set(source: str, tracklist: Optional[str] = None, download: bool = Tru
         a = analyze(path)
         return {"bpm": float(a.bpm), "key": a.key.camelot if a.key else None, "env": env, "vocal_db": vdb}
 
-    def clip_job(path: Path):
+    def clip_job(item):
+        # the clip's stems live only inside this job: a long set never holds every
+        # clip's four stems at once (~180 KB/s of set, 75 min of clips = ~0.8 GB)
+        (t0, _), path = item
         log(f"separating clip {path.name}")
-        return {n: _load(q) for n, q in separate(path).stems.items() if n in STEMS}
+        stems = {n: _load(q) for n, q in separate(path).stems.items() if n in STEMS}
+        if "drums" not in stems:
+            return None
+        bpm_at = _set_tempo_fn(stems["drums"])
+        log(f"locating stems {t0 / 60:.1f} min")
+        return (stem_timeline(stems, songs, bpm_at, t0=t0),
+                stem_timeline(stems, songs, bpm_at, VWIN_S, VHOP_S, only=("vocals",), min_r=VOCAL_MATCH_R,
+                              track=False, t0=t0),
+                stem_timeline(stems, songs, bpm_at, CWIN_S, CHOP_HOP_S, only=("vocals",), min_r=CHOP_MATCH_R,
+                              track=False, t0=t0))
 
     uniq = sorted({e.path for e in entries if e.path})           # a song listed 3x separates once
     done = dict(zip(uniq, _parallel(song_job, uniq, jobs, log, lambda x: Path(x).name)))
@@ -1028,17 +1047,11 @@ def learn_set(source: str, tracklist: Optional[str] = None, download: bool = Tru
     rows: List[dict] = []
     vrows: List[dict] = []
     crows: List[dict] = []
-    clip_stems = _parallel(clip_job, clip_paths, jobs, log, lambda x: x.name)
-    for (t0, _), stems in zip(clips, clip_stems):
-        if not stems or "drums" not in stems:
-            continue
-        bpm_at = _set_tempo_fn(stems["drums"])
-        log(f"locating stems {t0 / 60:.1f} min")
-        rows += stem_timeline(stems, songs, bpm_at, t0=t0)
-        vrows += stem_timeline(stems, songs, bpm_at, VWIN_S, VHOP_S, only=("vocals",), min_r=VOCAL_MATCH_R,
-                               track=False, t0=t0)
-        crows += stem_timeline(stems, songs, bpm_at, CWIN_S, CHOP_HOP_S, only=("vocals",), min_r=CHOP_MATCH_R,
-                               track=False, t0=t0)
+    for res in _parallel(clip_job, cut, jobs, log, lambda x: x[1].name):
+        if res:
+            rows += res[0]
+            vrows += res[1]
+            crows += res[2]
     if not rows:
         raise ValueError("no clip could be separated")
 

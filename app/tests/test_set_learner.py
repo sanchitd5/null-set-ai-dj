@@ -183,10 +183,44 @@ def test_vocal_chops_are_learned():
 def test_learn_set_end_to_end_with_stubs(tmp_path, monkeypatch):
     """learn_set wiring: tracklist -> songs -> ffmpeg clip -> (stub) Demucs -> observations -> store."""
     import shutil
-    import types
-    import soundfile as sf
     if not shutil.which("ffmpeg"):
         return
+    _stub_study(tmp_path, monkeypatch)
+    rep = sl.learn_set("x", tracklist="0:00 A - One\n0:36 B - Two", store_path=tmp_path / "learned.json", jobs=2, ai=False)
+    kinds = {o["kind"] for o in rep["observations"]}
+    assert {"bass_swap", "stem_intro"} <= kinds, rep["observations"]
+    assert rep["clips"] == [(0.0, 80.0)] and not any(t["likely_wrong_song"] for t in rep["tracks"])
+    assert sl.load_learned(tmp_path / "learned.json")["bass_swap"]["count"] >= 1
+
+
+def test_a_clip_that_fails_to_cut_does_not_sink_the_study(tmp_path, monkeypatch):
+    import pytest
+    import shutil
+    if not shutil.which("ffmpeg"):
+        return
+    separated = _stub_study(tmp_path, monkeypatch)
+    real_cut = sl.clip_audio
+
+    def cut(src, t0, t1, out_dir):
+        if t0 >= 500:
+            raise RuntimeError("ffmpeg: Invalid data found when processing input")
+        return real_cut(src, t0, t1, out_dir)
+    monkeypatch.setattr(sl, "clip_audio", cut)
+    monkeypatch.setattr(sl, "plan_clips", lambda starts, dur: [(0.0, 80.0), (500.0, 600.0)])
+    rep = sl.learn_set("x", tracklist="0:00 A - One\n0:36 B - Two", store_path=tmp_path / "l.json", jobs=2, ai=False)
+    assert {"bass_swap", "stem_intro"} <= {o["kind"] for o in rep["observations"]}
+    monkeypatch.setattr(sl, "plan_clips", lambda starts, dur: [(500.0, 600.0)])
+    separated.clear()
+    with pytest.raises(ValueError, match="no clip"):
+        sl.learn_set("x", tracklist="0:00 A - One\n0:36 B - Two", store_path=tmp_path / "l.json", ai=False)
+    assert separated == []                              # no song went to Demucs for nothing
+
+
+def _stub_study(tmp_path, monkeypatch) -> list:
+    """A synthetic 80 s two-song set with Demucs, analysis, lyrics and YouTube stubbed.
+    Returns the list of paths sent to (stub) Demucs."""
+    import types
+    import soundfile as sf
     from app.music_brain import analyzer, lyrics, stem_service
 
     a_st, _ = _song("A - One", 0.0, 1)
@@ -212,8 +246,11 @@ def test_learn_set_end_to_end_with_stubs(tmp_path, monkeypatch):
     for p in ("a.wav", "b.wav"):
         sf.write(tmp_path / p, np.zeros(SR), SR)
 
+    separated = []
+
     def fake_separate(path, **kw):
         path = str(path)
+        separated.append(path)
         if path in by_path:
             return types.SimpleNamespace(stems=by_path[path])
         t0, t1 = (float(x) for x in Path(path).stem.split("-"))       # a clip of the set
@@ -225,12 +262,7 @@ def test_learn_set_end_to_end_with_stubs(tmp_path, monkeypatch):
     monkeypatch.setattr(sl, "SETS_DIR", tmp_path / "sets")
     monkeypatch.setattr(sl, "fetch_set", lambda src: (set_path, "e2e", ""))
     monkeypatch.setattr(sl, "find_or_fetch_song", lambda title, d, download=True, **kw: tmp_path / ("a.wav" if title.startswith("A") else "b.wav"))
-
-    rep = sl.learn_set("x", tracklist="0:00 A - One\n0:36 B - Two", store_path=tmp_path / "learned.json", jobs=2, ai=False)
-    kinds = {o["kind"] for o in rep["observations"]}
-    assert {"bass_swap", "stem_intro"} <= kinds, rep["observations"]
-    assert rep["clips"] == [(0.0, 80.0)] and not any(t["likely_wrong_song"] for t in rep["tracks"])
-    assert sl.load_learned(tmp_path / "learned.json")["bass_swap"]["count"] >= 1
+    return separated
 
 
 def test_repeated_chorus_is_not_a_resequence():
