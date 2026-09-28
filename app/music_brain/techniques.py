@@ -194,7 +194,7 @@ class PairFeatures:
 
     @property
     def tempo_gap(self) -> float:
-        return abs(self.bpm_b / self.bpm_a - 1) if self.bpm_a > 0 else 1.0
+        return _fold_gap(self.bpm_a, self.bpm_b)
 
     @property
     def key(self) -> float:
