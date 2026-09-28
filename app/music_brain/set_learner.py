@@ -97,6 +97,23 @@ def _secs(ts: str) -> float:
     return float(s)
 
 
+_ARTIST_SEP = re.compile(r"\s[-–—]\s")
+
+
+def _layers(label: str) -> List[str]:
+    """'A x B x C' = a mashup, one song per layer. An 'x' in front of the ' - ' is an
+    artist collab ('Fred again.. x Jon Hopkins - Open Eye Signal' is one song), so a
+    part without its own ' - ' joins the next part when that one has it."""
+    out, artists = [], []
+    for part in re.split(r"\s+[x×]\s+", label.strip()):
+        if _ARTIST_SEP.search(part):
+            out.append(" x ".join(artists + [part]))
+            artists = []
+        else:
+            artists.append(part)
+    return out + artists
+
+
 def parse_tracklist(text: str) -> List[TrackEntry]:
     """'1:06:30 Artist - Title' lines -> entries sorted by time. IDs and blanks skipped."""
     out = []
@@ -108,7 +125,7 @@ def parse_tracklist(text: str) -> List[TrackEntry]:
         if not m:
             continue
         # "A x B x C" = a mashup: each song is its own layer from the same time
-        for title in re.split(r"\s+[x×]\s+", m.group(2).strip()):
+        for title in _layers(m.group(2)):
             title = re.sub(r"\s+x\d+$", "", title.strip())          # "Quiereme x2" = a return, same song
             if not title or title in ("...", "…") or re.fullmatch(r"(?i)id(\s*-\s*id)?\??|end", title):
                 continue

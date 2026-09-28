@@ -294,3 +294,16 @@ def test_set_download_found_by_title_when_named_by_youtube(tmp_path):
     lib = tmp_path / "lib"
     assert sl.find_or_fetch_song("Moderat - A New Error", d, library=lib, download=False).name == "A_New_Error.mp3"
     assert sl.find_or_fetch_song("Daft Punk - Technologic", d, library=lib, download=False) is None   # ambiguous
+
+
+# ---------------------------------------------------------------- review fixes
+def test_artist_collab_x_is_one_song_mashup_x_is_layers():
+    e = sl.parse_tracklist("0:00 Fred again.. x Jon Hopkins - Open Eye Signal\n"
+                           "3:00 Skrillex - Rumble x Fred again.. - Kyle\n"
+                           "6:00 Aerodynamic x Victory Lap Five\n"
+                           "9:00 Fred again.. x Skrillex x Four Tet - Baby again")
+    assert [(x.start, x.title) for x in e] == [
+        (0.0, "Fred again.. x Jon Hopkins - Open Eye Signal"),
+        (180.0, "Skrillex - Rumble"), (180.0, "Fred again.. - Kyle"),
+        (360.0, "Aerodynamic"), (360.0, "Victory Lap Five"),
+        (540.0, "Fred again.. x Skrillex x Four Tet - Baby again")]
