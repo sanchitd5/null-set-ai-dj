@@ -360,7 +360,7 @@ console.log("stem liveness ok");
     dispatchEvent() {}, addEventListener(type, fn) { this["on" + type] = fn; } });
   const raf = [];
   const timers = [];
-  const deckFake = () => ({ bpm: 128, buffer: buf(), seek() {}, play() {}, setPitchPercent() {},
+  const deckFake = () => ({ bpm: 128, buffer: buf(), seek() {}, play() {}, setPitchPercent() {}, rampPitchPercent() {},
     crossfaderGain: node(), lowFilter: node(), volumeGain: node() });
   const docListeners = {};
   const sb = {

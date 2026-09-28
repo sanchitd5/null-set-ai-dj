@@ -955,7 +955,7 @@
       const d = e.deck === "out" ? out : inn, at = t0 + e.t;
       if (e.start) {
         timers[innId].push(setTimeout(() => {
-          inn.setPitchPercent(0);                              // B at its own tempo: no beat ever overlaps
+          inn.rampPitchPercent(0, 0.005);                       // B at its own tempo: no beat ever overlaps (fast glide, never a jump)
           inn.play(bFrom, false, at);
           setTimeout(() => inn.stemMix(e.stems, at - 0.005, 0.005), 150);
         }, Math.max(0, (at - audioCtx.currentTime) * 1000 - 600)));
@@ -1024,7 +1024,7 @@
       const d = e.deck === "out" ? out : inn, at = t0 + e.bar * barS;
       if (e.start) {
         timers[innId].push(setTimeout(() => {
-          inn.setPitchPercent((bRate - 1) * 100);
+          inn.rampPitchPercent((bRate - 1) * 100, 0.005);
           inn.play(bEntry, false, at);
           setTimeout(() => inn.stemMix(e.stems, at - 0.005, 0.005), 150);
         }, Math.max(0, (at - audioCtx.currentTime) * 1000 - 700)));
@@ -1059,7 +1059,7 @@
       const d = e.deck === "out" ? out : inn, at = t0 + e.bar * barS;
       if (e.start) {
         timers[innId].push(setTimeout(() => {
-          inn.setPitchPercent((bRate - 1) * 100);
+          inn.rampPitchPercent((bRate - 1) * 100, 0.005);
           inn.play(bEntry, false, at);
           setTimeout(() => inn.stemMix(e.stems, at - 0.005, 0.005), 150);
         }, Math.max(0, (at - audioCtx.currentTime) * 1000 - 700)));

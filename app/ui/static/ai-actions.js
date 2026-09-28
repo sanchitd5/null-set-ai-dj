@@ -63,7 +63,7 @@
       // tempo-lock next to host; key-locked tempo stems when the gap is big
       const target = c.d.bpm * c.rate;
       if (n.useTempoStems && Math.abs(target / n.bpm - 1) > 0.02) await n.useTempoStems(target);
-      n.setPitchPercent((target / n.bpm - 1) * 100);
+      n.rampPitchPercent((target / n.bpm - 1) * 100, 0.005);
       const entry = (n.analysis.phrase_boundaries_8bar || [0])[0] || 0;
       const barS = c.bar / c.rate;
       n.play(entry, false, c.T);
@@ -166,7 +166,7 @@
       root.riffOverRap.run(prep, c.h, c.nId, t0, {
         xf: (inn, f) => setRange(xf, (inn === "b" ? 1 : -1) * f),
         eq: (d, band, v) => setRange(eq(d, band), v),
-        pitch: (d, pct) => root.decks[d].setPitchPercent(pct),
+        pitch: (d, pct) => root.decks[d].rampPitchPercent(pct, 0.005),
       });
       say("RIFF × RAP", `armed: starts at ${fmt(g0)} (in ${Math.round((g0 - pos) / c.rate)} s)`);
     },

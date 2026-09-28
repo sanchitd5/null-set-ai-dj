@@ -126,7 +126,7 @@
     decks.a.seek(Math.max(0, selected.a_time - preRoll), { user: true });
     decks.b.seek(Math.max(0, selected.b_time - preRoll), { user: true });
     const pitch = Math.max(-8, Math.min(8, ((decks.a.bpm || 128) / (decks.b.bpm || 128) - 1) * 100));
-    decks.b.setPitchPercent(pitch);
+    decks.b.rampPitchPercent(pitch, 0.005);
     decks.a.play(undefined, false);
     decks.b.play(undefined, false);
     setRange('.volume-fader[data-deck="a"]', 1);

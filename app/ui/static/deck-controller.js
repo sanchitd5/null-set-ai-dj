@@ -800,15 +800,20 @@ class Deck {
     return rule ? rule.isAudible(s) : s.playing;
   }
 
-  // Seconds a glide to `pct` must take under the gradient rule (0: may be instant).
+  // Seconds a glide to `pct` must take under the gradient rule (0: no real
+  // change). Never returns 0 for an actual change: a silent deck still
+  // glides, just fast (5 ms, inaudible to nobody) instead of a literal jump.
   tempoGlideSeconds(pct) {
     const rule = window.tempoRule;
-    if (!rule || !this.onMaster()) return 0;
+    if (!rule) return 0;
+    if (Math.abs((pct || 0) - this._pitchPercent) < (rule.STILL_PCT || 0.05)) return 0;
+    if (!this.onMaster()) return 0.005;
     return rule.glideSeconds(this._pitchPercent, pct, this.bpm, this._playbackRate());
   }
 
-  // Every AI tempo change goes through here: instant on a silent deck, a
-  // gradient on one the room hears. The user's own fader keeps setPitchPercent.
+  // Every AI tempo change goes through here: a fast glide on a silent deck,
+  // a full gradient on one the room hears. No deck ever gets a literal
+  // instant jump. The user's own fader keeps setPitchPercent.
   aiSetPitch(pct) {
     const g = this.tempoGlideSeconds(pct);
     if (g > 0 && typeof this.rampPitchPercent === "function") this.rampPitchPercent(pct, g);
