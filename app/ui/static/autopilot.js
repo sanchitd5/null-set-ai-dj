@@ -761,13 +761,14 @@ var autopilotCore = (function () {
         total = 8;
         break;
 
-      case "double": // both drops together for 8 bars, then cut A
+      case "double": // both drops together for 8 bars, then A fades out
         // [[Double Drop]]: one bass only - B's lows open, A's killed on the same
-        // downbeat (no ramp: two subs must never overlap).
+        // downbeat (no ramp: two subs must never overlap). A leaves over the last
+        // 1.5 bars, never on one downbeat (user: no hard cuts).
         setAt(xfEl, 0);
         setAt(lowOut, LOW_KILL);
         setAt(lowIn, 0);
-        at(8, () => setAt(xfEl, toXf));
+        at(7, () => rampParam(xfEl, 0, toXf, 1.5 * bar));
         total = 8.5;
         break;
 
