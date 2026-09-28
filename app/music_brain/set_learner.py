@@ -441,18 +441,35 @@ def _owner_grid(rows: List[dict]) -> Dict[float, Dict[str, set]]:
     return g
 
 
+def tempo_gap(bpm_a: float, bpm_b: float) -> Optional[float]:
+    """Stretch needed to lock two tempos, half/double time folded (87 vs 174 = 0 %)."""
+    if bpm_a <= 0 or bpm_b <= 0:
+        return None
+    return round(min(abs(bpm_b * k / bpm_a - 1) for k in (1.0, 2.0, 0.5)), 4)
+
+
+def handover_pairs(songs: List[SongData]) -> List[Tuple[int, int]]:
+    """(a, b) index pairs that are real handovers: every song of one tracklist slot to
+    every song of the next slot. Songs layered in the same slot ("A x B x C") play at
+    once: pairing them as A -> B would learn "transitions" that never happened."""
+    starts = sorted({s.start for s in songs})
+    groups = [[i for i, s in enumerate(songs) if s.start == t] for t in starts]
+    return [(a, b) for g, h in zip(groups, groups[1:]) for a in g for b in h]
+
+
 def transitions(rows: List[dict], songs: List[SongData], set_id: str, hop_s: float = HOP_S) -> List[Observation]:
-    """Per consecutive A -> B: the order the stems changed owner, classified."""
+    """Per real handover A -> B (handover_pairs): the order the stems changed owner,
+    classified. A pair counts only when A is heard leaving and B arriving; one
+    observation per kind per incoming slot."""
     from app.music_brain.techniques import camelot_score
 
     grid = _owner_grid(rows)
     times = sorted(grid)
     hits = {(r["t"], r["stem"], h.track): h for r in rows for h in r.get("owners", [])}
     out: List[Observation] = []
-    for ia in range(len(songs) - 1):
-        ib = ia + 1
+    for ia, ib in handover_pairs(songs):
         A, B = songs[ia], songs[ib]
-        gap = round(abs(B.bpm / A.bpm - 1), 4) if A.bpm > 0 and B.bpm > 0 else None   # unknown: no range learned
+        gap = tempo_gap(A.bpm, B.bpm)                                   # unknown: no range learned
         ks = camelot_score(A.key, B.key) if A.key and B.key else None
         base = dict(set_id=set_id, track_a=A.title, track_b=B.title, tempo_gap=gap, key_score=ks)
         win = [t for t in times if B.start - SLOT_PAD_S <= t <= B.start + SLOT_PAD_S]
@@ -464,7 +481,7 @@ def transitions(rows: List[dict], songs: List[SongData], set_id: str, hop_s: flo
                 a_last[n] = max(ta)
             if tb:
                 b_first[n] = min(tb)
-        if not b_first:
+        if not b_first or not a_last:
             continue
         at = min(b_first.values())
         # bass swap: A's bass hands to B's within about one window, drums running
@@ -496,7 +513,14 @@ def transitions(rows: List[dict], songs: List[SongData], set_id: str, hop_s: flo
         src = [hits[(t, "drums", ia)].src_t for t in win if (t, "drums", ia) in hits]
         if len(src) >= 3 and max(src[-3:]) - min(src[-3:]) < hop_s:
             out.append(Observation("loop_extend", at=at, **base, detail={"src_t": src[-1]}))
-    return out
+    # a slot entered by several layered songs: keep one observation per kind (the earliest)
+    seen, kept = set(), []
+    for o in sorted(out, key=lambda o: o.at):
+        slot = next((s.start for s in songs if s.title == o.track_b), None)
+        if (o.kind, slot) not in seen:
+            seen.add((o.kind, slot))
+            kept.append(o)
+    return kept
 
 
 MIN_RUN_WINDOWS = 3          # consecutive agreeing windows before a source position counts

@@ -269,3 +269,9 @@ def test_the_set_itself_is_not_the_song():
     assert sl.pick_result(res, "Fred again..", "i am a party") is None
     assert sl.pick_result([{"title": "Cmon (LATIN MAFIA & Fred edit)", "channel": "Fred again..", "id": "z"}],
                           "", "Cmon (LATIN MAFIA & Fred edit)")["id"] == "z"
+
+
+def test_layered_songs_are_not_handovers_and_half_time_folds():
+    songs = [sl.SongData(t, s, 120, None, {}) for t, s in (("A", 0), ("B", 0), ("C", 300), ("D", 600), ("E", 600))]
+    assert sl.handover_pairs(songs) == [(0, 2), (1, 2), (2, 3), (2, 4)]      # never A->B or D->E
+    assert sl.tempo_gap(87.0, 174.0) == 0.0 and sl.tempo_gap(120.0, 126.0) == 0.05 and sl.tempo_gap(0, 120) is None
