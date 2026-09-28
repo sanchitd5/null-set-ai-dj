@@ -9,6 +9,7 @@ recordings, interviews, covers; 90 s - 9 min; title must match the query).
 from __future__ import annotations
 
 import re
+import time
 from pathlib import Path
 from typing import Callable, Optional
 from urllib.parse import quote_plus
@@ -242,8 +243,7 @@ def search_songs(query: str, limit: int = 8) -> list[dict]:
         return []
     opts = {"quiet": True, "no_warnings": True, "extract_flat": "in_playlist",
             "skip_download": True, "playlistend": SEARCH_LIMIT}
-    with _yt_dlp.YoutubeDL(opts) as ydl:
-        info = ydl.extract_info(f"ytsearch{SEARCH_LIMIT}:{q}", download=False)
+    info = _guarded_extract(opts, f"ytsearch{SEARCH_LIMIT}:{q}")      # yt_guard.Cooling -> caller shows it
     out = []
     for e in (info or {}).get("entries") or []:
         vid, title = e.get("id"), e.get("title") or ""
@@ -290,9 +290,8 @@ def verify_song(artist: str, title: str) -> Optional[bool]:
     opts = {"quiet": True, "no_warnings": True, "extract_flat": "in_playlist",
             "skip_download": True, "playlistend": VERIFY_POOL}
     try:
-        with _yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(f"ytsearch{VERIFY_POOL}:{artist} - {title} audio", download=False)
-    except Exception:
+        info = _guarded_extract(opts, f"ytsearch{VERIFY_POOL}:{artist} - {title} audio")
+    except Exception:          # incl. yt_guard.Cooling: unknown, and no request while YouTube cools
         return None
     for e in (info or {}).get("entries") or []:
         if not e or base(e) is not None or _DATED_RE.search(e.get("title") or ""):
@@ -314,9 +313,8 @@ def song_views(name: str) -> Optional[int]:
     opts = {"quiet": True, "no_warnings": True, "extract_flat": "in_playlist",
             "skip_download": True, "playlistend": 6}
     try:
-        with _yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(f"ytsearch6:{q}", download=False)
-    except Exception:
+        info = _guarded_extract(opts, f"ytsearch6:{q}")
+    except Exception:          # incl. yt_guard.Cooling
         return None
     best = None
     for e in (info or {}).get("entries") or []:
@@ -329,6 +327,17 @@ def song_views(name: str) -> Optional[int]:
         if isinstance(v, int) and (best is None or v > best):
             best = v
     return best if best is not None else 0
+
+
+def _guarded_extract(opts: dict, url: str) -> dict:
+    """extract_info (no download) through app.music_brain.yt_guard: bot checks back off
+    and heal on their own instead of hammering YouTube."""
+    from app.music_brain import yt_guard
+
+    def run(extra: dict) -> dict:
+        with _yt_dlp.YoutubeDL(opts | extra) as ydl:
+            return ydl.extract_info(url, download=False) or {}
+    return yt_guard.call(run)
 
 
 def detect_source(url: str) -> str:
@@ -357,6 +366,7 @@ def download_to_dir(url: str, output_dir: Path, progress: Optional[Progress] = N
     progress(stage, percent) is called from the download thread: percent is a
     real byte ratio while downloading, None (indeterminate) for search / convert steps.
     """
+    background = progress is not None           # a job (with progress) waits out a YouTube pause
     progress = progress or _noop_progress
     output_dir.mkdir(parents=True, exist_ok=True)
     if _YTMSEARCH_RE.match(url):
@@ -440,18 +450,29 @@ def _ytdlp(url: str, output_dir: Path, progress: Optional[Progress] = None,
         # default s32 FLAC doubled file size for nothing.
         "postprocessor_args": {"extractaudio": ["-sample_fmt", "s16"]},
     }
-    for attempt in range(2):  # YouTube intermittently answers 403 on the first stream fetch
-        try:
-            with _yt_dlp.YoutubeDL(opts) as ydl:
-                ydl.download([url])
-            break
-        except _yt_dlp.utils.MaxDownloadsReached:
-            break  # got our one matching track
-        except _yt_dlp.utils.DownloadError as exc:
-            msg = str(exc)
-            if attempt == 0 and ("403" in msg or "timed out" in msg.lower()):
-                continue
-            raise
+    from app.music_brain import yt_guard
+
+    def run(extra: dict) -> None:
+        for attempt in range(2):  # YouTube intermittently answers 403 on the first stream fetch
+            try:
+                with _yt_dlp.YoutubeDL(opts | extra) as ydl:
+                    ydl.download([url])
+                return
+            except _yt_dlp.utils.MaxDownloadsReached:
+                return  # got our one matching track
+            except _yt_dlp.utils.DownloadError as exc:
+                msg = str(exc)
+                if attempt == 0 and ("403" in msg or "timed out" in msg.lower()):
+                    continue
+                raise
+
+    # A bot check pauses YouTube for everyone (yt_guard). A background job waits it out and
+    # carries on by itself; a request someone is waiting on answers at once (Cooling -> 503).
+    if background:
+        yt_guard.wait_and_call(run, on_wait=lambda until: progress(
+            f"YouTube cooling down after a bot check, retrying at {time.strftime('%H:%M', time.localtime(until))}", None))
+    else:
+        yt_guard.call(run)
 
     after = _audio_files(output_dir)
     new_files = sorted(after - before)

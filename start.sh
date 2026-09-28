@@ -52,6 +52,20 @@ MLX_PORT="${MLX_PORT:-8081}"
 OMNI_PY="${OMNI_PY:-$HOME/.venvs/mlx-vlm/bin/python}"
 OMNI_MODEL="${OMNI_MODEL:-mlx-community/Qwen3-Omni-30B-A3B-Instruct-4bit}"
 OMNI_PORT="${OMNI_PORT:-8901}"
+# YouTube cookies (Netscape cookies.txt from a logged-in browser) for yt-dlp's bot
+# checks: app.music_brain.yt_guard adds them only after a plain request is refused.
+# Kept outside the repo; never commit it (it is your YouTube login).
+YTDLP_COOKIES_FILE="${YTDLP_COOKIES_FILE:-$HOME/.config/ai-dj/youtube-cookies.txt}"
+if [[ -f "$YTDLP_COOKIES_FILE" ]]; then
+  if [[ "$(stat -f %Lp "$YTDLP_COOKIES_FILE" 2>/dev/null || stat -c %a "$YTDLP_COOKIES_FILE")" != "600" ]]; then
+    chmod 600 "$YTDLP_COOKIES_FILE" 2>/dev/null   # owner-only: it is a login
+  fi
+  export YTDLP_COOKIES_FILE
+  echo "yt-dlp: using cookies from $YTDLP_COOKIES_FILE (only after a bot check)"
+else
+  unset YTDLP_COOKIES_FILE
+  echo "yt-dlp: no cookies file at ~/.config/ai-dj/youtube-cookies.txt (bot checks back off and heal on their own)"
+fi
 LOG_APP="${LOG:-/tmp/ai-dj-server.log}"
 LOG_LLM="${MLX_LOG:-/tmp/ai-dj-mlx-server.log}"
 LOG_EAR="/tmp/ai-dj-omni-server.log"

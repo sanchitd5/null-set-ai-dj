@@ -121,6 +121,50 @@ def preview(
     return payload
 
 
+def learn_set(source: str, tracklist: Optional[str] = None, download: bool = True, jobs: int = 2, ai: bool = True) -> dict:
+    """Study a DJ set (URL or file): stems, per-stem song matching, transition and
+    vocal re-cut extraction; merges learned techniques into the store."""
+    from app.music_brain.set_learner import learn_set as _learn
+
+    return _learn(source, tracklist=tracklist, download=download, jobs=jobs, ai=ai,
+                  log=lambda m: print(m, file=sys.stderr, flush=True))
+
+
+def hook_drops(path: str, title: str, top_n: int = 3, render: bool = False, ai: bool = True) -> dict:
+    """Where to go acapella on the song's emotional hook and drop back in; render=True
+    writes an audition WAV per pick (plus the untouched span) to data/output/hook_drops/."""
+    import re
+
+    import librosa
+
+    from app.music_brain import hook_drop as hd, lyrics as ly, set_ai
+    from app.music_brain.config import ROOT_DIR
+    from app.music_brain.set_learner import load_learned
+    from app.music_brain.stem_service import separate as _sep
+
+    a = _analyze(path)
+    stems = _sep(path).stems
+    y, sr = librosa.load(stems["vocals"], sr=11025, mono=True)
+    lines = ly.for_file(title, y, sr, duration=a.duration, log=lambda m: print(m, file=sys.stderr))
+    picks = set_ai.emotional_lines(title, lines, call=ai) if lines else []
+    plan = hd.plan(lines, a.bpm, a.phrase_boundaries_8bar, a.energy_times, a.energy_curve,
+                   learned=load_learned(), top_n=top_n, ai_lines=picks)
+    out = {"title": title, "bpm": a.bpm, "lyrics_lines": len(lines), "ai": "used" if picks else "not used",
+           "hook_drops": plan}
+    if render:
+        slug = re.sub(r"[^\w]+", "_", title).strip("_")[:60]
+        for i, item in enumerate(plan, 1):
+            item["render"] = hd.render(stems, item, a.bpm, ROOT_DIR / "data" / "output" / "hook_drops" / f"{slug}_{i}_{int(item['cut_at'])}s.wav")
+    return out
+
+
+def learned() -> dict:
+    """Techniques learned so far, with their observations."""
+    from app.music_brain.set_learner import load_learned
+
+    return {"learned": load_learned()}
+
+
 def list_recipes() -> dict:
     """All 28 parsed transition recipes with their tags/prerequisites."""
     return {"recipes": [r.to_dict() for r in _get_knowledge().get_all()]}
@@ -164,6 +208,51 @@ def _build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("list-recipes", help="List all 28 parsed transition recipes.")
 
+    p_learn = sub.add_parser("learn-set", help="Learn transition + vocal techniques from a DJ set (URL or file).")
+    p_learn.add_argument("source", help="YouTube/SoundCloud URL or local set audio file.")
+    p_learn.add_argument("--tracklist", default=None, help="Text file of '1:06:30 Artist - Title' lines (default: video description).")
+    p_learn.add_argument("--no-download", action="store_true", help="Use only songs already in data/songs/.")
+    p_learn.add_argument("--no-ai", action="store_true", help="Skip the local-LLM review of detected moves.")
+    p_learn.add_argument("--jobs", type=int, default=2, help="Demucs runs at once (default 2; each holds a model in memory).")
+
+    sub.add_parser("learned", help="List techniques learned from studied sets.")
+
+    p_hd = sub.add_parser("hook-drop", help="Plan (and audition) an acapella drop on a song's emotional hook.")
+    p_hd.add_argument("audio")
+    p_hd.add_argument("--title", required=True, help='"Artist - Title" (for the lyrics)')
+    p_hd.add_argument("--top-n", type=int, default=3)
+    p_hd.add_argument("--render", action="store_true", help="write audition WAVs to data/output/hook_drops/")
+    p_hd.add_argument("--no-ai", action="store_true")
+
+    p_ly = sub.add_parser("lyrics", help="Show a song's synced lyrics, or pin them by hand when the online ones are wrong.")
+    p_ly.add_argument("title", help='"Artist - Title"')
+    g2 = p_ly.add_mutually_exclusive_group()
+    g2.add_argument("--lrc", help="LRC file to pin ([mm:ss.xx] words lines)")
+    g2.add_argument("--lrclib", type=str, help="pin one LRCLIB entry: id or https://lrclib.net/tracks/<id>")
+    g2.add_argument("--none", action="store_true", help="pin 'no lyrics' (online ones are for another song)")
+
+    p_src = sub.add_parser("source", help="Recordings a song's vocal was sampled from, and how they were rebuilt.")
+    ssub = p_src.add_subparsers(dest="source_cmd", required=True)
+    s_add = ssub.add_parser("add", help="fetch a source recording + its captions")
+    s_add.add_argument("url")
+    s_add.add_argument("--song", help='link it to "Artist - Title"')
+    s_add.add_argument("--note", default="", help="what the source means")
+    s_learn = ssub.add_parser("learn", help="how the source was made into a song or a live set")
+    s_learn.add_argument("source", help="source video id or url")
+    s_learn.add_argument("target", help="song/set audio file, or a YouTube url")
+    s_learn.add_argument("--start", type=float, default=0.0, help="seconds: cut a long set to the part using the source")
+    s_learn.add_argument("--end", type=float, default=None)
+    s_learn.add_argument("--label", default=None)
+    s_show = ssub.add_parser("show")
+    s_show.add_argument("source")
+
+    p_fb = sub.add_parser("learn-feedback", help="Refine a learned technique with your own rule (wins over the set).")
+    p_fb.add_argument("kind", help="e.g. acapella_over, bass_swap, vocal_resequence")
+    p_fb.add_argument("rule", nargs="?", default="", help='e.g. "rap ~9 dB under the riff"')
+    g = p_fb.add_mutually_exclusive_group()
+    g.add_argument("--disable", action="store_const", const=True, dest="disable", help="keep it out of the autopilot")
+    g.add_argument("--enable", action="store_const", const=False, dest="disable")
+
     return parser
 
 
@@ -190,11 +279,52 @@ def main(argv: Optional[list[str]] = None) -> int:
             )
         elif args.command == "list-recipes":
             payload = list_recipes()
+        elif args.command == "learn-set":
+            payload = learn_set(args.source, tracklist=args.tracklist, download=not args.no_download, jobs=args.jobs, ai=not args.no_ai)
+        elif args.command == "hook-drop":
+            payload = hook_drops(args.audio, args.title, top_n=args.top_n, render=args.render, ai=not args.no_ai)
+        elif args.command == "source":
+            from app.music_brain import sources as src
+
+            log = lambda m: print(m, file=sys.stderr, flush=True)
+            if args.source_cmd == "add":
+                payload = src.add(args.url, song=args.song, note=args.note, log=log)
+            elif args.source_cmd == "show":
+                payload = src.get(src.video_id(args.source)) | {"captions_text": src.captions(src.video_id(args.source))["phrases"]}
+            else:
+                target = args.target
+                if target.startswith("http"):
+                    from app.music_brain.set_learner import fetch_set
+
+                    target = str(fetch_set(target)[0])
+                payload = src.learn_transform(src.video_id(args.source), target, label=args.label,
+                                              start=args.start, end=args.end, log=log)
+        elif args.command == "learned":
+            payload = learned()
+        elif args.command == "lyrics":
+            from app.music_brain import lyrics as ly
+
+            if args.none:
+                lines = ly.set_manual(args.title, None)
+            elif args.lrclib:
+                lines = ly.set_from_lrclib(args.title, int(args.lrclib.rstrip("/").rsplit("/", 1)[-1]))
+            elif args.lrc:
+                lines = ly.set_manual(args.title, Path(args.lrc).expanduser().read_text(encoding="utf-8"))
+            else:
+                lines = ly.fetch(args.title)
+            payload = {"title": args.title, "manual": bool(args.none or args.lrc or args.lrclib), "sample": ly.sample_of(args.title), "lines": lines}
+        elif args.command == "learn-feedback":
+            from app.music_brain.set_learner import add_user_rule
+
+            payload = {"technique": add_user_rule(args.kind, args.rule, disable=args.disable)}
         else:  # pragma: no cover - argparse enforces valid choices
             parser.error(f"Unknown command: {args.command}")
             return 2
     except (FileNotFoundError, ValueError) as exc:
         print(json.dumps({"error": str(exc)}, indent=2))
+        return 1
+    except Exception as exc:          # yt-dlp / network / Demucs: still one JSON error line (spec: never a traceback on stdout)
+        print(json.dumps({"error": f"{type(exc).__name__}: {str(exc)[:400]}"}, indent=2))
         return 1
 
     print(json.dumps(payload, indent=2, default=str))

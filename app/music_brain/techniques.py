@@ -189,6 +189,7 @@ class PairFeatures:
     a_grooves: List[Tuple[float, float]] = field(default_factory=list)
     a_breakdowns: List[Tuple[float, float]] = field(default_factory=list)
     keylock: bool = False              # engine can stretch without moving pitch
+    a_hook_drops: List[dict] = field(default_factory=list)   # hook_drop.plan() for A: where to go acapella + drop
     exit_window: Tuple[float, float] = (0.0, 0.0)
 
     @property
@@ -279,7 +280,58 @@ TECHNIQUES = [
 ]
 
 
-def rank(f: PairFeatures) -> List[dict]:
-    """Every technique with fits + reasons; fitting ones first, in library order."""
-    out = [t.assess(f) | {"live": t.live} for t in TECHNIQUES]
-    return sorted(out, key=lambda x: (not x["fits"], TECHNIQUES.index(next(t for t in TECHNIQUES if t.name == x["name"]))))
+TEMPO_GAP_SLACK = 0.02      # a learned move fits pairs up to this much further apart than seen
+KEY_SCORE_SLACK = 0.05
+
+
+def learned_techniques(store: Optional[Dict[str, dict]] = None) -> List[Technique]:
+    """Techniques observed in studied sets (app.music_brain.set_learner), each
+    fitting pairs inside the tempo gap / key score range it was seen at."""
+    if store is None:
+        from app.music_brain.set_learner import load_learned
+        store = load_learned()
+    out = []
+    for kind, e in sorted(store.items()):
+        obs = e.get("observations") or []
+        if not obs or e.get("disabled"):
+            continue
+        rules = [r.get("text", "") for r in e.get("user_rules") or []]
+        ai_rules = list(e.get("ai_rules") or [])[:3]
+        gap_max, key_min, stems = e.get("tempo_gap_max"), e.get("key_score_min"), bool(e.get("stems"))
+        vocal_from = {o.get("detail", {}).get("vocal_from") for o in obs} - {None}
+
+        def checks(f: PairFeatures, gap_max=gap_max, key_min=key_min, stems=stems, vocal_from=vocal_from, n=len(obs), rules=rules, kind=kind, ai_rules=ai_rules):
+            res: List[Check] = ([(True, f"seen {n}x in studied sets")] + [(True, f"user rule: {r}") for r in rules]
+                                + [(True, f"ai rule: {r}") for r in ai_rules])
+            if stems:
+                res.append((f.stems_a and f.stems_b, "stems on both" if f.stems_a and f.stems_b else "needs stems on both"))
+            if gap_max is not None:
+                lim = gap_max + TEMPO_GAP_SLACK
+                res.append((f.tempo_gap <= lim, f"tempo gap {f.tempo_gap:.1%} (seen up to {gap_max:.1%})"))
+            if key_min is not None:
+                lim = max(0.0, key_min - KEY_SCORE_SLACK)
+                res.append((f.key >= lim, f"key score {f.key:.2f} (seen down to {key_min:.2f})"))
+            if vocal_from == {"A"}:
+                res.append((f.vocal_a_exit >= 0.3, f"A sings {f.vocal_a_exit:.0%} of the exit (needs 30 %)"))
+            elif vocal_from == {"B"}:
+                res.append((f.vocal_b_entry >= 0.3, f"B sings {f.vocal_b_entry:.0%} of the entry (needs 30 %)"))
+            if kind == "acapella_drop":
+                d = f.a_hook_drops[0] if f.a_hook_drops else None
+                res.append((d is not None, f'A\'s hook "{d["text"]}": beat out at {d["cut_at"]:.0f}s, drop at {d["drop_at"]:.0f}s'
+                            if d else "no hook line on a phrase boundary in A (needs synced lyrics)"))
+            return res
+
+        src = obs[0]
+        out.append(Technique(f"learned:{kind}", f"{src.get('set_id')} {int(src.get('at', 0)) // 60}:{int(src.get('at', 0)) % 60:02d} "
+                             f"{src.get('track_a', '')}{' -> ' + src['track_b'] if src.get('track_b') else ''}",
+                             e.get("what", kind), checks, live=bool(e.get("live"))))
+    return out
+
+
+def rank(f: PairFeatures, learned: Optional[Dict[str, dict]] = None) -> List[dict]:
+    """Every technique with fits + reasons; fitting ones first, in library order
+    (built-ins, then techniques learned from studied sets)."""
+    lib = TECHNIQUES + learned_techniques(learned)
+    order = {t.name: i for i, t in enumerate(lib)}
+    out = [t.assess(f) | {"live": t.live} for t in lib]
+    return sorted(out, key=lambda x: (not x["fits"], order[x["name"]]))

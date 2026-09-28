@@ -107,6 +107,7 @@ All settings are optional.
 | `LLM_BACKEND` | `auto` | `auto`, `mlx` or `ollama` |
 | `MLX_MODEL` | `mlx-community/Qwen3-30B-A3B-Instruct-2507-4bit` | MLX model |
 | `MLX_PORT` | `8081` | port for `mlx_lm.server` |
+| `YTDLP_COOKIES_FILE` | `~/.config/ai-dj/youtube-cookies.txt` | YouTube cookies.txt for yt-dlp bot checks (used only after a refusal; set by `start.sh` when the file exists; keep it out of the repo) |
 | `OLLAMA_URL` | `http://localhost:11434` | Ollama server |
 | `OLLAMA_MODEL` | `gemma3:27b` | Ollama fallback model |
 | `AUTOPILOT_MODEL`, `OLLAMA_BASE_URL` | set by the runtime | override the OpenAI-compatible endpoint/model the autopilot calls |
@@ -154,7 +155,25 @@ python -m app.music_brain.agent_bridge match data/songs/a.mp3 data/songs/b.mp3 -
 python -m app.music_brain.agent_bridge preview data/songs/a.mp3 data/songs/b.mp3 \
     --recipe "Bass Swap" --a-time 60 --b-time 10 --seconds 20 --out preview.mp3
 python -m app.music_brain.agent_bridge list-recipes
+
+# Learn from a real DJ set: ffmpeg clips +-96 s around every tracklist boundary,
+# Demucs on the clips and the source songs (2 at a time), per-stem song matching,
+# synced lyrics. Learned moves merge into data/cache/learned_techniques.json and
+# show up in GET /api/techniques as learned:<kind>.
+python -m app.music_brain.agent_bridge learn-set "https://www.youtube.com/watch?v=mDtud5fLgFQ" \
+    --tracklist research/notes/tracklists/mDtud5fLgFQ.txt --jobs 2
+python -m app.music_brain.agent_bridge learned
+python -m app.music_brain.agent_bridge learn-feedback acapella_over "rap ~9 dB under the riff"
+python -m app.music_brain.agent_bridge learn-feedback vocal_loop --disable
 ```
+
+`learn-set` learns: `bass_swap`, `stem_intro` (B's drums/top before its bass), `acapella_over`,
+`hard_cut`, `loop_extend`, `vocal_resequence` (lines played out of order into a new lyric, with
+the words), `vocal_loop`, and `acapella_drop` (beat out under a sung line, drop back in, with the
+words and whether it was the hook). Songs not in `data/songs/` are fetched by search into
+`data/cache/sets/<id>/songs/`; each is checked against the set and flagged `likely_wrong_song`
+when it is never heard. Your `learn-feedback` rules are kept across re-learning and shown in the
+technique's reasons.
 
 Failures print `{"error": "..."}` and exit non-zero.
 
@@ -165,7 +184,7 @@ The main endpoints in `app/ui/server.py`:
 | Area | Endpoints |
 |---|---|
 | LLM | `GET /api/llm/status` |
-| Tracks | `POST/GET /api/tracks`, `GET /api/tracks/{id}/analysis`, `GET /api/tracks/{id}/fame`, `GET /api/audio/tracks/{id}` |
+| Tracks | `POST/GET /api/tracks`, `GET /api/tracks/{id}/analysis`, `GET /api/tracks/{id}/fame`, `GET /api/tracks/{id}/hook-drops`, `GET /api/audio/tracks/{id}` |
 | Library | `GET /api/library`, `POST /api/library/scan`, `GET /api/library/lockable` |
 | Downloads | `POST /api/download`, `POST/GET /api/download/jobs`, `GET /api/download/jobs/{job_id}`, `GET /api/search/youtube` |
 | Stems | `POST /api/tracks/{id}/separate`, `GET /api/tracks/{id}/stems`, `GET /api/tracks/{id}/stems/{name}`, `GET /api/tracks/{id}/vocals`, `GET /api/tracks/{id}/vocal_entry`, `GET /api/stems/status`, `GET /api/audio/stems/{id}/vocals` |

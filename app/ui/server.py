@@ -244,6 +244,11 @@ async def download_from_url(req: DownloadRequest):
 
             paths = await run_in_threadpool(download_to_dir, req.url, tmp_dir)
         except Exception as exc:
+            from app.music_brain import yt_guard
+
+            if isinstance(exc, yt_guard.Cooling):        # bot check: paused, heals by itself
+                raise HTTPException(status_code=503, detail=str(exc),
+                                    headers={"Retry-After": str(max(1, int(exc.until - time.time())))})
             raise HTTPException(status_code=500, detail=str(exc))
 
         results = _register_downloaded(paths)
@@ -282,10 +287,22 @@ def get_youtube_search(q: str, limit: int = 8):
 
     if not (2 <= len(q.strip()) <= 120):
         raise HTTPException(status_code=400, detail="query must be 2-120 characters")
+    from app.music_brain import yt_guard
+
     try:
         return {"results": search_songs(q, max(1, min(limit, 12)))}
+    except yt_guard.Cooling as exc:            # bot check: YouTube paused, heals by itself
+        raise HTTPException(status_code=503, detail=str(exc), headers={"Retry-After": str(max(1, int(exc.until - time.time())))}) from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"search failed: {exc}") from exc
+
+
+@app.get("/api/youtube/status")
+def get_youtube_status():
+    """{cooling, until, strikes, last_error}: app.music_brain.yt_guard's bot-check backoff."""
+    from app.music_brain import yt_guard
+
+    return yt_guard.status()
 
 
 @app.post("/api/download/jobs")
@@ -809,7 +826,54 @@ def _pair_features(a_id: str, b_id: str, keylock: bool = False):
         stems_a=bool(sa), stems_b=bool(sb), famous_a=bool(_fame.get(a_id, {}).get("famous")),
         vocal_a_exit=share(va, lo, hi), vocal_b_entry=max([share(vb, t, t + 30) for t in rap_at] or [share(vb, 0, min(tb.duration, 60))]), b_rap=b_rap, b_rap_at=rap_at,
         a_grooves=grooves, a_breakdowns=breaks, keylock=keylock, exit_window=(lo, hi),
+        a_hook_drops=_safe_hook_drops(a_id),
     )
+
+
+def _safe_hook_drops(track_id: str) -> list:
+    try:
+        return _hook_drops(track_id)
+    except Exception:          # lyrics are a bonus: never break technique ranking
+        return []
+
+
+_hook_drop_cache: Dict[str, tuple] = {}
+
+
+def _hook_drops(track_id: str, top_n: int = 3, ai_call: bool = False) -> list:
+    """hook_drop.plan() for a library track: synced lyrics (cached), aligned to the
+    cached vocal stem when there is one, the local model's emotional-line picks
+    (ai_call=False: only already-cached picks, never waits on the model).
+    [] on any miss; never separates."""
+    from app.music_brain import hook_drop, lyrics, set_ai
+    from app.music_brain.set_learner import load_learned
+
+    path = _track_path(track_id)
+    name = _track_names.get(track_id) or _name_from_tags(track_id, path) or path.stem
+    if track_id not in _hook_drop_cache:
+        a = analyze_track(path)
+        stems = _cached_stems4(track_id)
+        y = None
+        if stems and stems.get("vocals"):
+            import librosa
+
+            y, _ = librosa.load(stems["vocals"], sr=11025, mono=True)
+        lines = lyrics.for_file(name, y, 11025, duration=a.duration)
+        if not lines:             # a miss may be a network blip: only cache real answers
+            return []
+        _hook_drop_cache[track_id] = (lines, a)
+    lines, a = _hook_drop_cache[track_id]
+    picks = set_ai.emotional_lines(name, lines, call=ai_call)
+    return hook_drop.plan(lines, a.bpm, a.phrase_boundaries_8bar, a.energy_times, a.energy_curve,
+                          learned=load_learned(), top_n=top_n, ai_lines=picks)
+
+
+@app.get("/api/tracks/{track_id}/hook-drops")
+def get_hook_drops(track_id: str, top_n: int = 3, ai: bool = True):
+    """Where to go acapella on the track's emotional hook and bring the drop back in:
+    [{text, cut_at, drop_at, hold_s, score, ai, why[]}] best first (app.music_brain.hook_drop).
+    ai=True asks the local model which lines carry the emotion (cached per song)."""
+    return {"track_id": track_id, "hook_drops": _hook_drops(track_id, max(1, min(top_n, 10)), ai_call=ai)}
 
 
 @app.get("/api/techniques")
