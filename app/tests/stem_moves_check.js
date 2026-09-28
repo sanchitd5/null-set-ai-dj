@@ -350,3 +350,31 @@ console.log("stem moves core ok");
   assert.deepStrictEqual(sm.mergeWithEar(r, null)[0].combo, r[0].combo);
   console.log("song merge ok");
 }
+
+// ---- dead-air guards: silent intro / empty voice / empty synth stem ---------
+{
+  const sm = require("../ui/static/stem-moves.js");
+  const { pickIntro, introAudible, keepsVibe, remixPick, breakdownVocalOk, fitStemBlend } = sm;
+  const silentDrums = { drums: 0, bass: 0, vocals: 0.05, other: 0.02 };
+  // key clash + silent drums: no drums-only intro
+  assert.strictEqual(pickIntro({ keyClash: true, energy: silentDrums }), null);
+  assert.strictEqual(pickIntro({ keyClash: true, energy: { drums: 0.2, bass: 0, vocals: 0, other: 0 } }), "drums");
+  assert.strictEqual(pickIntro({ keyClash: true, energy: null }), "drums");
+  assert.ok(!introAudible(null, null) && introAudible("drums", null));
+  assert.ok(!introAudible("other", { drums: 0.3, other: 0 }) && introAudible("other", { drums: 0, other: 0.1 }));
+  // the stem blend refuses (EQ path) rather than book a silent intro
+  const r = fitStemBlend("blend", 16, { keyClash: true, aSings: false, bSings: false, introEnergy: silentDrums });
+  assert.ok(r.refused && !r.check.ok);
+  // strip & rebuild: "voice alone" needs a vocal that plays
+  assert.ok(!breakdownVocalOk({ drums: 0.3, bass: 0.3, vocals: 0, other: 0.2 }));
+  assert.ok(!breakdownVocalOk({ drums: 0.3, bass: 0.3, vocals: 0.03, other: 0.3 }));   // <15 % of the mix
+  assert.ok(breakdownVocalOk({ drums: 0.2, bass: 0.2, vocals: 0.15, other: 0.15 }));
+  assert.ok(breakdownVocalOk(null));
+  // synth hold on an empty "other" stem is dead air
+  assert.ok(!keepsVibe("synth_hold", 16, { drums: 0.3, bass: 0.3, vocals: 0, other: 0 }));
+  assert.ok(keepsVibe("synth_hold", 16, { drums: 0.3, bass: 0.3, vocals: 0.1, other: 0.2 }));
+  assert.ok(!keepsVibe("acapella", 16, { drums: 0.3, bass: 0.3, vocals: 0.001, other: 0.2 }));
+  const base = { vocal: 0, used: [], count: 0, barsOnTrack: 64, barsLeft: 64, atBar: 64 };
+  assert.strictEqual(remixPick({ ...base, energy: { drums: 0.3, bass: 0, vocals: 0.01, other: 0 } }), null);
+  console.log("dead-air guards ok");
+}

@@ -130,7 +130,7 @@
       if (!c.d.stemsReady) return say("STEM REMIX", "this deck's stems aren't ready", false);
       const sm = root.stemMoves, used = (c.d._remix && c.d._remix.used) || [];
       const vocal = sm.vocalShare(c.d.analysis && c.d.analysis.vocal_active_regions, c.line, c.line + 16 * c.bar);
-      const kind = sm.core.remixPick({ vocal, used, count: 0, barsOnTrack: 99, barsLeft: 99 }) || "bass_out";
+      const kind = sm.core.remixPick({ vocal, used, count: 0, barsOnTrack: 99, barsLeft: 99, energy: sm.remixEnergy(c.d, c.line, c.bar) }) || "bass_out";
       if (sm.remix(c.d, c.line, kind, 16, "on demand")) {
         const r = c.d._remix || (c.d._remix = { used: [], count: 0, lastAtBar: null });
         r.used.push(kind);

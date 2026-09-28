@@ -77,8 +77,10 @@
   const INTRO_MIN_RMS = 0.01;          // ~ -40 dBFS: below this the stem is not really playing
   // c: {keyClash, aSings, bSings, energy: B's mean RMS per stem over the intro
   // window ({drums, bass, vocals, other}) or null when unmeasured}
+  // -> "other" | "drums" | "vocals", or null when keys clash and B's drums are silent there
+  // (no key-safe layer to bring in: the caller skips the intro rather than book a silent stem).
   function pickIntro(c) {
-    if (c.keyClash) return "drums";
+    if (c.keyClash) return !c.energy || (c.energy.drums || 0) >= INTRO_MIN_RMS ? "drums" : null;
     const e = c.energy;
     if (!e) return "other";
     const lvl = (n) => e[n] || 0;
@@ -90,6 +92,8 @@
   }
   // The intro stem plays alone (under A) for one phrase before the crossfade
   // moves: 8 bars, 4 in a short window.
+  // true when the measured intro stem really plays (unmeasured energy: cannot judge, ok)
+  function introAudible(intro, energy) { return !!intro && (!energy || (energy[intro] || 0) >= INTRO_MIN_RMS); }
   function introBars(bars) { return bars >= 16 ? 8 : Math.max(2, bars / 2); }
 
   // ---- loudness floor (user: "when crossfading it shouldn't mute stems where
@@ -379,6 +383,9 @@
   function fitStemBlend(kind, bars, c) {
     const intro = kind === "double" ? null
       : pickIntro({ keyClash: c.keyClash, aSings: c.aSingsIntro != null ? c.aSingsIntro : c.aSings, bSings: c.bSings, energy: c.introEnergy });
+    if (kind !== "double" && !introAudible(intro, c.introEnergy)) {
+      return { events: [], intro, fix: {}, check: { ok: false, reason: "no audible intro stem on B" }, refused: true };
+    }
     const tries = kind === "double" ? [{}] : [{}, { introLevel: 1 }, { keepA: true }, { keepA: true, introLevel: 1 }];
     let last = null;
     for (const fix of tries) {
@@ -489,8 +496,26 @@
   // break is fine while the other deck is also playing into the master (it carries
   // the tones: ctx.othersCarry), never when this song is all the room hears.
   // -> true when the move keeps a tonal stem of its own.
-  function keepsVibe(kind, len = 16) {
-    return remixEvents(kind, len).every((e) => !e.stems || ["bass", "vocals", "other"].some((n) => e.stems[n] !== 0));
+  // energy (optional, mean RMS per stem over the move's window, see remixEnergy): the kept tonal
+  // stem must really play there. An unzeroed stem that is silent (synth hold on an empty "other")
+  // is dead air, not a vibe. Unmeasured (null): judged by gains alone.
+  const REMIX_FEATURE = { synth_hold: "other", acapella: "vocals", vocal_hold: "vocals" };
+  const REMIX_REL_FLOOR = 0.15;      // a kept stem needs >= 15 % of the section's mix RMS
+  function stemPlays(energy, n) {
+    if (!energy) return true;
+    let mix = 0;
+    for (const s of STEMS) mix += (energy[s] || 0) ** 2;
+    return (energy[n] || 0) >= Math.max(INTRO_MIN_RMS, REMIX_REL_FLOOR * Math.sqrt(mix));
+  }
+  function keepsVibe(kind, len = 16, energy = null) {
+    const ok = remixEvents(kind, len).every((e) => !e.stems || ["bass", "vocals", "other"].some((n) => e.stems[n] !== 0 && stemPlays(energy, n)));
+    return ok && (!REMIX_FEATURE[kind] || stemPlays(energy, REMIX_FEATURE[kind]));
+  }
+  // Strip & rebuild leaves the voice alone: it needs a vocal that really sings in the window.
+  function breakdownVocalOk(energy) { return stemPlays(energy, "vocals"); }
+  // Mean RMS per stem over the last quarter of a len-bar section from song time lineT (where a remix move acts).
+  function remixEnergy(d, lineT, barSong, len = 16) {
+    return meanOver(stemEnergyBars(d, lineT, barSong, len), Math.floor(len * 0.75), len);
   }
   function remixPick(ctx) {
     if ((ctx.count || 0) >= REMIX_MAX_PER_SONG) return null;
@@ -499,7 +524,7 @@
     const used = new Set(ctx.used || []);
     const menu = ctx.vocal >= 0.5 ? ["vocal_hold", "acapella", "bass_out"]
       : ctx.vocal >= 0.15 ? ["bass_out", "drum_break", "synth_hold"] : ["drum_break", "synth_hold", "bass_out"];
-    return menu.find((k) => !used.has(k) && (ctx.othersCarry || keepsVibe(k))) || null;
+    return menu.find((k) => !used.has(k) && (ctx.othersCarry || keepsVibe(k, 16, ctx.energy))) || null;
   }
   // Hook drop (app/music_brain/hook_drop.py plan items: {cut_at, drop_at, text}):
   // drums + bass leave over a quarter bar ending on cut_at, synths duck to
@@ -626,7 +651,7 @@
       return e ? { ...r, score: r.score + (e.score - 5.5) * 3, ear: e } : r;
     }).sort((x, y) => y.score - x.score);
   }
-  const core = { keepsVibe, mergeCombos, mergeRank, mergeLabel, mergeTransitionPlan, mergeWithEar, keepOneStem, hookDropEvents, hookDropDue, HOOK_OTHER, BREAKDOWN, breakdownFits, handoffFits, vocalShare, stemBlendPlan, STEM_BLEND_KINDS, remixEvents, remixPick, stemBridgePlan, mashupTransitionPlan,
+  const core = { keepsVibe, breakdownVocalOk, introAudible, mergeCombos, mergeRank, mergeLabel, mergeTransitionPlan, mergeWithEar, keepOneStem, hookDropEvents, hookDropDue, HOOK_OTHER, BREAKDOWN, breakdownFits, handoffFits, vocalShare, stemBlendPlan, STEM_BLEND_KINDS, remixEvents, remixPick, stemBridgePlan, mashupTransitionPlan,
                  pickIntro, introBars, INTRO_LEVEL, levelCheck, gainsAt, faderAt, fitStemBlend, breakdownEvents,
                  masterAudibility, audibleRms, mergeFader, rawFader, deckFaderGains, mergeBooking, onTime, AUDIBLE_HZ, SILENCE_DB,
                  LEVEL_FLOOR_DB, AUDIBLE_GAIN, FADER_PARK_BARS, TYPICAL_SHARE, DIP_ALLOWED };
@@ -724,8 +749,12 @@
   function breakdown(d, startTrackT, bars, why) {
     const plan = BREAKDOWN[bars];
     if (!plan || !d.stemsReady) return false;
-    cancel(d.id);
     const bar = 240 / (d.bpm || 128), rate = (d._playbackRate && d._playbackRate()) || 1;
+    if (!breakdownVocalOk(meanOver(stemEnergyBars(d, startTrackT, bar, bars), 0, bars))) {
+      console.info(`breakdown ${d.id} skipped: no vocal energy for "voice alone"`);
+      return false;
+    }
+    cancel(d.id);
     // the strip IS the move: its dip is allowed, and says so
     dipReport(d, "breakdown", breakdownEvents(bars), bars, startTrackT, bar, DIP_ALLOWED.breakdown);
     const t0 = audioAt(d, startTrackT), beat = bar / 4 / rate;
@@ -754,10 +783,15 @@
     const pB = inn.cuePoint || 0;
     const bSings = vocalShare(inn.analysis && inn.analysis.vocal_active_regions, pB, pB + totalS) >= 0.3;
     if (inn.stemsReady) {
-      cancel(innId);
       const barB = 240 / (inn.bpm || 128);
-      let intro = pickIntro({ keyClash: camelotClash(out, inn), aSings, bSings, energy: meanOver(stemEnergyBars(inn, pB, barB, 4), 0, 4) });
+      const introE = meanOver(stemEnergyBars(inn, pB, barB, 4), 0, 4);
+      let intro = pickIntro({ keyClash: camelotClash(out, inn), aSings, bSings, energy: introE });
       if (intro === "vocals" && aSings) intro = "other";
+      if (!introAudible(intro, introE)) {          // nothing of B plays there: A stays the full mix, no silent intro
+        console.info(`stem intro ${innId} skipped: no audible intro stem on B`);
+        return false;
+      }
+      cancel(innId);
       const beatAt = swapS >= 2 * bar ? swapS : Math.max(bar, totalS / 2);
       inn.stemMix({ drums: 0, bass: 0, vocals: 0, other: 0 }, t0, minStemRamp("stem", bar, false, inn));
       book(inn, t0 + 0.01, { [intro]: INTRO_LEVEL[intro] || 0.8 }, bar);
@@ -793,9 +827,12 @@
     let intro = null;
     if (swapS >= 2 * bar) {
       const pB = inn.cuePoint || 0, barB = 240 / (inn.bpm || 128);
-      intro = pickIntro({ keyClash: camelotClash(out, inn), aSings: true, bSings: false,
-        energy: meanOver(stemEnergyBars(inn, pB, barB, 4), 0, 4) });
+      const introE = meanOver(stemEnergyBars(inn, pB, barB, 4), 0, 4);
+      intro = pickIntro({ keyClash: camelotClash(out, inn), aSings: true, bSings: false, energy: introE });
       if (intro === "vocals") intro = "other";
+      if (!introAudible(intro, introE)) intro = null;     // B has nothing audible there: no silent intro
+    }
+    if (intro) {
       inn.stemMix({ drums: 0, bass: 0, vocals: 0, other: 0 }, t0, minStemRamp("stem", bar, false, inn));
       book(inn, t0 + 0.01, { [intro]: INTRO_LEVEL[intro] }, bar);
       book(inn, t0 + swapS, { drums: 1, bass: 1, other: 1 }, 0.05);
@@ -1088,7 +1125,7 @@
   }
 
   root.stemMoves = { core, mergeTransition, hookDrop, breakdown, handoff, instrumental, reset, audioAt, vocalShare, stemBlend, remix, REMIX_LABEL, mashupBreak, stemBridge, mashupTransition,
-                     bridgeFader, stemEnergyBars, eqIntro };
+                     bridgeFader, stemEnergyBars, remixEnergy, eqIntro };
 
   // ------------------------------------------------------ stem rail UI --
   // Per deck, under the loop rail: separation status + one toggle per stem.
