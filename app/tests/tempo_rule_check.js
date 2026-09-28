@@ -40,6 +40,11 @@ assert.strictEqual(R.clampPitch(-18, true), -16);
 assert.ok(R.minRampSeconds("level", 2, { deck: { playing: true } }) >= 0.49);
 assert.strictEqual(R.minRampSeconds("stem", 2, { drop: true, playing: true }), 0.005);
 
+// shouldWaitForTempoStems: decide whether to wait for B's render
+assert.strictEqual(R.shouldWaitForTempoStems({}).wait, false, "no render in flight");
+assert.strictEqual(R.shouldWaitForTempoStems({ renderInFlight: true, transitionSeconds: 3, phraseSeconds: 8, songLeftSeconds: 30 }).wait, true, "3s transition > 2.5s render");
+assert.strictEqual(R.shouldWaitForTempoStems({ renderInFlight: true, transitionSeconds: 1, phraseSeconds: 8, songLeftSeconds: 30 }).wait, true, "defer 1s + 8s phrase, track has 30s");
+assert.strictEqual(R.shouldWaitForTempoStems({ renderInFlight: true, transitionSeconds: 1, phraseSeconds: 8, songLeftSeconds: 8 }).wait, false, "defer would outlive track");
 // Scan: AI tempo moves in autopilot.js go through setDeckPitch/aiSetPitch, never
 // a bare setPitchPercent on a deck object.
 const src = fs.readFileSync(path.join(__dirname, "../ui/static/autopilot.js"), "utf8");

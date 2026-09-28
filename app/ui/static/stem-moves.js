@@ -630,10 +630,22 @@
                  pickIntro, introBars, INTRO_LEVEL, levelCheck, gainsAt, faderAt, fitStemBlend, breakdownEvents,
                  masterAudibility, audibleRms, mergeFader, rawFader, deckFaderGains, mergeBooking, onTime, AUDIBLE_HZ, SILENCE_DB,
                  LEVEL_FLOOR_DB, AUDIBLE_GAIN, FADER_PARK_BARS, TYPICAL_SHARE, DIP_ALLOWED };
-  if (typeof module !== "undefined" && module.exports) module.exports = core;
-  if (typeof root.document === "undefined" || typeof audioCtx === "undefined") return;
+   if (typeof module !== "undefined" && module.exports) module.exports = core;
+   if (typeof root.document === "undefined" || typeof audioCtx === "undefined") return;
 
-  // ------------------------------------------------------------ browser --
+   // Minimum ramp seconds for stem moves: route through tempoRule if available,
+   // else fallback. kind = "stem" or "level"; barS = seconds/bar; drop = exempt
+   // (drop landing on its downbeat); deck = audible deck check.
+   function minStemRamp(kind, barS, drop, deck) {
+     if (typeof root.tempoRule !== "undefined" && root.tempoRule.minRampSeconds) {
+       return root.tempoRule.minRampSeconds(kind, barS, { drop, deck });
+     }
+     // Fallback: drop or silent deck -> instant (0.005), else minimum ramp
+     if (drop || !deck || !deck.playing) return 0.005;
+     return kind === "stem" ? barS * 0.25 : barS / 4;
+   }
+
+   // ------------------------------------------------------------ browser --
   const timers = { a: [], b: [] };
   function note(deckId, label, why) {
     root.dispatchEvent(new CustomEvent("ai-activity", { detail: { kind: "stem-move", deck: deckId, label, why } }));
@@ -747,7 +759,7 @@
       let intro = pickIntro({ keyClash: camelotClash(out, inn), aSings, bSings, energy: meanOver(stemEnergyBars(inn, pB, barB, 4), 0, 4) });
       if (intro === "vocals" && aSings) intro = "other";
       const beatAt = swapS >= 2 * bar ? swapS : Math.max(bar, totalS / 2);
-      inn.stemMix({ drums: 0, bass: 0, vocals: 0, other: 0 }, t0, 0.005);
+      inn.stemMix({ drums: 0, bass: 0, vocals: 0, other: 0 }, t0, minStemRamp("stem", bar, false, inn));
       book(inn, t0 + 0.01, { [intro]: INTRO_LEVEL[intro] || 0.8 }, bar);
       book(inn, t0 + beatAt, { drums: 1, bass: 1, other: 1 }, 0.05);
       if (intro !== "vocals") book(inn, aSings ? t0 + totalS - bar / 2 : t0 + beatAt, { vocals: 1 }, bar / 2);
@@ -784,11 +796,11 @@
       intro = pickIntro({ keyClash: camelotClash(out, inn), aSings: true, bSings: false,
         energy: meanOver(stemEnergyBars(inn, pB, barB, 4), 0, 4) });
       if (intro === "vocals") intro = "other";
-      inn.stemMix({ drums: 0, bass: 0, vocals: 0, other: 0 }, t0, 0.005);
+      inn.stemMix({ drums: 0, bass: 0, vocals: 0, other: 0 }, t0, minStemRamp("stem", bar, false, inn));
       book(inn, t0 + 0.01, { [intro]: INTRO_LEVEL[intro] }, bar);
       book(inn, t0 + swapS, { drums: 1, bass: 1, other: 1 }, 0.05);
     } else {
-      inn.stemMix({ vocals: 0 }, t0, 0.02);
+       inn.stemMix({ vocals: 0 }, t0, minStemRamp("stem", bar, false, inn));
     }
     out.stemMix({ vocals: 0, bus: 1 }, t0, bar / 4);
     // Last bar: A's voice fades, B's own vocal comes back in.
@@ -809,7 +821,7 @@
   }
 
   // Deck stopped / reloaded: never leave its mix muted.
-  function reset(d) { if (d) { cancel(d.id); d.stemMix(null, 0, 0.005); } }
+  function reset(d) { if (d) { cancel(d.id); const barS = 240 / ((d && d.bpm) || 128); d.stemMix(null, 0, minStemRamp("stem", barS, false, d)); } }
 
   // Run a stem blend from audio time t0 (B's first downbeat). barS = seconds per
   // bar. opts.fader / opts.dir: the crossfader moves the caller will run
@@ -846,7 +858,7 @@
       if (e.bar === 0 && e.deck === "in") {
         // B must be silent-in-stems from its very first sample
         setTimeout(() => d.stemMix(e.stems, at - 0.005, 0.005), Math.max(0, (at - audioCtx.currentTime) * 1000 - 400));
-      } else book(d, at, e.stems, Math.max(0.005, e.ramp * barS));
+      } else book(d, at, e.stems, Math.max(minStemRamp("stem", barS, false, d), e.ramp * barS));
     }
     const fixTxt = fit.fix.keepA ? ", A's synths held longer" : fit.fix.introLevel ? ", intro louder" : "";
     const introTxt = fit.intro ? `B in on its ${fit.intro === "other" ? "synths" : fit.intro} (${fit.intro === "drums" && keyClash ? "keys clash" : eIn ? "measured" : "typical"})` : "both drops together";
@@ -870,12 +882,12 @@
       const strips = e.stems && tonal.every((n) => e.stems[n] === 0);
       if (strips) {
         // vibe floor at the moment it plays: only while another deck carries the tones
-        const T = at(e.bar), ramp = Math.max(0.005, (e.ramp * barS) / rate);
+        const T = at(e.bar), ramp = Math.max(minStemRamp("stem", barS / rate, false, d), (e.ramp * barS) / rate);
         timers[d.id].push(setTimeout(() => {
           if (d.playing && d._othersCarry && d._othersCarry()) d.stemMix(e.stems, T, ramp);
           else console.info(`remix ${d.id}: ${kind} skipped, nothing else is playing into the master`);
         }, Math.max(0, (T - audioCtx.currentTime) * 1000 - 200)));
-      } else if (e.stems !== undefined) book(d, at(e.bar), e.stems, Math.max(0.005, (e.ramp * barS) / rate));
+      } else if (e.stems !== undefined) book(d, at(e.bar), e.stems, Math.max(minStemRamp("stem", barS / rate, false, d), (e.ramp * barS) / rate));
       if (e.hold) {
         const h = e.hold, T0 = at(e.bar), T1 = at(h.untilBar);
         timers[d.id].push(setTimeout(() => { if (d.playing) d.holdStem(h.stem, lineT + h.fromBar * barS, h.bars, T0, T1); },
@@ -950,7 +962,7 @@
       } else if (e.hold) {
         timers[outId].push(setTimeout(() => { if (out.playing) out.holdStem(e.hold.stem, pA + e.hold.fromBar * barA * rA, e.hold.bars, at, t0 + e.until); },
           Math.max(0, (at - audioCtx.currentTime) * 1000 - 250)));
-      } else book(d, at, e.stems, Math.max(0.005, e.ramp));
+       } else book(d, at, e.stems, Math.max(minStemRamp("stem", 1, false, d), e.ramp)); // e.ramp is in seconds (plan units)
     }
     root.dispatchEvent(new CustomEvent("ai-cue", { detail: { at: t0 + plan.bEntry, kind: "drop", deck: innId, bar: barB,
       why: "B's beat lands after the stem bridge" } }));
@@ -1016,7 +1028,7 @@
           inn.play(bEntry, false, at);
           setTimeout(() => inn.stemMix(e.stems, at - 0.005, 0.005), 150);
         }, Math.max(0, (at - audioCtx.currentTime) * 1000 - 700)));
-      } else book(d, at, e.stems, Math.max(0.005, e.ramp * barS));
+      } else book(d, at, e.stems, Math.max(minStemRamp("stem", barS, false, d), e.ramp * barS));
     }
     root.dispatchEvent(new CustomEvent("ai-cue", { detail: { at: t0 + M * barS, kind: "drop", deck: innId, bar: barS,
       why: "B takes every stem on the line after the merge" } }));
@@ -1055,7 +1067,7 @@
         const until = t0 + e.hold.untilBar * barS;
         timers[innId].push(setTimeout(() => { if (inn.playing) inn.holdStem("vocals", bEntry + e.hold.fromBar * barB, 1, at, until); },
           Math.max(0, (at - audioCtx.currentTime) * 1000 - 250)));
-      } else book(d, at, e.stems, Math.max(0.005, e.ramp * barS));
+      } else book(d, at, e.stems, Math.max(minStemRamp("stem", barS, false, d), e.ramp * barS));
     }
     root.dispatchEvent(new CustomEvent("ai-cue", { detail: { at: t0 + M * barS, kind: "drop", deck: innId, bar: barS,
       why: "B's beat takes over after the mashup" } }));

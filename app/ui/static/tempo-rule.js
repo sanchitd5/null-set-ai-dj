@@ -93,6 +93,26 @@
     return Math.max(-range, Math.min(range, pct || 0));
   }
 
+  // Decide whether to wait for B's key-locked tempo stems to render before
+  // deciding recipe. Renders take ~2s. Wait if: render in flight AND enough
+  // time until transition (>= phraseS or can defer to next phrase boundary)
+  // AND deferred transition doesn't outlive the outgoing track.
+  // -> { wait: bool, why: string }
+  function shouldWaitForTempoStems(o) {
+    // o: { renderInFlight, transitionSeconds, phraseSeconds, songLeftSeconds }
+    if (!o || !o.renderInFlight) return { wait: false, why: "no render in flight" };
+    if (!(o.transitionSeconds > 0) || !o.phraseSeconds) return { wait: false, why: "no time info" };
+    const renderTimeS = 2.5;     // conservative: ~2 s for Demucs stems, network varies
+    const needS = renderTimeS;
+    const deferableS = o.phraseSeconds;  // defer to next phrase boundary
+    if (o.transitionSeconds >= needS) return { wait: true, why: `${needS.toFixed(1)}s render fits before transition` };
+    const deferredS = o.transitionSeconds + deferableS;
+    if (deferredS <= (o.songLeftSeconds || Infinity)) {
+      return { wait: true, why: `defer to next phrase (${deferableS.toFixed(1)}s), render done before then, outgoing track OK` };
+    }
+    return { wait: false, why: `defer would outlive outgoing track (needs ${deferredS.toFixed(1)}s, have ${(o.songLeftSeconds || 0).toFixed(1)}s)` };
+  }
+
   // Minimum ramp for any other AI move on an audible deck. A drop landing on
   // its downbeat (the slam is the musical hit) and silent decks are exempt.
   function minRampSeconds(kind, barS, o) {
@@ -103,7 +123,7 @@
 
   const core = { MAX_TEMPO_PCT_PER_BAR, PITCH_RANGE_PCT, KEYLOCK_RANGE_PCT, AUDIBLE_MIN, STILL_PCT,
     MIN_LEVEL_RAMP_BEATS, MIN_STEM_RAMP_BARS,
-    isAudible, glideBars, glideSeconds, tempoMove, lockRate, beatLock, beatRecipe, stemLockable, clampPitch, minRampSeconds };
+    isAudible, glideBars, glideSeconds, tempoMove, lockRate, beatLock, beatRecipe, stemLockable, clampPitch, minRampSeconds, shouldWaitForTempoStems };
   root.tempoRule = core;
   if (typeof module !== "undefined" && module.exports) module.exports = core;
 })(typeof window !== "undefined" ? window : globalThis);
