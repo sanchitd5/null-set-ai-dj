@@ -197,6 +197,14 @@ class PairFeatures:
         return _fold_gap(self.bpm_a, self.bpm_b)
 
     @property
+    def riff_tempo_gap(self) -> float:
+        """Like tempo_gap, but also folds 3-over-4 / 2-over-3 feel: riff_over_rap
+        only needs A's groove bars to line up with B's, which a felt 3:4 or 2:3
+        relationship gives even when the raw BPM ratio doesn't. Other techniques
+        (learned moves, vocal/rate stretch) keep the tighter tempo_gap."""
+        return _fold_gap(self.bpm_a, self.bpm_b, extra=True)
+
+    @property
     def key(self) -> float:
         return camelot_score(self.key_a, self.key_b)
 
@@ -221,7 +229,7 @@ class Technique:
 
 
 def _riff_over_rap(f: PairFeatures) -> List[Check]:
-    gap = f.tempo_gap
+    gap = f.riff_tempo_gap
     lo, hi = f.exit_window
     brk = [b for b in f.a_breakdowns if lo - 60 <= b[0] <= hi + 30]
     rap = bool(f.b_rap) and f.vocal_b_entry >= 0.3
@@ -284,11 +292,20 @@ NEAR_GAP = 0.03             # a learned move fits pairs within this tempo gap of
 NEAR_KEY = 0.15             # ... and within this key score
 
 
-def _fold_gap(bpm_a: float, bpm_b: float) -> float:
-    """Tempo gap with half/double time folded, as the set learner records it."""
+FOLD_RATIOS = (1.0, 2.0, 0.5)                          # straight, half/double time
+FOLD_RATIOS_EXTRA = FOLD_RATIOS + (2 / 3, 3 / 2, 3 / 4, 4 / 3)  # + 3-over-4 / 2-over-3 feel
+
+
+def _fold_gap(bpm_a: float, bpm_b: float, extra: bool = False) -> float:
+    """Tempo gap with half/double time folded, as the set learner records it.
+    extra=True also folds 3-over-4 / 2-over-3 feel (bar grids that line up at
+    those ratios even when the raw BPM ratio doesn't) -- used only where that
+    looser feel is actually musically valid (riff_over_rap's groove-over-groove
+    loop), not for tight learned-move matching."""
     if bpm_a <= 0 or bpm_b <= 0:
         return 1.0
-    return min(abs(bpm_b * k / bpm_a - 1) for k in (1.0, 2.0, 0.5))
+    ratios = FOLD_RATIOS_EXTRA if extra else FOLD_RATIOS
+    return min(abs(bpm_b * k / bpm_a - 1) for k in ratios)
 
 
 TEMPO_GAP_SLACK = 0.02      # a learned move fits pairs up to this much further apart than seen
