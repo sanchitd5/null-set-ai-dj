@@ -663,7 +663,11 @@ var autopilotCore = (function () {
    * so every bar count is halved to keep the set moving.
    * Returns total duration in ms; the outgoing deck may be stopped after that.
    */
+  // The move executeTransition actually ran (label for the track event: a Stem Bridge
+  // that was refused and fell to the EQ path must not be logged as a Stem Bridge).
+  let executedMove = null;
   function executeTransition(recipe, out, inn, xfDuration, t0Audio) {
+    executedMove = recipe;
     clearRun();
     xT0 = Number.isFinite(t0Audio) ? t0Audio : audioCtx.currentTime;
     const kind = recipeKind(recipe);
@@ -712,6 +716,7 @@ var autopilotCore = (function () {
         const secs = smM.mergeTransition(out, inn, xT0, mp.entry, mp.M, mp.pick, undefined, mp.ranked);
         if (secs > 0) {
           runMergeFader(smM, mp.M, 240 / (odM.bpm || 128) / odM._playbackRate());
+          executedMove = "Stem Merge";
           return secs * 1000;
         }
       }
@@ -729,6 +734,7 @@ var autopilotCore = (function () {
         const secs = sm1.mashupTransition(out, inn, xT0, mt.entry, mt.M, MASHUP_VOX, mt.why);
         if (secs > 0) {
           runMergeFader(sm1, mt.M, 240 / (od1.bpm || 128) / od1._playbackRate());   // B's voice fades in with the fader
+          executedMove = "Mashup → Transition";
           return secs * 1000;
         }
       }
@@ -744,6 +750,7 @@ var autopilotCore = (function () {
         ["low", "mid", "high"].forEach((b) => { setRange(eqEl(out, b), 0); setRange(eqEl(inn, b), 0); });
         const secs = sm0.stemBridge(out, inn, xT0, id0.startOffset || 0);
         if (secs > 0) {
+          executedMove = "Stem Bridge";
           // B's intro stem sits alone at the centre, the crossfade proper runs
           // into B's line (stemBridgePlan.fader, seconds, B-ward units)
           for (const m of sm0.bridgeFader() || []) {
@@ -888,6 +895,7 @@ var autopilotCore = (function () {
         window.stemMoves && window.stemMoves.eqIntro && kind !== "double") {
       window.stemMoves.eqIntro(out, inn, xT0, (total * bar) / 1000, (swapBar * bar) / 1000);
     }
+    if (recipe === "Stem Bridge" || recipe === "Stem Merge") executedMove = "EQ blend";   // the stem move was refused
     return total * bar;
   }
 
@@ -2444,8 +2452,8 @@ var autopilotCore = (function () {
           }
         } else {
           totalMs = executeTransition(recipe, outgoing, incoming, xfDuration, t0) + XF_LOOKAHEAD_MS;
-          sessionEvent("track", { event: "transition_start", from: history[history.length - 1] || null, to: nextName, recipe,
-                                  out: outgoing, in: incoming, seconds: Math.round(totalMs / 100) / 10 });
+          sessionEvent("track", { event: "transition_start", from: history[history.length - 1] || null, to: nextName, recipe: executedMove || recipe,
+                                  planned: executedMove && executedMove !== recipe ? recipe : undefined, out: outgoing, in: incoming, seconds: Math.round(totalMs / 100) / 10 });
           window.dispatchEvent(new CustomEvent("ai-cue", { detail: { at: t0, kind: "transition",
             deck: incoming, bar: 240 / ((window.decks[incoming] && window.decks[incoming].bpm) || 128), why: `${recipe}: B's first downbeat` } }));
         }
