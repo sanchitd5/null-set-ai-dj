@@ -20,6 +20,7 @@ the producer wrote out of someone else's sentences, in their words.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -179,8 +180,12 @@ def source_of(song: str) -> Optional[dict]:
         return None
     for d in sorted(SOURCES_DIR.iterdir()):
         for l in load_links(d.name) if d.is_dir() else []:
-            if _clean_title(l["song"]).lower() == key:
-                info = json.loads((d / "info.json").read_text(encoding="utf-8"))
+            if _clean_title(str(l.get("song") or "")).lower() == key:
+                try:                       # every hook-drop request reads this: never raise
+                    info = json.loads((d / "info.json").read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    info = {}
+                info = info if isinstance(info, dict) else {}
                 return {"id": d.name, "title": f"{info.get('title')} ({info.get('uploader')})",
                         "url": info.get("url"), "note": l.get("note", "")}
     return None
@@ -215,7 +220,10 @@ def learn_transform(source_id: str, target: str, label: Optional[str] = None, st
         raise FileNotFoundError(target)
     if start or end:
         end = end or float(librosa.get_duration(path=str(target)))
-        target = sl.clip_audio(target, start, end, d / "clips")
+        # clips are named by span only: one folder per target, or a second target cut at
+        # the same span would be served the first one's audio
+        tkey = hashlib.sha256(str(target.resolve()).encode()).hexdigest()[:12]
+        target = sl.clip_audio(target, float(start), float(end), d / "clips" / tkey)
     log("separating source + target vocals")
     src_v = sl._load(separate(d / "audio.mp3").stems["vocals"])
     tgt_v = sl._load(separate(target).stems["vocals"])

@@ -911,6 +911,8 @@ def clip_audio(src: Path, t0: float, t1: float, out_dir: Path) -> Path:
     """ffmpeg cut to 44.1 kHz stereo WAV (deterministic bytes -> Demucs cache hits on re-runs)."""
     import subprocess
 
+    if not (0.0 <= t0 < t1):
+        raise ValueError(f"bad clip span {t0}..{t1} s (needs 0 <= start < end)")
     out_dir.mkdir(parents=True, exist_ok=True)
     out = out_dir / f"{t0:09.2f}-{t1:09.2f}.wav"
     if out.exists() and out.stat().st_size > 0:
