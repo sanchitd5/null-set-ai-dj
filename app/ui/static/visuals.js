@@ -7,6 +7,11 @@
 //   "ai-cue" line        a scan line (a new layer arrives, e.g. B's rap)
 //   "ai-activity"        stem moves: edge glow; hold loop: a breathing frame
 //   master low band      a soft vignette pulse on every kick
+//   energy high point    a gentle bloom when the on-air deck plays into one of
+//                        its song's peaks (top 10 %, rising, 32+ bars apart)
+//
+// AI gate: every effect, the kick pulse included, runs ONLY while the AI is
+// driving the decks (window.autopilotState.active). Hand mixing stays dark.
 //
 // Cues carry an audio-clock time (audioCtx.currentTime); the effect is
 // scheduled to start on it, so the drop visual lands on the drop.
@@ -30,8 +35,81 @@
     else if (cue.kind === "transition") fx = { type: "sweep", deck, dur: Math.min(3, Math.max(1.2, bar * 2)) };
     else if (cue.kind === "line") fx = { type: "scan", deck, dur: 0.9 };
     else if (cue.kind === "stem-move") fx = { type: "edge", deck, dur: 0.8 };
+    else if (cue.kind === "peak") fx = { type: "peak", deck, dur: 2.4 };
     if (fx && reduced) { fx.still = true; fx.dur = Math.max(fx.dur, 1.2); }
     return fx;
+  }
+
+  // Pure: the AI gate. state = window.autopilotState (read-only getters).
+  function aiDriving(state) {
+    return !!state && state.active === true;
+  }
+
+  // Pure: a song's energy high points, in song seconds, ascending.
+  // curve / times = analysis.energy_curve / energy_times. A high point is a
+  // local max (a plateau counts once, at its first sample) that sits in the
+  // song's top 10 %, is reached by rising (above its left neighbour, and the
+  // energy climbed at least 10 % of the song's range within the last 8 bars,
+  // so a wiggle inside a long loud section is not a new high point), and is
+  // at least 32 bars from any stronger high point.
+  const PEAK_PCT = 0.9, PEAK_GAP_BARS = 32, PEAK_RISE_BARS = 8, PEAK_RISE_FRAC = 0.1;
+  function energyPeaks(curve, times, bpm) {
+    if (!Array.isArray(curve) || !Array.isArray(times)) return [];
+    const bar = 240 / (Number.isFinite(bpm) && bpm > 0 ? bpm : 128);
+    const v = [], t = [];
+    for (let i = 0; i < Math.min(curve.length, times.length); i++) {
+      if (!Number.isFinite(curve[i]) || !Number.isFinite(times[i])) continue;
+      if (t.length && times[i] < t[t.length - 1]) return [];    // times must ascend
+      v.push(curve[i]); t.push(times[i]);
+    }
+    if (v.length < 3) return [];
+    const sorted = v.slice().sort((x, y) => x - y);
+    if (!(sorted[sorted.length - 1] > sorted[0])) return [];    // flat song: no high point
+    const thr = sorted[Math.floor(PEAK_PCT * (sorted.length - 1))];
+    const rise = PEAK_RISE_FRAC * (sorted[sorted.length - 1] - sorted[0]);
+    const cand = [];
+    for (let i = 1; i < v.length - 1; i++) {
+      if (v[i] < thr || !(v[i] > v[i - 1]) || v[i + 1] > v[i]) continue;
+      let lo = Infinity;
+      for (let j = i - 1; j >= 0 && t[i] - t[j] <= PEAK_RISE_BARS * bar; j--) lo = Math.min(lo, v[j]);
+      if (v[i] - lo >= rise) cand.push(i);
+    }
+    cand.sort((x, y) => v[y] - v[x] || t[x] - t[y]);             // strongest first
+    const gap = PEAK_GAP_BARS * bar, out = [];
+    for (const i of cand) if (out.every((s) => Math.abs(s - t[i]) >= gap)) out.push(t[i]);
+    return out.sort((x, y) => x - y);
+  }
+  // Pure: index of the first peak strictly after pos (binary search).
+  function nextPeakIdx(peaks, pos) {
+    let lo = 0, hi = peaks.length;
+    while (lo < hi) { const m = (lo + hi) >> 1; if (peaks[m] <= pos) lo = m + 1; else hi = m; }
+    return lo;
+  }
+  // Pure: move one deck's pointer to playback position pos; O(1) per frame.
+  // tr = {peaks, idx, prev}. Returns the peak crossed since the last step, or
+  // null. A backwards move or a jump (seek, loop, beat jump, load) re-finds
+  // the pointer without firing.
+  const SEEK_JUMP_S = 1.5;
+  function stepPeaks(tr, pos) {
+    if (!tr || !Array.isArray(tr.peaks) || !Number.isFinite(pos)) return null;
+    const prev = tr.prev;
+    tr.prev = pos;
+    if (!Number.isFinite(prev) || pos < prev || pos - prev > SEEK_JUMP_S) {
+      tr.idx = nextPeakIdx(tr.peaks, pos);
+      return null;
+    }
+    if (tr.idx < tr.peaks.length && tr.peaks[tr.idx] <= pos) {
+      const hit = tr.peaks[tr.idx];
+      tr.idx = nextPeakIdx(tr.peaks, pos);
+      return hit;
+    }
+    return null;
+  }
+  // Pure: drop/peak de-dup. No peak within DROP_PEAK_GAP_S of a drop effect,
+  // before or after (drops are booked ahead, so their future times count).
+  const DROP_PEAK_GAP_S = 4;
+  function peakAllowed(now, dropTimes, gap = DROP_PEAK_GAP_S) {
+    return (dropTimes || []).every((d) => !(Math.abs(now - d) < gap));
   }
   // Pure: attack/decay envelope, t and dur in seconds -> 0..1.
   function env(t, dur, attack = 0.06) {
@@ -40,7 +118,10 @@
     const k = (t - attack) / (dur - attack);
     return (1 - k) * (1 - k);
   }
-  if (typeof module !== "undefined" && module.exports) module.exports = { effectFor, env, FLASH_GAP_S };
+  if (typeof module !== "undefined" && module.exports) {
+    module.exports = { effectFor, env, FLASH_GAP_S, aiDriving, energyPeaks, nextPeakIdx, stepPeaks,
+                       peakAllowed, DROP_PEAK_GAP_S, SEEK_JUMP_S };
+  }
   if (typeof document === "undefined") return;
 
   // ---- DOM --------------------------------------------------------------------
@@ -92,8 +173,10 @@
   const effects = [];
   let lastFlash = -Infinity;
   const nowS = () => performance.now() / 1000;
+  const aiOn = () => aiDriving(root.autopilotState);
+  const dropTimes = [];                           // performance-clock seconds, booked + fired
   function spawn(fx) {
-    if (!enabled || !fx || document.hidden) return;
+    if (!enabled || !fx || document.hidden || !aiOn()) return;
     fx.t0 = nowS();
     if (fx.type === "drop") {
       fx.flash = !fx.still && fx.t0 - lastFlash >= FLASH_GAP_S;
@@ -113,10 +196,16 @@
     const ms = Number.isFinite(at) && typeof audioCtx !== "undefined"
       ? Math.max(0, (at - audioCtx.currentTime) * 1000) : 0;
     if (ms > 60000) return;                       // stale or bogus clock: skip
+    if (fx.type === "drop") {
+      const now = nowS();
+      while (dropTimes.length && (dropTimes.length > 8 || dropTimes[0] < now - 10)) dropTimes.shift();
+      dropTimes.push(now + ms / 1000);
+    }
     if (ms < 4) spawn(fx); else setTimeout(() => spawn(fx), ms);
   }
 
   root.addEventListener("ai-cue", (e) => {
+    if (!enabled || !aiOn()) return;
     const d = e.detail || {};
     schedule(effectFor(d, reduced), d.at);
   });
@@ -154,6 +243,27 @@
     const low = s / (lowN * 255);
     if (low - prevLow > 0.07 && low > 0.45) pulse = Math.min(1, pulse + low);
     prevLow = low;
+  }
+
+  // ---- energy high points: one pointer per deck, peaks found once per load --
+  const tracks = { a: null, b: null };
+  function checkPeaks() {
+    const ds = root.decks || {};
+    for (const id of ["a", "b"]) {
+      const d = ds[id], an = d && d.analysis;
+      if (!an || typeof d._currentPosition !== "function") { tracks[id] = null; continue; }
+      let tr = tracks[id];
+      if (!tr || tr.analysis !== an) {             // new track loaded: precompute once
+        tr = tracks[id] = { analysis: an, idx: 0, prev: NaN,
+                            peaks: energyPeaks(an.energy_curve, an.energy_times, d.bpm || an.bpm) };
+      }
+      if (!tr.peaks.length) continue;
+      const g = d.crossfaderGain && d.crossfaderGain.gain;
+      if (!d.playing || !g || !(g.value > 0.05)) { tr.prev = NaN; continue; }   // off air
+      if (stepPeaks(tr, d._currentPosition()) !== null && peakAllowed(nowS(), dropTimes)) {
+        spawn(effectFor({ kind: "peak", deck: id }, reduced));
+      }
+    }
   }
 
   // ---- drawing ------------------------------------------------------------------
@@ -207,22 +317,35 @@
     cx.fillStyle = g;
     cx.fillRect(0, y - bh, W, bh * 2);
   }
-  const DRAW = { drop: drawDrop, sweep: drawSweep, scan: drawScan,
+  // gentler than a drop: no flash, no ring, a slow bloom from the centre
+  function drawPeak(fx, t, c) {
+    const e = env(t, fx.dur, 0.5);
+    if (fx.still) { edgeGlow(c, 0.25 * e); return; }
+    const R = (Math.hypot(W, H) / 2) * (0.6 + 0.4 * (t / fx.dur));
+    const g = cx.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, R);
+    g.addColorStop(0, rgba(c, 0.1 * e)); g.addColorStop(1, rgba(c, 0));
+    cx.fillStyle = g;
+    cx.fillRect(0, 0, W, H);
+    edgeGlow(c, 0.28 * e);
+  }
+  const DRAW = { drop: drawDrop, sweep: drawSweep, scan: drawScan, peak: drawPeak,
                  edge: (fx, t, c) => edgeGlow(c, 0.22 * env(t, fx.dur)) };
 
   // ---- loop: runs only while something is on screen ------------------------
   let raf = 0, lastT = 0;
   function wake() {
-    if (raf || !enabled || document.hidden) return;
+    if (raf || !enabled || document.hidden || !aiOn()) return;
     lastT = nowS();
     raf = requestAnimationFrame(frame);
   }
   function frame() {
     raf = 0;
+    if (!aiOn()) { effects.length = 0; pulse = 0; clear(); return; }   // user took over: dark, asleep
     const now = nowS(), dt = Math.min(0.1, now - lastT);
     lastT = now;
     tap();
     kick(dt);
+    checkPeaks();
     clear();
     const deck = audibleDeck();
     if (deck && pulse > 0.01) edgeGlow(colorOf(deck), 0.14 * pulse);
@@ -241,7 +364,7 @@
     if (document.hidden) { if (raf) cancelAnimationFrame(raf); raf = 0; effects.length = 0; clear(); }
     else wake();
   });
-  // a deck starting to play wakes the kick pulse (no per-deck hook needed)
+  // the AI taking over (or a deck starting under it) wakes the loop; wake() gates on aiOn()
   setInterval(() => { if (!raf && audibleDeck()) wake(); }, 1000);
 
   setEnabled(enabled);
