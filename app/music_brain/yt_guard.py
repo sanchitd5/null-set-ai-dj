@@ -30,8 +30,9 @@ STATE_PATH = CACHE_DIR / "yt_guard.json"
 BASE_COOLDOWN_S = 120.0
 MAX_COOLDOWN_S = 3600.0
 CLIENTS = (None, ["android", "ios"], ["tv", "web_safari"], ["mweb"])
-_BOT_MARKERS = ("confirm you’re not a bot", "confirm you're not a bot", "sign in to confirm",
-                "http error 429", "too many requests")
+# Only the bot check itself: "Sign in to confirm your age" is an age gate on ONE
+# video, not a reason to pause YouTube for everyone.
+_BOT_MARKERS = ("confirm you’re not a bot", "confirm you're not a bot", "http error 429", "too many requests")
 _lock = threading.Lock()
 T = TypeVar("T")
 
@@ -83,6 +84,8 @@ def check() -> None:
 def _trip(exc: BaseException) -> Cooling:
     with _lock:
         s = _read()
+        if float(s.get("until") or 0) > time.time():      # already paused: parallel callers of the
+            return Cooling(float(s["until"]), "")          # same episode add no strike
         strikes = int(s.get("strikes") or 0) + 1
         until = time.time() + min(MAX_COOLDOWN_S, BASE_COOLDOWN_S * 2 ** (strikes - 1))
         _write({"strikes": strikes, "until": until, "last_error": str(exc)[:300], "at": time.time()})

@@ -324,6 +324,16 @@ console.log("stem moves core ok");
       assert.ok(!(a.bass > 0.5 && b.bass > 0.5), `two basses at ${t} in ${sm.mergeLabel(c)}`);
     }
   }
+  // clashing keys: no tonal overlap anywhere, handover included
+  for (const c of sm.mergeCombos().filter((c) => new Set([c.bass, c.vocals, c.other]).size === 1)) {
+    const q = sm.mergeTransitionPlan(16, c, true);
+    for (let t = 0; t <= q.total; t += 0.0625) {
+      const a = sm.gainsAt(q.events, "out", t), b = sm.gainsAt(q.events, "in", t);
+      for (const n of ["bass", "vocals", "other"]) for (const m of ["bass", "vocals", "other"]) {
+        assert.ok(!(a[n] > 0.05 && b[m] > 0.05), `tonal overlap ${n}/${m} at ${t} in ${sm.mergeLabel(c)}`);
+      }
+    }
+  }
   // the silent ear moves the pick
   const ear = [{ combo: r[1].combo, ear: { score: 10, why: "locks" } }, { combo: r[0].combo, ear: { score: 1, why: "flams" } }];
   assert.deepStrictEqual(sm.mergeWithEar(r, ear)[0].combo, r[1].combo);

@@ -10,9 +10,12 @@ from app.ui.llm_gate import LOOKAHEAD, PLAN, SUGGEST, GateTimeout, PriorityGate
 
 
 def _run(gate, prio, order, hold=0.0):
-    with gate.slot(prio):
-        order.append(prio)
-        time.sleep(hold)
+    try:
+        with gate.slot(prio):
+            order.append(prio)
+            time.sleep(hold)
+    except GateTimeout:                  # a refused look-ahead is an answer, not a thread crash
+        pass
 
 
 def test_plan_jumps_queued_lookaheads():

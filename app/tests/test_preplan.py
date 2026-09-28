@@ -71,3 +71,12 @@ def test_flat_or_mostly_loud_songs_have_no_high_to_protect():
     flat = {"energy_times": list(range(100)), "energy_curve": [0.5] * 100}
     mostly = {"energy_times": list(range(100)), "energy_curve": [0.9] * 90 + [0.1] * 10}
     assert preplan.high_spans(flat, BAR) == [] and preplan.high_spans(mostly, BAR) == []
+
+
+def test_session_event_accepts_glitch_reports(tmp_path, monkeypatch):
+    import app.ui.server as s
+    from app.ui import session_log
+    monkeypatch.setattr(session_log, "SESSIONS_DIR", tmp_path)
+    r = s.post_session_event(s.SessionEvent(kind="glitch", data={"kind": "silence", "where": "A x @ 1:00", "decks": [{"deck": "a"}]}))
+    e = session_log.read()[-1]
+    assert r["ok"] and e["kind"] == "glitch" and e["kind_"] == "silence" and e["where"] == "A x @ 1:00"

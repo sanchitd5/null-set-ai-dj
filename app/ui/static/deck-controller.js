@@ -1100,7 +1100,10 @@ class Deck {
     const pos = this._clampPos(position);
     if (this.playing && !opts.user && this._onAir()) {
       const cur = this._currentPosition(), end = this._loopSpan && this._loopSpan[1];
-      const natural = Math.abs(pos - cur) < 0.08 || (opts.loopExit && end != null && Math.abs(pos - end) < 0.15);
+      // natural: inaudible, a loop's own end, or a slip release onto the song's own timeline
+      const natural = Math.abs(pos - cur) < 0.08 ||
+        (opts.loopExit && end != null && Math.abs(pos - end) < 0.15) ||
+        (opts.loopExit && opts.slipTo != null && Math.abs(pos - opts.slipTo) < 0.15);
       if (!natural) {
         console.warn(`deck ${this.id}: seek to ${pos.toFixed(2)}s refused (on the master at ${cur.toFixed(2)}s: wait for it)`);
         window.dispatchEvent(new CustomEvent("seek-refused", { detail: { deck: this.id, from: cur, to: pos, why: opts.why || "" } }));

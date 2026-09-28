@@ -36,6 +36,9 @@ OVERLAPS = (16, 32)
 MAX_HANDOVERS = 6
 EAR_TOP = 4
 MIN_LEAD_S = 20.0          # B cannot start sooner than this from now: room to cue it
+PLAN_BUDGET_S = 40.0       # rendering + the ear on up to EAR_TOP clips: plans nearer than this expire meanwhile
+UNHEARD_TTL_S = 120.0      # a plan the ear could not hear is reused this long (no re-decode per retry)
+_unheard: Dict[str, tuple] = {}
 
 
 def bar_rms(path: str, bar_s: float, sr: int = SR) -> np.ndarray:
@@ -50,8 +53,17 @@ def bar_rms(path: str, bar_s: float, sr: int = SR) -> np.ndarray:
     return np.sqrt(np.mean(np.square(y[:k * n].reshape(k, n)), axis=1))
 
 
+@__import__("functools").lru_cache(maxsize=64)
+def _bar_rms_cached(path: str, mtime: float, bar_s: float) -> tuple:
+    return tuple(bar_rms(path, bar_s))
+
+
 def energies(stems: Dict[str, str], bar_s: float) -> Dict[str, np.ndarray]:
-    return {r: bar_rms(stems[r], bar_s) for r in merge.ROLES}
+    """Per-bar RMS per stem, decoded once per (file, bar length) for the process."""
+    import os
+
+    return {r: np.asarray(_bar_rms_cached(stems[r], os.path.getmtime(stems[r]), round(bar_s, 5)))
+            for r in merge.ROLES}
 
 
 def mean_over(e: Dict[str, np.ndarray], t0: float, t1: float, bar_s: float) -> Dict[str, float]:
@@ -136,7 +148,7 @@ def candidates(a: dict, b: dict, bpm_a: float, bpm_b: float, lo: float, hi: floa
     for h in lines_a:
         for L in OVERLAPS:
             a_in = h - L * bar_a
-            if a_in < now + MIN_LEAD_S or h + 8 * bar_a > dur_a:
+            if a_in < now + MIN_LEAD_S + PLAN_BUDGET_S or h + 8 * bar_a > dur_a:
                 continue
             if in_high(highs, a_in, h + 8 * bar_a):   # B would come in / A leave during A's high
                 continue
@@ -172,12 +184,17 @@ def preplan(a: dict, b: dict, stems_a: Dict[str, str], stems_b: Dict[str, str], 
     """{ok, plan, candidates, ear}: the timing + combo the ear liked best."""
     h = hashlib.sha256(json.dumps([cache_key, round(lo), round(hi), round(bpm_a, 1)]).encode()).hexdigest()[:20]
     path = Path(cache_dir) / f"{h}.json"
+    import time as _t
+
     try:
         hit = json.loads(path.read_text(encoding="utf-8"))
         if hit.get("plan") and hit["plan"]["a_in"] >= now + MIN_LEAD_S:
             return hit
     except (OSError, ValueError):
         pass
+    soft = _unheard.get(h)
+    if soft and _t.time() - soft[0] < UNHEARD_TTL_S and soft[1]["plan"]["a_in"] >= now + MIN_LEAD_S:
+        return soft[1]
     eA, eB = energies(stems_a, 240.0 / bpm_a), energies(stems_b, 240.0 / bpm_b)
     cands = candidates(a, b, bpm_a, bpm_b, lo, hi, now, eA, eB, key_score, b_rap)
     if not cands:
@@ -198,4 +215,8 @@ def preplan(a: dict, b: dict, stems_a: Dict[str, str], stems_b: Dict[str, str], 
     if heard:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(res), encoding="utf-8")
+    else:
+        _unheard[h] = (_t.time(), res)
+        if len(_unheard) > 64:
+            _unheard.pop(min(_unheard, key=lambda k: _unheard[k][0]))
     return res

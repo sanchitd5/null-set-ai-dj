@@ -68,6 +68,16 @@ def _load_from_cache(cache_dir: Path) -> Optional[Dict[str, str]]:
     return None
 
 
+def _demucs_out():
+    """Where Demucs' progress output goes: our stderr (never stdout: agent_bridge prints
+    JSON there), or nowhere when stderr is not a real file (pytest capture, embedders)."""
+    try:
+        sys.stderr.fileno()
+        return sys.stderr
+    except (AttributeError, OSError, ValueError):
+        return subprocess.DEVNULL
+
+
 def separate(
     audio_path: str | Path,
     two_stems: Optional[str] = None,
@@ -118,7 +128,7 @@ def separate(
     cmd.append(str(audio_path))
 
     try:
-        subprocess.run(cmd, check=True, stdout=sys.stderr)   # stdout stays JSON-only for agent_bridge
+        subprocess.run(cmd, check=True, stdout=_demucs_out())   # stdout stays JSON-only for agent_bridge
     except subprocess.CalledProcessError:
         if device != "mps":
             raise
@@ -126,7 +136,7 @@ def separate(
         cmd[cmd.index("-d") + 1] = "cpu"
         shutil.rmtree(demucs_out_dir, ignore_errors=True)
         demucs_out_dir.mkdir(parents=True, exist_ok=True)
-        subprocess.run(cmd, check=True, stdout=sys.stderr)   # stdout stays JSON-only for agent_bridge
+        subprocess.run(cmd, check=True, stdout=_demucs_out())   # stdout stays JSON-only for agent_bridge
 
     track_stem_dir = demucs_out_dir / model / audio_path.stem
     stem_names = (two_stems, [n for n in TWO_STEM_NAMES if n != two_stems][0]) if two_stems else FOUR_STEM_NAMES

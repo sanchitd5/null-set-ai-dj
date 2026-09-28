@@ -131,3 +131,17 @@ def test_download_to_dir_runs_end_to_end(tmp_path, monkeypatch, with_progress):
     out = ds.download_to_dir("https://www.youtube.com/watch?v=aqu4ezLQEUA", tmp_path,
                              progress=(lambda st, pct=None: seen.append(st)) if with_progress else None)
     assert [p.name for p in out] == ["Artist - Song.flac"]
+
+
+def test_parallel_failures_in_one_episode_add_one_strike():
+    for _ in range(6):
+        try:
+            g._trip(BOT)
+        except Exception:
+            pass
+    assert g.status()["strikes"] == 1                               # not 6 (a 1-hour pause)
+
+
+def test_an_age_gate_is_not_a_bot_check():
+    assert not g.is_bot_check(RuntimeError("ERROR: [youtube] x: Sign in to confirm your age. This video may be inappropriate"))
+    assert g.is_bot_check(BOT) and g.is_bot_check(RuntimeError("HTTP Error 429: Too Many Requests"))

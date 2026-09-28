@@ -20,7 +20,7 @@ import time
 from contextlib import contextmanager
 from typing import Iterator, Optional
 
-PLAN, SUGGEST, LOOKAHEAD = 0, 1, 2
+PLAN, EAR, SUGGEST, LOOKAHEAD = 0, 1, 2, 3   # EAR: the silent ear rating pre-planned transitions
 EAR_HOLD_S = 45.0          # a hold loop asks the ear every 8-bar phrase: cover the next one
 
 
@@ -31,7 +31,7 @@ def _skip(why: str) -> None:
         session_log.log("gate_skip", priority="lookahead", why=why)
     except Exception:
         pass
-NAMES = {PLAN: "plan", SUGGEST: "suggest", LOOKAHEAD: "lookahead"}
+NAMES = {PLAN: "plan", EAR: "ear", SUGGEST: "suggest", LOOKAHEAD: "lookahead"}
 
 
 class GateTimeout(TimeoutError):

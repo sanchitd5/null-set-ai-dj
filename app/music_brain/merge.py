@@ -153,13 +153,23 @@ does it feel like one new song with energy a crowd would move to?
 Answer JSON only: {"score": 1-10, "why": "<one short sentence>"}"""
 
 
+EAR_WAIT_S = 20.0              # the silent ear waits this long for the model slot, then skips
+
+
 def ear_rate(wav: bytes, what: str, ask: Optional[Callable[[str, bytes, str], str]] = None) -> Optional[dict]:
-    """{score, why} from the omni model for one clip, or None (no model, bad answer)."""
-    if ask is None:
-        ask = _ask_omni
+    """{score, why} from the omni model for one clip, or None (no model, busy, bad answer).
+    The real model call goes through the one-at-a-time LLM gate (EAR priority: after
+    a transition PLAN, before song suggestions) and holds look-aheads off meanwhile."""
     try:
-        raw = ask(EAR_SYSTEM, wav, f"Merged layers: {what}. Rate this merge.")
-    except Exception:
+        if ask is None:
+            from app.ui import llm_gate
+
+            llm_gate.gate.note_ear(30)
+            with llm_gate.gate.slot(llm_gate.EAR, wait_timeout=EAR_WAIT_S):
+                raw = _ask_omni(EAR_SYSTEM, wav, f"Merged layers: {what}. Rate this merge.")
+        else:
+            raw = ask(EAR_SYSTEM, wav, f"Merged layers: {what}. Rate this merge.")
+    except Exception:              # incl. GateTimeout: the algorithm's rank stands
         return None
     m = re.search(r"\{.*\}", raw or "", re.S)
     if not m:

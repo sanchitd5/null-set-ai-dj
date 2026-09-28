@@ -140,5 +140,9 @@ console.log("autopilot core ok");
   assert.ok(!energyStepOk(7, 5, { setPos: 0.1 }).ok && energyStepOk(7, 6, { setPos: 0.1 }).ok);   // building
   assert.ok(!energyStepOk(5, 7, { setPos: 0.9 }).ok);                                              // cooling
   assert.ok(energyStepOk(3, 6, { force: true }).ok && !energyStepOk(3, 7, { force: true }).ok);   // fallback: +1 only
+  assert.ok(energyStepOk(3, 8, { rawDelta: 0.05 }).ok);                     // levels apart, measurements the same
+  assert.ok(!energyStepOk(3, 8, { rawDelta: 0.3 }).ok);
+  assert.ok(!energyStepOk(7, 5, { songs: 2 }).ok && energyStepOk(7, 5, { songs: 12 }).ok);   // warm-up builds, then open
+  assert.ok(energyStepOk(5, 7, { songs: 40 }).ok);                          // no automatic "cooling" all night
   console.log("energy step ok");
 }

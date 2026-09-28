@@ -205,6 +205,7 @@
     const sect = s.phraseSection != null ? s.phraseSection : s.section;
     if ((s.remixCount || 0) >= REMIX_MAX_PER_SONG) return `remix cap ${REMIX_MAX_PER_SONG} reached`;
     if (used.includes(kind)) return "already used on this song";
+    if (kind === "beat_jump" && s.onAir) return "the deck is on the master: no jumps";
     if (s.barsOnTrack < MIN_BARS_ON_TRACK) return `first ${MIN_BARS_ON_TRACK} bars`;
     if (s.barsToExit != null && s.barsToExit < EXIT_GUARD_BARS) return `last ${EXIT_GUARD_BARS} bars before exit`;
     if ((s.phraseIdx || 0) - (s.lastRemixPhrase == null ? -99 : s.lastRemixPhrase) < REMIX_GAP_PHRASES) {
@@ -784,20 +785,37 @@
   function loopAt(d, id, start, beats) {
     const len = beats * 60 / (d.bpm || 128);
     const s = nextLoopStart(start, d._currentPosition(), len, !!(d.playing && d._onAir && d._onAir()));
+    const ana = d.analysis;
     const engage = () => {
+      if (deckId !== id || d.analysis !== ana || !d.playing) return;   // song changed meanwhile
+      const was = d.loopOn, prevBeats = d.loopBeats;
+      if (!was) d._loopSlip = { pos: s, at: audioCtx.currentTime };  // where the song's own timeline left off
       if (typeof d.setLoopBeats === "function") d.setLoopBeats(beats);
       d.loopOn = true;
-      if (!d.seek(s)) { d.loopOn = false; }
+      if (!d.seek(s)) {
+        // refused (the engage fired late): a loop already running keeps going as it
+        // was; with none running nothing was started, so just stay out of loop mode
+        if (was) { if (typeof d.setLoopBeats === "function") d.setLoopBeats(prevBeats); }
+        else { d.loopOn = false; d._loopSlip = null; }
+      }
       loopUi(id, d);
     };
     const wait = (s - d._currentPosition()) / ((d._playbackRate && d._playbackRate()) || 1);
     if (wait > 0.08) setTimeout(engage, Math.max(0, wait * 1000 - 20)); else engage();
     return s;
   }
+  // Leave a loop. `to` = where the song continues: its own loop end, or (stutter /
+  // roll) where the song would be had the loop never played (slip: the song's own
+  // timeline, not a jump). A deck on the master refuses anything else; then the
+  // loop simply ends where playback is. Never leaves a native loop running.
   function loopRelease(d, id, to) {
     if (!d.loopOn) return;
+    const here = d._currentPosition();                     // read while the loop still wraps
+    const rate = (d._playbackRate && d._playbackRate()) || 1;
+    const slip = d._loopSlip ? d._loopSlip.pos + (audioCtx.currentTime - d._loopSlip.at) * rate : null;
     d.loopOn = false;
-    d.seek(to, { loopExit: true });       // the loop's own end: allowed, else playback just runs on
+    d._loopSlip = null;
+    if (!d.seek(to, { loopExit: true, slipTo: slip }) && d.playing) d.play(here);
     loopUi(id, d);
   }
   function fxEcho(id, on) {
@@ -874,6 +892,7 @@
       preDrop: isPreDrop(pLab, nLab),
       skipHitsDrop: { 8: dropIn(8), 16: dropIn(16) },
       remixUsed, remixCount: remixUsed.length, lastRemixPhrase,
+      onAir: !!(d._onAir && d._onAir()),
       relaxed: !!(root.djSession && root.djSession.relaxed),
       aiMove,
       rate,
@@ -1065,7 +1084,8 @@
       rate: (d._playbackRate && d._playbackRate()) || 1,
       secs: nowS() - (holdLoop.since || nowS()),
       washed: !!holdLoop.washed, moved: !!holdLoop.moved,
-      canMove: holdLoop.start - PHRASE_BARS * bar >= Math.max(0, d._mindEntry || 0) - 0.01,
+      // moving the loop a phrase back is a jump back: never on a deck the room hears
+      canMove: holdLoop.start - PHRASE_BARS * bar >= Math.max(0, d._mindEntry || 0) - 0.01 && !(d._onAir && d._onAir()),
     };
   }
   // One ear decision. Loop changes land on the next wrap (a grid line), EQ
@@ -1081,8 +1101,8 @@
     const snap = (t) => (db.length ? db.reduce((b, x) => (Math.abs(x - t) < Math.abs(b - t) ? x : b), db[0]) : t);
     const reloop = (start, bars) => later(wrapIn, () => {
       if (deckId !== id || plan || !holdLoop || !d.loopOn) return;
-      holdLoop.start = snap(start); holdLoop.bars = bars;
-      loopAt(d, id, holdLoop.start, bars * 4);
+      holdLoop.bars = bars;
+      holdLoop.start = loopAt(d, id, snap(start), bars * 4);   // the start actually used
     });
     const voc = (d.analysis && d.analysis.vocal_active_regions) || [];
     const cutsVocal = (t) => voc.some(([s, e]) => s < t - SEAM_VOCAL_GAP_S && e > t + SEAM_VOCAL_GAP_S);

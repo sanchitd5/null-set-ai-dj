@@ -65,10 +65,16 @@ def level_from_raw(raw: float, library: Optional[List[float]] = None) -> int:
     return int(np.clip(round(1 + 9 * raw), 1, 10))
 
 
-def _cache(path: Path) -> Path:
+@__import__("functools").lru_cache(maxsize=512)
+def _hash_of(path: str, mtime: float, size: int) -> str:
     from app.music_brain.analyzer import _file_hash
 
-    return ANALYSIS_CACHE_DIR / f"{_file_hash(path)}.energy.json"
+    return _file_hash(Path(path))
+
+
+def _cache(path: Path) -> Path:
+    st = Path(path).stat()               # hash each file once per process, not per call
+    return ANALYSIS_CACHE_DIR / f"{_hash_of(str(path), st.st_mtime, st.st_size)}.energy.json"
 
 
 def measure(audio_path, bpm: float, use_cache: bool = True) -> dict:
@@ -98,7 +104,18 @@ def measure(audio_path, bpm: float, use_cache: bool = True) -> dict:
     return d
 
 
+_lib_cache: tuple = (None, [])
+
+
 def library_raws() -> List[float]:
+    """Every measured track's raw score; re-read only when the cache dir changed."""
+    global _lib_cache
+    try:
+        stamp = (ANALYSIS_CACHE_DIR.stat().st_mtime, VERSION, tuple(sorted(WEIGHTS.items())))
+    except OSError:
+        return []
+    if _lib_cache[0] == stamp:
+        return _lib_cache[1]
     out = []
     for p in ANALYSIS_CACHE_DIR.glob("*.energy.json"):
         try:
@@ -107,6 +124,7 @@ def library_raws() -> List[float]:
                 out.append(_raw(d))
         except (OSError, ValueError, KeyError):
             pass
+    _lib_cache = (stamp, out)
     return out
 
 

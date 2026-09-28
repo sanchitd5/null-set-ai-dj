@@ -25,7 +25,7 @@ load_dotenv()
 from fastapi import FastAPI, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.music_brain.analyzer import analyze as analyze_track
 from app.music_brain.config import (
@@ -785,6 +785,7 @@ _voiced_cache: Dict[tuple, dict] = {}
 
 
 _pair_cache: Dict[tuple, tuple] = {}
+_pair_lock = threading.Lock()
 PAIR_CACHE_S = 600.0
 
 
@@ -792,13 +793,15 @@ def _pair_features_cached(a_id: str, b_id: str, keylock: bool = False):
     """_pair_features loads all of A's stems (seconds): once per pair per 10 min,
     rebuilt when either side's stems appear."""
     key = (a_id, b_id, keylock, bool(_cached_stems4(a_id)), bool(_cached_stems4(b_id)))
-    hit = _pair_cache.get(key)
+    with _pair_lock:
+        hit = _pair_cache.get(key)
     if hit and time.time() - hit[0] < PAIR_CACHE_S:
         return hit[1]
     f = _pair_features(a_id, b_id, keylock)
-    _pair_cache[key] = (time.time(), f)
-    if len(_pair_cache) > 64:
-        _pair_cache.pop(min(_pair_cache, key=lambda k: _pair_cache[k][0]))
+    with _pair_lock:                 # FastAPI runs sync handlers on a thread pool
+        _pair_cache[key] = (time.time(), f)
+        if len(_pair_cache) > 64:
+            _pair_cache.pop(min(_pair_cache, key=lambda k: _pair_cache[k][0]))
     return f
 
 
@@ -856,6 +859,8 @@ def _safe_hook_drops(track_id: str) -> list:
 
 
 _hook_drop_cache: Dict[str, tuple] = {}
+_hook_drop_miss: Dict[str, float] = {}
+HOOK_MISS_TTL_S = 600.0
 
 
 def _hook_drops(track_id: str, top_n: int = 3, ai_call: bool = False) -> list:
@@ -868,8 +873,16 @@ def _hook_drops(track_id: str, top_n: int = 3, ai_call: bool = False) -> list:
 
     path = _track_path(track_id)
     name = _track_names.get(track_id) or _name_from_tags(track_id, path) or path.stem
+    miss = _hook_drop_miss.get(track_id)
+    if miss and time.time() - miss < HOOK_MISS_TTL_S:
+        return []                 # no lyrics a moment ago: don't re-ask LRCLIB or reload stems
     if track_id not in _hook_drop_cache:
         a = analyze_track(path)
+        # lyrics first (cached on disk; one network call at most): the vocal stem is
+        # only decoded when there are lines to align
+        if not (lyrics.fetch(name, duration=a.duration) or lyrics.load_plain(name)):
+            _hook_drop_miss[track_id] = time.time()
+            return []
         stems = _cached_stems4(track_id)
         y = None
         if stems and stems.get("vocals"):
@@ -877,7 +890,8 @@ def _hook_drops(track_id: str, top_n: int = 3, ai_call: bool = False) -> list:
 
             y, _ = librosa.load(stems["vocals"], sr=11025, mono=True)
         lines = lyrics.for_file(name, y, 11025, duration=a.duration)
-        if not lines:             # a miss may be a network blip: only cache real answers
+        if not lines:
+            _hook_drop_miss[track_id] = time.time()
             return []
         _hook_drop_cache[track_id] = (lines, a)
     lines, a = _hook_drop_cache[track_id]
@@ -904,9 +918,12 @@ def post_session_event(ev: SessionEvent):
     """The console's side of this session's log (track changes, ear flushes)."""
     from app.ui import session_log
 
-    if ev.kind not in ("track", "ear_flush", "note"):
-        raise HTTPException(status_code=400, detail="kind must be track, ear_flush or note")
-    session_log.log(ev.kind, **{k: v for k, v in list(ev.data.items())[:20] if isinstance(k, str)})
+    if ev.kind not in ("track", "ear_flush", "note", "glitch"):
+        raise HTTPException(status_code=400, detail="kind must be track, ear_flush, glitch or note")
+    # the event's own fields may reuse the log's names (a glitch report has its own "kind"):
+    # those are kept as "<name>_" instead of clashing
+    fields = {(f"{k}_" if k in ("kind", "t", "at") else k): v for k, v in list(ev.data.items())[:20] if isinstance(k, str)}
+    session_log.log(ev.kind, **fields)
     return {"ok": True, "session": session_log.SESSION_ID}
 
 
@@ -927,10 +944,11 @@ def get_session_log(session: Optional[str] = None, limit: int = 500):
 class PreplanRequest(BaseModel):
     a_id: str
     b_id: str
-    lo: float                        # A's song seconds: earliest handover line
-    hi: float                        # latest handover line
-    now: float                       # A's current song position
-    bpm_a: float                     # A's tempo as it plays (pitch fader included)
+    lo: float = Field(ge=0, le=36000, allow_inf_nan=False)    # A's song seconds: earliest handover line
+    hi: float = Field(ge=0, le=36000, allow_inf_nan=False)    # latest handover line
+    now: float = Field(ge=0, le=36000, allow_inf_nan=False)   # A's current song position
+    bpm_a: float = Field(gt=0, le=400, allow_inf_nan=False)   # A as it plays (pitch fader): informational;
+                                                                # the plan is in song time on A's analysed BPM
 
 
 @app.post("/api/transition/preplan")
@@ -947,9 +965,11 @@ def post_transition_preplan(req: PreplanRequest):
         raise HTTPException(status_code=409, detail="both songs need their 4 stems cached")
     ta, tb = analyze_track(_track_path(req.a_id)), analyze_track(_track_path(req.b_id))
     ka, kb = ta.key.camelot if ta.key else None, tb.key.camelot if tb.key else None
-    llm_gate.gate.note_ear(90)
     t0 = time.time()
-    res = preplan.preplan(ta.to_dict(), tb.to_dict(), sa, sb, req.bpm_a or ta.bpm, tb.bpm or 120.0,
+    # Song-time maths on A's ANALYSED tempo: a_in / handover sit on A's phrase grid in
+    # song seconds, and the clip plays A unstretched, so B is stretched to ta.bpm. The
+    # live pitch fader moves both decks' audio together (B follows A) and never the grid.
+    res = preplan.preplan(ta.to_dict(), tb.to_dict(), sa, sb, ta.bpm or 120.0, tb.bpm or 120.0,
                           req.lo, req.hi, req.now, tq.camelot_score(ka, kb) if ka and kb else None,
                           b_rap=any(r.get("rap") for r in (_voiced_cache.get((req.b_id, "style")) or [])), cache_key=f"{req.a_id}:{req.b_id}")
     p = res.get("plan") or {}
@@ -962,8 +982,8 @@ def post_transition_preplan(req: PreplanRequest):
 class MergeAuditionRequest(BaseModel):
     a_id: str
     b_id: str
-    a_time: float                    # A's song seconds where the merge starts
-    b_time: float                    # B's song seconds at that moment
+    a_time: float = Field(ge=0, le=36000, allow_inf_nan=False)   # A's song seconds where the merge starts
+    b_time: float = Field(ge=0, le=36000, allow_inf_nan=False)   # B's song seconds at that moment
     combos: List[Dict[str, str]]     # up to 3, from stem-moves mergeRank (console)
 
 
@@ -983,7 +1003,6 @@ def post_merge_audition(req: MergeAuditionRequest):
     ta, tb = analyze_track(_track_path(req.a_id)), analyze_track(_track_path(req.b_id))
     from app.ui import llm_gate, session_log
 
-    llm_gate.gate.note_ear()                  # look-aheads wait: the ear is on the model
     t0 = time.time()
     res = merge.audition(sa, sb, ok, max(0.0, req.a_time), max(0.0, req.b_time), ta.bpm or 120.0, tb.bpm or 120.0,
                          key=f"{req.a_id}:{req.b_id}")
@@ -1178,11 +1197,12 @@ def post_match(req: MatchRequest):
     try:
         from app.music_brain import energy as en
 
-        ea = en.level(_track_path(req.track_a_id), track_a.bpm)["level"]
-        eb = en.level(_track_path(req.track_b_id), track_b.bpm)["level"]
-        vibe = (vibe or {}) | {"energy_a": ea, "energy_b": eb}
-    except Exception:
-        pass
+        la = en.level(_track_path(req.track_a_id), track_a.bpm)
+        lb = en.level(_track_path(req.track_b_id), track_b.bpm)
+        vibe = (vibe or {}) | {"energy_a": la["level"], "energy_b": lb["level"],
+                               "energy_raw_a": la["raw"], "energy_raw_b": lb["raw"]}
+    except Exception as exc:          # best-effort, but say why
+        print(f"WARNING [match] energy level unavailable: {type(exc).__name__}: {exc}", flush=True)
     return {"candidates": [c.to_dict() for c in candidates], "vibe": vibe}
 
 

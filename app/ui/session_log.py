@@ -27,6 +27,9 @@ SESSIONS_DIR = CACHE_DIR / "sessions"
 SESSION_ID = time.strftime("%Y-%m-%d_%H%M%S")
 _lock = threading.Lock()
 MAX_FIELD = 300
+MAX_NESTED = 4000
+KEEP_SESSIONS = 60
+_pruned = False
 
 
 def _path(session: Optional[str] = None) -> Path:
@@ -43,15 +46,30 @@ def log(kind: str, **fields) -> None:
         for k, v in fields.items():
             if isinstance(v, str) and len(v) > MAX_FIELD:
                 v = v[:MAX_FIELD] + "..."
+            elif not isinstance(v, (int, float, bool, type(None), str)):
+                enc = json.dumps(v, default=str)
+                if len(enc) > MAX_NESTED:          # a nested glitch report stays bounded
+                    v = enc[:MAX_NESTED] + "..."
             ev[k] = v
         line = json.dumps(ev, ensure_ascii=False, default=str)
         p = _path()
+        global _pruned
         with _lock:
+            if not _pruned:                       # once per run: keep the newest KEEP_SESSIONS
+                _pruned = True
+                _prune()
             p.parent.mkdir(parents=True, exist_ok=True)
             with open(p, "a", encoding="utf-8") as f:
                 f.write(line + "\n")
     except Exception:
         pass
+
+
+def _prune() -> None:
+    import shutil
+
+    for sid in sessions()[KEEP_SESSIONS:]:
+        shutil.rmtree(SESSIONS_DIR / sid, ignore_errors=True)
 
 
 def read(session: Optional[str] = None, limit: int = 500) -> list:

@@ -169,9 +169,16 @@ var autopilotCore = (function () {
   // Same rule as app/music_brain/energy.next_ok: at most 2 levels a song (1 relaxed,
   // +1 on the last-round fallback); early in the set (< 30 %) it may not fall more
   // than 1, near the end (> 85 %) not rise more than 1. -> {ok, step, why}
+  const ENERGY_MIN_RAW = 0.1;      // raw 0-1: below this the two songs measure the same, whatever the levels say
+  const WARMUP_SONGS = 5;          // the set builds over its first songs; open-ended after (no known end)
+  // o: {relaxed, force, songs (played so far), rawDelta (raw_b - raw_a)}
   function energyStepOk(cur, nxt, o = {}) {
     const step = nxt - cur, lim = (o.relaxed ? 1 : 2) + (o.force ? 1 : 0);
-    const arc = o.setPos != null && o.setPos < 0.3 ? "build" : o.setPos != null && o.setPos > 0.85 ? "cool" : "";
+    if (o.rawDelta != null && Math.abs(o.rawDelta) < ENERGY_MIN_RAW) {
+      return { ok: true, step, why: `energy ${cur} -> ${nxt} (measured almost the same)` };
+    }
+    const arc = o.songs != null ? (o.songs < WARMUP_SONGS ? "build" : "")
+      : o.setPos != null && o.setPos < 0.3 ? "build" : o.setPos != null && o.setPos > 0.85 ? "cool" : "";
     if (Math.abs(step) > lim) return { ok: false, step, why: `energy ${step > 0 ? "jump" : "drop"} ${cur} -> ${nxt} (max ${lim} a song)` };
     if (!o.force && arc === "build" && step < -1) return { ok: false, step, why: `energy falls ${cur} -> ${nxt} while the set is building` };
     if (!o.force && arc === "cool" && step > 1) return { ok: false, step, why: `energy rises ${cur} -> ${nxt} while the set is cooling down` };
@@ -1513,9 +1520,9 @@ var autopilotCore = (function () {
     // The last-round fallback allows one more level so the set never stalls.
     const ev = candidate.vibe;
     if (ev && Number.isFinite(ev.energy_a) && Number.isFinite(ev.energy_b)) {
-      const setPos = Math.min(history.length / 10, 1.0);
       const verdict = autopilotCore.energyStepOk(ev.energy_a, ev.energy_b, {
-        relaxed: !!(window.djSession && window.djSession.relaxed), setPos, force: forceJump });
+        relaxed: !!(window.djSession && window.djSession.relaxed), songs: history.length, force: forceJump,
+        rawDelta: Number.isFinite(ev.energy_raw_a) && Number.isFinite(ev.energy_raw_b) ? ev.energy_raw_b - ev.energy_raw_a : null });
       if (!verdict.ok) {
         console.warn("Autopilot energy reject:", nextName, verdict.why);
         apStatus(`Not after this song: ${nextName} (${verdict.why}) — kept for later`);
@@ -1599,7 +1606,10 @@ var autopilotCore = (function () {
     // of B's lines, how long both play, who owns each stem); the master plays it.
     if (!layer) {
       apStatus(`Ear pre-planning the mix into ${nextName}…`);
-      const pp = await requestPreplan(currentId, nextId, candidate);
+      // the plan may take a while (renders + the ear): never hold the booking past
+      // PREPLAN_WAIT_MS; the server keeps going and caches a heard plan for next time
+      const pp = await Promise.race([requestPreplan(currentId, nextId, candidate),
+        new Promise((r) => setTimeout(() => r(null), PREPLAN_WAIT_MS))]);
       if (!active || currentTrackId !== currentId || (gen !== undefined && gen !== prepGen)) return false;
       if (pp) candidate = Object.assign({}, candidate, { preplan: pp });
     }
@@ -2077,8 +2087,10 @@ var autopilotCore = (function () {
     }
     // Never a hard cut (user): a cut the matcher or the AI plan proposed is a Bass Swap.
     if (/\bcut\b/i.test(String(recipe || ""))) {
-      console.info("transition recipe:", `${recipe} -> Bass Swap (no hard cuts)`);
+      // a cut was the matcher's answer to clashing keys: keep the overlap short (4 bars)
+      console.info("transition recipe:", `${recipe} -> 4-bar Bass Swap (no hard cuts)`);
       recipe = "Bass Swap";
+      vocalShort = true;
     }
     // Mashup -> transition beats every other move when the pair fits (user)
     if (stemsBoth && odS && sdS && mashupFits(odS, sdS)) recipe = "Mashup → Transition";
@@ -2458,6 +2470,8 @@ var autopilotCore = (function () {
       return d && d.ok && d.plan ? d.plan : null;
     } catch (e) { return null; }
   }
+
+  const PREPLAN_WAIT_MS = 35000;
 
   function mergesOn() {
     if (window.djSession && window.djSession.relaxed) return false;

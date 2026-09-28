@@ -100,13 +100,42 @@
         body: JSON.stringify({ kind: "glitch", data: ev }) }).catch(() => {});
     } catch (e) { /* never break playback */ }
   }
+  // The listener's own hands: EQ / fader moves they made recently are never undone.
+  const userTouch = {};
+  document.addEventListener("input", (e) => {
+    const el = e.target;
+    if (!e.isTrusted || !el || !el.dataset) return;
+    if (el.classList.contains("eq-knob") || el.classList.contains("volume-fader")) userTouch[el.dataset.deck] = Date.now();
+    if (el.id === "crossfader" || el.id === "master-fader") userTouch.all = Date.now();
+  }, true);
+  const touchedRecently = (id) => Date.now() - Math.max(userTouch[id] || 0, userTouch.all || 0) < 30000;
+  function masterFaderDown() {
+    const f = document.getElementById("master-fader");
+    return !!(f && parseFloat(f.value) < 0.05);
+  }
+  // The song itself is quiet here (its analysed energy, 0-1 of its own peak): an
+  // intro's silence, a pre-drop gap, a fade tail are music, not a glitch.
+  function songQuietAt(d) {
+    const a = d.analysis, t = d._currentPosition();
+    if (!a || !a.energy_times || !a.energy_curve || !a.energy_times.length) return false;
+    let i = a.energy_times.findIndex((x) => x > t);
+    if (i < 0) i = a.energy_times.length - 1;
+    const win = a.energy_curve.slice(Math.max(0, i - 2), i + 1);
+    return win.length > 0 && Math.max(...win) < 0.08;
+  }
+  // Silence nobody chose: the on-air deck back to its full mix (booked stem moves
+  // stay booked: an in-flight transition keeps going), killed EQ bands reopened
+  // unless the listener touched that deck in the last 30 s.
   function recover() {
     for (const d of onAirDecks()) {
-      if (root.stemMoves && root.stemMoves.reset) root.stemMoves.reset(d);   // cancels booked moves, full mix
-      else if (d.stemMix) d.stemMix(null, 0, 0.05);
+      if (d.stemMix) d.stemMix(null, 0, 0.05);
+      if (touchedRecently(d.id)) continue;
       for (const b of ["low", "mid", "high"]) {
         const el = document.querySelector(`.eq-knob[data-deck="${d.id}"][data-band="${b}"]`);
-        if (el && parseFloat(el.value) < -20) { el.value = 0; el.dispatchEvent(new Event("input", { bubbles: true })); }
+        if (el && parseFloat(el.value) < -20) {
+          el.value = 0;
+          if (d.setEQ) d.setEQ(b, 0);                     // direct: an AI ramp may own the knob (data-ai-audio)
+        }
       }
     }
   }
@@ -120,7 +149,10 @@
     if (!samples || samples.length < 400) return;
     let sum = 0, clips = 0;
     for (let i = 0; i < samples.length; i++) { const v = samples[i]; sum += v * v; if (v >= 0.999 || v <= -0.999) clips++; }
-    const onAir = onAirDecks().length > 0;
+    const live = onAirDecks();
+    // silence only counts when it wasn't chosen: master fader up, and at least one
+    // on-air song is not itself quiet at this moment
+    const onAir = live.length > 0 && !masterFaderDown() && live.some((d) => !songQuietAt(d));
     for (const g of step(st, { t: audioCtx.currentTime, rms: Math.sqrt(sum / samples.length), clips, onAir })) {
       if (!allow(st, g.kind, audioCtx.currentTime)) continue;
       if (g.kind === "recover") {

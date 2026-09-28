@@ -447,7 +447,9 @@
   }
   // Plan events (bars from B's entry): 0..M the combo; M-0.25 A's kick+bass leave
   // (if they are A's) and B's land ON M; A's tones/voice fade over 8; M+8 B full.
-  function mergeTransitionPlan(M, combo) {
+  // keyClash: the two records' keys fight (camelot < 0.8): no tonal overlap even in
+  // the handover; A's synths / voice leave a quarter bar before the line, B's land on it.
+  function mergeTransitionPlan(M, combo, keyClash = false) {
     const on = (who) => Object.fromEntries(STEMS.map((n) => [n, combo[n] === who ? 1 : 0]));
     // Every stem A hands to B leaves a quarter bar before the line and B's lands ON
     // it (the bass-swap convention): one sub owner, one singer, never both.
@@ -463,6 +465,16 @@
     }
     // A's synths hand over across 8 bars; voices never overlap: A's voice leaves
     // over 2 bars, B's comes in after it (one singer)
+    if (keyClash) {
+      const tone = ["other", "vocals"].filter((n) => combo[n] === "a");
+      if (tone.length) {
+        ev.push({ bar: M - 0.25, deck: "out", stems: Object.fromEntries(tone.map((n) => [n, 0])), ramp: 0.25 });
+        ev.push({ bar: M, deck: "in", stems: Object.fromEntries(tone.map((n) => [n, 1])), ramp: 0.05 });
+      }
+      ev.push({ bar: M, deck: "out", stems: { vocals: 0, other: 0 }, ramp: 0.05 });
+      ev.push({ bar: M + 8, deck: "in", stems: null, ramp: 0.05 });
+      return { events: ev.sort((a, b) => a.bar - b.bar), total: M + 8 };
+    }
     ev.push({ bar: M, deck: "out", stems: { other: 0 }, ramp: 8 });
     if (combo.other === "a") ev.push({ bar: M, deck: "in", stems: { other: 1 }, ramp: 8 });
     if (combo.vocals === "a") {
@@ -808,7 +820,7 @@
     if (!out.stemsReady || !inn.stems) return 0;
     const barS = 240 / (out.bpm || 128) / ((out._playbackRate && out._playbackRate()) || 1);
     const bRate = (out.bpm * out._playbackRate()) / inn.bpm;
-    const plan = mergeTransitionPlan(M, pick.combo);
+    const plan = mergeTransitionPlan(M, pick.combo, camelotClash(out, inn));
     const barB = 240 / inn.bpm;
     const pA = out._positionAt ? out._positionAt(t0) : out._currentPosition();
     let eOut = stemEnergyBars(out, pA, 240 / (out.bpm || 128), plan.total + 1), eIn = stemEnergyBars(inn, bEntry, barB, plan.total + 1);
