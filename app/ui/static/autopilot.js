@@ -2513,7 +2513,7 @@ var autopilotCore = (function () {
   const WINDOWS = {
     long:   { min: 180, max: 360, xf: 24, label: "LONG" },
     medium: { min: 120, max: 240, xf: 16, label: "MID" },
-    quick:  { min: 60,  max: 120, xf: 8,  label: "QUICK" }, // user: "1-2 min"; 45 s felt rushed
+    quick:  { min: 40,  max: 100, xf: 8,  label: "QUICK" }, // user: 40-100 s (widened from 60-120)
     bail:   { min: 30,  max: 60,  xf: 8,  label: "QUICK·bail" },
     // steering toward the occasion's music: short bridge songs (user: 30-60 s each)
     bridge: { min: 30,  max: 60,  xf: 8,  label: "BRIDGE" },
