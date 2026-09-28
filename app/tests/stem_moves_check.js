@@ -287,3 +287,46 @@ console.log("stem moves core ok");
   assert.ok(r.next.other >= AUDIBLE_GAIN);                                     // held at least at the floor
   console.log("keep one stem ok");
 }
+
+// song merge: every split, the rules, the plan, the ear blend
+{
+  const sm = require("../ui/static/stem-moves.js");
+  const combos = sm.mergeCombos();
+  assert.strictEqual(combos.length, 14);
+  assert.ok(combos.every((c) => new Set(Object.values(c)).size === 2));
+  const E = { drums: 0.2, bass: 0.2, vocals: 0.1, other: 0.1 };
+  const r = sm.mergeRank({ eA: E, eB: E, keyScore: 1 });
+  assert.deepStrictEqual(r[0].combo, { drums: "a", bass: "a", vocals: "b", other: "b" });
+  assert.strictEqual(r[0].label, "A drums + A bass + B vox + B synth");
+  // keys clash: tonal layers (bass, vox, synth) from ONE deck only
+  for (const x of sm.mergeRank({ eA: E, eB: E, keyScore: 0.3 })) assert.strictEqual(new Set([x.combo.bass, x.combo.vocals, x.combo.other]).size, 1);
+  // B's voice silent: no combo takes B's vox
+  assert.ok(sm.mergeRank({ eA: E, eB: { ...E, vocals: 0 }, keyScore: 1 }).every((x) => x.combo.vocals === "a"));
+  // plan: A's kick+bass leave a quarter bar before the line, B's land ON it; B full at M+8
+  const p = sm.mergeTransitionPlan(16, { drums: "a", bass: "a", vocals: "b", other: "b" });
+  const at = (deck, bar) => p.events.filter((e) => e.deck === deck && e.bar === bar);
+  assert.deepStrictEqual(at("out", -0.25)[0].stems, { vocals: 0, other: 0 });   // what A hands to B leaves first
+  assert.deepStrictEqual(at("in", 0)[0].stems, { drums: 0, bass: 0, vocals: 1, other: 1 });
+  assert.deepStrictEqual(at("out", 15.75)[0].stems, { drums: 0, bass: 0 });
+  assert.deepStrictEqual(at("in", 16).find((e) => e.stems && e.stems.drums === 1).stems, { drums: 1, bass: 1 });
+  assert.strictEqual(p.events[p.events.length - 1].stems, null);
+  assert.strictEqual(p.total, 24);
+  // one sub owner and one singer at every moment of the plan
+  for (let t = 0; t <= 24; t += 0.125) {
+    const a = sm.gainsAt(p.events, "out", t), b = sm.gainsAt(p.events, "in", t);
+    assert.ok(!(a.bass > 0.5 && b.bass > 0.5), `two basses at ${t}`);
+  }
+  for (const c of sm.mergeCombos()) {                                  // every combo: never two singers
+    const q = sm.mergeTransitionPlan(16, c);
+    for (let t = 0; t <= q.total; t += 0.125) {
+      const a = sm.gainsAt(q.events, "out", t), b = sm.gainsAt(q.events, "in", t);
+      assert.ok(!(a.vocals > 0.05 && b.vocals > 0.05), `two singers at ${t} in ${sm.mergeLabel(c)}`);
+      assert.ok(!(a.bass > 0.5 && b.bass > 0.5), `two basses at ${t} in ${sm.mergeLabel(c)}`);
+    }
+  }
+  // the silent ear moves the pick
+  const ear = [{ combo: r[1].combo, ear: { score: 10, why: "locks" } }, { combo: r[0].combo, ear: { score: 1, why: "flams" } }];
+  assert.deepStrictEqual(sm.mergeWithEar(r, ear)[0].combo, r[1].combo);
+  assert.deepStrictEqual(sm.mergeWithEar(r, null)[0].combo, r[0].combo);
+  console.log("song merge ok");
+}

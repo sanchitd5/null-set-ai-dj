@@ -894,6 +894,33 @@ def get_hook_drops(track_id: str, top_n: int = 3, ai: bool = True):
     return {"track_id": track_id, "hook_drops": _hook_drops(track_id, max(1, min(top_n, 10)), ai_call=ai)}
 
 
+class MergeAuditionRequest(BaseModel):
+    a_id: str
+    b_id: str
+    a_time: float                    # A's song seconds where the merge starts
+    b_time: float                    # B's song seconds at that moment
+    combos: List[Dict[str, str]]     # up to 3, from stem-moves mergeRank (console)
+
+
+@app.post("/api/merge/audition")
+def post_merge_audition(req: MergeAuditionRequest):
+    """The silent ear on candidate song merges (app.music_brain.merge): each combo is
+    rendered offline from the cached stems (B key-locked to A's tempo) and the local
+    omni model rates it. Advisory and cached; {"results": [...], "ear": bool}."""
+    from app.music_brain import merge
+
+    sa, sb = _cached_stems4(req.a_id), _cached_stems4(req.b_id)
+    if not sa or not sb:
+        raise HTTPException(status_code=409, detail="both songs need their 4 stems cached")
+    ok = [c for c in req.combos[:3] if set(c) == set(merge.ROLES) and set(c.values()) <= {"a", "b"}]
+    if not ok:
+        raise HTTPException(status_code=400, detail="combos must map drums/bass/vocals/other to 'a' or 'b'")
+    ta, tb = analyze_track(_track_path(req.a_id)), analyze_track(_track_path(req.b_id))
+    res = merge.audition(sa, sb, ok, max(0.0, req.a_time), max(0.0, req.b_time), ta.bpm or 120.0, tb.bpm or 120.0,
+                         key=f"{req.a_id}:{req.b_id}")
+    return {"results": res, "ear": any(r["ear"] for r in res)}
+
+
 @app.get("/api/learned/pick")
 def get_learned_pick(a: str, b: str, keylock: bool = False):
     """The move learned from studied sets to play for A -> B, as a console recipe

@@ -407,7 +407,82 @@
     const kept = KEEP_ORDER.reduce((best, n) => ((b[n] || 0) > (b[best] || 0) ? n : best), KEEP_ORDER[0]);
     return { next: { ...next, [kept]: Math.max(AUDIBLE_GAIN, Math.min(1, b[kept] || 1)) }, kept };
   }
-  const core = { keepOneStem, hookDropEvents, hookDropDue, HOOK_OTHER, BREAKDOWN, breakdownFits, handoffFits, vocalShare, stemBlendPlan, STEM_BLEND_KINDS, remixEvents, remixPick, stemBridgePlan, mashupTransitionPlan,
+  // ---- SONG MERGE (user: "A drums, A bass, B vox, B synth; different combinations
+  // where possible"). For M bars each role plays from ONE deck (one sub owner,
+  // one singer), then B takes everything on the line. Same rules as
+  // app/music_brain/merge.py rank(); the silent ear (/api/merge/audition) re-ranks.
+  const TONAL = ["bass", "vocals", "other"];
+  const MERGE_KEY_OK = 0.8;
+  function mergeCombos() {
+    const out = [];
+    for (let m = 1; m < 15; m++) {
+      const c = {};
+      STEMS.forEach((n, i) => { c[n] = (m >> (3 - i)) & 1 ? "b" : "a"; });
+      out.push(c);
+    }
+    return out;
+  }
+  const mergeLabel = (c) => STEMS.map((n) => `${c[n].toUpperCase()} ${n === "other" ? "synth" : n === "vocals" ? "vox" : n}`).join(" + ");
+  // c: {eA, eB: mean RMS per stem over each deck's merge window (null: unmeasured,
+  // typical shares), keyScore (null: unknown), aRap, bRap}. -> [{combo, label, score, reasons}]
+  function mergeRank(c) {
+    const eA = c.eA || TYPICAL_SHARE, eB = c.eB || TYPICAL_SHARE, out = [];
+    for (const m of mergeCombos()) {
+      const e = (n) => (m[n] === "a" ? eA : eB)[n] || 0;
+      if (STEMS.some((n) => e(n) < INTRO_MIN_RMS)) continue;                 // every chosen stem really plays
+      const tonal = new Set(TONAL.filter((n) => !(n === "vocals" && ((m[n] === "b" && c.bRap) || (m[n] === "a" && c.aRap)))).map((n) => m[n]));
+      if (tonal.size === 2 && c.keyScore != null && c.keyScore < MERGE_KEY_OK) continue;
+      let score = 50;
+      const why = [];
+      if (m.drums === m.bass) { score += 20; why.push("kick + bass from one record"); }
+      if (m.vocals === "b" && m.drums === "a") { score += 10; why.push("B's song over A's beat"); }
+      score += 10;                                                            // a voice carries it (stems play: checked above)
+      if (tonal.size === 2 && c.keyScore != null) score += 10 * c.keyScore;
+      let ea = 0, eb = 0;
+      for (const n of STEMS) { if (m[n] === "a") ea += eA[n] ** 2; else eb += eB[n] ** 2; }
+      if (ea + eb > 0) score += 10 * (1 - Math.abs(ea - eb) / (ea + eb));
+      out.push({ combo: m, label: mergeLabel(m), score: Math.round(score * 10) / 10, reasons: why });
+    }
+    return out.sort((x, y) => y.score - x.score);
+  }
+  // Plan events (bars from B's entry): 0..M the combo; M-0.25 A's kick+bass leave
+  // (if they are A's) and B's land ON M; A's tones/voice fade over 8; M+8 B full.
+  function mergeTransitionPlan(M, combo) {
+    const on = (who) => Object.fromEntries(STEMS.map((n) => [n, combo[n] === who ? 1 : 0]));
+    // Every stem A hands to B leaves a quarter bar before the line and B's lands ON
+    // it (the bass-swap convention): one sub owner, one singer, never both.
+    const give = Object.fromEntries(STEMS.filter((n) => combo[n] === "b").map((n) => [n, 0]));
+    const ev = [
+      { bar: -0.25, deck: "out", stems: give, ramp: 0.25 },
+      { bar: 0, deck: "in", start: true, stems: on("b"), ramp: 0 },
+    ];
+    const aBeat = ["drums", "bass"].filter((n) => combo[n] === "a");
+    if (aBeat.length) {
+      ev.push({ bar: M - 0.25, deck: "out", stems: Object.fromEntries(aBeat.map((n) => [n, 0])), ramp: 0.25 });
+      ev.push({ bar: M, deck: "in", stems: Object.fromEntries(aBeat.map((n) => [n, 1])), ramp: 0.05 });
+    }
+    // A's synths hand over across 8 bars; voices never overlap: A's voice leaves
+    // over 2 bars, B's comes in after it (one singer)
+    ev.push({ bar: M, deck: "out", stems: { other: 0 }, ramp: 8 });
+    if (combo.other === "a") ev.push({ bar: M, deck: "in", stems: { other: 1 }, ramp: 8 });
+    if (combo.vocals === "a") {
+      ev.push({ bar: M, deck: "out", stems: { vocals: 0 }, ramp: 2 });
+      ev.push({ bar: M + 2, deck: "in", stems: { vocals: 1 }, ramp: 2 });
+    } else ev.push({ bar: M, deck: "out", stems: { vocals: 0 }, ramp: 0.05 });
+    ev.push({ bar: M + 8, deck: "in", stems: null, ramp: 0.05 });
+    return { events: ev.sort((a, b) => a.bar - b.bar), total: M + 8 };
+  }
+  // Blend the algorithm's rank with the ear's scores (1-10): ear-heard combos
+  // move by up to +-15; unheard keep their score. -> re-sorted copy
+  function mergeWithEar(ranked, ear) {
+    const key = (c) => STEMS.map((n) => c[n]).join("");
+    const heard = new Map((ear || []).filter((r) => r && r.ear).map((r) => [key(r.combo), r.ear]));
+    return ranked.map((r) => {
+      const e = heard.get(key(r.combo));
+      return e ? { ...r, score: r.score + (e.score - 5.5) * 3, ear: e } : r;
+    }).sort((x, y) => y.score - x.score);
+  }
+  const core = { mergeCombos, mergeRank, mergeLabel, mergeTransitionPlan, mergeWithEar, keepOneStem, hookDropEvents, hookDropDue, HOOK_OTHER, BREAKDOWN, breakdownFits, handoffFits, vocalShare, stemBlendPlan, STEM_BLEND_KINDS, remixEvents, remixPick, stemBridgePlan, mashupTransitionPlan,
                  pickIntro, introBars, INTRO_LEVEL, levelCheck, gainsAt, faderAt, fitStemBlend, breakdownEvents,
                  LEVEL_FLOOR_DB, AUDIBLE_GAIN, FADER_PARK_BARS, TYPICAL_SHARE, DIP_ALLOWED };
   if (typeof module !== "undefined" && module.exports) module.exports = core;
@@ -724,6 +799,41 @@
 
   // Run it. t0 = A's phrase line (audio time); bEntry = B's vocal phrase start
   // (track time); B must already carry tempo stems at A's tempo when they differ.
+  // Plays mergeTransitionPlan like mashupTransition (B enters on its key-locked
+  // tempo stems at A's tempo, floor-checked). Returns seconds, 0 = refused.
+  function mergeTransition(outId, innId, t0, bEntry, M, pick, why) {
+    const out = root.decks[outId], inn = root.decks[innId];
+    if (!out || !inn || !pick) return 0;
+    if (!out.stemsReady && out.rearmStems) out.rearmStems("merge");
+    if (!out.stemsReady || !inn.stems) return 0;
+    const barS = 240 / (out.bpm || 128) / ((out._playbackRate && out._playbackRate()) || 1);
+    const bRate = (out.bpm * out._playbackRate()) / inn.bpm;
+    const plan = mergeTransitionPlan(M, pick.combo);
+    const barB = 240 / inn.bpm;
+    const pA = out._positionAt ? out._positionAt(t0) : out._currentPosition();
+    let eOut = stemEnergyBars(out, pA, 240 / (out.bpm || 128), plan.total + 1), eIn = stemEnergyBars(inn, bEntry, barB, plan.total + 1);
+    if (!eOut || !eIn) eOut = eIn = null;
+    const lv = levelCheck({ events: plan.events, fader: [{ bar: 0, from: -1, to: 0, bars: 2 }, { bar: M, from: 0, to: 1, bars: 8 }],
+      dir: 1, span: plan.total, eOut, eIn });
+    if (!lv.ok) { console.info(`merge ${outId}->${innId} refused: ${lv.reason}`); return 0; }
+    cancel(outId); cancel(innId);
+    for (const e of plan.events) {
+      const d = e.deck === "out" ? out : inn, at = t0 + e.bar * barS;
+      if (e.start) {
+        timers[innId].push(setTimeout(() => {
+          inn.setPitchPercent((bRate - 1) * 100);
+          inn.play(bEntry, false, at);
+          setTimeout(() => inn.stemMix(e.stems, at - 0.005, 0.005), 150);
+        }, Math.max(0, (at - audioCtx.currentTime) * 1000 - 700)));
+      } else book(d, at, e.stems, Math.max(0.005, e.ramp * barS));
+    }
+    root.dispatchEvent(new CustomEvent("ai-cue", { detail: { at: t0 + M * barS, kind: "drop", deck: innId, bar: barS,
+      why: "B takes every stem on the line after the merge" } }));
+    note(outId, `MERGE → ${innId.toUpperCase()} · ${pick.label} · ${M} bars`, why ||
+      `${pick.label}${pick.ear ? `; ear ${pick.ear.score}/10: ${pick.ear.why}` : ""}`);
+    return plan.total * barS;
+  }
+
   function mashupTransition(outId, innId, t0, bEntry, M, vox, why) {
     const out = root.decks[outId], inn = root.decks[innId];
     if (!out || !inn) return 0;
@@ -777,7 +887,7 @@
     return true;
   }
 
-  root.stemMoves = { core, hookDrop, breakdown, handoff, instrumental, reset, audioAt, vocalShare, stemBlend, remix, REMIX_LABEL, mashupBreak, stemBridge, mashupTransition,
+  root.stemMoves = { core, mergeTransition, hookDrop, breakdown, handoff, instrumental, reset, audioAt, vocalShare, stemBlend, remix, REMIX_LABEL, mashupBreak, stemBridge, mashupTransition,
                      bridgeFader, stemEnergyBars, eqIntro };
 
   // ------------------------------------------------------ stem rail UI --

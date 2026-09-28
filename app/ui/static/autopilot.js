@@ -125,7 +125,7 @@ var autopilotCore = (function () {
   // PEAK, riff over rap, mashup: user rule "mashup beats every other move").
   // -> {recipe, why} | null
   function learnedRecipe(pick, o) {
-    if (!pick || !pick.recipe || o.layer || o.peak || o.riff || o.recipe === "Mashup → Transition") return null;
+    if (!pick || !pick.recipe || o.layer || o.peak || o.riff || o.recipe === "Mashup → Transition" || o.recipe === "Stem Merge") return null;
     const allowed = {
       // any beat-to-beat pair can swap the bass on a line
       "Bass Swap": !!(o.blend || o.oneSong),
@@ -486,6 +486,55 @@ var autopilotCore = (function () {
     return { entry: ve.entry, M, why: `${M}-bar mashup: B's ${ve.rap ? "rap" : "vocal"} over A's instrumental${gap > 0.02 ? `, B key-locked ${(gap * 100).toFixed(0)} %` : ""}, then B's beat on the line` };
   }
 
+  // SONG MERGE needs what a mashup needs except a key/vocal verdict (each combo is
+  // judged on its own: stem-moves mergeRank): stems on both, B's entry line, B at
+  // A's tempo (key-locked stems when they differ), room for M bars + 8.
+  function mergeFits(od, idk) {
+    const ve = idk._vocalEntry;
+    if (!od.stemsReady || !idk.stems || !ve || ve.entry == null || !od.bpm || !idk.bpm) return null;
+    const aEff = od.bpm * od._playbackRate(), gap = Math.abs(aEff / idk.bpm - 1);
+    if (gap > 0.25) return null;
+    if (gap > 0.02 && !(idk.tempoStems && Math.abs(idk.tempoStems.bpm / aEff - 1) < 0.01)) return null;
+    const barS = 240 / aEff;
+    const aLeft = od.buffer ? (od.buffer.duration - od._currentPosition()) / od._playbackRate() : 0;
+    const M = ve.vocal32 >= 0.7 && aLeft >= 44 * barS ? 32 : aLeft >= 26 * barS ? 16 : 0;
+    return M ? { entry: ve.entry, M, rap: !!ve.rap, gap } : null;
+  }
+  // Mean RMS per stem over [songT, songT + bars) of deck d (null: no decoded stems).
+  function stemMeans(d, songT, bars) {
+    const sm = window.stemMoves, e = sm && sm.stemEnergyBars ? sm.stemEnergyBars(d, songT, 240 / (d.bpm || 128), bars) : null;
+    if (!e) return null;
+    const m = {};
+    for (const n of ["drums", "bass", "vocals", "other"]) m[n] = e[n].reduce((a, b) => a + b, 0) / (e[n].length || 1);
+    return m;
+  }
+  // Plan the merge for A -> B at A's song time aT: algorithm first, then the
+  // silent ear re-ranks the top 3 in the background (offline clips, nothing
+  // plays) before the transition fires. Stored on B's deck as _mergePlan.
+  function planMerge(aId, bId, od, idk, aT) {
+    const mf = mergeFits(od, idk), sm = window.stemMoves;
+    if (!mf || !sm || !sm.core.mergeRank) return null;
+    const cs = window.djMind && window.djMind.core && window.djMind.core.camelotScore;
+    const ka = od.analysis && od.analysis.key && od.analysis.key.camelot, kb = idk.analysis && idk.analysis.key && idk.analysis.key.camelot;
+    const ranked = sm.core.mergeRank({ eA: stemMeans(od, aT, mf.M), eB: stemMeans(idk, mf.entry, mf.M),
+      keyScore: cs && ka && kb ? cs(ka, kb) : null, bRap: mf.rap });
+    if (!ranked.length) return null;
+    const plan = { ...mf, ranked, pick: ranked[0], aT, heard: false };
+    idk._mergePlan = plan;
+    fetch("/api/merge/audition", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ a_id: aId, b_id: bId, a_time: aT, b_time: mf.entry, combos: ranked.slice(0, 3).map((r) => r.combo) }) })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((res) => {
+        if (!res || !res.ear || idk._mergePlan !== plan) return;
+        plan.ranked = sm.core.mergeWithEar(plan.ranked, res.results);
+        plan.pick = plan.ranked[0];
+        plan.heard = true;
+        console.info("merge (silent ear):", plan.ranked.slice(0, 3).map((r) => `${r.label} ${r.score}${r.ear ? ` ear ${r.ear.score}` : ""}`).join(" | "));
+      })
+      .catch(() => {});
+    return plan;
+  }
+
   function recipeKind(recipe) {
     const r = String(recipe || "").toLowerCase();
     if (r.includes("double drop")) return "double";
@@ -534,6 +583,24 @@ var autopilotCore = (function () {
       at(bars - 0.25, () => rampParam(lowOut, null, LOW_KILL, beat));
       at(bars, () => rampParam(lowIn, LOW_KILL, 0, beat));
     };
+
+    // SONG MERGE (user): for M bars each stem plays from one deck (e.g. A drums +
+    // A bass + B vox + B synth), the combo the algorithm + silent ear picked when
+    // B was booked; then B takes every stem on the line, 8-bar crossfade.
+    {
+      const smM = window.stemMoves, odM = window.decks && window.decks[out], idM = window.decks && window.decks[inn];
+      const mp = idM && idM._mergePlan;
+      if (recipe === "Stem Merge" && smM && smM.mergeTransition && mp && odM && kind !== "cut") {
+        ["low", "mid", "high"].forEach((b) => { setRange(eqEl(out, b), 0); setRange(eqEl(inn, b), 0); });
+        const secs = smM.mergeTransition(out, inn, xT0, mp.entry, mp.M, mp.pick);
+        if (secs > 0) {
+          const barS = 240 / (odM.bpm || 128) / odM._playbackRate();
+          rampParam(xfEl, fromXf, 0, 2 * barS * 1000);
+          later(Math.max(0, (xT0 + mp.M * barS - audioCtx.currentTime) * 1000), () => rampParam(xfEl, 0, toXf, 8 * barS * 1000));
+          return secs * 1000;
+        }
+      }
+    }
 
     // MASHUP -> TRANSITION (user): A's instrumental under B's vocal phrase, hold
     // vox, A's beat drops out, B's beat takes over on the line, 8-bar crossfade.
@@ -1975,6 +2042,15 @@ var autopilotCore = (function () {
     // (Bass Swap 8 -> 4 bars) so the overlap ends before B's vocal.
     const xfDuration = oneSong ? Math.max(16, w.xf) : vocalShort ? Math.min(8, w.xf) : peakT ? Math.max(16, w.xf) : w.xf;
     playPlanTag = ` | ${w.label} ${fmtTime(effectiveATime - entryPos)}`;
+    // Song merge beats the plain mashup (it is its generalization) when a combo fits;
+    // never over LAYER / PEAK. The mashup stays the fallback if the merge is refused.
+    if (!layer && !peakT && mergesOn() && stemsBoth && odS && sdS) {
+      const mp = planMerge(currentId, nextId, odS, sdS, effectiveATime);
+      if (mp) {
+        recipe = "Stem Merge";
+        console.info("transition recipe:", `Stem Merge: ${mp.pick.label} (${mp.pick.reasons.join(", ")}), ${mp.M} bars`);
+      }
+    }
 
     let executed = false;
     let filled = false;
@@ -2244,6 +2320,12 @@ var autopilotCore = (function () {
   // 8/16-bar phrase of the current track (the Fred again.. "x" move: tease the
   // next record's voice over this beat, then bring the record itself in).
   // Restraint: at most one layer per track; skipped unless key and tempo fit.
+  function mergesOn() {
+    if (window.djSession && window.djSession.relaxed) return false;
+    const t = document.getElementById("ap-merge-toggle");
+    return !t || t.checked;
+  }
+
   // Moves learned from studied sets: on unless the (optional) toggle is off.
   function learnedOn() {
     const t = document.getElementById("ap-learned-toggle");
