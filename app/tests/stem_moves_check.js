@@ -184,7 +184,17 @@ console.log("stem moves core ok");
   const base = { vocal: 0.8, used: [], count: 0, barsOnTrack: 40, barsLeft: 80, lastAtBar: null, atBar: 40 };
   assert.strictEqual(remixPick(base), "vocal_hold");
   assert.strictEqual(remixPick({ ...base, used: ["vocal_hold"] }), "acapella");
-  assert.strictEqual(remixPick({ ...base, vocal: 0 }), "drum_break");
+  assert.strictEqual(remixPick({ ...base, vocal: 0 }), "synth_hold");          // alone on the master: never drums alone
+  assert.strictEqual(remixPick({ ...base, vocal: 0.3 }), "bass_out");
+  assert.strictEqual(remixPick({ ...base, vocal: 0, othersCarry: true }), "drum_break");   // the other deck carries the tones
+  const { keepsVibe } = require("../ui/static/stem-moves.js");
+  assert.ok(!keepsVibe("drum_break") && keepsVibe("synth_hold") && keepsVibe("bass_out") && keepsVibe("acapella"));
+  for (const v of [0, 0.1, 0.3, 0.6, 0.9]) {
+    for (const used of [[], ["synth_hold"], ["bass_out"], ["vocal_hold", "acapella"]]) {
+      const k = remixPick({ ...base, vocal: v, used });
+      assert.ok(k === null || keepsVibe(k), `vocal ${v} used ${used}: ${k} strips every tonal stem`);
+    }
+  }
   assert.strictEqual(remixPick({ ...base, barsOnTrack: 16 }), null);            // let the song establish itself
   assert.strictEqual(remixPick({ ...base, barsLeft: 30 }), null);               // not near the exit
   assert.strictEqual(remixPick({ ...base, lastAtBar: 20 }), null);              // 32 bars apart
@@ -322,6 +332,16 @@ console.log("stem moves core ok");
       const a = sm.gainsAt(q.events, "out", t), b = sm.gainsAt(q.events, "in", t);
       assert.ok(!(a.vocals > 0.05 && b.vocals > 0.05), `two singers at ${t} in ${sm.mergeLabel(c)}`);
       assert.ok(!(a.bass > 0.5 && b.bass > 0.5), `two basses at ${t} in ${sm.mergeLabel(c)}`);
+    }
+  }
+  // clashing keys: no tonal overlap anywhere, handover included
+  for (const c of sm.mergeCombos().filter((c) => new Set([c.bass, c.vocals, c.other]).size === 1)) {
+    const q = sm.mergeTransitionPlan(16, c, true);
+    for (let t = 0; t <= q.total; t += 0.0625) {
+      const a = sm.gainsAt(q.events, "out", t), b = sm.gainsAt(q.events, "in", t);
+      for (const n of ["bass", "vocals", "other"]) for (const m of ["bass", "vocals", "other"]) {
+        assert.ok(!(a[n] > 0.05 && b[m] > 0.05), `tonal overlap ${n}/${m} at ${t} in ${sm.mergeLabel(c)}`);
+      }
     }
   }
   // the silent ear moves the pick

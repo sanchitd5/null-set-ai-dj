@@ -52,7 +52,8 @@ assert.strictEqual(introBars(32), 8); assert.strictEqual(introBars(16), 8); asse
 // vocal-driven recipe: stems on either side never cut (Open Eye Signal -> Delilah)
 assert.strictEqual(vocalRecipe({ vIn: 3, oneSong: false, aStems: false, bStems: true }).recipe, "Bass Swap");
 assert.strictEqual(vocalRecipe({ vIn: 3, oneSong: false, aStems: true, bStems: false }).recipe, "Bass Swap");
-assert.strictEqual(vocalRecipe({ vIn: 3, oneSong: false, aStems: false, bStems: false }).recipe, "Quick Cut");
+assert.strictEqual(vocalRecipe({ vIn: 3, oneSong: false, aStems: false, bStems: false }).recipe, "Bass Swap");   // never a hard cut
+assert.strictEqual(vocalRecipe({ vIn: 3, oneSong: false, aStems: false, bStems: false }).short, true);
 assert.strictEqual(vocalRecipe({ vIn: 6, oneSong: false, aStems: false, bStems: true }).short, false, "B's voice is held: no shortening");
 assert.strictEqual(vocalRecipe({ vIn: 6, oneSong: false, aStems: false, bStems: false }).short, true);
 assert.strictEqual(vocalRecipe({ vIn: 3, oneSong: true, aStems: true, bStems: true }), null);
@@ -109,4 +110,50 @@ console.log("autopilot core ok");
   assert.strictEqual(learnedRecipe(pick("Bass Swap", "bass_swap"), { ...base, recipe: "Mashup → Transition" }), null);  // mashup outranks
   assert.strictEqual(learnedRecipe(null, base), null);
   console.log("learned recipe ok");
+}
+
+// never transition while A is at, or building into, its energy high
+{
+  const { highSpans, exitPastHigh } = require("../ui/static/autopilot.js");
+  const bar = 2, times = [], curve = [];
+  for (let t = 0; t < 240; t++) { times.push(t); curve.push(t >= 150 && t < 190 ? 0.9 : 0.3); }
+  const sp = highSpans(times, curve, bar);
+  assert.strictEqual(sp.length, 1);
+  assert.strictEqual(sp[0][0], 150 - 16 * bar);                                 // the 16-bar build is protected
+  assert.ok(sp[0][1] >= 190);
+  const phrase = 16;                                                             // 8 bars
+  const r = exitPastHigh(110, 16 * bar, sp, phrase, 230);                        // 110..142 runs into the build
+  assert.ok(r.clear && r.moved > 0 && r.t >= sp[0][1]);
+  assert.deepStrictEqual(exitPastHigh(60, 16 * bar, sp, phrase, 230), { t: 60, clear: true, moved: 0 });   // clear already
+  assert.strictEqual(exitPastHigh(110, 16 * bar, sp, phrase, 150).clear, false); // no room past it: not moved
+  const loud = times.map(() => 0.9);
+  assert.deepStrictEqual(highSpans(times, loud, bar), []);                       // loud all through: no "high" to protect
+  console.log("energy high timing ok");
+}
+
+// next song: measured energy stays within reach of the one playing
+{
+  const { energyStepOk } = require("../ui/static/autopilot.js");
+  assert.ok(energyStepOk(6, 8).ok && !energyStepOk(3, 8).ok);
+  assert.match(energyStepOk(3, 8).why, /jump 3 -> 8 \(max 2/);
+  assert.ok(!energyStepOk(6, 8, { relaxed: true }).ok && energyStepOk(6, 7, { relaxed: true }).ok);
+  assert.ok(!energyStepOk(7, 5, { setPos: 0.1 }).ok && energyStepOk(7, 6, { setPos: 0.1 }).ok);   // building
+  assert.ok(!energyStepOk(5, 7, { setPos: 0.9 }).ok);                                              // cooling
+  assert.ok(energyStepOk(3, 6, { force: true }).ok && !energyStepOk(3, 7, { force: true }).ok);   // fallback: +1 only
+  assert.ok(energyStepOk(3, 8, { rawDelta: 0.05 }).ok);                     // levels apart, measurements the same
+  assert.ok(!energyStepOk(3, 8, { rawDelta: 0.3 }).ok);
+  assert.ok(!energyStepOk(7, 5, { songs: 2 }).ok && energyStepOk(7, 5, { songs: 12 }).ok);   // warm-up builds, then open
+  assert.ok(energyStepOk(5, 7, { songs: 40 }).ok);                          // no automatic "cooling" all night
+  console.log("energy step ok");
+}
+
+// no hard cuts (user: "hard cuts are a big no"): recipeKind never yields "cut",
+// so executeTransition keeps no cut branch, and the autopilot's /api/match asks
+// the matcher to leave cut recipes out.
+{
+  const src = require("fs").readFileSync(require("path").join(__dirname, "../ui/static/autopilot.js"), "utf8");
+  assert.ok(!/return\s+"cut"/.test(src), "recipeKind must not return a cut kind");
+  assert.ok(!/case\s+"cut"/.test(src) && !/kind\s*[!=]==\s*"cut"/.test(src), "dead cut branch in autopilot.js");
+  assert.ok(/no_cuts:\s*true/.test(src), "matchTracks must send no_cuts");
+  console.log("no hard cuts ok");
 }

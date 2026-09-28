@@ -108,14 +108,15 @@ var autopilotCore = (function () {
   // voices must never sing together), or null (no constraint). Stems on
   // either deck solve it on the stems: B enters with its voice held (B's
   // stems) or A's voice leaves on the line (A's stems), so the blend keeps a
-  // full 8-bar bass swap. Quick Cut only when NEITHER deck has stems and
-  // there's no room for a swap.
+  // full 8-bar bass swap. Neither deck has stems: a shorter EQ bass swap that
+  // ends before B's vocal (never a cut).
   function vocalRecipe(o) {
     const v = o.vIn;
     if (o.oneSong || v == null || !(v < 16)) return null;
     if (o.bStems) return { recipe: "Bass Swap", short: false, why: `B sings in ${Math.round(v)} bars: its voice held on its stems until A's is out` };
     if (o.aStems) return { recipe: "Bass Swap", short: false, why: `B sings in ${Math.round(v)} bars: A's voice leaves on its stems` };
-    if (v < 4) return { recipe: "Quick Cut", short: false, why: `no stems, B sings in ${Math.round(v)} bars: cut on the downbeat before B's vocal` };
+    // never a hard cut (user): no stems and B sings very soon -> the shortest EQ swap
+    if (v < 4) return { recipe: "Bass Swap", short: true, why: `no stems, B sings in ${Math.round(v)} bars: 4-bar swap, A's voice out before B's` };
     if (v < 8) return { recipe: "Bass Swap", short: true, why: `4-bar swap: B sings in ${Math.round(v)} bars` };
     return { recipe: "Bass Swap", short: false, why: `8-bar swap: B sings in ${Math.round(v)} bars` };
   }
@@ -136,7 +137,90 @@ var autopilotCore = (function () {
     if (!allowed[pick.recipe] || pick.recipe === o.recipe) return null;
     return { recipe: pick.recipe, why: `learned ${pick.kind.replace("_", " ")} (seen ${pick.seen}x, ${pick.source})` };
   }
-  const api = { learnedRecipe, vocalRecipe, stemBlendBars, stemBlendFader, phraseWaitS, introBars, FADER_PARK_BARS, homePlan, maskedGlideBars, maskedDropAt, HOME_DROP_PCT, LADDER_STEP_PCT };
+  // A's high-energy sections [[t0, t1]] (song s), same rule as preplan.high_spans:
+  // energy >= its 85th percentile AND >= median + 0.3 x range, joined across gaps
+  // under 2 bars, padded HIGH_LEAD_BARS before (at the high OR about to reach it:
+  // the build into it) and 1 bar after. Quantiles are numpy's exactly (percentile
+  // "linear", median = mean of the middle two): golden vectors in
+  // app/tests/fixtures/rule_vectors.json check both sides.
+  const HIGH_LEAD_BARS = 16;
+  // np.percentile(x, 100 * p) on an ascending array, same float operations
+  function quantileLinear(sorted, p) {
+    const n = sorted.length, vi = (n - 1) * p;
+    if (vi >= n - 1) return sorted[n - 1];
+    const lo = Math.floor(vi), g = vi - lo, a = sorted[lo], d = sorted[lo + 1] - a;
+    return g >= 0.5 ? sorted[lo + 1] - d * (1 - g) : a + d * g;
+  }
+  // np.median on an ascending array
+  function median(sorted) {
+    const n = sorted.length, h = n >> 1;
+    return n % 2 ? sorted[h] : (sorted[h - 1] + sorted[h]) / 2;
+  }
+  function highSpans(times, curve, bar) {
+    if (!times || !curve || times.length < 4 || times.length !== curve.length) return [];
+    const sorted = [...curve].sort((x, y) => x - y);
+    const q = (p) => quantileLinear(sorted, p);
+    const med = median(sorted), range = sorted[sorted.length - 1] - sorted[0];
+    if (!(range > 1e-6)) return [];                       // flat: no high point to protect
+    const thr = Math.max(q(0.85), med + 0.3 * range);
+    const spans = [];
+    for (let i = 0; i < times.length; i++) {
+      if (curve[i] < thr || curve[i] <= med) continue;    // must stand above the song's typical level
+      const last = spans[spans.length - 1];
+      if (last && times[i] - last[1] <= 2 * bar) last[1] = times[i];
+      else spans.push([times[i], times[i]]);
+    }
+    return spans.map(([x, y]) => [Math.max(0, x - HIGH_LEAD_BARS * bar), y + bar]);
+  }
+  // Exit time moved by whole phrases until [exit, exit + span) is clear of A's highs
+  // (user: never transition as A reaches its energy high). Gives up past `limit`.
+  function exitPastHigh(exit, spanS, spans, phraseS, limit) {
+    let t = exit, moved = 0;
+    const hits = (x) => spans.some(([a, b]) => x < b && x + spanS > a);
+    while (hits(t) && t + phraseS <= limit && moved < 12) { t += phraseS; moved++; }
+    return hits(t) ? { t: exit, clear: false, moved: 0 } : { t, clear: true, moved };
+  }
+  // The live rule; app/music_brain/energy.next_ok mirrors it (same golden vectors,
+  // app/tests/fixtures/rule_vectors.json): at most 2 levels a song (1 relaxed,
+  // +1 on the last-round fallback); early in the set (< 30 %) it may not fall more
+  // than 1, near the end (> 85 %) not rise more than 1. -> {ok, step, why}
+  const ENERGY_MIN_RAW = 0.1;      // raw 0-1: below this the two songs measure the same, whatever the levels say
+  const WARMUP_SONGS = 5;          // the set builds over its first songs; open-ended after (no known end)
+  // o: {relaxed, force, songs (played so far), rawDelta (raw_b - raw_a)}
+  function energyStepOk(cur, nxt, o = {}) {
+    const step = nxt - cur, lim = (o.relaxed ? 1 : 2) + (o.force ? 1 : 0);
+    if (o.rawDelta != null && Math.abs(o.rawDelta) < ENERGY_MIN_RAW) {
+      return { ok: true, step, why: `energy ${cur} -> ${nxt} (measured almost the same)` };
+    }
+    const arc = o.songs != null ? (o.songs < WARMUP_SONGS ? "build" : "")
+      : o.setPos != null && o.setPos < 0.3 ? "build" : o.setPos != null && o.setPos > 0.85 ? "cool" : "";
+    if (Math.abs(step) > lim) return { ok: false, step, why: `energy ${step > 0 ? "jump" : "drop"} ${cur} -> ${nxt} (max ${lim} a song)` };
+    if (!o.force && arc === "build" && step < -1) return { ok: false, step, why: `energy falls ${cur} -> ${nxt} while the set is building` };
+    if (!o.force && arc === "cool" && step > 1) return { ok: false, step, why: `energy rises ${cur} -> ${nxt} while the set is cooling down` };
+    return { ok: true, step, why: `energy ${cur} -> ${nxt}` };
+  }
+
+  // A background job's final answer (app/ui/bg_jobs.py: the silent ear's preplan /
+  // merge audition). `first` is the POST's body; while it reads {status: "pending",
+  // job}, poll(job) is asked every `everyMs` until the result lands. Past `budgetMs`,
+  // when alive() turns false, or on a failed poll: null, and the caller carries on
+  // exactly as it does without the ear. A body without "pending" IS the result.
+  async function awaitJob(first, poll, o = {}) {
+    const every = o.everyMs || 1500, budget = o.budgetMs == null ? 35000 : o.budgetMs;
+    const clock = o.now || Date.now, sleep = o.sleep || ((ms) => new Promise((r) => setTimeout(r, ms)));
+    const alive = o.alive || (() => true);
+    const t0 = clock();
+    let d = first;
+    while (d && d.status === "pending" && d.job) {
+      const left = budget - (clock() - t0);
+      if (left <= 0 || !alive()) return null;
+      await sleep(Math.min(every, left));
+      if (!alive()) return null;
+      try { d = await poll(d.job); } catch (e) { return null; }
+    }
+    return d || null;
+  }
+  const api = { awaitJob, energyStepOk, highSpans, quantileLinear, median, exitPastHigh, learnedRecipe, vocalRecipe, stemBlendBars, stemBlendFader, phraseWaitS, introBars, FADER_PARK_BARS, homePlan, maskedGlideBars, maskedDropAt, HOME_DROP_PCT, LADDER_STEP_PCT };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   return api;
 })();
@@ -154,8 +238,8 @@ var autopilotCore = (function () {
     if (u.includes("/api/blend/plan") || u.includes("/api/mashup/plan")) return 180000;
     if (u.includes("/api/layer/plan")) return 60000;   // vocal maps already cached by the blend plan
     if (u.includes("/api/bridge/plan")) return 10000;
-    if (u.includes("/api/transition/preplan")) return 120000;   // renders + the ear hears up to 4 clips
-    if (u.includes("/api/merge/audition")) return 90000;
+    // background jobs (app/ui/bg_jobs.py): the POST starts one, the GET polls it; both answer at once
+    if (u.includes("/api/transition/preplan") || u.includes("/api/merge/audition")) return 20000;
     if (u.includes("/api/autopilot/suggest")) return 240000; // ~50 s per call, may queue behind a plan
     if (u.includes("/api/audio/")) return 120000;
     if (u.includes("/api/match") || u.includes("/analysis")) return 90000;
@@ -250,7 +334,8 @@ var autopilotCore = (function () {
   //    below is expressed in BARS and lands on the grid: the recipe matcher
   //    already snaps `a_time` / `b_time` to a real 8-bar boundary, so t0 of the
   //    transition IS a phrase boundary. 1 bar = 4 beats = 240000 / bpm ms.
-  //    Standard blend = 16 bars, drop-based recipes = 8 bars, hard cut = 0.
+  //    Standard blend = 16 bars, drop-based recipes = 8 bars. No hard cuts:
+  //    a cut recipe runs as a Bass Swap (recipeKind).
   //
   // 2. FREQUENCY OWNERSHIP. Two kick drums / two sub-basses never play at once
   //    (sub-bass < 120 Hz stacks into mud and phase cancellation). The low EQ
@@ -480,7 +565,7 @@ var autopilotCore = (function () {
     if (!od.stemsReady || !idk.stems || !ve || ve.entry == null || !od.bpm || !idk.bpm) return null;
     const aEff = od.bpm * od._playbackRate();
     const gap = Math.abs(aEff / idk.bpm - 1);
-    if (gap > 0.25) return null;
+    if (gap > keyLockLim()) return null;
     if (gap > 0.02 && !(idk.tempoStems && Math.abs(idk.tempoStems.bpm / aEff - 1) < 0.01)) return null;
     const cs = window.djMind && window.djMind.core && window.djMind.core.camelotScore;
     const ka = od.analysis && od.analysis.key && od.analysis.key.camelot, kb = idk.analysis && idk.analysis.key && idk.analysis.key.camelot;
@@ -500,7 +585,7 @@ var autopilotCore = (function () {
     const ve = idk._vocalEntry;
     if (!od.stemsReady || !idk.stems || !ve || ve.entry == null || !od.bpm || !idk.bpm) return null;
     const aEff = od.bpm * od._playbackRate(), gap = Math.abs(aEff / idk.bpm - 1);
-    if (gap > 0.25) return null;
+    if (gap > keyLockLim()) return null;
     if (gap > 0.02 && !(idk.tempoStems && Math.abs(idk.tempoStems.bpm / aEff - 1) < 0.01)) return null;
     const barS = 240 / aEff;
     const aLeft = od.buffer ? (od.buffer.duration - od._currentPosition()) / od._playbackRate() : 0;
@@ -533,6 +618,12 @@ var autopilotCore = (function () {
     fetch("/api/merge/audition", { method: "POST", headers: { "Content-Type": "application/json" }, signal: ctl.signal,
       body: JSON.stringify({ a_id: aId, b_id: bId, a_time: aT, b_time: mf.entry, combos: ranked.slice(0, 3).map((r) => r.combo) }) })
       .then((r) => (r.ok ? r.json() : null))
+      // a background job on the server: poll until heard (budget as the old request's
+      // 90 s deadline); a newer booking aborts ctl and ends the polling
+      .then((first) => autopilotCore.awaitJob(first, async (job) => {
+        const g = await fetch(`/api/merge/audition/${encodeURIComponent(job)}`, { signal: ctl.signal });
+        return g.ok ? g.json() : null;
+      }, { budgetMs: 90000, everyMs: 2000, alive: () => !ctl.signal.aborted && idk._mergePlan === plan }))
       .then((res) => {
         if (!res || !res.ear || idk._mergePlan !== plan) return;
         plan.ranked = sm.core.mergeWithEar(plan.ranked, res.results);
@@ -550,7 +641,9 @@ var autopilotCore = (function () {
     if (r.includes("bass swap") || r.includes("drop swap")) return "bass";
     if (r.includes("echo")) return "echo";
     if (r.includes("filter")) return "filter";
-    if (r.includes("hard cut") || r.includes("quick cut") || r.includes("cut")) return "cut";
+    // no hard cuts (user: "hard cuts are a big no"): a cut recipe that slips through
+    // (Hard Cut, Quick Cut) still runs as a bass swap on the audio clock
+    if (r.includes("cut")) return "bass";
     if (r.includes("loop")) return "loop";
     if (r.includes("blend")) return "blend";
     return "default";
@@ -596,16 +689,22 @@ var autopilotCore = (function () {
     // SONG MERGE (user): for M bars each stem plays from one deck (e.g. A drums +
     // A bass + B vox + B synth), the combo the algorithm + silent ear picked when
     // B was booked; then B takes every stem on the line, 8-bar crossfade.
+    // The crossfader runs stem-moves' mergeFader, the curve the booking checked
+    // (rawFader: B-ward units -> this direction's fader values).
+    const runMergeFader = (sm, M, barS) => {
+      for (const s of sm.core.rawFader(sm.core.mergeFader(M), out)) {
+        if (s.bar === 0) { rampParam(xfEl, s.from, s.to, s.bars * barS * 1000); continue; }
+        later(Math.max(0, (xT0 + s.bar * barS - audioCtx.currentTime) * 1000), () => rampParam(xfEl, s.from, s.to, s.bars * barS * 1000));
+      }
+    };
     {
       const smM = window.stemMoves, odM = window.decks && window.decks[out], idM = window.decks && window.decks[inn];
       const mp = idM && idM._mergePlan;
-      if (recipe === "Stem Merge" && smM && smM.mergeTransition && mp && odM && kind !== "cut") {
+      if (recipe === "Stem Merge" && smM && smM.mergeTransition && mp && odM) {
         ["low", "mid", "high"].forEach((b) => { setRange(eqEl(out, b), 0); setRange(eqEl(inn, b), 0); });
-        const secs = smM.mergeTransition(out, inn, xT0, mp.entry, mp.M, mp.pick);
+        const secs = smM.mergeTransition(out, inn, xT0, mp.entry, mp.M, mp.pick, undefined, mp.ranked);
         if (secs > 0) {
-          const barS = 240 / (odM.bpm || 128) / odM._playbackRate();
-          rampParam(xfEl, fromXf, 0, 2 * barS * 1000);
-          later(Math.max(0, (xT0 + mp.M * barS - audioCtx.currentTime) * 1000), () => rampParam(xfEl, 0, toXf, 8 * barS * 1000));
+          runMergeFader(smM, mp.M, 240 / (odM.bpm || 128) / odM._playbackRate());
           return secs * 1000;
         }
       }
@@ -618,13 +717,11 @@ var autopilotCore = (function () {
     {
       const sm1 = window.stemMoves, od1 = window.decks && window.decks[out], id1 = window.decks && window.decks[inn];
       const mt = sm1 && od1 && id1 ? mashupFits(od1, id1) : null;
-      if (mt && kind !== "cut" && kind !== "double") {
+      if (mt && kind !== "double") {
         ["low", "mid", "high"].forEach((b) => { setRange(eqEl(out, b), 0); setRange(eqEl(inn, b), 0); });
         const secs = sm1.mashupTransition(out, inn, xT0, mt.entry, mt.M, MASHUP_VOX, mt.why);
         if (secs > 0) {
-          const barS = 240 / (od1.bpm || 128) / od1._playbackRate();
-          rampParam(xfEl, fromXf, 0, 2 * barS * 1000);                     // B's voice fades in with the fader
-          later(Math.max(0, (xT0 + mt.M * barS - audioCtx.currentTime) * 1000), () => rampParam(xfEl, 0, toXf, 8 * barS * 1000));
+          runMergeFader(sm1, mt.M, 240 / (od1.bpm || 128) / od1._playbackRate());   // B's voice fades in with the fader
           return secs * 1000;
         }
       }
@@ -710,13 +807,14 @@ var autopilotCore = (function () {
         total = 8;
         break;
 
-      case "double": // both drops together for 8 bars, then cut A
+      case "double": // both drops together for 8 bars, then A fades out
         // [[Double Drop]]: one bass only - B's lows open, A's killed on the same
-        // downbeat (no ramp: two subs must never overlap).
+        // downbeat (no ramp: two subs must never overlap). A leaves over the last
+        // 1.5 bars, never on one downbeat (user: no hard cuts).
         setAt(xfEl, 0);
         setAt(lowOut, LOW_KILL);
         setAt(lowIn, 0);
-        at(8, () => setAt(xfEl, toXf));
+        at(7, () => rampParam(xfEl, 0, toXf, 1.5 * bar));
         total = 8.5;
         break;
 
@@ -740,13 +838,6 @@ var autopilotCore = (function () {
           rampParam(highOut, null, HIGH_SWEEP, 4 * bar);
         });
         total = 8;
-        break;
-
-      case "cut": // instant snap on the phrase boundary
-        setAt(lowOut, LOW_KILL);
-        setAt(lowIn, 0);
-        setAt(xfEl, toXf);
-        total = 1;
         break;
 
       case "loop": // 2-bar loop roll on A holds the exit point steady
@@ -787,7 +878,7 @@ var autopilotCore = (function () {
         break;
     }
     if (!stemHandoff(kind, out, inn, (total * bar) / 1000, (swapBar * bar) / 1000) &&
-        window.stemMoves && window.stemMoves.eqIntro && kind !== "cut" && kind !== "double") {
+        window.stemMoves && window.stemMoves.eqIntro && kind !== "double") {
       window.stemMoves.eqIntro(out, inn, xT0, (total * bar) / 1000, (swapBar * bar) / 1000);
     }
     return total * bar;
@@ -797,7 +888,7 @@ var autopilotCore = (function () {
   // incoming stems): B enters as its instrumental, A's vocal rides B's beat on
   // the vocal bus, B's own vocal returns as A's fades (stem-moves.js).
   function stemHandoff(kind, out, inn, totalS, swapS = 0) {
-    if (!window.stemMoves || kind === "cut" || kind === "double" || totalS < 4) return false;
+    if (!window.stemMoves || kind === "double" || totalS < 4) return false;
     const od = window.decks && window.decks[out], id = window.decks && window.decks[inn];
     if (!od || !id) return false;
     const ka = od.analysis && od.analysis.key && od.analysis.key.camelot;
@@ -892,6 +983,8 @@ var autopilotCore = (function () {
   // downloaded and waiting (READY), and songs still downloading (⬇).
   let scheduledNext = null;   // candidate booked for the coming transition
   let scheduledFireAt = null; // track time of the booked transition on the playing deck
+  let preplanFor = null;      // song name while the silent ear pre-plans (read by vibe-ui.js)
+  let bookedRecipe = null;    // recipe the booked transition will play (read by vibe-ui.js)
   let pendingSugs = [];       // suggestions whose downloads are in flight
   let aiPicking = false;
 
@@ -1079,7 +1172,8 @@ var autopilotCore = (function () {
     const res = await fetch("/api/match", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ track_a_id: aId, track_b_id: bId, top_n: 1 }),
+      // no_cuts: the matcher never hands the autopilot a Hard Cut / Quick Cut (user rule)
+      body: JSON.stringify({ track_a_id: aId, track_b_id: bId, top_n: 1, no_cuts: true }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || res.statusText);
@@ -1138,7 +1232,9 @@ var autopilotCore = (function () {
   // +/-8 % on pitch; +/-15 % when the playing deck has stems: the next song
   // then plays on key-locked tempo stems (multi-BPM stem sets), no pitch shift.
   function stemsOn() { const d = window.decks && window.decks[activeDeck]; return !!(d && d.stems); }
-  function lockLimit() { return stemsOn() ? 0.25 : 0.08; }
+  // key-locked stems range, shared with tempo-rule.js (+-16 %: 174 -> 125 is 28 %, never locks)
+  function keyLockLim() { return ((window.tempoRule && window.tempoRule.KEYLOCK_RANGE_PCT) || 16) / 100; }
+  function lockLimit() { return stemsOn() ? keyLockLim() : 0.08; }
   function tempoLockableAt(cand, lim) {
     const d = window.decks && window.decks[activeDeck];
     if (!d || !d.bpm || !cand.bpm) return true;
@@ -1459,10 +1555,29 @@ var autopilotCore = (function () {
     // onset density / energy sit too far from what is playing right now.
     if (candidate.vibe && candidate.vibe.ok === false) {
       const why = (candidate.vibe.reasons || []).join("; ") || `distance ${candidate.vibe.distance}`;
-      console.warn("Autopilot vibe reject:", nextName, why);
+      console.warn("Autopilot vibe reject:", nextName, why); window.aiStep && window.aiStep("candidate_reject", { track_id: nextId, phase: "selection", decision: "vibe reject", why });
       apStatus(`Not after this song: ${nextName} (${why}) — kept for later`);
       cand.keep = true; // pairwise: may fit fine after the next song
       return false;
+    }
+
+    // Measured energy gate (app/music_brain/energy.py, 1-10 vs the library): the next
+    // song stays within 2 levels (1 relaxed), the set arc decides the direction.
+    // The last-round fallback allows one more level so the set never stalls.
+    const ev = candidate.vibe;
+    if (ev && Number.isFinite(ev.energy_a) && Number.isFinite(ev.energy_b)) {
+      const verdict = autopilotCore.energyStepOk(ev.energy_a, ev.energy_b, {
+        relaxed: !!(window.djSession && window.djSession.relaxed), songs: history.length, force: forceJump,
+        rawDelta: Number.isFinite(ev.energy_raw_a) && Number.isFinite(ev.energy_raw_b) ? ev.energy_raw_b - ev.energy_raw_a : null });
+      if (!verdict.ok) {
+        console.warn("Autopilot energy reject:", nextName, verdict.why); window.aiStep && window.aiStep("candidate_reject", { track_id: nextId, phase: "selection", decision: "energy reject", why: verdict.why });
+        apStatus(`Not after this song: ${nextName} (${verdict.why}) — kept for later`);
+        cand.keep = true;
+        return false;
+      }
+      console.info("energy:", nextName, verdict.why);
+      // vibe-ui.js: measured energy of the pair the gate just passed
+      window.dispatchEvent(new CustomEvent("ai-energy", { detail: { a: ev.energy_a, b: ev.energy_b, next: nextName } }));
     }
 
     // Show match score on the NEXT queue card.
@@ -1495,14 +1610,14 @@ var autopilotCore = (function () {
           const aEff1 = oa1.bpm * oa1._playbackRate();
           const m1 = [1, 2, 0.5].reduce((b, m) => (Math.abs(aEff1 / (sd1.bpm * m) - 1) < Math.abs(aEff1 / (sd1.bpm * b) - 1) ? m : b));
           const g1 = Math.abs(aEff1 / (sd1.bpm * m1) - 1);
-          if (g1 > 0.02 && g1 <= 0.25) sd1._tempoStemsJob = sd1.useTempoStems(aEff1 / m1);
+          if (g1 > 0.02 && g1 <= keyLockLim()) sd1._tempoStemsJob = sd1.useTempoStems(aEff1 / m1);
           // where its vocal phrase starts (for a mashup transition)
           fetch(`/api/tracks/${nextId}/vocal_entry`).then((r) => r.json()).then((v) => { sd1._vocalEntry = v; }).catch(() => {});
         });
       }
     }
     // Over 8 % the blend needs the key-locked stems: book the song only once they're on.
-    if (cand.bpm && !tempoLockableAt(cand, 0.08) && tempoLockableAt(cand, 0.25)) {
+    if (cand.bpm && !tempoLockableAt(cand, 0.08) && tempoLockableAt(cand, keyLockLim())) {
       const sd2 = window.decks && window.decks[stagingDeck()];
       apStatus(`Key-locking ${nextName} to this tempo (tempo stems)…`);
       const t2 = Date.now();
@@ -1539,7 +1654,11 @@ var autopilotCore = (function () {
     // of B's lines, how long both play, who owns each stem); the master plays it.
     if (!layer) {
       apStatus(`Ear pre-planning the mix into ${nextName}…`);
-      const pp = await requestPreplan(currentId, nextId, candidate);
+      // the plan may take a while (renders + the ear): never hold the booking past
+      // PREPLAN_WAIT_MS; the server keeps going and caches a heard plan for next time
+      preplanFor = nextName;
+      const pp = await Promise.race([requestPreplan(currentId, nextId, candidate),
+        new Promise((r) => setTimeout(() => r(null), PREPLAN_WAIT_MS))]).finally(() => { preplanFor = null; });
       if (!active || currentTrackId !== currentId || (gen !== undefined && gen !== prepGen)) return false;
       if (pp) candidate = Object.assign({}, candidate, { preplan: pp });
     }
@@ -1669,7 +1788,8 @@ var autopilotCore = (function () {
     const d = window.decks && window.decks[deckId];
     if (!d) return;
     const v = Math.max(-range, Math.min(range, pct));
-    d.setPitchPercent(v);
+    // gradient rule: instant only while B is silent, else a glide
+    if (typeof d.aiSetPitch === "function") d.aiSetPitch(v); else d.setPitchPercent(v);
     const fader = document.querySelector(`.pitch-fader[data-deck="${deckId}"]`);
     if (fader) fader.value = String(v.toFixed(1));
     const readout = document.getElementById(`pitch-readout-${deckId}`);
@@ -1978,11 +2098,21 @@ var autopilotCore = (function () {
     const stemsBoth = aStems && bStems;
     const aEffS = odS ? odS.bpm * odS._playbackRate() : 0;
     const gapS = sdS && sdS.bpm ? Math.min(...[1, 2, 0.5].map((m) => Math.abs(aEffS / (sdS.bpm * m) - 1))) : 1;
-    const oneSong = stemsBoth && gapS <= 0.25;
+    // Tempo gate (tempo-rule.js): a beat-to-beat recipe only when B locks to
+    // A's heard tempo right now, inside B's range (+-8 % pitch, or +-16 % on
+    // key-locked stems rendered for exactly this tempo). leavemealone 174 ->
+    // Sexy Magic 125 was a Long Blend because this used to be "gapS <= 0.25"
+    // (tempo stems assumed, never checked), so B then played unlocked.
+    const lockS = window.tempoRule.beatRecipe({ aEff: aEffS, bBpm: sdS && sdS.bpm, stemsBoth,
+      tempoStemsBpm: sdS && sdS.tempoStems && sdS.tempoStems.bpm });
+    const oneSong = lockS.oneSong;
+    if (!lockS.beat) {
+      if (blend || layer) console.info("transition tempo:", `beatless, ${lockS.lock.why}`);
+      blend = null; layer = null;
+    }
     const od0bpm = (window.decks && window.decks[activeDeck] && window.decks[activeDeck].bpm) || 128;
-    // Beat-to-beat: when the tempos lock, hand beat to beat. Echo-outs and cuts
-    // are for tempo gaps; they turned "vocal -> beat" when used between
-    // compatible songs.
+    // Beat-to-beat: when the tempos lock, hand beat to beat. Echo-outs are for
+    // tempo gaps; they turned "vocal -> beat" when used between compatible songs.
     if (blend) {
       bTime = blend.entry;
       // A's vocal riding over B's instrumental intro is a classic long blend;
@@ -2001,10 +2131,9 @@ var autopilotCore = (function () {
       if (vr) {
         vocalRule = true;
         recipe = vr.recipe; vocalShort = vr.short; vocalCut = vr.why;
-        if (vr.recipe === "Quick Cut") vocalCut += ` (A stems: ${aStemsWhy || "live"}, B stems: ${bStems ? "loaded" : "none"})`;
       }
     } else if (oneSong) {
-      // tempo gap up to 25 %: key-locked tempo stems make it a real blend
+      // tempos lock (key-locked tempo stems attached, or inside the pitch range)
       recipe = "Long Blend";
     } else if (stemsBoth) {
       // tempo can't lock: a stem bridge, never an echo-out (user)
@@ -2015,16 +2144,23 @@ var autopilotCore = (function () {
       // ([[Echo Out]]). Rare now: every library song is pre-separated.
       recipe = "Echo Out";
     }
+    // Never a hard cut (user): a cut the matcher or the AI plan proposed is a Bass Swap.
+    if (/\bcut\b/i.test(String(recipe || ""))) {
+      // a cut was the matcher's answer to clashing keys: keep the overlap short (4 bars)
+      console.info("transition recipe:", `${recipe} -> 4-bar Bass Swap (no hard cuts)`);
+      recipe = "Bass Swap";
+      vocalShort = true;
+    }
     // Mashup -> transition beats every other move when the pair fits (user)
-    if (stemsBoth && odS && sdS && mashupFits(odS, sdS)) recipe = "Mashup → Transition";
+    if (lockS.beat && stemsBoth && odS && sdS && mashupFits(odS, sdS)) recipe = "Mashup → Transition";
     if (layer) { bTime = layer.entry; recipe = `LAYER ${layer.hold_bars}+${layer.unwind_bars} bars`; }
     jumpPending = !blend && !oneSong;
-    // why a cut / echo / non-stem recipe: on the status line and in the console,
+    // why an echo / non-stem recipe: on the status line and in the console,
     // so the next time a transition sounds like a cut the reason is visible
     if (!layer && !stemsBoth) {
       const why = `${recipe}: A stems ${aStemsWhy || "live"}, B stems ${bStems ? "loaded" : "not loaded"}` +
         `${vocalCut ? `, ${vocalCut}` : ""}${blend ? "" : `, tempo gap ${(gapS * 100).toFixed(1)}%`}`;
-      console.info("transition recipe:", why);
+      console.info("transition recipe:", why); window.aiStep && window.aiStep("recipe", { deck: activeDeck, decision: recipe, why });
       apStatus(why);
     } else if (vocalCut) console.info("transition recipe:", `${recipe}: ${vocalCut}`);
     const overlapStyle = layer ? "layer"
@@ -2063,7 +2199,7 @@ var autopilotCore = (function () {
     // the line it chose, the merge it heard. Only when the plan is still ahead.
     const pp = candidate.preplan;
     let preplanned = false;
-    if (pp && !layer && !peakT && stemsBoth && odS && sdS && pp.a_in >= nowPos + 15) {
+    if (pp && lockS.beat && !layer && !peakT && stemsBoth && odS && sdS && pp.a_in >= nowPos + 15) {
       effectiveATime = pp.a_in;
       bTime = pp.b_start;
       recipe = "Stem Merge";
@@ -2074,9 +2210,19 @@ var autopilotCore = (function () {
       console.info("transition recipe:", `Stem Merge (pre-planned): ${pp.direction}, B from ${fmtTime(pp.b_start)} at A ${fmtTime(pp.a_in)}, ` +
         `${pp.bars} bars, ${pp.label}${pp.ear ? `, ear ${pp.ear.score}/10` : ""}`);
     }
+    // Never transition out of A while it's at its energy high: push the exit past it
+    // by whole phrases (not for PEAK / LAYER / pre-planned: they chose their line).
+    if (!peakT && !layer && !preplanned && od && od.analysis) {
+      const spans = autopilotCore.highSpans(od.analysis.energy_times, od.analysis.energy_curve, 240 / od0bpm);
+      const ex = autopilotCore.exitPastHigh(effectiveATime, 16 * 240 / od0bpm, spans, phraseS, trackEnd);
+      if (ex.moved) {
+        console.info("transition timing:", `exit moved ${ex.moved} phrase(s) to ${fmtTime(ex.t)}: A is at its energy high`); window.aiStep && window.aiStep("exit_moved", { deck: activeDeck, decision: `exit +${ex.moved} phrase(s)`, why: "A is at its energy high", result: { from: effectiveATime, to: ex.t } });
+        effectiveATime = ex.t;
+      }
+    }
     // Song merge beats the plain mashup (it is its generalization) when a combo fits;
     // never over LAYER / PEAK. The mashup stays the fallback if the merge is refused.
-    if (!preplanned && !layer && !peakT && mergesOn() && stemsBoth && odS && sdS) {
+    if (!preplanned && lockS.beat && !layer && !peakT && mergesOn() && stemsBoth && odS && sdS) {
       const mp = planMerge(currentId, nextId, odS, sdS, effectiveATime);
       if (mp) {
         recipe = "Stem Merge";
@@ -2084,6 +2230,7 @@ var autopilotCore = (function () {
       }
     }
 
+    bookedRecipe = recipe;
     let executed = false;
     let filled = false;
     let fireAt = effectiveATime; // B's entry lands exactly on this phrase line
@@ -2118,6 +2265,7 @@ var autopilotCore = (function () {
           if (!ch || executed || !active || currentTrackId !== currentId) return;
           learned = pick;
           recipe = ch.recipe;
+          bookedRecipe = recipe;
           console.info("transition recipe (learned):", `${ch.recipe}: ${ch.why}`, pick.reasons);
           window.dispatchEvent(new CustomEvent("ai-activity", { detail: {
             kind: "learned", deck: activeDeck, label: `LEARNED · ${ch.recipe}`, why: ch.why } }));
@@ -2214,13 +2362,11 @@ var autopilotCore = (function () {
       if (sd && oa && oa.bpm > 0 && sd.bpm > 0) {
         // Live A tempo (A may still be easing back from its own tempo lock);
         // half/double time counts as a match.
-        const aEff = oa.bpm * rateA;
-        const lockRate = [1, 2, 0.5].map((m) => aEff / (sd.bpm * m))
-          .reduce((best, r) => (Math.abs(r - 1) < Math.abs(best - 1) ? r : best));
-        // Key-locked tempo stems (prefetched below): locks up to 15 % keep B's key.
-        const keyLocked = sd.tempoStems && Math.abs(sd.tempoStems.bpm / (sd.bpm * lockRate) - 1) < 0.01;
-        if (keyLocked) setDeckPitch(stagingDeck(), (lockRate - 1) * 100, 26);
-        else if (Math.abs(lockRate - 1) <= 0.08) setDeckPitch(stagingDeck(), (lockRate - 1) * 100);
+        // Same gate as the recipe (tempo-rule.js beatLock): key-locked tempo
+        // stems keep B's key up to +-16 %, the pitched mix stays inside +-8 %.
+        const lk = window.tempoRule.beatLock({ aEff: oa.bpm * rateA, bBpm: sd.bpm,
+          tempoStemsBpm: sd.tempoStems && sd.tempoStems.bpm });
+        if (lk.ok) setDeckPitch(stagingDeck(), lk.pct, lk.range);
       }
       const leadS = Math.max(0.05, (fireAt - deckPosition(activeDeck)) / rateA);
       const t0 = audioCtx.currentTime + leadS;
@@ -2250,6 +2396,8 @@ var autopilotCore = (function () {
             beatMutedByLayer = true;
           }
           totalMs = executeLayer(outgoing, incoming, layer, t0) + XF_LOOKAHEAD_MS;
+          // NULL-BOT supermove (mascot.js): the LAYER starts on B's first downbeat
+          window.dispatchEvent(new CustomEvent("ai-supermove", { detail: { at: t0, name: "LAYER", deck: incoming } }));
           if (window.djMind && window.djMind.layering) {
             window.djMind.layering(totalMs / 1000, { source: layer.source,
               why: `${layer.why} - ${layer.hold_bars} bars together, bass to B on the line, A unwinds ${layer.unwind_bars} bars` });
@@ -2258,7 +2406,7 @@ var autopilotCore = (function () {
           totalMs = executeTransition(recipe, outgoing, incoming, xfDuration, t0) + XF_LOOKAHEAD_MS;
           sessionEvent("track", { event: "transition_start", from: history[history.length - 1] || null, to: nextName, recipe,
                                   out: outgoing, in: incoming, seconds: Math.round(totalMs / 100) / 10 });
-          window.dispatchEvent(new CustomEvent("ai-cue", { detail: { at: t0, kind: recipeKind(recipe) === "cut" ? "drop" : "transition",
+          window.dispatchEvent(new CustomEvent("ai-cue", { detail: { at: t0, kind: "transition",
             deck: incoming, bar: 240 / ((window.decks[incoming] && window.decks[incoming].bpm) || 128), why: `${recipe}: B's first downbeat` } }));
         }
         later(totalMs + 500, afterBlend);
@@ -2364,6 +2512,13 @@ var autopilotCore = (function () {
     } catch (e) { /* logging never breaks the set */ }
   }
   window.addEventListener("ear-flush", (e) => sessionEvent("ear_flush", e.detail));
+  // every AI move (stem moves, remix, merges, hook drops, learned moves) with the deck
+  // position, so a move that "killed the vibe" can be found in the session log
+  window.addEventListener("ai-activity", (e) => {
+    const d = e.detail || {}, dk = d.deck && window.decks && window.decks[d.deck];
+    sessionEvent("move", { move: d.kind || "", label: d.label || "", why: d.why || "", deck: d.deck || null,
+      song: history[history.length - 1] || null, pos: dk && dk._currentPosition ? Math.round(dk._currentPosition() * 10) / 10 : null });
+  });
 
   // POST /api/transition/preplan (app/music_brain/preplan.py) for the booked pair:
   // the exit window of this song, now, and A's live tempo. null when stems are
@@ -2372,17 +2527,24 @@ var autopilotCore = (function () {
     const od = window.decks && window.decks[activeDeck], sd = window.decks && window.decks[stagingDeck()];
     if (!mergesOn() || !od || !sd || !od.stemsReady || !sd.stems || !od.bpm || !sd.bpm) return null;
     const aEff = od.bpm * od._playbackRate(), gap = Math.abs(aEff / sd.bpm - 1);
-    if (gap > 0.25 || (gap > 0.02 && !(sd.tempoStems && Math.abs(sd.tempoStems.bpm / aEff - 1) < 0.01))) return null;
+    if (gap > keyLockLim() || (gap > 0.02 && !(sd.tempoStems && Math.abs(sd.tempoStems.bpm / aEff - 1) < 0.01))) return null;
     const w = playWindow(candidate.score || 50);
     const trackEnd = (od.buffer ? od.buffer.duration : Infinity) - w.xf - 2;
     const lo = Math.min(entryPos + w.min, trackEnd), hi = Math.min(entryPos + w.max, trackEnd);
     try {
       const r = await fetch("/api/transition/preplan", { method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ a_id: currentId, b_id: nextId, lo, hi, now: deckPosition(activeDeck), bpm_a: aEff }) });
-      const d = r.ok ? await r.json() : null;
+      // the server answers {status: "pending", job} at once and renders + asks the ear
+      // in the background; poll it inside the same PREPLAN_WAIT_MS budget as before
+      const d = await autopilotCore.awaitJob(r.ok ? await r.json() : null, async (job) => {
+        const g = await fetch(`/api/transition/preplan/${encodeURIComponent(job)}?now=${deckPosition(activeDeck)}`);
+        return g.ok ? g.json() : null;
+      }, { budgetMs: PREPLAN_WAIT_MS, alive: () => active && currentTrackId === currentId });
       return d && d.ok && d.plan ? d.plan : null;
     } catch (e) { return null; }
   }
+
+  const PREPLAN_WAIT_MS = 35000;
 
   function mergesOn() {
     if (window.djSession && window.djSession.relaxed) return false;
@@ -2673,6 +2835,8 @@ var autopilotCore = (function () {
     get energy() { return currentEnergy; },
     get fireAt() { return scheduledNext ? scheduledFireAt : null; },
     get layering() { return !!(window.djMind && window.djMind.layerActive); },
+    get preplanning() { return preplanFor; },
+    get next() { return scheduledNext ? { name: scheduledNext.name || null, recipe: bookedRecipe } : null; },
   };
 
   const leadGo = document.getElementById("ap-lead-go");
