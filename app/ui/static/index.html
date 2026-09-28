@@ -8,6 +8,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/style.css" />
+  <link rel="stylesheet" href="/vibe.css" />
   <script src="https://unpkg.com/wavesurfer.js@7/dist/wavesurfer.min.js"></script>
   <script src="https://unpkg.com/wavesurfer.js@7/dist/plugins/regions.min.js"></script>
 </head>
@@ -102,6 +103,9 @@
     <div class="legend" id="shortcut-legend"></div>
   </div>
 </div>
+
+<!-- VIBE strip: what the AI hears, plans and does (built by vibe-ui.js) -->
+<section class="vibe-bar" id="vibe-bar" aria-label="What the AI is doing"></section>
 
 <!-- ========================================================================= -->
 <!-- FX ENGINE TOP BAR — two units, one per deck (real Web Audio wiring)       -->
@@ -968,5 +972,6 @@
 <script src="/download-progress.js"></script>
 <script src="/autopilot.js"></script>
 <script src="/beat-grid-ai.js"></script>
+<script src="/vibe-ui.js"></script>
 </body>
 </html>
