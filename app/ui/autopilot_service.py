@@ -111,7 +111,7 @@ ERA CONTINUITY (as important as genre):
 TRACK PROFILE (judge the SONG, not the artist):
   Artist reputation is NOT enough. The same artist has chill tracks and peak tracks.
   First describe the CURRENT track in "current_profile", then give every suggestion its own "track_profile":
-    energy: integer 1-10 (how hard THIS song hits on a dancefloor; NOT the 0-1 Avg Energy number)
+    energy: integer 1-10 (how hard THIS song hits on a dancefloor; the MEASURED energy above is the truth for the current song)
     tempo_feel: driving | mid | laid-back
     drums: none | sparse | steady | busy
     vocals: none | chopped | sung
@@ -343,7 +343,7 @@ _TEMPO_WINDOW_LINE = (
 _USER_TEMPLATE = (
     'NOW PLAYING: "{title}" by {artist}\n'
     "BPM: {bpm:.1f} | Camelot Key: {camelot} | Duration: {duration:.0f}s | "
-    "Avg Energy: {energy:.2f}/1.0 (relative to this song's own peak) | Loudness: {loudness} | "
+    "{energy_line} | Loudness: {loudness} | "
     "Set position: {set_pos_pct}% through set\n"
     "{lead_line}"
     "Occasion: {occasion}\n"
@@ -774,6 +774,17 @@ def prompt_history(played: list | None, queued: list | None = None, skip: list |
     return " | ".join(parts) if parts else "none"
 
 
+def energy_line(avg: float, measured: int | None, relaxed: bool = False) -> str:
+    """The prompt's energy fact: the measured 1-10 level (app.music_brain.energy) with the
+    range the next song must stay in, else the old per-song relative number."""
+    if measured is None:
+        return f"Avg Energy: {avg:.2f}/1.0 (relative to this song's own peak)"
+    step = 1 if relaxed else 2
+    lo, hi = max(1, measured - step), min(10, measured + step)
+    return (f"MEASURED ENERGY: {measured}/10 (vs the library) - every suggestion's track_profile energy "
+            f"MUST be {lo}-{hi}: no swings between low and high energy songs")
+
+
 def _chat_call(system, user, temperature, timeout, model, max_tokens) -> str:
     """The HTTP call itself. Supports openai v0.x/3.x (ChatCompletion.create)
     and v1.x/v2.x (OpenAI client). response_format may be ignored by the
@@ -846,6 +857,7 @@ def suggest_next_tracks(
     lead_step: int = 0,
     lead_steps: int = 0,
     lead_bpm: float | None = None,
+    measured_energy: int | None = None,
 ) -> list[dict]:
     """
     Call local Ollama (gemma3:4b) to suggest next n tracks.
@@ -882,6 +894,7 @@ def suggest_next_tracks(
         camelot=camelot,
         duration=duration,
         energy=avg_energy,
+        energy_line=energy_line(avg_energy, measured_energy, relaxed),
         occasion=occasion or "general DJ set",
         set_mode_line=SET_MODE_LINES.get(set_mode, SET_MODE_LINES["hybrid"]),
         history=prompt_history(history_display or history, queue_display, avoid_display),

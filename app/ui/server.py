@@ -1173,6 +1173,16 @@ def post_match(req: MatchRequest):
         )
     except Exception:
         vibe = None
+    # Measured energy 1-10 of both (app.music_brain.energy): the console refuses a
+    # next song more than 2 levels away (1 when relaxed).
+    try:
+        from app.music_brain import energy as en
+
+        ea = en.level(_track_path(req.track_a_id), track_a.bpm)["level"]
+        eb = en.level(_track_path(req.track_b_id), track_b.bpm)["level"]
+        vibe = (vibe or {}) | {"energy_a": ea, "energy_b": eb}
+    except Exception:
+        pass
     return {"candidates": [c.to_dict() for c in candidates], "vibe": vibe}
 
 
@@ -1735,6 +1745,13 @@ def _autopilot_suggest_impl(req: AutopilotSuggestRequest):
 
     curve = list(analysis.energy_curve) if analysis.energy_curve is not None else []
     avg_energy = float(np.mean(curve)) if curve else 0.5
+    measured_energy = None
+    try:
+        from app.music_brain import energy as en
+
+        measured_energy = en.level(path, analysis.bpm)["level"]
+    except Exception:
+        measured_energy = None           # best-effort: the prompt falls back to the relative number
     camelot = analysis.key.camelot if analysis.key else "unknown"
 
     from app.ui.track_identity import clean_identity, credited_artists
@@ -1794,6 +1811,7 @@ def _autopilot_suggest_impl(req: AutopilotSuggestRequest):
             camelot=camelot,
             duration=analysis.duration or 0.0,
             avg_energy=avg_energy,
+            measured_energy=measured_energy,
             occasion=_occasion_with_note(req.occasion, req.energy_note,
                                          _variety_note(req.variety_run, req.variety_genre),
                                          hook=req.energy_hook),

@@ -130,3 +130,15 @@ console.log("autopilot core ok");
   assert.deepStrictEqual(highSpans(times, loud, bar), []);                       // loud all through: no "high" to protect
   console.log("energy high timing ok");
 }
+
+// next song: measured energy stays within reach of the one playing
+{
+  const { energyStepOk } = require("../ui/static/autopilot.js");
+  assert.ok(energyStepOk(6, 8).ok && !energyStepOk(3, 8).ok);
+  assert.match(energyStepOk(3, 8).why, /jump 3 -> 8 \(max 2/);
+  assert.ok(!energyStepOk(6, 8, { relaxed: true }).ok && energyStepOk(6, 7, { relaxed: true }).ok);
+  assert.ok(!energyStepOk(7, 5, { setPos: 0.1 }).ok && energyStepOk(7, 6, { setPos: 0.1 }).ok);   // building
+  assert.ok(!energyStepOk(5, 7, { setPos: 0.9 }).ok);                                              // cooling
+  assert.ok(energyStepOk(3, 6, { force: true }).ok && !energyStepOk(3, 7, { force: true }).ok);   // fallback: +1 only
+  console.log("energy step ok");
+}

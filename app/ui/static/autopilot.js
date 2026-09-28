@@ -166,7 +166,18 @@ var autopilotCore = (function () {
     while (hits(t) && t + phraseS <= limit && moved < 12) { t += phraseS; moved++; }
     return hits(t) ? { t: exit, clear: false, moved: 0 } : { t, clear: true, moved };
   }
-  const api = { highSpans, exitPastHigh, learnedRecipe, vocalRecipe, stemBlendBars, stemBlendFader, phraseWaitS, introBars, FADER_PARK_BARS, homePlan, maskedGlideBars, maskedDropAt, HOME_DROP_PCT, LADDER_STEP_PCT };
+  // Same rule as app/music_brain/energy.next_ok: at most 2 levels a song (1 relaxed,
+  // +1 on the last-round fallback); early in the set (< 30 %) it may not fall more
+  // than 1, near the end (> 85 %) not rise more than 1. -> {ok, step, why}
+  function energyStepOk(cur, nxt, o = {}) {
+    const step = nxt - cur, lim = (o.relaxed ? 1 : 2) + (o.force ? 1 : 0);
+    const arc = o.setPos != null && o.setPos < 0.3 ? "build" : o.setPos != null && o.setPos > 0.85 ? "cool" : "";
+    if (Math.abs(step) > lim) return { ok: false, step, why: `energy ${step > 0 ? "jump" : "drop"} ${cur} -> ${nxt} (max ${lim} a song)` };
+    if (!o.force && arc === "build" && step < -1) return { ok: false, step, why: `energy falls ${cur} -> ${nxt} while the set is building` };
+    if (!o.force && arc === "cool" && step > 1) return { ok: false, step, why: `energy rises ${cur} -> ${nxt} while the set is cooling down` };
+    return { ok: true, step, why: `energy ${cur} -> ${nxt}` };
+  }
+  const api = { energyStepOk, highSpans, exitPastHigh, learnedRecipe, vocalRecipe, stemBlendBars, stemBlendFader, phraseWaitS, introBars, FADER_PARK_BARS, homePlan, maskedGlideBars, maskedDropAt, HOME_DROP_PCT, LADDER_STEP_PCT };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   return api;
 })();
@@ -1495,6 +1506,23 @@ var autopilotCore = (function () {
       apStatus(`Not after this song: ${nextName} (${why}) — kept for later`);
       cand.keep = true; // pairwise: may fit fine after the next song
       return false;
+    }
+
+    // Measured energy gate (app/music_brain/energy.py, 1-10 vs the library): the next
+    // song stays within 2 levels (1 relaxed), the set arc decides the direction.
+    // The last-round fallback allows one more level so the set never stalls.
+    const ev = candidate.vibe;
+    if (ev && Number.isFinite(ev.energy_a) && Number.isFinite(ev.energy_b)) {
+      const setPos = Math.min(history.length / 10, 1.0);
+      const verdict = autopilotCore.energyStepOk(ev.energy_a, ev.energy_b, {
+        relaxed: !!(window.djSession && window.djSession.relaxed), setPos, force: forceJump });
+      if (!verdict.ok) {
+        console.warn("Autopilot energy reject:", nextName, verdict.why);
+        apStatus(`Not after this song: ${nextName} (${verdict.why}) — kept for later`);
+        cand.keep = true;
+        return false;
+      }
+      console.info("energy:", nextName, verdict.why);
     }
 
     // Show match score on the NEXT queue card.
