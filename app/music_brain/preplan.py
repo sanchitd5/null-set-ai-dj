@@ -36,7 +36,9 @@ OVERLAPS = (16, 32)
 MAX_HANDOVERS = 6
 EAR_TOP = 4
 MIN_LEAD_S = 20.0          # B cannot start sooner than this from now: room to cue it
-PLAN_BUDGET_S = 40.0       # rendering + the ear on up to EAR_TOP clips: plans nearer than this expire meanwhile
+SHORT_OVERLAPS = (8, 16, 32)   # QUICK-sized windows: a 16-bar overlap alone fits nowhere
+SHORT_WINDOW_S = 120.0     # window end (song s) at or under this uses SHORT_OVERLAPS
+PLAN_BUDGET_S = 20.0       # rendering + the ear on up to EAR_TOP clips; measured 0.5-16 s, so 40 was 2x too high
 UNHEARD_TTL_S = 120.0      # a plan the ear could not hear is reused this long (no re-decode per retry)
 _unheard: Dict[str, tuple] = {}
 
@@ -147,8 +149,9 @@ def candidates(a: dict, b: dict, bpm_a: float, bpm_b: float, lo: float, hi: floa
         idx = np.linspace(0, len(lines_a) - 1, MAX_HANDOVERS).round().astype(int)
         lines_a = [lines_a[i] for i in sorted(set(idx))]
     out = []
+    overlaps = SHORT_OVERLAPS if hi <= SHORT_WINDOW_S else OVERLAPS
     for h in lines_a:
-        for L in OVERLAPS:
+        for L in overlaps:
             a_in = h - L * bar_a
             if a_in < now + MIN_LEAD_S + PLAN_BUDGET_S or h + 8 * bar_a > dur_a:
                 continue

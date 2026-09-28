@@ -39,3 +39,27 @@ for (const m of [16, 32]) {
   assert.ok(events.every((e) => e.bar % 4 === 0 || e.bar % 1 !== 0 || e.bar === 24 + m - 2));
 }
 console.log("riff schedule ok");
+
+{ // prepare: one request per pair in flight, successes and deterministic failures cached
+  const { memoPrepare } = require("../ui/static/riff-over-rap.js");
+  (async () => {
+    let calls = 0, t = 0;
+    const now = () => t;
+    const store = new Map();
+    const fail = () => { calls++; return Promise.resolve({ ok: false, reasons: ["tempo gap 41.6 %"], deterministic: true }); };
+    const [x, y] = await Promise.all([memoPrepare(store, "a>b", fail, now), memoPrepare(store, "a>b", fail, now)]);
+    assert.strictEqual(calls, 1); assert.strictEqual(x, y);                // in-flight shared
+    await memoPrepare(store, "a>b", fail, now); assert.strictEqual(calls, 1);   // failure cached
+    t = 11 * 60 * 1000; await memoPrepare(store, "a>b", fail, now); assert.strictEqual(calls, 2);   // ttl over
+    const transient = () => { calls++; return Promise.resolve({ ok: false, reasons: ["HTTP 503"] }); };
+    await memoPrepare(store, "c>d", transient, now); await memoPrepare(store, "c>d", transient, now);
+    assert.strictEqual(calls, 4);                                            // transient: retried
+    const good = () => { calls++; return Promise.resolve({ ok: true }); };
+    await memoPrepare(store, "e>f", good, now); await memoPrepare(store, "e>f", good, now);
+    assert.strictEqual(calls, 5);                                            // success cached
+    const boom = () => { calls++; return Promise.reject(new Error("x")); };
+    await assert.rejects(memoPrepare(store, "g>h", boom, now));
+    await assert.rejects(memoPrepare(store, "g>h", boom, now)); assert.strictEqual(calls, 7);
+    console.log("riff prepare memo ok");
+  })().catch((e) => { console.error(e); process.exit(1); });
+}

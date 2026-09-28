@@ -62,7 +62,26 @@
   }
   const RAP_LIFT = 1.5;    // user: "raise it by half more" in the mashup's second segment
   function db(g) { return g >= 1 ? "0" : (20 * Math.log10(g)).toFixed(1); }
-  const core = { schedule };
+  // One in-flight request per key, successes kept, deterministic failures (no plan: gap/key)
+  // kept for FAIL_TTL_MS so the same pair is not re-planned on every retry.
+  const FAIL_TTL_MS = 10 * 60 * 1000;
+  function memoPrepare(store, key, fn, now = Date.now) {
+    const hit = store.get(key);
+    if (hit) {
+      if (hit.promise) return hit.promise;
+      if (hit.failAt == null || now() - hit.failAt < FAIL_TTL_MS) return Promise.resolve(hit.value);
+      store.delete(key);
+    }
+    const promise = Promise.resolve().then(fn).then((value) => {
+      if (value && value.ok) store.set(key, { value });
+      else if (value && value.deterministic) store.set(key, { value, failAt: now() });
+      else store.delete(key);
+      return value;
+    }, (e) => { store.delete(key); throw e; });
+    store.set(key, { promise });
+    return promise;
+  }
+  const core = { schedule, memoPrepare };
   if (typeof module !== "undefined" && module.exports) module.exports = core;
   if (typeof root.document === "undefined" || typeof audioCtx === "undefined") return;
 
@@ -74,9 +93,10 @@
   // Plan + render + decode. Resolves {ok:true, plan, buffers} or {ok:false, reasons}
   // — the reasons are always returned to the caller, not just console-logged, so
   // the UI can show the actual "why" instead of a bare "see the console".
-  async function prepare(aId, bId, notBefore) {
-    const k = `${aId}>${bId}`;
-    if (cache.has(k)) return cache.get(k);
+  function prepare(aId, bId, notBefore) {
+    return memoPrepare(cache, `${aId}>${bId}`, () => prepareUncached(aId, bId, notBefore));
+  }
+  async function prepareUncached(aId, bId, notBefore) {
     const res = await fetch("/api/riff/plan", { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ a_id: aId, b_id: bId, not_before: notBefore || 0 }) });
     if (!res.ok) return { ok: false, reasons: [`plan request failed: HTTP ${res.status}`] };
@@ -84,7 +104,7 @@
     if (!plan.ok) {
       const reasons = plan.reasons || ["no reason given"];
       console.info("riff over rap: no -", reasons.join("; "));
-      return { ok: false, reasons };
+      return { ok: false, reasons, deterministic: true };
     }
     for (let i = 0; i < 90 && plan.state !== "done"; i++) {
       await new Promise((r) => setTimeout(r, 2000));
@@ -108,7 +128,6 @@
       buffers[n] = await audioCtx.decodeAudioData(await (await fetch(plan.stems[n])).arrayBuffer());
     }));
     const out = { ok: true, plan, buffers };
-    cache.set(k, out);
     return out;
   }
 
