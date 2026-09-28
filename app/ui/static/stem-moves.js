@@ -395,7 +395,19 @@
     }
     return null;
   }
-  const core = { hookDropEvents, hookDropDue, HOOK_OTHER, BREAKDOWN, breakdownFits, handoffFits, vocalShare, stemBlendPlan, STEM_BLEND_KINDS, remixEvents, remixPick, stemBridgePlan, mashupTransitionPlan,
+  // A deck on the master with nobody else carrying the sound must keep at least one
+  // stem audible (user rule): a move that would take every stem (and the vocal
+  // bus) below AUDIBLE_GAIN keeps the stem that was loudest before it at the
+  // floor instead. -> {next, kept} (kept = the stem held up, or null).
+  const KEEP_ORDER = ["vocals", "other", "drums", "bass"];     // ties: the voice first, never the bass
+  function keepOneStem(next, before, othersCarry) {
+    const up = (s) => STEMS.some((n) => (s[n] || 0) >= AUDIBLE_GAIN) || (s.bus || 0) >= AUDIBLE_GAIN;
+    if (othersCarry || up(next)) return { next, kept: null };
+    const b = before || { drums: 1, bass: 1, vocals: 1, other: 1 };
+    const kept = KEEP_ORDER.reduce((best, n) => ((b[n] || 0) > (b[best] || 0) ? n : best), KEEP_ORDER[0]);
+    return { next: { ...next, [kept]: Math.max(AUDIBLE_GAIN, Math.min(1, b[kept] || 1)) }, kept };
+  }
+  const core = { keepOneStem, hookDropEvents, hookDropDue, HOOK_OTHER, BREAKDOWN, breakdownFits, handoffFits, vocalShare, stemBlendPlan, STEM_BLEND_KINDS, remixEvents, remixPick, stemBridgePlan, mashupTransitionPlan,
                  pickIntro, introBars, INTRO_LEVEL, levelCheck, gainsAt, faderAt, fitStemBlend, breakdownEvents,
                  LEVEL_FLOOR_DB, AUDIBLE_GAIN, FADER_PARK_BARS, TYPICAL_SHARE, DIP_ALLOWED };
   if (typeof module !== "undefined" && module.exports) module.exports = core;

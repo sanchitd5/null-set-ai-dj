@@ -269,3 +269,21 @@ console.log("stem moves core ok");
   assert.strictEqual(sm.hookDropDue([], 10, bar, null), null);
   console.log("hook drop ok");
 }
+
+// never a silent master: an on-air deck nobody else carries keeps one stem up
+{
+  const { keepOneStem, AUDIBLE_GAIN } = require("../ui/static/stem-moves.js");
+  const full = { drums: 1, bass: 1, vocals: 1, other: 1, bus: 0 };
+  const allOff = { drums: 0, bass: 0, vocals: 0, other: 0, bus: 0 };
+  let r = keepOneStem(allOff, full, false);
+  assert.strictEqual(r.kept, "vocals");                                       // tie: the voice, never the bass
+  assert.strictEqual(r.next.vocals, 1);
+  r = keepOneStem(allOff, { drums: 1, bass: 0.2, vocals: 0, other: 0.4, bus: 0 }, false);
+  assert.strictEqual(r.kept, "drums");                                        // the loudest before the move
+  assert.strictEqual(keepOneStem(allOff, full, true).kept, null);              // the other deck carries: allowed
+  assert.strictEqual(keepOneStem({ ...allOff, vocals: 1 }, full, false).kept, null);   // hook drop: voice stays
+  assert.strictEqual(keepOneStem({ ...allOff, bus: 1 }, full, false).kept, null);      // voice on the vocal bus
+  r = keepOneStem({ ...allOff, other: 0.05 }, { drums: 0, bass: 0, vocals: 0, other: 0.05, bus: 0 }, false);
+  assert.ok(r.next.other >= AUDIBLE_GAIN);                                     // held at least at the floor
+  console.log("keep one stem ok");
+}

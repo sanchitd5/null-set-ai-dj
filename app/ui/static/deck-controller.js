@@ -700,7 +700,14 @@ class Deck {
     }
     if (!live) return false;
     const cur = prev || { drums: 1, bass: 1, vocals: 1, other: 1, bus: 0 };
-    const next = { ...cur, ...target };
+    let next = { ...cur, ...target };
+    // Never a silent master: an on-air deck nobody else is carrying keeps one stem up.
+    const keep = window.stemMoves && window.stemMoves.core && window.stemMoves.core.keepOneStem;
+    if (keep && this._onAir()) {
+      const r = keep(next, cur, this._othersCarry());
+      if (r.kept) console.info(`deck ${this.id}: kept ${r.kept} up (a move would have muted every stem on the master)`);
+      next = r.next;
+    }
     // from the full mix: stems start where the mix was (1) and the mix hands over
     // instantly-ish, so the switch itself is inaudible
     set(this.mixGain.gain, prev ? 0 : 1, 0);
@@ -709,6 +716,17 @@ class Deck {
     this.stemState = next;
     this._emitStem(next);
     return true;
+  }
+
+  // This deck reaches the master: playing with its crossfader side open.
+  _onAir() {
+    return !!(this.playing && this.crossfaderGain && this.crossfaderGain.gain.value > 0.05);
+  }
+  // Another deck is on air AND sounding (full mix, or at least one stem up).
+  _othersCarry() {
+    const ds = window.decks || {};
+    return Object.values(ds).some((d) => d && d !== this && d._onAir && d._onAir() &&
+      (!d.stemState || ["drums", "bass", "vocals", "other", "bus"].some((n) => (d.stemState[n] || 0) >= 0.126)));
   }
 
   // Stem hold: loop `bars` of one stem (song time `from`) from audio time
