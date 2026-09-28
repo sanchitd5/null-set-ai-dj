@@ -261,7 +261,145 @@ var autopilotCore = (function () {
     const r = store.get(pairKey(aId, bId));
     return r && (!forced || r.forced) ? r : null;
   }
-  const api = { emptyRetryMs, useLibraryFallback, rememberPairReject, pairRejected, awaitJob, keySafeRecipe, KEY_SAFE_MIN, energyStepOk, hybridWindowKey, highSpans, quantileLinear, median, exitPastHigh, learnedRecipe, vocalRecipe, stemBlendBars, stemBlendFader, phraseWaitS, introBars, FADER_PARK_BARS, homePlan, maskedGlideBars, maskedDropAt, HOME_DROP_PCT, LADDER_STEP_PCT };
+  // ---- scheduleTransition seams (pure; the virtual set in app/sim drives them) ----
+  // Beat-to-beat blends run on the pitched mix (8 %) or on key-locked tempo stems
+  // (keyLim); half / double time counts. aEff: A's heard tempo.
+  function tempoLockableAt(aEff, bBpm, lim) {
+    return [1, 2, 0.5].some((m) => Math.abs(aEff / (bBpm * m) - 1) <= lim);
+  }
+  // Recipe kind: which family of moves a recipe name runs as.
+  function recipeKind(recipe) {
+    const r = String(recipe || "").toLowerCase();
+    if (r.includes("double drop")) return "double";
+    if (r.includes("bass swap") || r.includes("drop swap")) return "bass";
+    if (r.includes("echo")) return "echo";
+    if (r.includes("filter")) return "filter";
+    // no hard cuts (user: "hard cuts are a big no"): a cut recipe that slips through
+    // (Hard Cut, Quick Cut) still runs as a bass swap on the audio clock
+    if (r.includes("cut")) return "bass";
+    if (r.includes("loop")) return "loop";
+    if (r.includes("blend")) return "blend";
+    return "default";
+  }
+  // The recipe scheduleTransition books from the matcher's pick and the live facts.
+  // o: {recipe, blend, layer (bool), aStems, bStems, aEff, bBpm, tempoStemsBpm,
+  //     keyScore (Camelot 0-1 or null), mashupFits: () => bool}
+  // -> {recipe, blend (null when dropped), dropLayer, blendClean, vocalShort, vocalCut,
+  //     vocalRule, oneSong, stemsBoth, lockS, keyRewrite {from,to}|null, cutRewrite}
+  function decideRecipe(o, tempoRule) {
+    let recipe = o.recipe || "Blend", blend = o.blend || null;
+    let vocalShort = false, vocalCut = "", vocalRule = false, blendClean = null;
+    const aStems = !!o.aStems, bStems = !!o.bStems, stemsBoth = aStems && bStems;
+    // Tempo gate (tempo-rule.js): a beat-to-beat recipe only when B locks to A's
+    // heard tempo right now (pitched mix or key-locked stems), else beatless.
+    const lockS = tempoRule.planFit({ aEff: o.aEff, bBpm: o.bBpm, stemsBoth, tempoStemsBpm: o.tempoStemsBpm });
+    const oneSong = lockS.oneSong;
+    let dropLayer = false;
+    if (!lockS.beat) { blend = null; dropLayer = true; }
+    // Beat-to-beat: when the tempos lock, hand beat to beat. Echo-outs are for
+    // tempo gaps; they turned "vocal -> beat" when used between compatible songs.
+    if (blend) {
+      // A's vocal riding over B's instrumental intro is a classic long blend;
+      // only two vocals at once clash, so keep that overlap short (bass swap).
+      const bClean = blend.b_vocal_coverage == null || blend.b_vocal_coverage <= 0.15;
+      const k = recipeKind(recipe);
+      if (!bClean) recipe = "Bass Swap";
+      else if (!["bass", "blend", "default"].includes(k)) recipe = "Long Blend";
+      blendClean = bClean;
+      // Two vocals must never sing together: the overlap has to END before B's
+      // vocal first comes in. Pick the transition length by how many bars that is.
+      if (oneSong) { recipe = "Long Blend"; blendClean = true; }
+      // stems on either deck: one singer by muting a vocal stem, never a cut
+      const vr = vocalRecipe({ vIn: blend.b_vocal_in_bars, oneSong, aStems, bStems });
+      if (vr) { vocalRule = true; recipe = vr.recipe; vocalShort = vr.short; vocalCut = vr.why; }
+    } else if (oneSong) {
+      // tempos lock (key-locked tempo stems attached, or inside the pitch range)
+      recipe = "Long Blend";
+    } else if (stemsBoth) {
+      // tempo can't lock: a stem bridge, never an echo-out (user)
+      recipe = "Stem Bridge";
+    } else if (!["echo", "filter"].includes(recipeKind(recipe))) {
+      // No stems and no tempo lock: beats cannot be layered, so don't hard-swap.
+      // Echo the outgoing song away while the new one enters on its phrase ([[Echo Out]]).
+      recipe = "Echo Out";
+    }
+    // Clashing keys never get a tonal blend: Echo Out (CLAUDE.md s4). The matcher
+    // ranked key-safe recipes for these pairs; the rewrites above turned them into
+    // Long Blend / Bass Swap without reading the key.
+    let keyRewrite = null;
+    if (!o.layer || dropLayer) {
+      const safe = keySafeRecipe(recipe, o.keyScore);
+      if (safe !== recipe) { keyRewrite = { from: recipe, to: safe }; recipe = safe; blend = null; vocalShort = false; }
+    }
+    // Never a hard cut (user): a cut the matcher or the AI plan proposed is a 4-bar Bass Swap.
+    let cutRewrite = false;
+    if (/\bcut\b/i.test(String(recipe || ""))) { recipe = "Bass Swap"; vocalShort = true; cutRewrite = true; }
+    // Mashup -> transition beats every other move when the pair fits (user)
+    if (lockS.beat && stemsBoth && o.mashupFits && o.mashupFits()) recipe = "Mashup → Transition";
+    return { recipe, blend, dropLayer, blendClean, vocalShort, vocalCut, vocalRule, oneSong, stemsBoth, lockS, keyRewrite, cutRewrite };
+  }
+  // Play-time windows by set mode, counted from when a song came in.
+  //   long   songs ride 3-6 min, long 24 s blends;  quick  40-100 s, 8 s blends
+  //   hybrid per song: weak match or high energy -> quick, low energy -> long
+  const WINDOWS = {
+    long:   { min: 180, max: 360, xf: 24, label: "LONG" },
+    medium: { min: 120, max: 240, xf: 16, label: "MID" },
+    quick:  { min: 40,  max: 100, xf: 8,  label: "QUICK" }, // user: 40-100 s (widened from 60-120)
+    bail:   { min: 30,  max: 60,  xf: 8,  label: "QUICK·bail" },
+    // steering toward the occasion's music: short bridge songs (user: 30-60 s each)
+    bridge: { min: 30,  max: 60,  xf: 8,  label: "BRIDGE" },
+  };
+  // o: {steering ("move"), famous, rem (famous song: seconds left from its entry),
+  //     mode, score, energy}
+  function playWindowFor(o) {
+    if (o.steering === "move") return WINDOWS.bridge;
+    // A famous song plays in full (user; the USB002 set rides leavemealone for
+    // 7 min): exit only in its last ~50 s, i.e. the outro.
+    if (o.famous && o.rem > 90) return { min: Math.max(60, o.rem - 50), max: Math.max(70, o.rem - 6), xf: 24, label: "FULL·famous" };
+    const weak = (o.score == null ? 50 : o.score) < 65;
+    if (o.mode === "long") return WINDOWS.long;
+    if (o.mode === "quick") return weak ? WINDOWS.bail : WINDOWS.quick;
+    if (weak) return WINDOWS.bail;
+    return WINDOWS[hybridWindowKey(o.energy)];
+  }
+  // Exit window on the playing song (track seconds), from the play window.
+  // o: {w (play window), entryPos, trackDur (Infinity when unknown)}
+  function exitBounds(o) {
+    const trackEnd = o.trackDur - o.w.xf - 2;
+    return { trackEnd, lo: Math.min(o.entryPos + o.w.min, trackEnd), hi: Math.min(o.entryPos + o.w.max, trackEnd) };
+  }
+  // (exitPick below, then exitTiming, exitHighPush)
+  // The planned exit inside the window: a blend / layer point wins, else the
+  // matcher's point clamped into the window, never before the song's first drop.
+  // o: {lo, hi, trackEnd, layerStart, blendExit, candidateATime, minExit, hasBlend}
+  function exitPick(o) {
+    let exitAt = o.layerStart != null ? o.layerStart : o.hasBlend ? o.blendExit : o.candidateATime;
+    if (!o.hasBlend && !(exitAt >= o.lo && exitAt <= o.hi)) exitAt = Math.max(o.lo, Math.min(o.hi, exitAt || o.hi));
+    // never leave before the playing song's first drop has played (server floor)
+    if (!o.hasBlend && o.minExit != null && exitAt < o.minExit && o.minExit < o.trackEnd) exitAt = o.minExit;
+    return exitAt;
+  }
+  // Exit kept on A's phrase grid (whole phrases, never seconds) and the crossfade length.
+  // o: {exitAt, nowPos, phraseS, w, oneSong, vocalShort, peak}
+  function exitTiming(o) {
+    let t = o.exitAt;
+    while (t < o.nowPos + 15) t += o.phraseS;
+    // vocalShort: xfDuration < 16 halves every bar count in executeTransition
+    // (Bass Swap 8 -> 4 bars) so the overlap ends before B's vocal.
+    const xfDuration = o.oneSong ? Math.max(16, o.w.xf) : o.vocalShort ? Math.min(8, o.w.xf) : o.peak ? Math.max(16, o.w.xf) : o.w.xf;
+    return { effectiveATime: t, xfDuration };
+  }
+  // Never transition out of A while it is at its energy high: the exit moves past it by
+  // whole phrases (not for PEAK / LAYER / pre-planned: they chose their line).
+  // o: {t (effectiveATime), phraseS, bpm, trackEnd, energyTimes, energyCurve} -> {t, moved}
+  function exitHighPush(o) {
+    if (!o.energyTimes || !o.energyCurve) return { t: o.t, moved: 0 };
+    const spans = highSpans(o.energyTimes, o.energyCurve, 240 / o.bpm);
+    const ex = exitPastHigh(o.t, 16 * 240 / o.bpm, spans, o.phraseS, o.trackEnd);
+    return { t: ex.moved ? ex.t : o.t, moved: ex.moved };
+  }
+  const api = { emptyRetryMs, useLibraryFallback, rememberPairReject, pairRejected, awaitJob, keySafeRecipe, KEY_SAFE_MIN, energyStepOk, hybridWindowKey, highSpans, quantileLinear, median, exitPastHigh, learnedRecipe, vocalRecipe, stemBlendBars, stemBlendFader, phraseWaitS, introBars, FADER_PARK_BARS, homePlan, maskedGlideBars, maskedDropAt, HOME_DROP_PCT, LADDER_STEP_PCT,
+    tempoLockableAt, recipeKind, decideRecipe, WINDOWS, playWindowFor, exitBounds, exitPick, exitTiming, exitHighPush };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   return api;
 })();
@@ -676,19 +814,7 @@ var autopilotCore = (function () {
     return plan;
   }
 
-  function recipeKind(recipe) {
-    const r = String(recipe || "").toLowerCase();
-    if (r.includes("double drop")) return "double";
-    if (r.includes("bass swap") || r.includes("drop swap")) return "bass";
-    if (r.includes("echo")) return "echo";
-    if (r.includes("filter")) return "filter";
-    // no hard cuts (user: "hard cuts are a big no"): a cut recipe that slips through
-    // (Hard Cut, Quick Cut) still runs as a bass swap on the audio clock
-    if (r.includes("cut")) return "bass";
-    if (r.includes("loop")) return "loop";
-    if (r.includes("blend")) return "blend";
-    return "default";
-  }
+  const recipeKind = autopilotCore.recipeKind;
 
   /**
    * Run a recipe-aware, EQ-first transition from `out` to `inn`.
@@ -1290,13 +1416,12 @@ var autopilotCore = (function () {
     const d = window.decks && window.decks[activeDeck];
     if (!d || !d.bpm || !cand.bpm) return true;
     const aEff = d.bpm * d._playbackRate();
-    return [1, 2, 0.5].some((m) => Math.abs(aEff / (cand.bpm * m) - 1) <= lim);
+    return autopilotCore.tempoLockableAt(aEff, cand.bpm, lim);
   }
   function tempoLockable(cand) {
     const d = window.decks && window.decks[activeDeck];
     if (!d || !d.bpm || !cand.bpm) return true; // unknown: let the matcher decide
-    const aEff = d.bpm * d._playbackRate();
-    return [1, 2, 0.5].some((m) => Math.abs(aEff / (cand.bpm * m) - 1) <= lockLimit());
+    return autopilotCore.tempoLockableAt(d.bpm * d._playbackRate(), cand.bpm, lockLimit());
   }
   let allowTempoJump = false; // set on the last round so the set never stalls
   // Tempo-jump budget (user: "genre switch once in a while is fine, or in the
@@ -1873,7 +1998,7 @@ var autopilotCore = (function () {
     if (!d) return;
     const v = Math.max(-range, Math.min(range, pct));
     // gradient rule: instant only while B is silent, else a glide
-    if (typeof d.aiSetPitch === "function") d.aiSetPitch(v); else d.setPitchPercent(v);
+    if (typeof d.aiSetPitch === "function") d.aiSetPitch(v);   // the ramping setter: no bare jump
     const fader = document.querySelector(`.pitch-fader[data-deck="${deckId}"]`);
     if (fader) fader.value = String(v.toFixed(1));
     const readout = document.getElementById(`pitch-readout-${deckId}`);
@@ -2202,75 +2327,35 @@ var autopilotCore = (function () {
     // Re-derive with the SAME pure fn pick time used (tempoRule.planFit), only
     // re-validating live state (stems readiness, current pitch) as inputs; the
     // pick-time verdict is candidate.plannedFit, kept here only for a sanity log.
-    const lockS = window.tempoRule.planFit({ aEff: aEffS, bBpm: sdS && sdS.bpm, stemsBoth,
-      tempoStemsBpm: sdS && sdS.tempoStems && sdS.tempoStems.bpm });
-    if (candidate.plannedFit && candidate.plannedFit.smooth !== lockS.smooth) {
-      console.info("transition plan-fit:", `live state changed since pick (${candidate.plannedFit.why} -> ${lockS.why})`);
-    }
-    const oneSong = lockS.oneSong;
-    if (!lockS.beat) {
-      if (blend || layer) console.info("transition tempo:", `beatless, ${lockS.lock.why}`);
-      blend = null; layer = null;
-    }
-    const od0bpm = (window.decks && window.decks[activeDeck] && window.decks[activeDeck].bpm) || 128;
-    // Beat-to-beat: when the tempos lock, hand beat to beat. Echo-outs are for
-    // tempo gaps; they turned "vocal -> beat" when used between compatible songs.
-    if (blend) {
-      bTime = blend.entry;
-      // A's vocal riding over B's instrumental intro is a classic long blend;
-      // only two vocals at once clash, so keep that overlap short (bass swap).
-      const bClean = blend.b_vocal_coverage == null || blend.b_vocal_coverage <= 0.15;
-      const k = recipeKind(recipe);
-      if (!bClean) recipe = "Bass Swap";
-      else if (!["bass", "blend", "default"].includes(k)) recipe = "Long Blend";
-      blend.clean = bClean;
-      // Two vocals must never sing together: the overlap has to END before B's
-      // vocal first comes in (user: "vocals are overlapping"). Pick the
-      // transition length by how many bars that is.
-      if (oneSong) { recipe = "Long Blend"; blend.clean = true; }
-      // stems on either deck: one singer by muting a vocal stem, never a cut
-      const vr = autopilotCore.vocalRecipe({ vIn: blend.b_vocal_in_bars, oneSong, aStems, bStems });
-      if (vr) {
-        vocalRule = true;
-        recipe = vr.recipe; vocalShort = vr.short; vocalCut = vr.why;
-      }
-    } else if (oneSong) {
-      // tempos lock (key-locked tempo stems attached, or inside the pitch range)
-      recipe = "Long Blend";
-    } else if (stemsBoth) {
-      // tempo can't lock: a stem bridge, never an echo-out (user)
-      recipe = "Stem Bridge";
-    } else if (!["echo", "filter"].includes(recipeKind(recipe))) {
-      // No stems and no tempo lock: beats cannot be layered, so don't hard-swap.
-      // Echo the outgoing song away while the new one enters on its phrase
-      // ([[Echo Out]]). Rare now: every library song is pre-separated.
-      recipe = "Echo Out";
-    }
-    // Clashing keys never get a tonal blend: Echo Out (CLAUDE.md s4). The matcher
-    // ranked key-safe recipes for these pairs; the rewrites above turned them into
-    // Long Blend / Bass Swap without reading the key.
     const keyScoreS = (() => {
       const cs = window.djMind && window.djMind.core && window.djMind.core.camelotScore;
       const ka = odS && odS.analysis && odS.analysis.key && odS.analysis.key.camelot;
       const kb = sdS && sdS.analysis && sdS.analysis.key && sdS.analysis.key.camelot;
       return cs && ka && kb ? cs(ka, kb) : null;
     })();
-    if (!layer) {
-      const safe = keySafeRecipe(recipe, keyScoreS);
-      if (safe !== recipe) {
-        console.info("transition recipe:", `${recipe} -> ${safe} (keys clash, camelot ${keyScoreS})`);
-        recipe = safe; blend = null; vocalShort = false;
-      }
+    // The whole recipe decision is autopilotCore.decideRecipe (pure, node-checked; the
+    // virtual set in app/sim drives the same function).
+    const dec = autopilotCore.decideRecipe({
+      recipe, blend, layer: !!layer, aStems, bStems, aEff: aEffS, bBpm: sdS && sdS.bpm,
+      tempoStemsBpm: sdS && sdS.tempoStems && sdS.tempoStems.bpm, keyScore: keyScoreS,
+      mashupFits: () => !!(odS && sdS && mashupFits(odS, sdS)),
+    }, window.tempoRule);
+    const lockS = dec.lockS;
+    if (candidate.plannedFit && candidate.plannedFit.smooth !== lockS.smooth) {
+      console.info("transition plan-fit:", `live state changed since pick (${candidate.plannedFit.why} -> ${lockS.why})`);
     }
-    // Never a hard cut (user): a cut the matcher or the AI plan proposed is a Bass Swap.
-    if (/\bcut\b/i.test(String(recipe || ""))) {
-      // a cut was the matcher's answer to clashing keys: keep the overlap short (4 bars)
-      console.info("transition recipe:", `${recipe} -> 4-bar Bass Swap (no hard cuts)`);
-      recipe = "Bass Swap";
-      vocalShort = true;
+    const oneSong = dec.oneSong;
+    if (dec.dropLayer) {
+      if (blend || layer) console.info("transition tempo:", `beatless, ${lockS.lock.why}`);
+      layer = null;
     }
-    // Mashup -> transition beats every other move when the pair fits (user)
-    if (lockS.beat && stemsBoth && odS && sdS && mashupFits(odS, sdS)) recipe = "Mashup → Transition";
+    // B enters on the blend's line even when a key rewrite then drops the blend itself
+    if (blend && !dec.dropLayer) { bTime = blend.entry; blend.clean = dec.blendClean; }
+    blend = dec.blend;
+    recipe = dec.recipe; vocalShort = dec.vocalShort; vocalCut = dec.vocalCut; vocalRule = dec.vocalRule;
+    if (dec.keyRewrite) console.info("transition recipe:", `${dec.keyRewrite.from} -> ${dec.keyRewrite.to} (keys clash, camelot ${keyScoreS})`);
+    if (dec.cutRewrite) console.info("transition recipe:", "cut -> 4-bar Bass Swap (no hard cuts)");
+    const od0bpm = (window.decks && window.decks[activeDeck] && window.decks[activeDeck].bpm) || 128;
     if (layer) { bTime = layer.entry; recipe = `LAYER ${layer.hold_bars}+${layer.unwind_bars} bars`; }
     jumpPending = !blend && !oneSong;
     // why an echo / non-stem recipe: on the status line and in the console,
@@ -2291,13 +2376,9 @@ var autopilotCore = (function () {
     const w = playWindow(score);
     const nowPos = deckPosition(activeDeck);
     const od = window.decks && window.decks[activeDeck];
-    const trackEnd = (od && od.buffer ? od.buffer.duration : Infinity) - w.xf - 2;
-    const lo = Math.min(entryPos + w.min, trackEnd);
-    const hi = Math.min(entryPos + w.max, trackEnd);
-    let exitAt = layer ? layer.start : blend ? blend.exit : candidate.a_time;
-    if (!blend && !(exitAt >= lo && exitAt <= hi)) exitAt = Math.max(lo, Math.min(hi, exitAt || hi));
-    // never leave before the playing song's first drop has played (server floor)
-    if (!blend && minExit != null && exitAt < minExit && minExit < trackEnd) exitAt = minExit;
+    const { trackEnd, lo, hi } = autopilotCore.exitBounds({ w, entryPos, trackDur: od && od.buffer ? od.buffer.duration : Infinity });
+    let exitAt = autopilotCore.exitPick({ lo, hi, trackEnd, layerStart: layer ? layer.start : null, hasBlend: !!blend,
+      blendExit: blend && blend.exit, candidateATime: candidate.a_time, minExit });
     // PEAK mode (dj-mind.js peakTransition): tempo-locked pairs only, land B's
     // drop on A's drop downbeat - Double Drop or Drop Swap. null -> blend.
     const peakT = !layer && blend && blend.drop && window.djMind && window.djMind.planPeak
@@ -2307,11 +2388,9 @@ var autopilotCore = (function () {
     if (peakT) { recipe = peakT.recipe; bTime = peakT.bTime; exitAt = peakT.exitAt; }
     // Keep the exit on A's phrase grid: push by whole phrases, never by seconds.
     const phraseS = 32 * 60 / od0bpm;
-    let effectiveATime = exitAt;
-    while (effectiveATime < nowPos + 15) effectiveATime += phraseS;
-    // vocalShort: xfDuration < 16 halves every bar count in executeTransition
-    // (Bass Swap 8 -> 4 bars) so the overlap ends before B's vocal.
-    const xfDuration = oneSong ? Math.max(16, w.xf) : vocalShort ? Math.min(8, w.xf) : peakT ? Math.max(16, w.xf) : w.xf;
+    const timing = autopilotCore.exitTiming({ exitAt, nowPos, phraseS, w, oneSong, vocalShort, peak: !!peakT });
+    let effectiveATime = timing.effectiveATime;
+    const xfDuration = timing.xfDuration;
     playPlanTag = ` | ${w.label} ${fmtTime(effectiveATime - entryPos)}`;
     // Pre-planned by the silent ear: B starts where the ear chose (inside A), from
     // the line it chose, the merge it heard. Only when the plan is still ahead.
@@ -2331,8 +2410,8 @@ var autopilotCore = (function () {
     // Never transition out of A while it's at its energy high: push the exit past it
     // by whole phrases (not for PEAK / LAYER / pre-planned: they chose their line).
     if (!peakT && !layer && !preplanned && od && od.analysis) {
-      const spans = autopilotCore.highSpans(od.analysis.energy_times, od.analysis.energy_curve, 240 / od0bpm);
-      const ex = autopilotCore.exitPastHigh(effectiveATime, 16 * 240 / od0bpm, spans, phraseS, trackEnd);
+      const ex = autopilotCore.exitHighPush({ t: effectiveATime, phraseS, bpm: od0bpm, trackEnd,
+        energyTimes: od.analysis.energy_times, energyCurve: od.analysis.energy_curve });
       if (ex.moved) {
         console.info("transition timing:", `exit moved ${ex.moved} phrase(s) to ${fmtTime(ex.t)}: A is at its energy high`); window.aiStep && window.aiStep("exit_moved", { deck: activeDeck, decision: `exit +${ex.moved} phrase(s)`, why: "A is at its energy high", result: { from: effectiveATime, to: ex.t } });
         effectiveATime = ex.t;
@@ -2588,31 +2667,14 @@ var autopilotCore = (function () {
     return ["long", "quick", "hybrid"].includes(v) ? v : "hybrid";
   }
 
-  const WINDOWS = {
-    long:   { min: 180, max: 360, xf: 24, label: "LONG" },
-    medium: { min: 120, max: 240, xf: 16, label: "MID" },
-    quick:  { min: 40,  max: 100, xf: 8,  label: "QUICK" }, // user: 40-100 s (widened from 60-120)
-    bail:   { min: 30,  max: 60,  xf: 8,  label: "QUICK·bail" },
-    // steering toward the occasion's music: short bridge songs (user: 30-60 s each)
-    bridge: { min: 30,  max: 60,  xf: 8,  label: "BRIDGE" },
-  };
-
+  // The windows themselves (autopilotCore.WINDOWS) and the choice (playWindowFor) are pure.
   function playWindow(score) {
-    if (steering === "move") return WINDOWS.bridge;
-    // A famous song plays in full (user; the USB002 set rides leavemealone for
-    // 7 min): exit only in its last ~50 s, i.e. the outro. Stem breakdowns
-    // (stem-moves.js) keep it from sounding long.
+    // A famous song plays in full: exit only in its last ~50 s, i.e. the outro. Stem
+    // breakdowns (stem-moves.js) keep it from sounding long.
     const pd = window.decks && window.decks[activeDeck];
-    if (pd && pd.fame && pd.fame.famous && pd.buffer) {
-      const rem = pd.buffer.duration - (entryPos || 0);
-      if (rem > 90) return { min: Math.max(60, rem - 50), max: Math.max(70, rem - 6), xf: 24, label: "FULL·famous" };
-    }
-    const mode = setMode();
-    const weak = score < 65;
-    if (mode === "long") return WINDOWS.long;
-    if (mode === "quick") return weak ? WINDOWS.bail : WINDOWS.quick;
-    if (weak) return WINDOWS.bail;
-    return WINDOWS[autopilotCore.hybridWindowKey(currentEnergy)];
+    const famous = !!(pd && pd.fame && pd.fame.famous && pd.buffer);
+    return autopilotCore.playWindowFor({ steering, famous, rem: famous ? pd.buffer.duration - (entryPos || 0) : 0,
+      mode: setMode(), score, energy: currentEnergy });
   }
 
   // ── live mashup ("A x B") ─────────────────────────────────────────────────

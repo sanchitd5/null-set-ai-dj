@@ -20,9 +20,7 @@ const ALLOW = {
     1467, // SYNC button -- the user's own control
     1528, // pitch fader input handler -- the user's own control
   ],
-  "autopilot.js": [
-    1816, // setDeckPitch's defensive fallback when d.aiSetPitch doesn't exist (never true in practice)
-  ],
+  "autopilot.js": [],
 };
 
 let bad = 0;
