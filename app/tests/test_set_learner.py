@@ -395,6 +395,19 @@ def test_a_slot_never_analysed_is_not_called_the_wrong_song():
     assert sl.verify_songs(rows, songs)[1]["likely_wrong_song"] is True
 
 
+def test_a_short_return_of_a_proven_song_is_not_a_wrong_download():
+    env = {"drums": np.zeros(4)}                     # one file, listed at 0 and again at 300
+    songs = [sl.SongData("T - Technologic", 0.0, 120, None, env), sl.SongData("C - Circles", 200.0, 120, None, {"d": 1}),
+             sl.SongData("T - Technologic", 300.0, 120, None, env)]
+    rows = [{"t": float(t), "stem": "drums", "db": -10,
+             "owners": [sl.Hit(0 if t < 200 else 1 if t < 300 else 2, 0.9, 0.0, 1.0)] if t < 300 or t == 300 else []}
+            for t in range(0, 400, 10)]
+    v = sl.verify_songs(rows, songs)                 # heard in 1 of its 10 windows at 300
+    assert v[2]["heard_share"] == 0.1 and v[2]["likely_wrong_song"] is False
+    songs[2] = sl.SongData("T - Technologic", 300.0, 120, None, {"drums": np.zeros(4)})   # another file
+    assert sl.verify_songs(rows, songs)[2]["likely_wrong_song"] is True
+
+
 def _rows(spans, t0, t1, hop=sl.HOP_S):
     """Owner rows from {stem: [(track, from, to, src_at(t))]}: heard at t when from <= t < to."""
     rows = []

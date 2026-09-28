@@ -914,6 +914,13 @@ def verify_songs(rows: List[dict], songs: List[SongData]) -> List[dict]:
         # either way, so the song is not called wrong and its other slots still count
         out.append({"heard_share": round(share, 3),
                     "likely_wrong_song": bool(s.env) and bool(ts) and share < WRONG_SONG_SHARE})
+    # a song listed again (learn_set gives every entry of one file the same env): heard
+    # in one of its slots, the file is the song; a short return is not a wrong download
+    for i, s in enumerate(songs):
+        if out[i]["likely_wrong_song"] and any(
+                out[j]["heard_share"] >= WRONG_SONG_SHARE and not out[j]["likely_wrong_song"]
+                for j, x in enumerate(songs) if j != i and x.env is s.env):
+            out[i]["likely_wrong_song"] = False
     return out
 
 
