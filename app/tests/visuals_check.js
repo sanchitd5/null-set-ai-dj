@@ -1,11 +1,21 @@
 // Node check for the visuals cue mapping (app/ui/static/visuals.js). Run by test_keylock.py.
 const assert = require("assert");
 const { effectFor, env, FLASH_GAP_S, aiDriving, energyPeaks, nextPeakIdx, stepPeaks,
-        peakAllowed, DROP_PEAK_GAP_S, SEEK_JUMP_S } = require("../ui/static/visuals.js");
+        peakAllowed, DROP_PEAK_GAP_S, SEEK_JUMP_S, vfxLayers, flashAllowed, safeBeat, MIN_PULSE_GAP_S,
+        bassState, bassFollow, bassAlive, deckBass, bassMix, mixHex, afterPulse, DROP_BURST_S,
+        DROP_AFTER_BEATS } = require("../ui/static/visuals.js");
 
-assert.deepStrictEqual(effectFor({ kind: "drop", deck: "b" }), { type: "drop", deck: "b", dur: 1.6 });
+{ // drop: burst + 2 bars of after-pulses at the cue's tempo (default 128 BPM)
+  const d = effectFor({ kind: "drop", deck: "b" });
+  assert.strictEqual(d.type, "drop"); assert.strictEqual(d.deck, "b");
+  assert.strictEqual(d.beat, 60 / 128);
+  assert.ok(Math.abs(d.dur - (60 / 128) * (DROP_AFTER_BEATS + 1)) < 1e-9);
+  assert.ok(d.dur >= DROP_BURST_S && d.dur <= 6);
+  assert.strictEqual(effectFor({ kind: "drop", bar: 100 }).dur, 6);               // capped
+  assert.strictEqual(effectFor({ kind: "drop", deck: "a" }, true).dur, DROP_BURST_S); // still: no after-pulses
+}
 assert.strictEqual(effectFor({ kind: "transition", deck: "a", bar: 1.875 }).type, "sweep");
-assert.strictEqual(effectFor({ kind: "transition", bar: 100 }).dur, 3);          // capped
+assert.strictEqual(effectFor({ kind: "transition", bar: 100 }).dur, 3.5);        // capped
 assert.strictEqual(effectFor({ kind: "line", deck: "x" }).deck, null);         // unknown deck -> AI colour
 assert.strictEqual(effectFor({ kind: "nope" }), null);
 assert.strictEqual(effectFor(null), null);
@@ -17,7 +27,7 @@ assert.strictEqual(env(1, 1), 0);
 assert.strictEqual(env(0.06, 1), 1);
 assert.ok(env(0.5, 1) > 0 && env(0.5, 1) < 1);
 assert.ok(FLASH_GAP_S >= 1 / 3);                                                 // <= 3 flashes/s
-assert.deepStrictEqual(effectFor({ kind: "peak", deck: "a" }), { type: "peak", deck: "a", dur: 2.4 });
+assert.deepStrictEqual(effectFor({ kind: "peak", deck: "a" }), { type: "peak", deck: "a", dur: 3 });
 
 // ---- AI gate: only a live autopilot counts
 assert.strictEqual(aiDriving({ active: true }), true);
@@ -94,4 +104,128 @@ assert.strictEqual(peakAllowed(100, [97]), false);        // drop 3 s ago
 assert.strictEqual(peakAllowed(100, [103]), false);       // drop booked 3 s ahead
 assert.strictEqual(peakAllowed(100, [95.9]), true);
 assert.strictEqual(peakAllowed(100, [104]), true);
+
+// ---- layer gate: bass band needs no AI, every other effect does; toggle off = nothing
+{
+  const on = { enabled: true, hidden: false, playing: true, bassAlive: true };
+  assert.deepStrictEqual(vfxLayers({ ...on, autopilot: { active: false } }), { bass: true, ai: false });  // hand mixing
+  assert.deepStrictEqual(vfxLayers({ ...on, autopilot: undefined }), { bass: true, ai: false });
+  assert.deepStrictEqual(vfxLayers({ ...on, autopilot: { active: true } }), { bass: true, ai: true });
+  assert.deepStrictEqual(vfxLayers({ ...on, enabled: false, autopilot: { active: true } }), { bass: false, ai: false });
+  assert.deepStrictEqual(vfxLayers({ ...on, hidden: true, autopilot: { active: true } }), { bass: false, ai: false });
+  // stopped: the band keeps drawing only while it fades out
+  assert.strictEqual(vfxLayers({ ...on, playing: false, bassAlive: true }).bass, true);
+  assert.strictEqual(vfxLayers({ ...on, playing: false, bassAlive: false }).bass, false);
+  assert.deepStrictEqual(vfxLayers(null), { bass: false, ai: false });
+}
+
+// ---- photosensitivity: one flash per second, pulses / kicks under 3 per second
+assert.strictEqual(flashAllowed(10, -Infinity), true);
+assert.strictEqual(flashAllowed(10.5, 10), false);
+assert.strictEqual(flashAllowed(11, 10), true);
+assert.strictEqual(flashAllowed(NaN, 0), false);
+{ // a drop every 0.25 s for 10 s: at most one flash per second
+  let last = -Infinity, n = 0;
+  for (let t = 0; t < 10; t += 0.25) if (flashAllowed(t, last)) { last = t; n++; }
+  assert.ok(n <= 10, `flashes ${n}`);
+}
+assert.ok(MIN_PULSE_GAP_S > 1 / 3);
+assert.ok(safeBeat(60 / 200) >= MIN_PULSE_GAP_S);                 // 200 BPM -> half-time
+assert.strictEqual(safeBeat(60 / 128), 60 / 128);
+assert.strictEqual(safeBeat(NaN), 60 / 128);
+assert.strictEqual(safeBeat(-1), 60 / 128);
+
+// ---- after-drop pulses: on beats 1..8, decaying, none on the downbeat or after 2 bars
+{
+  const b = 0.5;
+  assert.strictEqual(afterPulse(0.1, b), 0);                           // downbeat is the burst's
+  assert.ok(Math.abs(afterPulse(b, b) - 1) < 1e-9);                    // beat 1: full
+  assert.ok(afterPulse(b + 0.2, b) < afterPulse(b, b));                // decays inside the beat
+  assert.ok(afterPulse(4 * b, b) < afterPulse(b, b));                  // fades over the bars
+  assert.ok(afterPulse(8 * b, b) > 0);
+  assert.strictEqual(afterPulse(9 * b, b), 0);                         // after 2 bars: over
+  assert.strictEqual(afterPulse(-1, b), 0);
+  // pulse onsets never faster than 3 per second, even at 200 BPM
+  let onsets = 0, prev = 0;
+  for (let t = 0; t < 3; t += 0.001) { const p = afterPulse(t, 60 / 200); if (p > prev + 0.5) onsets++; prev = p; }
+  assert.ok(onsets <= 9, `onsets ${onsets}`);
+}
+
+// ---- bass envelope follower: fast attack, slow release, kick hit, idle decay to zero
+{
+  const st = bassState();
+  const run = (low, secs, t0, fps = 60) => { let t = t0; for (let i = 0; i < secs * fps; i++) { t += 1 / fps; bassFollow(st, low, 1 / fps, t); } return t; };
+  let t = run(0.8, 0.1, 0);                                             // 100 ms of bass
+  assert.ok(st.level > 0.7, `attack ${st.level}`);                      // attack: up in ~0.1 s
+  const top = st.level;
+  t = run(0, 0.1, t);
+  assert.ok(st.level > 0.5 * top, `release ${st.level}`);               // release slower than attack
+  assert.ok(st.level < top);
+  t = run(0, 5, t);
+  assert.strictEqual(st.level, 0);                                      // idle: exactly zero
+  assert.strictEqual(st.hit, 0);
+  assert.strictEqual(bassAlive(st), false);
+}
+{ // kick: a sharp rise into a loud low band hits; a slow climb or a quiet bump does not
+  const st = bassState();
+  bassFollow(st, 0.2, 1 / 60, 1);
+  bassFollow(st, 0.9, 1 / 60, 1.02);
+  assert.ok(st.hit > 0.8, `hit ${st.hit}`);
+  const h = st.hit;
+  bassFollow(st, 0.9, 0.1, 1.12);
+  assert.ok(st.hit < h);                                                // decays fast
+  bassFollow(st, 0.2, 1 / 60, 1.14);
+  bassFollow(st, 0.95, 1 / 60, 1.16);                                   // 0.14 s later: capped
+  assert.strictEqual(st.lastKick, 1.02);
+  bassFollow(st, 0.2, 1 / 60, 1.5);
+  bassFollow(st, 0.95, 1 / 60, 1.52);
+  assert.strictEqual(st.lastKick, 1.52);                                // next beat: hits
+  const q = bassState();
+  bassFollow(q, 0.1, 1 / 60, 1); bassFollow(q, 0.3, 1 / 60, 1.02);     // quiet bump
+  assert.strictEqual(q.hit, 0);
+  const s = bassState();
+  for (let i = 0; i < 60; i++) bassFollow(s, i / 60, 1 / 60, i / 60);   // slow climb
+  assert.strictEqual(s.hit, 0);
+}
+{ // reduced motion: no hits, slow both ways
+  const st = bassState();
+  bassFollow(st, 0.2, 1 / 60, 1, true); bassFollow(st, 0.95, 1 / 60, 1.02, true);
+  assert.strictEqual(st.hit, 0);
+  assert.ok(st.level < 0.1);
+}
+{ // bad input never throws, never goes NaN
+  const st = bassState();
+  bassFollow(st, NaN, NaN, NaN); bassFollow(st, 5, 1, 1); bassFollow(st, -3, -1, 2);
+  assert.ok(Number.isFinite(st.level) && st.level >= 0 && st.level <= 1);
+  assert.strictEqual(bassFollow(null, 1, 1, 1), null);
+}
+
+// ---- who carries the low end, and the colour mix for two decks
+{
+  const p = (v) => ({ value: v });
+  const deck = (o) => ({ playing: true, crossfaderGain: { gain: p(1) }, volumeGain: { gain: p(1) },
+                         lowFilter: { gain: p(0) }, stemState: null, ...o });
+  assert.strictEqual(deckBass(deck({})), 1);
+  assert.strictEqual(deckBass(deck({ playing: false })), 0);
+  assert.strictEqual(deckBass(null), 0);
+  assert.strictEqual(deckBass(deck({ crossfaderGain: { gain: p(0) } })), 0);
+  assert.ok(deckBass(deck({ lowFilter: { gain: p(-40) } })) < 0.02);           // low EQ killed
+  assert.strictEqual(deckBass(deck({ stemState: { bass: 0, drums: 0, vocals: 1, other: 1 } })), 0);
+  assert.strictEqual(deckBass(deck({ stemState: { bass: 0, drums: 1, vocals: 1, other: 1 } })), 1); // kick still there
+  assert.strictEqual(deckBass({ playing: true }), 1);                          // no nodes: assume full
+
+  assert.strictEqual(bassMix(1, 0), 0);
+  assert.strictEqual(bassMix(0, 1), 1);
+  assert.strictEqual(bassMix(1, 1), 0.5);
+  assert.strictEqual(bassMix(0, 0), null);                                     // nobody: master colour
+  assert.strictEqual(bassMix(NaN, undefined), null);
+  assert.strictEqual(bassMix(1, 0.3) * 16 % 1, 0);                             // 1/16 steps
+  assert.strictEqual(mixHex("#00ff66", "#ff2bd6", 0), "#00ff66");
+  assert.strictEqual(mixHex("#00ff66", "#ff2bd6", 1), "#ff2bd6");
+  assert.strictEqual(mixHex("#000000", "#ffffff", 0.5), "#808080");
+  assert.strictEqual(mixHex("#00ff66", "#ff2bd6", 0.5), "#80959e");
+  assert.strictEqual(mixHex("bad", "#ff2bd6", 0.5), "#ff2bd6");
+  assert.strictEqual(mixHex("bad", "worse", 0.5), "#00e5ff");
+  assert.strictEqual(mixHex("#000000", "#ffffff", 7), "#ffffff");              // clamped
+}
 console.log("visuals ok");
