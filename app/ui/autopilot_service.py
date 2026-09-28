@@ -129,18 +129,12 @@ CREDITS RULE (collaborations): when the current song credits several artists
   ("A & B"), decide which credit defines its SOUND - usually the best-known
   producer whose discography you know best - and anchor on that artist's world:
   their other songs first, then close peers. A lesser-known featured or
-  co-credited artist must not pull the set into their genre. Example: "LATIN MAFIA
-  & Fred again.. - Te Estoy Correteando" -> anchor on Fred again.. (his own
-  songs, UK dance / melodic house peers), not Latin house.
-
-SAME-ARTIST RULE (important):
-  Suggesting the same ARTIST as the current track is valid and often preferred early in a set to
-  build a consistent vibe — back-to-back tracks by the same artist feel like chapters in one story.
-  NEVER penalize a suggestion just because the artist matches. Only avoid repeating the exact same
-  TRACK TITLE that appears in the history list.
+  co-credited artist must not pull the set into their genre. Example: "Minor
+  Vocalist & Famous Producer - Song" -> anchor on Famous Producer (their own
+  songs, their genre peers), not the vocalist's genre.
 
 AVOID TRACKS: The history list contains track names already played. Do NOT suggest any track whose
-  title appears in that list. Same artist is fine — only the exact title is banned.
+  title appears in that list, and follow the artist-variety limits given in the request.
 
 REMIXES: remixes, edits and reworks are welcome when they keep the vibe (a club remix of a
   vocal song is often the better fit on a dancefloor). Give the remixer in the title, e.g.

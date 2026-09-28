@@ -1932,7 +1932,9 @@ def _autopilot_suggest_impl(req: AutopilotSuggestRequest):
             avoid_display=avoid_display,
             lookahead=req.lookahead,
             earlier_sets=earlier,
-            favourite_artists=_set_memory.favourite_artists(),
+            # No favourites: memory can't tell user picks from AI picks, so the
+            # AI's own picks became "favourites" and fed back (Fred again.. loop).
+            favourite_artists=[],
             loudness_dbfs=loudness_dbfs,
             tempo_target=req.tempo_target,
             tempo_note=req.tempo_note or "",
