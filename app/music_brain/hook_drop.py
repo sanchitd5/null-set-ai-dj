@@ -55,7 +55,9 @@ def plan(lines: List[dict], bpm: float, boundaries: Sequence[float], energy_time
     bar = 4 * 60.0 / bpm
     hold = learned_hold_s(learned)
     hold_src = "learned from studied sets" if hold else f"default {DEFAULT_HOLD_BARS} bars"
-    hold = min(hold or DEFAULT_HOLD_BARS * bar, MAX_HOLD_BARS * bar)
+    # learned holds are seconds at another song's tempo: whole bars here, so the beat
+    # leaves on a bar line (drop_at is a phrase boundary)
+    hold = float(np.clip(round((hold or DEFAULT_HOLD_BARS * bar) / bar), 1, MAX_HOLD_BARS)) * bar
     from app.music_brain.lyrics import _norm
 
     hk = hooks(lines)[:3]

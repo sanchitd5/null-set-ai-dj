@@ -733,9 +733,11 @@ def vocal_chops(crows: List[dict], songs: List[SongData], set_id: str, hop_s: fl
 
 
 def acapella_drops(rows: List[dict], songs: List[SongData], set_id: str, hop_s: float = HOP_S,
-                   max_hold_s: float = 32.0) -> List[Observation]:
+                   max_hold_s: float = 32.0, win_s: float = WIN_S) -> List[Observation]:
     """Vocal alone (drums and bass silent) for up to max_hold_s, then drums + bass
-    back: the DJ making a drop out of a sung line. Records the words held."""
+    back: the DJ making a drop out of a sung line. Records the words held.
+    Rows are win_s windows starting at t: the beat is gone by the first silent
+    window's start and back only after the last silent window's end."""
     from app.music_brain.lyrics import is_hook, words_between
 
     grid: Dict[float, Dict[str, dict]] = {}
@@ -756,18 +758,21 @@ def acapella_drops(rows: List[dict], songs: List[SongData], set_id: str, hop_s: 
         k = j + 1
         back = k < len(times) and times[k] - times[j] <= hop_s * 1.5 and \
             grid[times[k]].get("drums", {}).get("db", -120) > SILENT_DB and grid[times[k]].get("bass", {}).get("db", -120) > SILENT_DB
-        held = times[j] - times[i] + hop_s
-        v = next((grid[times[x]]["vocals"]["owner"] for x in range(i, j + 1) if grid[times[x]]["vocals"].get("owner")), None)
+        drop_at = times[j] + win_s                  # window j was beatless to its end
+        held = drop_at - times[i]
+        x0 = next((x for x in range(i, j + 1) if grid[times[x]]["vocals"].get("owner")), None)
+        v = grid[times[x0]]["vocals"]["owner"] if x0 is not None else None
         if back and held <= max_hold_s and v is not None:
             s = songs[v.track]
-            src1 = v.src_t + held * v.rate
-            words = words_between(s.lyrics, v.src_t, src1) if s.lyrics else ""
+            src0 = v.src_t - (times[x0] - times[i]) * v.rate     # the song position when the beat left
+            src1 = src0 + held * v.rate
+            words = words_between(s.lyrics, src0, src1) if s.lyrics else ""
             drop_by = grid[times[k]]["drums"].get("owner")
             out.append(Observation("acapella_drop", set_id=set_id, at=times[i], track_a=s.title,
                                    track_b=songs[drop_by.track].title if drop_by and drop_by.track != v.track else "",
-                                   detail={"held_s": round(held, 1), "src_span": [round(v.src_t, 1), round(src1, 1)],
+                                   detail={"held_s": round(held, 1), "src_span": [round(src0, 1), round(src1, 1)],
                                            "words": words, "hook": bool(words) and any(is_hook(w, s.lyrics) for w in words.split(" / ")),
-                                           "drop_at": times[k]}))
+                                           "drop_at": round(drop_at, 2)}))
         i = k
     return out
 

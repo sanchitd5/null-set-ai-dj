@@ -102,8 +102,23 @@ def test_acapella_drop_is_learned_with_its_words():
         rows += [dict(_row(t, -20, v), stem="vocals"), dict(_row(t, -80 if solo else -20), stem="drums"),
                  dict(_row(t, -80 if solo else -20), stem="bass"), dict(_row(t, -20), stem="other")]
     obs = sl.acapella_drops(rows, [song], "s")
-    assert len(obs) == 1 and obs[0].at == 28 and obs[0].detail["drop_at"] == 36
+    # 8 s windows at 28 and 32 are beatless, so the beat is back only after 40 (was: 36,
+    # inside the silent window) and the voice held 12 s (was: 8)
+    assert len(obs) == 1 and obs[0].at == 28 and obs[0].detail["drop_at"] == 40
+    assert obs[0].detail["held_s"] == 12.0 and obs[0].detail["src_span"] == [30.0, 42.0]
     assert "take me higher" in obs[0].detail["words"] and obs[0].detail["hook"]
+
+
+def test_acapella_drop_words_start_where_the_beat_left():
+    song = sl.SongData("A - Song", 0.0, 120.0, "8A", {}, lyrics.parse_lrc(LRC))
+    rows = []
+    for t in range(0, 40, 4):
+        solo = t in (28, 32)
+        v = sl.Hit(0, 0.9, float(t) + 2, 1.0) if t != 28 else None      # first beatless window not located
+        rows += [dict(_row(t, -20, v), stem="vocals"), dict(_row(t, -80 if solo else -20), stem="drums"),
+                 dict(_row(t, -80 if solo else -20), stem="bass"), dict(_row(t, -20), stem="other")]
+    o = sl.acapella_drops(rows, [song], "s")[0]
+    assert o.detail["src_span"] == [30.0, 42.0]                        # was [34, 42]: shifted by one window
 
 
 def test_rank_learned_acapella_drop_needs_a_hook_drop():
@@ -209,6 +224,15 @@ def test_compressed_lrc_repeats_a_line_at_each_of_its_times():
     assert [(l["t"], l["text"]) for l in lines] == [
         (10.0, "take me higher"), (20.0, "verse"), (30.0, "take me higher"), (40.0, "end")]
     assert lyrics.hooks(lines)[0]["count"] == 2
+
+
+def test_a_learned_hold_is_whole_bars_of_this_song():
+    store = {"acapella_drop": {"observations": [{"detail": {"held_s": 16.0, "hook": True}}]}}
+    lines = [{"t": 30.0, "end": 57.6, "text": "hey now"}, {"t": 60.0, "end": 86.4, "text": "hey now"}]
+    bar = 2.4                                                         # 100 bpm
+    p = hook_drop.plan(lines, 100.0, [i * 4 * bar for i in range(20)], learned=store)
+    assert len(p) == 2 and all(abs(x["hold_s"] / bar - round(x["hold_s"] / bar)) < 1e-2 for x in p)
+    assert p[0]["hold_s"] == round(7 * bar, 2)                        # 16 s = 6.67 bars -> 7 (was 16.0: mid-bar cut)
 
 
 def test_a_short_hook_never_drops_before_the_voice_is_alone():
