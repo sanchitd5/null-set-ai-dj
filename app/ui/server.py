@@ -784,6 +784,24 @@ def get_track_stems(track_id: str, separate: bool = False, bpm: Optional[float] 
 _voiced_cache: Dict[tuple, dict] = {}
 
 
+_pair_cache: Dict[tuple, tuple] = {}
+PAIR_CACHE_S = 600.0
+
+
+def _pair_features_cached(a_id: str, b_id: str, keylock: bool = False):
+    """_pair_features loads all of A's stems (seconds): once per pair per 10 min,
+    rebuilt when either side's stems appear."""
+    key = (a_id, b_id, keylock, bool(_cached_stems4(a_id)), bool(_cached_stems4(b_id)))
+    hit = _pair_cache.get(key)
+    if hit and time.time() - hit[0] < PAIR_CACHE_S:
+        return hit[1]
+    f = _pair_features(a_id, b_id, keylock)
+    _pair_cache[key] = (time.time(), f)
+    if len(_pair_cache) > 64:
+        _pair_cache.pop(min(_pair_cache, key=lambda k: _pair_cache[k][0]))
+    return f
+
+
 def _pair_features(a_id: str, b_id: str, keylock: bool = False):
     """PairFeatures for the technique library, from cached stems (never separates)."""
     import librosa
@@ -874,6 +892,17 @@ def get_hook_drops(track_id: str, top_n: int = 3, ai: bool = True):
     [{text, cut_at, drop_at, hold_s, score, ai, why[]}] best first (app.music_brain.hook_drop).
     ai=True asks the local model which lines carry the emotion (cached per song)."""
     return {"track_id": track_id, "hook_drops": _hook_drops(track_id, max(1, min(top_n, 10)), ai_call=ai)}
+
+
+@app.get("/api/learned/pick")
+def get_learned_pick(a: str, b: str, keylock: bool = False):
+    """The move learned from studied sets to play for A -> B, as a console recipe
+    ({kind, recipe, seen, source, reasons, rules}), or {"pick": null}. The console
+    only switches to it when that recipe is already allowed for the pair."""
+    from app.music_brain import techniques as tq
+
+    f = _pair_features_cached(a, b, keylock)
+    return {"pick": tq.learned_pick(tq.rank(f))}
 
 
 @app.get("/api/techniques")

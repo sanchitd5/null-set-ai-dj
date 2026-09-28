@@ -119,7 +119,24 @@ var autopilotCore = (function () {
     if (v < 8) return { recipe: "Bass Swap", short: true, why: `4-bar swap: B sings in ${Math.round(v)} bars` };
     return { recipe: "Bass Swap", short: false, why: `8-bar swap: B sings in ${Math.round(v)} bars` };
   }
-  const api = { vocalRecipe, stemBlendBars, stemBlendFader, phraseWaitS, introBars, FADER_PARK_BARS, homePlan, maskedGlideBars, maskedDropAt, HOME_DROP_PCT, LADDER_STEP_PCT };
+  // A move learned from studied sets (/api/learned/pick) replaces the recipe only
+  // when the console already allows that recipe for this pair (o: the same facts
+  // scheduleTransition decides on), and never a move that outranks it (LAYER,
+  // PEAK, riff over rap, mashup: user rule "mashup beats every other move").
+  // -> {recipe, why} | null
+  function learnedRecipe(pick, o) {
+    if (!pick || !pick.recipe || o.layer || o.peak || o.riff || o.recipe === "Mashup → Transition") return null;
+    const allowed = {
+      // any beat-to-beat pair can swap the bass on a line
+      "Bass Swap": !!(o.blend || o.oneSong),
+      // the long stem intro keeps both records up: only when no vocal rule shortened it
+      "Long Blend": !!(o.oneSong && !o.vocalRule && (!o.blend || o.blend.clean)),
+      "Mashup → Transition": !!(o.stemsBoth && o.mashupFits),
+    };
+    if (!allowed[pick.recipe] || pick.recipe === o.recipe) return null;
+    return { recipe: pick.recipe, why: `learned ${pick.kind.replace("_", " ")} (seen ${pick.seen}x, ${pick.source})` };
+  }
+  const api = { learnedRecipe, vocalRecipe, stemBlendBars, stemBlendFader, phraseWaitS, introBars, FADER_PARK_BARS, homePlan, maskedGlideBars, maskedDropAt, HOME_DROP_PCT, LADDER_STEP_PCT };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   return api;
 })();
@@ -1862,6 +1879,7 @@ var autopilotCore = (function () {
     // a line. No vocal-driven shortening, no cuts or spinbacks (those were only
     // there to stop two vocals or two beats clashing, which stems already solve).
     const odS = window.decks && window.decks[activeDeck], sdS = window.decks && window.decks[stagingDeck()];
+    let vocalRule = false;
     // A stems-readiness blip (a dead source, a set swap in flight) must not
     // decide the recipe: re-arm A's decoded stems first (Open Eye Signal ->
     // Delilah was a Quick Cut because A reported "no stems").
@@ -1891,6 +1909,7 @@ var autopilotCore = (function () {
       // stems on either deck: one singer by muting a vocal stem, never a cut
       const vr = autopilotCore.vocalRecipe({ vIn: blend.b_vocal_in_bars, oneSong, aStems, bStems });
       if (vr) {
+        vocalRule = true;
         recipe = vr.recipe; vocalShort = vr.short; vocalCut = vr.why;
         if (vr.recipe === "Quick Cut") vocalCut += ` (A stems: ${aStemsWhy || "live"}, B stems: ${bStems ? "loaded" : "none"})`;
       }
@@ -1969,6 +1988,27 @@ var autopilotCore = (function () {
         peakKind: peakT ? peakT.kind : null, peakWhy: peakT ? peakT.why : null, brake: !!(peakT && peakT.brake),
         preClearBars: Number.isFinite(candidate.pre_clear_bars) ? candidate.pre_clear_bars : 8,
       });
+    }
+
+    // Learned from studied sets (app/music_brain/set_learner.py): the move that DJ
+    // made most on pairs like this one, when the console already allows it here.
+    let learned = null;
+    if (!layer && !peakT && learnedOn()) {
+      const facts = { layer, peak: peakT, blend, oneSong, stemsBoth, vocalRule, recipe,
+                      mashupFits: !!(stemsBoth && odS && sdS && mashupFits(odS, sdS)) };
+      fetch(`/api/learned/pick?a=${encodeURIComponent(currentId)}&b=${encodeURIComponent(nextId)}&keylock=${!!(sdS && sdS.useTempoStems)}`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((r) => {
+          const pick = r && r.pick;
+          const ch = autopilotCore.learnedRecipe(pick, { ...facts, riff: !!riff, recipe });
+          if (!ch || executed || !active || currentTrackId !== currentId) return;
+          learned = pick;
+          recipe = ch.recipe;
+          console.info("transition recipe (learned):", `${ch.recipe}: ${ch.why}`, pick.reasons);
+          window.dispatchEvent(new CustomEvent("ai-activity", { detail: {
+            kind: "learned", deck: activeDeck, label: `LEARNED · ${ch.recipe}`, why: ch.why } }));
+        })
+        .catch((e) => console.info("learned pick: none -", e.message));
     }
 
     // Riff over rap (riff-over-rap.js): when the pair fits (3-15 % tempo gap,
@@ -2198,6 +2238,12 @@ var autopilotCore = (function () {
   // 8/16-bar phrase of the current track (the Fred again.. "x" move: tease the
   // next record's voice over this beat, then bring the record itself in).
   // Restraint: at most one layer per track; skipped unless key and tempo fit.
+  // Moves learned from studied sets: on unless the (optional) toggle is off.
+  function learnedOn() {
+    const t = document.getElementById("ap-learned-toggle");
+    return !t || t.checked;
+  }
+
   function riffOn() {
     if (window.djSession && window.djSession.relaxed) return false;
     const t = document.getElementById("ap-riff-toggle");

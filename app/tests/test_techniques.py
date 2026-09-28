@@ -108,3 +108,20 @@ def test_only_the_opening_hook_is_skipped_not_later_rhymes():
         rep[i] = True          # a rhyme pattern later in the verse
     db = [i * 1.7 for i in range(41)]
     assert tq.skip_repetitive_intro(rep, db, [0, 13.6, 27.2, 40.8], 0.0) == 27.2   # after bar 14, not after 20
+
+
+def test_learned_pick_maps_live_moves_to_console_recipes():
+    store = {
+        "bass_swap": {"kind": "bass_swap", "what": "x", "stems": False, "live": True, "count": 2, "tempo_gap_max": 0.05,
+                      "key_score_min": 0.8, "observations": [{"set_id": "s", "at": 60, "track_a": "A", "track_b": "B", "detail": {}}] * 2},
+        "stem_intro": {"kind": "stem_intro", "what": "x", "stems": True, "live": True, "count": 5, "tempo_gap_max": 0.05,
+                       "key_score_min": 0.8, "observations": [{"set_id": "s", "at": 90, "track_a": "C", "track_b": "D", "detail": {}}] * 5},
+        "vocal_chop": {"kind": "vocal_chop", "what": "x", "stems": True, "live": False, "count": 9,
+                       "observations": [{"set_id": "s", "at": 9, "track_a": "E", "detail": {}}] * 9},
+    }
+    f = tq.PairFeatures(124, 126, "8A", "9A", stems_a=True, stems_b=True)
+    p = tq.learned_pick(tq.rank(f, learned=store), store)
+    assert p["kind"] == "stem_intro" and p["recipe"] == "Long Blend" and p["seen"] == 5   # most seen, playable
+    no_stems = tq.learned_pick(tq.rank(tq.PairFeatures(124, 126, "8A", "9A"), learned=store), store)
+    assert no_stems["kind"] == "bass_swap"                                                 # stem_intro needs stems
+    assert tq.learned_pick(tq.rank(tq.PairFeatures(124, 174, "8A", "9A"), learned=store), store) is None  # out of range

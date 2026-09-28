@@ -93,3 +93,20 @@ assert.ok(Math.abs(phraseWaitS(11, 10, ph) - (ph - 1)) < 1e-9);
 assert.strictEqual(phraseWaitS(8, 10, ph), 2);
 
 console.log("autopilot core ok");
+
+// learned moves (/api/learned/pick) only switch to a recipe the console already allows
+{
+  const { learnedRecipe } = require("../ui/static/autopilot.js");
+  const pick = (recipe, kind = "stem_intro") => ({ recipe, kind, seen: 5, source: "gfF8jzBVWvM 1:01" });
+  const base = { blend: { clean: true }, oneSong: true, stemsBoth: true, vocalRule: false, mashupFits: false, recipe: "Bass Swap" };
+  assert.strictEqual(learnedRecipe(pick("Long Blend"), base).recipe, "Long Blend");
+  assert.match(learnedRecipe(pick("Long Blend"), base).why, /learned stem intro \(seen 5x/);
+  assert.strictEqual(learnedRecipe(pick("Long Blend"), { ...base, vocalRule: true }), null);            // a vocal rule stands
+  assert.strictEqual(learnedRecipe(pick("Long Blend"), { ...base, blend: { clean: false } }), null);     // B sings early
+  assert.strictEqual(learnedRecipe(pick("Mashup → Transition", "acapella_over"), base), null);           // mashup doesn't fit
+  assert.strictEqual(learnedRecipe(pick("Bass Swap", "bass_swap"), { ...base, recipe: "Long Blend" }).recipe, "Bass Swap");
+  for (const k of ["layer", "peak", "riff"]) assert.strictEqual(learnedRecipe(pick("Bass Swap", "bass_swap"), { ...base, recipe: "Long Blend", [k]: {} }), null);
+  assert.strictEqual(learnedRecipe(pick("Bass Swap", "bass_swap"), { ...base, recipe: "Mashup → Transition" }), null);  // mashup outranks
+  assert.strictEqual(learnedRecipe(null, base), null);
+  console.log("learned recipe ok");
+}

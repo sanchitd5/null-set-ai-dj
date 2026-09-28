@@ -335,3 +335,38 @@ def rank(f: PairFeatures, learned: Optional[Dict[str, dict]] = None) -> List[dic
     order = {t.name: i for i, t in enumerate(lib)}
     out = [t.assess(f) | {"live": t.live} for t in lib]
     return sorted(out, key=lambda x: (not x["fits"], order[x["name"]]))
+
+
+# ------------------------------------------------------- learned -> console
+# Learned kinds the live console can already perform, as the console recipe that
+# performs them. Everything else learned (vocal re-cuts, chops, loops) is studied,
+# not played: the console has no move for it yet.
+LEARNED_RECIPE = {
+    "learned:bass_swap": "Bass Swap",
+    "learned:stem_intro": "Long Blend",        # stem-moves eqIntro: B's intro stem under A, bass on the swap line
+    "learned:acapella_over": "Mashup → Transition",
+}
+
+
+def learned_pick(ranked: List[dict], store: Optional[Dict[str, dict]] = None) -> Optional[dict]:
+    """The learned move to play for this pair, or None: live, fits, has a console recipe;
+    among those, the one seen most often in studied sets."""
+    if store is None:
+        from app.music_brain.set_learner import load_learned
+        store = load_learned()
+    best = None
+    for r in ranked:
+        rec = LEARNED_RECIPE.get(r["name"])
+        if not (rec and r["fits"] and r.get("live")):
+            continue
+        kind = r["name"].split(":", 1)[1]
+        e = store.get(kind) or {}
+        if kind == "acapella_over":           # only B's voice over A's beat is the console's mashup
+            froms = {o.get("detail", {}).get("vocal_from") for o in e.get("observations") or []}
+            if "B" not in froms:
+                continue
+        seen = int(e.get("count") or 0)
+        if best is None or seen > best["seen"]:
+            best = {"kind": kind, "recipe": rec, "seen": seen, "source": r["source"], "reasons": r["reasons"],
+                    "rules": [x for x in r["reasons"] if "rule:" in x]}
+    return best
