@@ -74,7 +74,11 @@ def plan(lines: List[dict], bpm: float, boundaries: Sequence[float], energy_time
         pick = ai.get(_norm(h["text"]))
         for t in h["times"]:
             line = next(l for l in lines if l["t"] == t)
-            i = int(np.searchsorted(b, line["end"] - EARLY_DROP_BARS * bar))   # never mid-line
+            # never mid-line, and never at or before the line's own start (a line shorter
+            # than EARLY_DROP_BARS would otherwise drop before the voice is alone: hold <= 0)
+            i = int(np.searchsorted(b, line["end"] - EARLY_DROP_BARS * bar))
+            while i < len(b) and b[i] <= line["t"]:
+                i += 1
             if i >= len(b):
                 continue
             drop_at = float(b[i])
@@ -124,13 +128,15 @@ def render(stems: Dict[str, str], item: dict, bpm: float, out_path, pre_s: float
             raise ValueError("stems at different sample rates")
         sr, data[n] = r, y
     n_all = min(len(y) for y in data.values())
+    cut, drop = float(item["cut_at"]), float(item["drop_at"])
+    if not (0.0 <= cut < drop < n_all / sr):
+        raise ValueError(f"cut_at {cut} / drop_at {drop} must satisfy 0 <= cut < drop < song length")
     t0 = max(0.0, item["cut_at"] - pre_s)
     t1 = min(n_all / sr, item["drop_at"] + post_s)
     a, b = int(t0 * sr), int(t1 * sr)
     t = np.arange(a, b) / sr
     bar = 4 * 60.0 / bpm if bpm > 0 else 2.0
     fade = FADE_BARS * bar
-    cut, drop = item["cut_at"], item["drop_at"]
     beat = np.clip((cut - t) / fade, 0, 1)                     # 1 -> 0 over the fade ending at cut
     beat = np.where(t >= drop, 1.0, beat)
     beat = np.where((t >= drop) & (t < drop + 0.005), (t - drop) / 0.005, beat)   # 5 ms: no click

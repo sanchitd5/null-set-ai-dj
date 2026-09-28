@@ -1,5 +1,6 @@
 """Synced lyrics, hook detection, LRC alignment, hook-drop planning, acapella-drop learning."""
 import numpy as np
+import pytest
 
 from app.music_brain import hook_drop, lyrics
 from app.music_brain import set_learner as sl
@@ -198,3 +199,13 @@ def test_render_pulls_the_beat_under_the_line_and_slams_it_back(tmp_path):
     assert r["cut_in_file"] == 8.0 and r["drop_in_file"] == 12.0
     assert np.allclose(y[:int(7 * sr)], o[:int(7 * sr)]) and np.allclose(y[int(12.1 * sr):], o[int(12.1 * sr):])
     assert d(y, 8.5, 11.5) < 0.7 * d(o, 8.5, 11.5)                         # beat out during the hold
+    for bad in ({"cut_at": 24.0, "drop_at": 20.0}, {"cut_at": 20.0, "drop_at": 99.0}):
+        with pytest.raises(ValueError):
+            hook_drop.render(stems, bad, 120.0, tmp_path / "bad.wav")
+
+
+def test_a_short_hook_never_drops_before_the_voice_is_alone():
+    # a 0.6 s shout; a phrase line 0.2 s before it starts is within EARLY_DROP_BARS of its end
+    lines = [{"t": 10.0, "end": 10.6, "text": "hey"}, {"t": 20.0, "end": 20.6, "text": "hey"}]
+    p = hook_drop.plan(lines, 120.0, [0, 9.8, 12.0, 19.8, 22.0])
+    assert p and all(x["drop_at"] > x["line_t"] and x["hold_s"] > 0 for x in p)
