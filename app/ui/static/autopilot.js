@@ -1629,6 +1629,30 @@ var autopilotCore = (function () {
         return false;
       }
     }
+    // Plan-before-pick (user): only accept a candidate whose transition is
+    // already smooth. Same pure gate scheduleTransition uses (tempoRule.planFit),
+    // so pick time and play time can't disagree. Skip while a forced tempo jump
+    // is the explicit fallback (allowTempoJump): that path exists to accept the
+    // hard Echo Out on purpose when nothing beat-matchable is left.
+    {
+      const odF = window.decks && window.decks[activeDeck], sdF = window.decks && window.decks[stagingDeck()];
+      if (odF && sdF && odF.bpm > 0) {
+        if (odF.stems && !odF.stemsReady && odF.rearmStems) odF.rearmStems("plan-fit check");
+        const aStemsWhyF = stemsWhy(odF), stemsBothF = !aStemsWhyF && !!sdF.stems;
+        const fit = window.tempoRule.planFit({
+          aEff: odF.bpm * odF._playbackRate(), bBpm: sdF.bpm, stemsBoth: stemsBothF,
+          tempoStemsBpm: sdF.tempoStems && sdF.tempoStems.bpm,
+        });
+        candidate.plannedFit = fit; // scheduleTransition re-derives with the same fn + live state
+        if (!fit.smooth && !allowTempoJump) {
+          console.warn("Autopilot plan-fit reject:", nextName, fit.why);
+          window.aiStep && window.aiStep("candidate_reject", { track_id: nextId, phase: "selection", decision: "plan-fit reject", why: fit.why });
+          apStatus(`Not after this song: ${nextName} (${fit.why}) — kept for later`);
+          cand.keep = true;
+          return false;
+        }
+      }
+    }
     matchGain(activeDeck, stagingDeck(), candidate.vibe && candidate.vibe.gain_match_db);
     const plan = await aiPlan;
     if (!active || currentTrackId !== currentId) return false;
@@ -2106,8 +2130,14 @@ var autopilotCore = (function () {
     // key-locked stems rendered for exactly this tempo). leavemealone 174 ->
     // Sexy Magic 125 was a Long Blend because this used to be "gapS <= 0.25"
     // (tempo stems assumed, never checked), so B then played unlocked.
-    const lockS = window.tempoRule.beatRecipe({ aEff: aEffS, bBpm: sdS && sdS.bpm, stemsBoth,
+    // Re-derive with the SAME pure fn pick time used (tempoRule.planFit), only
+    // re-validating live state (stems readiness, current pitch) as inputs; the
+    // pick-time verdict is candidate.plannedFit, kept here only for a sanity log.
+    const lockS = window.tempoRule.planFit({ aEff: aEffS, bBpm: sdS && sdS.bpm, stemsBoth,
       tempoStemsBpm: sdS && sdS.tempoStems && sdS.tempoStems.bpm });
+    if (candidate.plannedFit && candidate.plannedFit.smooth !== lockS.smooth) {
+      console.info("transition plan-fit:", `live state changed since pick (${candidate.plannedFit.why} -> ${lockS.why})`);
+    }
     const oneSong = lockS.oneSong;
     if (!lockS.beat) {
       if (blend || layer) console.info("transition tempo:", `beatless, ${lockS.lock.why}`);

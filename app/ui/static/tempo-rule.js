@@ -80,6 +80,23 @@
       fallback: lock.ok ? null : (o.stemsBoth ? "Stem Bridge" : "Echo Out") };
   }
 
+  // The pick-time / play-time shared gate: is a transition to B actually
+  // smooth right now, or would it fall back to a hard/abrupt Echo Out?
+  // Smooth = beat-matched lock (in range, or key-locked stems), or a proper
+  // beatless bridge (Stem Bridge, stems on both decks). Same pure fn used
+  // by evaluateCandidate (pick time) and scheduleTransition (play time) so
+  // the two can never disagree: same inputs, same verdict.
+  // o: { aEff, bBpm, stemsBoth, tempoStemsBpm }
+  function planFit(o) {
+    const lock = beatRecipe(o);
+    const smooth = lock.beat || lock.fallback === "Stem Bridge";
+    const plan = lock.beat ? (lock.oneSong ? "beat-matched (stems)" : "beat-matched") : lock.fallback;
+    const why = lock.beat ? lock.lock.why
+      : lock.fallback === "Stem Bridge" ? "tempo gap, stems on both decks: beatless Stem Bridge"
+      : `tempo gap (${lock.lock.why}), no stems on both decks: only a hard Echo Out`;
+    return Object.assign({ smooth, plan, why }, lock);
+  }
+
   // A tempo lock that could still become a beat-to-beat blend once B's
   // key-locked stems render (the gap the stem render is worth waiting for).
   function stemLockable(aEff, bBpm) {
@@ -123,7 +140,7 @@
 
   const core = { MAX_TEMPO_PCT_PER_BAR, PITCH_RANGE_PCT, KEYLOCK_RANGE_PCT, AUDIBLE_MIN, STILL_PCT,
     MIN_LEVEL_RAMP_BEATS, MIN_STEM_RAMP_BARS,
-    isAudible, glideBars, glideSeconds, tempoMove, lockRate, beatLock, beatRecipe, stemLockable, clampPitch, minRampSeconds, shouldWaitForTempoStems };
+    isAudible, glideBars, glideSeconds, tempoMove, lockRate, beatLock, beatRecipe, planFit, stemLockable, clampPitch, minRampSeconds, shouldWaitForTempoStems };
   root.tempoRule = core;
   if (typeof module !== "undefined" && module.exports) module.exports = core;
 })(typeof window !== "undefined" ? window : globalThis);

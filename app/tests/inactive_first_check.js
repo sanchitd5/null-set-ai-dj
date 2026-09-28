@@ -21,7 +21,7 @@ const ALLOW = {
     1528, // pitch fader input handler -- the user's own control
   ],
   "autopilot.js": [
-    1792, // setDeckPitch's defensive fallback when d.aiSetPitch doesn't exist (never true in practice)
+    1816, // setDeckPitch's defensive fallback when d.aiSetPitch doesn't exist (never true in practice)
   ],
 };
 
