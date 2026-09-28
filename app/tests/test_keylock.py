@@ -115,6 +115,13 @@ def test_mascot_js():
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_vibe_ui_js():
+    res = subprocess.run([shutil.which("node"), str(Path(__file__).with_name("vibe_ui_check.js"))],
+                         capture_output=True, text=True, timeout=30)
+    assert res.returncode == 0, res.stderr or res.stdout
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
 def test_remix_mode_js():
     res = subprocess.run([shutil.which("node"), str(Path(__file__).with_name("remix_mode_check.js"))],
                          capture_output=True, text=True, timeout=30)
