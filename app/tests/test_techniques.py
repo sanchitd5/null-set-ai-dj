@@ -34,7 +34,9 @@ def test_stem_map_finds_the_groove_and_the_breakdown():
 
 
 def test_usb002_pair_fits_riff_over_rap_with_keylock():
-    r = _by("riff_over_rap", tq.rank(_usb002()))
+    # the original 13.9 % gap is past the 8 % key-lock cap now; a 5.8 % one still fits
+    assert not _by("riff_over_rap", tq.rank(_usb002()))["fits"]
+    r = _by("riff_over_rap", tq.rank(_usb002(bpm_b=130.0)))
     assert r["fits"], r["reasons"]
     assert any("rap" in x for x in r["reasons"])                     # the key clash is excused, and says why
 
@@ -136,3 +138,19 @@ def test_learned_move_fits_pairs_like_the_ones_it_was_seen_on():
     assert fit(tq.PairFeatures(124, 124, "8A", "8A"))                  # like sighting 1
     assert not fit(tq.PairFeatures(124, 140, "8A", "8A"))              # 13 %: like neither (a range would say yes)
     assert fit(tq.PairFeatures(87, 174, "8A", "8A"))                   # half time folds to 0 %
+
+
+def test_learned_pick_skips_tonal_blends_on_clashing_keys():
+    # stem_intro was "seen" on clashing pairs (key_score 0.0) in studied sets: must not license one here
+    obs = [{"set_id": "s", "at": 1, "track_a": "A", "track_b": "B", "tempo_gap": 0.02, "key_score": 0.0, "detail": {}}] * 4
+    store = {k: {"kind": k, "what": "x", "stems": False, "live": True, "count": 4, "tempo_gap_max": 0.05,
+                 "key_score_min": 0.0, "observations": obs} for k in ("stem_intro", "bass_swap")}
+    f = tq.PairFeatures(124, 130, "6A", "1A", stems_a=True, stems_b=True)
+    ranked = tq.rank(f, learned=store)
+    assert tq.learned_pick(ranked, store) is not None                   # no key info: legacy behaviour
+    assert tq.learned_pick(ranked, store, key_score=tq.camelot_score("6A", "1A")) is None
+    assert tq.learned_pick(ranked, store, key_score=0.9) is not None
+
+
+def test_keylock_stretch_capped_at_8_percent():
+    assert tq.MAX_KEYLOCK_STRETCH == 0.08

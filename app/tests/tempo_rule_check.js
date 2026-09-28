@@ -28,13 +28,17 @@ assert.strictEqual(b.beat, true); assert.ok(!b.lock.keyLocked);
 // 87 -> 174: half-time counts as a lock
 b = R.beatRecipe({ aEff: 87, bBpm: 174, stemsBoth: true });
 assert.strictEqual(b.beat, true); assert.ok(Math.abs(b.lock.pct) < 0.01);
-// 12 % gap: only with key-locked stems rendered for that tempo
+// key-lock stretch capped at 8 %: 12 % never locks, even with stems rendered for the tempo
 assert.strictEqual(R.beatLock({ aEff: 112, bBpm: 100 }).ok, false);
-assert.strictEqual(R.beatLock({ aEff: 112, bBpm: 100, tempoStemsBpm: 112 }).ok, true);
+assert.strictEqual(R.beatLock({ aEff: 112, bBpm: 100, tempoStemsBpm: 112 }).ok, false);
+assert.strictEqual(R.beatLock({ aEff: 117, bBpm: 102, tempoStemsBpm: 117 }).ok, false);   // 14.7 %
+// 7 % is inside the pitch range; 9 % is past both ranges
+assert.strictEqual(R.beatLock({ aEff: 107, bBpm: 100 }).ok, true);
+assert.strictEqual(R.beatLock({ aEff: 109, bBpm: 100, tempoStemsBpm: 109 }).ok, false);
 
 // Pitch-range clamp: -18 % never reaches a deck
 assert.strictEqual(R.clampPitch(-18, false), -8);
-assert.strictEqual(R.clampPitch(-18, true), -16);
+assert.strictEqual(R.clampPitch(-18, true), -8);
 
 // Minimum ramps; a drop on its downbeat and a silent deck are exempt
 assert.ok(R.minRampSeconds("level", 2, { deck: { playing: true } }) >= 0.49);

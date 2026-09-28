@@ -149,7 +149,7 @@ def _parse_camelot(camelot: str) -> Tuple[int, str]:
 # Confidence below this on either key softens a clash (KeyEstimate.confidence).
 KEY_CONFIDENCE_MIN = 0.6
 UNCERTAIN_CLASH_SCORE = 0.5
-BYPASS_KEY_SCORE = 0.7  # key-agnostic recipes on a clashing pair: neutral, not a clash
+BYPASS_KEY_SCORE = 0.4  # key-agnostic recipes on a clashing pair: a penalty, never neutral (0.7 scored clashes 83-91)
 
 
 def is_key_clash(camelot_a: str, camelot_b: str) -> bool:

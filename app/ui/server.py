@@ -1207,7 +1207,7 @@ def get_learned_pick(a: str, b: str, keylock: bool = False):
     from app.music_brain import techniques as tq
 
     f = _pair_features_cached(a, b, keylock)
-    pick = tq.learned_pick(tq.rank(f))
+    pick = tq.learned_pick(tq.rank(f), key_score=tq.camelot_score(f.key_a, f.key_b))
     _song_step("learned_pick", b, phase="planning", decision=(pick or {}).get("recipe") or "none",
                why="; ".join(map(str, (pick or {}).get("reasons") or []))[:300] or None,
                inputs={"a_id": a, "keylock": keylock})

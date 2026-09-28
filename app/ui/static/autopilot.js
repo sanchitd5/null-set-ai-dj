@@ -120,6 +120,14 @@ var autopilotCore = (function () {
     if (v < 8) return { recipe: "Bass Swap", short: true, why: `4-bar swap: B sings in ${Math.round(v)} bars` };
     return { recipe: "Bass Swap", short: false, why: `8-bar swap: B sings in ${Math.round(v)} bars` };
   }
+  // Clashing keys (Camelot < 0.8, CLAUDE.md s4): a tonal blend layers two harmonic
+  // records for 16-32 bars. Only Echo Out / Breakdown / Stem Bridge route around it;
+  // a Long Blend or Bass Swap becomes an Echo Out. keyScore null (unknown key): unchanged.
+  const KEY_SAFE_MIN = 0.8;
+  function keySafeRecipe(recipe, keyScore) {
+    if (keyScore == null || keyScore >= KEY_SAFE_MIN) return recipe;
+    return /long blend|bass swap|drop swap/i.test(String(recipe || "")) ? "Echo Out" : recipe;
+  }
   // A move learned from studied sets (/api/learned/pick) replaces the recipe only
   // when the console already allows that recipe for this pair (o: the same facts
   // scheduleTransition decides on), and never a move that outranks it (LAYER,
@@ -127,11 +135,12 @@ var autopilotCore = (function () {
   // -> {recipe, why} | null
   function learnedRecipe(pick, o) {
     if (!pick || !pick.recipe || o.layer || o.peak || o.riff || o.recipe === "Mashup → Transition" || o.recipe === "Stem Merge") return null;
+    const keyOk = o.keyScore == null || o.keyScore >= KEY_SAFE_MIN;   // clashing keys: no tonal learned blend
     const allowed = {
       // any beat-to-beat pair can swap the bass on a line
-      "Bass Swap": !!(o.blend || o.oneSong),
+      "Bass Swap": !!(keyOk && (o.blend || o.oneSong)),
       // the long stem intro keeps both records up: only when no vocal rule shortened it
-      "Long Blend": !!(o.oneSong && !o.vocalRule && (!o.blend || o.blend.clean)),
+      "Long Blend": !!(keyOk && o.oneSong && !o.vocalRule && (!o.blend || o.blend.clean)),
       "Mashup → Transition": !!(o.stemsBoth && o.mashupFits),
     };
     if (!allowed[pick.recipe] || pick.recipe === o.recipe) return null;
@@ -227,7 +236,7 @@ var autopilotCore = (function () {
     }
     return d || null;
   }
-  const api = { awaitJob, energyStepOk, highSpans, quantileLinear, median, exitPastHigh, learnedRecipe, vocalRecipe, stemBlendBars, stemBlendFader, phraseWaitS, introBars, FADER_PARK_BARS, homePlan, maskedGlideBars, maskedDropAt, HOME_DROP_PCT, LADDER_STEP_PCT };
+  const api = { awaitJob, keySafeRecipe, KEY_SAFE_MIN, energyStepOk, highSpans, quantileLinear, median, exitPastHigh, learnedRecipe, vocalRecipe, stemBlendBars, stemBlendFader, phraseWaitS, introBars, FADER_PARK_BARS, homePlan, maskedGlideBars, maskedDropAt, HOME_DROP_PCT, LADDER_STEP_PCT };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   return api;
 })();
@@ -1240,7 +1249,7 @@ var autopilotCore = (function () {
   // then plays on key-locked tempo stems (multi-BPM stem sets), no pitch shift.
   function stemsOn() { const d = window.decks && window.decks[activeDeck]; return !!(d && d.stems); }
   // key-locked stems range, shared with tempo-rule.js (+-16 %: 174 -> 125 is 28 %, never locks)
-  function keyLockLim() { return ((window.tempoRule && window.tempoRule.KEYLOCK_RANGE_PCT) || 16) / 100; }
+  function keyLockLim() { return ((window.tempoRule && window.tempoRule.KEYLOCK_RANGE_PCT) || 8) / 100; }
   function lockLimit() { return stemsOn() ? keyLockLim() : 0.08; }
   function tempoLockableAt(cand, lim) {
     const d = window.decks && window.decks[activeDeck];
@@ -2107,7 +2116,7 @@ var autopilotCore = (function () {
         const aEff0 = oa0.bpm * oa0._playbackRate();
         const m0 = [1, 2, 0.5].reduce((b, m) => (Math.abs(aEff0 / (sd0.bpm * m) - 1) < Math.abs(aEff0 / (sd0.bpm * b) - 1) ? m : b));
         const gap0 = Math.abs(aEff0 / (sd0.bpm * m0) - 1);
-        if (gap0 > 0.02 && gap0 <= 0.15) {
+        if (gap0 > 0.02 && gap0 <= keyLockLim()) {
           sd0.useTempoStems(aEff0 / m0).then((ok) => ok && window.dispatchEvent(new CustomEvent("ai-activity", { detail: {
             kind: "stem-move", deck: stagingDeck(), label: `TEMPO STEMS · ${(aEff0 / m0).toFixed(1)} BPM`,
             why: `${nextName}: stems key-locked ${(gap0 * 100).toFixed(1)} % to this tempo, no pitch shift` } })));
@@ -2183,6 +2192,22 @@ var autopilotCore = (function () {
       // Echo the outgoing song away while the new one enters on its phrase
       // ([[Echo Out]]). Rare now: every library song is pre-separated.
       recipe = "Echo Out";
+    }
+    // Clashing keys never get a tonal blend: Echo Out (CLAUDE.md s4). The matcher
+    // ranked key-safe recipes for these pairs; the rewrites above turned them into
+    // Long Blend / Bass Swap without reading the key.
+    const keyScoreS = (() => {
+      const cs = window.djMind && window.djMind.core && window.djMind.core.camelotScore;
+      const ka = odS && odS.analysis && odS.analysis.key && odS.analysis.key.camelot;
+      const kb = sdS && sdS.analysis && sdS.analysis.key && sdS.analysis.key.camelot;
+      return cs && ka && kb ? cs(ka, kb) : null;
+    })();
+    if (!layer) {
+      const safe = keySafeRecipe(recipe, keyScoreS);
+      if (safe !== recipe) {
+        console.info("transition recipe:", `${recipe} -> ${safe} (keys clash, camelot ${keyScoreS})`);
+        recipe = safe; blend = null; vocalShort = false;
+      }
     }
     // Never a hard cut (user): a cut the matcher or the AI plan proposed is a Bass Swap.
     if (/\bcut\b/i.test(String(recipe || ""))) {
@@ -2295,7 +2320,7 @@ var autopilotCore = (function () {
     // made most on pairs like this one, when the console already allows it here.
     let learned = null;
     if (!layer && !peakT && learnedOn()) {
-      const facts = { layer, peak: peakT, blend, oneSong, stemsBoth, vocalRule, recipe,
+      const facts = { layer, peak: peakT, blend, oneSong, stemsBoth, vocalRule, recipe, keyScore: keyScoreS,
                       mashupFits: !!(stemsBoth && odS && sdS && mashupFits(odS, sdS)) };
       fetch(`/api/learned/pick?a=${encodeURIComponent(currentId)}&b=${encodeURIComponent(nextId)}&keylock=${!!(sdS && sdS.useTempoStems)}`)
         .then((res) => (res.ok ? res.json() : null))

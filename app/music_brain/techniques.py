@@ -42,7 +42,7 @@ SILENT_DB = -45.0          # a stem this quiet over a phrase is "out"
 # / 12.5 c, Apocalypse 0.380 / 13.9, Teardrop 0.184 / 22.2. Preliminary: 5 songs.
 RAP_MAX_HOLD_S = 0.10
 RAP_MIN_OFFNOTE_C = 20.0
-MAX_KEYLOCK_STRETCH = 0.15  # USB002 pushed a riff +13.9 % key-locked
+MAX_KEYLOCK_STRETCH = 0.08  # key-locked stretch smears past ~8 % (CLAUDE.md s4: big gaps go via Echo Out)
 MAX_RATE_STRETCH = 0.06    # without key-lock (pitch moves): the recipe engine's limit
 
 
@@ -235,7 +235,7 @@ def _riff_over_rap(f: PairFeatures) -> List[Check]:
     rap = bool(f.b_rap) and f.vocal_b_entry >= 0.3
     return [
         (f.stems_a and f.stems_b, "stems on both songs" if f.stems_a and f.stems_b else "needs 4 stems on both songs"),
-        (0.03 <= gap <= MAX_KEYLOCK_STRETCH, f"tempo gap {gap:.1%} (3-15 %: stretch A onto B's tempo)"),
+        (0.03 <= gap <= MAX_KEYLOCK_STRETCH, f"tempo gap {gap:.1%} (3-8 %: stretch A onto B's tempo)"),
         (f.keylock or gap <= MAX_RATE_STRETCH,
          "key-locked stretch available" if f.keylock else f"no key-lock: {gap:.1%} would detune A's riff by {12 * np.log2(1 + gap):.1f} st"),
         (bool(f.a_grooves), "A has a loopable full groove" if f.a_grooves else "A has no drums+bass+riff stretch to loop"),
@@ -380,9 +380,16 @@ LEARNED_RECIPE = {
 }
 
 
-def learned_pick(ranked: List[dict], store: Optional[Dict[str, dict]] = None) -> Optional[dict]:
+LEARNED_MIN_KEY = 0.8   # CLAUDE.md s4: below this the keys clash, only Echo Out / Breakdown are safe
+_KEY_SENSITIVE = {"learned:bass_swap", "learned:stem_intro"}   # both layer tonal stems / full mixes
+
+
+def learned_pick(ranked: List[dict], store: Optional[Dict[str, dict]] = None,
+                 key_score: Optional[float] = None) -> Optional[dict]:
     """The learned move to play for this pair, or None: live, fits, has a console recipe;
-    among those, the one seen most often in studied sets."""
+    among those, the one seen most often in studied sets. key_score (Camelot, 0-1) of
+    the pair: below LEARNED_MIN_KEY the tonal blends (bass swap, stem intro) are skipped,
+    whatever clashing pairs they were once seen on (7 of 11 stem_intro sightings clash)."""
     if store is None:
         from app.music_brain.set_learner import load_learned
         store = load_learned()
@@ -390,6 +397,8 @@ def learned_pick(ranked: List[dict], store: Optional[Dict[str, dict]] = None) ->
     for r in ranked:
         rec = LEARNED_RECIPE.get(r["name"])
         if not (rec and r["fits"] and r.get("live")):
+            continue
+        if key_score is not None and key_score < LEARNED_MIN_KEY and r["name"] in _KEY_SENSITIVE:
             continue
         kind = r["name"].split(":", 1)[1]
         e = store.get(kind) or {}
