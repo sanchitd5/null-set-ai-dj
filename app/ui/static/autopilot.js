@@ -2377,6 +2377,8 @@ var autopilotCore = (function () {
             beatMutedByLayer = true;
           }
           totalMs = executeLayer(outgoing, incoming, layer, t0) + XF_LOOKAHEAD_MS;
+          // NULL-BOT supermove (mascot.js): the LAYER starts on B's first downbeat
+          window.dispatchEvent(new CustomEvent("ai-supermove", { detail: { at: t0, name: "LAYER", deck: incoming } }));
           if (window.djMind && window.djMind.layering) {
             window.djMind.layering(totalMs / 1000, { source: layer.source,
               why: `${layer.why} - ${layer.hold_bars} bars together, bass to B on the line, A unwinds ${layer.unwind_bars} bars` });
