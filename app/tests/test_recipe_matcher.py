@@ -14,6 +14,8 @@ from app.music_brain.recipe_matcher import (
     vocal_overlap_penalty,
 )
 
+ALL_RECIPES = len(KnowledgeParser())   # top_n that returns every recipe
+
 
 def _track(
     bpm=128.0,
@@ -156,14 +158,14 @@ def test_compatible_pair_favors_bass_swap_style_recipe(matcher: RecipeMatcher):
     # Same key, near-identical BPM, no vocal clash: a blend-family recipe
     # should out-score a big-gap bridge recipe like Echo Out.
     a, b = _track(bpm=128.0, camelot="8B"), _track(bpm=129.0, camelot="8B")
-    results = {c.recipe.name: c for c in matcher.match(a, b, top_n=28)}
+    results = {c.recipe.name: c for c in matcher.match(a, b, top_n=ALL_RECIPES)}
     assert results["Bass Swap"].score > results["Echo Out"].score
 
 
 def test_clashing_key_and_huge_bpm_gap_favors_echo_out(matcher: RecipeMatcher):
     a = _track(bpm=128.0, camelot="8B")
     b = _track(bpm=174.0, camelot="2B")  # clashing key + huge BPM gap
-    results = {c.recipe.name: c for c in matcher.match(a, b, top_n=28)}
+    results = {c.recipe.name: c for c in matcher.match(a, b, top_n=ALL_RECIPES)}
     assert results["Echo Out"].score > results["Bass Swap"].score
 
 
@@ -171,7 +173,7 @@ def test_vocal_collision_is_penalized_unless_recipe_uses_stems(matcher: RecipeMa
     # Vocals everywhere: per-recipe point search can't route around the clash.
     a = _track(bpm=128.0, camelot="8B", vocal_regions=[(0.0, 240.0)])
     b = _track(bpm=129.0, camelot="8B", vocal_regions=[(0.0, 240.0)])
-    results = {c.recipe.name: c for c in matcher.match(a, b, top_n=28)}
+    results = {c.recipe.name: c for c in matcher.match(a, b, top_n=ALL_RECIPES)}
     assert results["Bass Swap"].vocal_penalty > 0.5  # Bass Swap doesn't use stems
     assert results["Stems Transition"].vocal_penalty < results["Bass Swap"].vocal_penalty
 
@@ -231,14 +233,14 @@ def test_resolve_candidate_no_args_uses_ai_top_match(matcher: RecipeMatcher):
 def test_resolve_candidate_recipe_only_uses_ai_points_for_that_recipe(matcher: RecipeMatcher):
     a, b = _track(bpm=128.0, camelot="8B"), _track(bpm=129.0, camelot="8B")
     resolved = matcher.resolve_candidate(a, b, recipe_name="Echo Out")
-    all_matches = {c.recipe.name: c for c in matcher.match(a, b, top_n=28)}
+    all_matches = {c.recipe.name: c for c in matcher.match(a, b, top_n=ALL_RECIPES)}
     assert resolved.a_time == all_matches["Echo Out"].a_time
     assert resolved.b_time == all_matches["Echo Out"].b_time
 
 
 def test_resolve_candidate_manual_time_overrides_even_when_recipe_already_matched(matcher: RecipeMatcher):
     """The exact bug this fixes: picking a recipe that the AI already
-    scored (true for virtually every recipe, since match() covers all 28)
+    scored (true for virtually every recipe, since match() covers all of them)
     must NOT silently discard a user-supplied manual time."""
     a = _track(bpm=128.0, camelot="8B", phrase_boundaries=[0.0, 15.0, 30.0, 45.0, 100.0, 215.0])
     b = _track(bpm=129.0, camelot="8B", phrase_boundaries=[0.0, 15.0, 30.0])

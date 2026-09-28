@@ -1,6 +1,5 @@
-from fastapi.testclient import TestClient
-
 from app.music_brain.set_log import SCHEMA
+from app.tests.testclient_compat import TestClient
 from app.ui import server
 
 

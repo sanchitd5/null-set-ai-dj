@@ -1,5 +1,9 @@
 """Unit tests for music_brain.knowledge_parser (Phase 1 acceptance criteria:
-all 28 transition recipes parse correctly with their tags and principles)."""
+every transition recipe parses correctly with its tags and principles).
+
+The cookbook started with 28 recipes; "Vocal Punchline Drop Snap" is the 29th, a
+full 17-part recipe (the order and section checks below cover it), so the count
+is 29. Other tests take the count from the parser rather than repeating it."""
 
 import re
 
@@ -13,7 +17,7 @@ from app.music_brain.knowledge_parser import (
     parse_recipe_file,
 )
 
-EXPECTED_RECIPE_COUNT = 28
+EXPECTED_RECIPE_COUNT = 29
 
 
 @pytest.fixture(scope="module")
@@ -21,16 +25,23 @@ def parser() -> KnowledgeParser:
     return KnowledgeParser()
 
 
-def test_cookbook_directory_has_28_recipe_files():
+def test_cookbook_directory_has_29_recipe_files():
     md_files = list(TRANSITION_COOKBOOK_DIR.glob("*.md"))
     assert len(md_files) == EXPECTED_RECIPE_COUNT
 
 
-def test_parser_loads_all_28_recipes(parser: KnowledgeParser):
+def test_parser_loads_all_29_recipes(parser: KnowledgeParser):
     assert len(parser) == EXPECTED_RECIPE_COUNT
     recipes = parser.get_all()
     assert len(recipes) == EXPECTED_RECIPE_COUNT
     assert all(isinstance(r, TransitionRecipe) for r in recipes)
+
+
+def test_vocal_punchline_drop_snap_is_a_full_recipe(parser: KnowledgeParser):
+    r = parser.get("Vocal Punchline Drop Snap")
+    assert r is not None and r.difficulty == "Intermediate"
+    assert "dj/transition" in r.tags and len(r.steps) == 5
+    assert "Drop Swap" in r.related
 
 
 def test_every_recipe_has_required_sections_populated(parser: KnowledgeParser):
