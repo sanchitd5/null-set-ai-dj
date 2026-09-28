@@ -108,8 +108,8 @@ var autopilotCore = (function () {
   // voices must never sing together), or null (no constraint). Stems on
   // either deck solve it on the stems: B enters with its voice held (B's
   // stems) or A's voice leaves on the line (A's stems), so the blend keeps a
-  // full 8-bar bass swap. Quick Cut only when NEITHER deck has stems and
-  // there's no room for a swap.
+  // full 8-bar bass swap. Neither deck has stems: a shorter EQ bass swap that
+  // ends before B's vocal (never a cut).
   function vocalRecipe(o) {
     const v = o.vIn;
     if (o.oneSong || v == null || !(v < 16)) return null;
@@ -298,7 +298,8 @@ var autopilotCore = (function () {
   //    below is expressed in BARS and lands on the grid: the recipe matcher
   //    already snaps `a_time` / `b_time` to a real 8-bar boundary, so t0 of the
   //    transition IS a phrase boundary. 1 bar = 4 beats = 240000 / bpm ms.
-  //    Standard blend = 16 bars, drop-based recipes = 8 bars, hard cut = 0.
+  //    Standard blend = 16 bars, drop-based recipes = 8 bars. No hard cuts:
+  //    a cut recipe runs as a Bass Swap (recipeKind).
   //
   // 2. FREQUENCY OWNERSHIP. Two kick drums / two sub-basses never play at once
   //    (sub-bass < 120 Hz stacks into mud and phase cancellation). The low EQ
@@ -599,8 +600,8 @@ var autopilotCore = (function () {
     if (r.includes("echo")) return "echo";
     if (r.includes("filter")) return "filter";
     // no hard cuts (user: "hard cuts are a big no"): a cut recipe that slips through
-    // still runs as a bass swap on the audio clock
-    if (r.includes("hard cut") || r.includes("quick cut") || r.includes("cut")) return "bass";
+    // (Hard Cut, Quick Cut) still runs as a bass swap on the audio clock
+    if (r.includes("cut")) return "bass";
     if (r.includes("loop")) return "loop";
     if (r.includes("blend")) return "blend";
     return "default";
@@ -649,7 +650,7 @@ var autopilotCore = (function () {
     {
       const smM = window.stemMoves, odM = window.decks && window.decks[out], idM = window.decks && window.decks[inn];
       const mp = idM && idM._mergePlan;
-      if (recipe === "Stem Merge" && smM && smM.mergeTransition && mp && odM && kind !== "cut") {
+      if (recipe === "Stem Merge" && smM && smM.mergeTransition && mp && odM) {
         ["low", "mid", "high"].forEach((b) => { setRange(eqEl(out, b), 0); setRange(eqEl(inn, b), 0); });
         const secs = smM.mergeTransition(out, inn, xT0, mp.entry, mp.M, mp.pick);
         if (secs > 0) {
@@ -668,7 +669,7 @@ var autopilotCore = (function () {
     {
       const sm1 = window.stemMoves, od1 = window.decks && window.decks[out], id1 = window.decks && window.decks[inn];
       const mt = sm1 && od1 && id1 ? mashupFits(od1, id1) : null;
-      if (mt && kind !== "cut" && kind !== "double") {
+      if (mt && kind !== "double") {
         ["low", "mid", "high"].forEach((b) => { setRange(eqEl(out, b), 0); setRange(eqEl(inn, b), 0); });
         const secs = sm1.mashupTransition(out, inn, xT0, mt.entry, mt.M, MASHUP_VOX, mt.why);
         if (secs > 0) {
@@ -792,13 +793,6 @@ var autopilotCore = (function () {
         total = 8;
         break;
 
-      case "cut": // instant snap on the phrase boundary
-        setAt(lowOut, LOW_KILL);
-        setAt(lowIn, 0);
-        setAt(xfEl, toXf);
-        total = 1;
-        break;
-
       case "loop": // 2-bar loop roll on A holds the exit point steady
         setLoopLength(out, 8);
         setLoop(out, true);
@@ -837,7 +831,7 @@ var autopilotCore = (function () {
         break;
     }
     if (!stemHandoff(kind, out, inn, (total * bar) / 1000, (swapBar * bar) / 1000) &&
-        window.stemMoves && window.stemMoves.eqIntro && kind !== "cut" && kind !== "double") {
+        window.stemMoves && window.stemMoves.eqIntro && kind !== "double") {
       window.stemMoves.eqIntro(out, inn, xT0, (total * bar) / 1000, (swapBar * bar) / 1000);
     }
     return total * bar;
@@ -847,7 +841,7 @@ var autopilotCore = (function () {
   // incoming stems): B enters as its instrumental, A's vocal rides B's beat on
   // the vocal bus, B's own vocal returns as A's fades (stem-moves.js).
   function stemHandoff(kind, out, inn, totalS, swapS = 0) {
-    if (!window.stemMoves || kind === "cut" || kind === "double" || totalS < 4) return false;
+    if (!window.stemMoves || kind === "double" || totalS < 4) return false;
     const od = window.decks && window.decks[out], id = window.decks && window.decks[inn];
     if (!od || !id) return false;
     const ka = od.analysis && od.analysis.key && od.analysis.key.camelot;
@@ -1129,7 +1123,8 @@ var autopilotCore = (function () {
     const res = await fetch("/api/match", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ track_a_id: aId, track_b_id: bId, top_n: 1 }),
+      // no_cuts: the matcher never hands the autopilot a Hard Cut / Quick Cut (user rule)
+      body: JSON.stringify({ track_a_id: aId, track_b_id: bId, top_n: 1, no_cuts: true }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || res.statusText);
@@ -2050,9 +2045,8 @@ var autopilotCore = (function () {
     const gapS = sdS && sdS.bpm ? Math.min(...[1, 2, 0.5].map((m) => Math.abs(aEffS / (sdS.bpm * m) - 1))) : 1;
     const oneSong = stemsBoth && gapS <= 0.25;
     const od0bpm = (window.decks && window.decks[activeDeck] && window.decks[activeDeck].bpm) || 128;
-    // Beat-to-beat: when the tempos lock, hand beat to beat. Echo-outs and cuts
-    // are for tempo gaps; they turned "vocal -> beat" when used between
-    // compatible songs.
+    // Beat-to-beat: when the tempos lock, hand beat to beat. Echo-outs are for
+    // tempo gaps; they turned "vocal -> beat" when used between compatible songs.
     if (blend) {
       bTime = blend.entry;
       // A's vocal riding over B's instrumental intro is a classic long blend;
@@ -2071,7 +2065,6 @@ var autopilotCore = (function () {
       if (vr) {
         vocalRule = true;
         recipe = vr.recipe; vocalShort = vr.short; vocalCut = vr.why;
-        if (vr.recipe === "Quick Cut") vocalCut += ` (A stems: ${aStemsWhy || "live"}, B stems: ${bStems ? "loaded" : "none"})`;
       }
     } else if (oneSong) {
       // tempo gap up to 25 %: key-locked tempo stems make it a real blend
@@ -2096,7 +2089,7 @@ var autopilotCore = (function () {
     if (stemsBoth && odS && sdS && mashupFits(odS, sdS)) recipe = "Mashup → Transition";
     if (layer) { bTime = layer.entry; recipe = `LAYER ${layer.hold_bars}+${layer.unwind_bars} bars`; }
     jumpPending = !blend && !oneSong;
-    // why a cut / echo / non-stem recipe: on the status line and in the console,
+    // why an echo / non-stem recipe: on the status line and in the console,
     // so the next time a transition sounds like a cut the reason is visible
     if (!layer && !stemsBoth) {
       const why = `${recipe}: A stems ${aStemsWhy || "live"}, B stems ${bStems ? "loaded" : "not loaded"}` +
@@ -2345,7 +2338,7 @@ var autopilotCore = (function () {
           totalMs = executeTransition(recipe, outgoing, incoming, xfDuration, t0) + XF_LOOKAHEAD_MS;
           sessionEvent("track", { event: "transition_start", from: history[history.length - 1] || null, to: nextName, recipe,
                                   out: outgoing, in: incoming, seconds: Math.round(totalMs / 100) / 10 });
-          window.dispatchEvent(new CustomEvent("ai-cue", { detail: { at: t0, kind: recipeKind(recipe) === "cut" ? "drop" : "transition",
+          window.dispatchEvent(new CustomEvent("ai-cue", { detail: { at: t0, kind: "transition",
             deck: incoming, bar: 240 / ((window.decks[incoming] && window.decks[incoming].bpm) || 128), why: `${recipe}: B's first downbeat` } }));
         }
         later(totalMs + 500, afterBlend);

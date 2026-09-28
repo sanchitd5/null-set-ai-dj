@@ -146,3 +146,14 @@ console.log("autopilot core ok");
   assert.ok(energyStepOk(5, 7, { songs: 40 }).ok);                          // no automatic "cooling" all night
   console.log("energy step ok");
 }
+
+// no hard cuts (user: "hard cuts are a big no"): recipeKind never yields "cut",
+// so executeTransition keeps no cut branch, and the autopilot's /api/match asks
+// the matcher to leave cut recipes out.
+{
+  const src = require("fs").readFileSync(require("path").join(__dirname, "../ui/static/autopilot.js"), "utf8");
+  assert.ok(!/return\s+"cut"/.test(src), "recipeKind must not return a cut kind");
+  assert.ok(!/case\s+"cut"/.test(src) && !/kind\s*[!=]==\s*"cut"/.test(src), "dead cut branch in autopilot.js");
+  assert.ok(/no_cuts:\s*true/.test(src), "matchTracks must send no_cuts");
+  console.log("no hard cuts ok");
+}

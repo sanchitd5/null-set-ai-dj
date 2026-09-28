@@ -370,7 +370,8 @@
       if (!(p.bDropEnergy >= d.energy - 0.05)) continue;
       if (block("drop_swap", d.t)) continue;
       const brake = (p.brakesUsed || 0) < BACKSPIN_MAX && !p.lastSwapBraked;
-      return { kind: "drop_swap", recipe: "Slam Cut", exitAt: d.t, bTime: drop.entry, brake,
+      // runs as a 4+4-bar Bass Swap in executeTransition: B's drop lands on the downbeat
+      return { kind: "drop_swap", recipe: "Drop Swap", exitAt: d.t, bTime: drop.entry, brake,
                why: brake ? "A's build winds down (brake), B's drop hits on the downbeat"
                           : "A's build, then B's drop cuts in on the downbeat" };
     }

@@ -176,6 +176,27 @@ def test_vocal_collision_is_penalized_unless_recipe_uses_stems(matcher: RecipeMa
     assert results["Stems Transition"].vocal_penalty < results["Bass Swap"].vocal_penalty
 
 
+@pytest.mark.parametrize("bpm_b, key_b", [(129.0, "8B"), (174.0, "2B"), (140.0, "3A"), (96.0, "11A")])
+def test_no_cuts_drops_only_the_cut_recipes(matcher: RecipeMatcher, bpm_b, key_b):
+    # The autopilot asks with no_cuts (user: "hard cuts are a big no"); the rest
+    # of the ranking is untouched, and without the flag the cuts are still there
+    # for the user-picked cards.
+    a, b = _track(bpm=128.0, camelot="8B"), _track(bpm=bpm_b, camelot=key_b)
+    every = matcher.match(a, b, top_n=99)
+    names = [c.recipe.name for c in every]
+    assert {"Hard Cut", "Quick Cut"} <= set(names)
+    kept = [c.recipe.name for c in matcher.match(a, b, top_n=99, no_cuts=True)]
+    assert kept == [n for n in names if n not in ("Hard Cut", "Quick Cut")]
+    top = matcher.match(a, b, top_n=1, no_cuts=True)
+    assert len(top) == 1 and "cut" not in top[0].recipe.name.lower()
+
+
+def test_is_cut_recipe():
+    from app.music_brain.recipe_matcher import is_cut_recipe
+    assert is_cut_recipe("Hard Cut") and is_cut_recipe("Quick Cut") and is_cut_recipe("slam cut")
+    assert not any(is_cut_recipe(n) for n in ("Bass Swap", "Echo Out", "Stems Transition", "Double Drop", "", None))
+
+
 def test_candidate_to_dict_is_json_serializable():
     import json
 

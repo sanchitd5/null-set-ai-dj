@@ -198,6 +198,7 @@ class MatchRequest(BaseModel):
     track_a_id: str
     track_b_id: str
     top_n: int = 3
+    no_cuts: bool = False   # the autopilot: never rank Hard Cut / Quick Cut ("hard cuts are a big no")
 
 
 class PreviewRequest(BaseModel):
@@ -1179,7 +1180,7 @@ def post_match(req: MatchRequest):
         tracks.append(track)
     track_a, track_b = tracks
     candidates = _matcher.match(
-        track_a, track_b, top_n=req.top_n, **_pair_vibe(req.track_a_id, req.track_b_id),
+        track_a, track_b, top_n=req.top_n, no_cuts=req.no_cuts, **_pair_vibe(req.track_a_id, req.track_b_id),
     )
     # Measured vibe continuity (loudness / brightness / onset density / energy).
     # Best-effort: a vibe failure must never break matching.

@@ -59,6 +59,13 @@ _SLOW_RECIPES = {
 }
 PRE_CLEAR_BARS = {"instant": 0, "standard": 8, "slow": 16}
 
+_CUT_RE = re.compile(r"\bcut\b", re.IGNORECASE)
+
+
+def is_cut_recipe(name: str) -> bool:
+    """Hard Cut, Quick Cut: the same test the console uses to turn a cut into a Bass Swap."""
+    return bool(_CUT_RE.search(name or ""))
+
 
 def overlap_style(recipe_name: str) -> str:
     """'instant' | 'standard' | 'slow' overlap for a recipe name."""
@@ -444,7 +451,10 @@ class RecipeMatcher:
         genre_b: Optional[str] = None,
         era_a: Optional[str] = None,
         era_b: Optional[str] = None,
+        no_cuts: bool = False,
     ) -> List[TransitionCandidate]:
+        """Best candidates first. no_cuts drops cut recipes (Hard Cut, Quick Cut):
+        the autopilot never plays a hard cut, the user-picked cards still can."""
         entry_points = find_entry_candidates(track_b) or (
             [track_b.phrase_boundaries_8bar[0]] if track_b.phrase_boundaries_8bar else [0.0]
         )
@@ -455,6 +465,8 @@ class RecipeMatcher:
         # the latest exit + earliest entry, what a DJ reaches for first.
         best_per_recipe: dict[str, TransitionCandidate] = {}
         for recipe in self.knowledge.get_all():
+            if no_cuts and is_cut_recipe(recipe.name):
+                continue
             exits = recipe_exit_candidates(track_a, recipe.name)[-MAX_POINTS_PER_SIDE:]
             for a_time in reversed(exits):
                 for b_time in entry_points:
