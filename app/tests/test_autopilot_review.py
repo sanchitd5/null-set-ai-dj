@@ -103,8 +103,15 @@ def test_few_shot_json_parses_and_uses_current_schema():
     assert len(ex) == 1
     for d in ex.values():
         assert {"steering", "occasion_fit", "current_genre", "current_profile"} <= set(d)
+        assert {"energy", "tempo_feel", "mood"} <= set(d["current_profile"])  # _profile_clash / _relaxed_only
         for s in d["suggestions"]:
-            assert {"occasion_fit", "track_profile", "genre", "vibe_link", "expected_key"} <= set(s)
+            # every field the filters and the console read; the display-only ones the
+            # model no longer writes (vibe_link, mix_moment, drums/vocals/texture) are gone
+            assert {"occasion_fit", "track_profile", "genre", "era", "expected_key", "expected_bpm",
+                    "energy_delta", "genre_hop", "reason"} <= set(s)
+            assert not {"vibe_link", "mix_moment"} & set(s)
+            assert {"energy", "tempo_feel", "mood"} == set(s["track_profile"])
+            assert len(s["reason"].split()) <= 8
 
 
 def test_few_shot_uses_placeholder_songs_only():
