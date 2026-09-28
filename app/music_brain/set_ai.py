@@ -75,7 +75,9 @@ def _ask(system: str, user: str, chat: Optional[Chat], cache_key: str, call: boo
     """JSON answer, cached. None when no model or an unusable answer. call=False: cache only."""
     path = AI_CACHE_DIR / f"{hashlib.sha256((system + user).encode()).hexdigest()[:20]}.json"
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        cached = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(cached, dict):           # a truncated / hand-edited file is a miss
+            return cached
     except (OSError, ValueError):
         pass
     if not call:
@@ -121,12 +123,13 @@ def emotional_lines(title: str, lines: Sequence[dict], chat: Optional[Chat] = No
     data = _ask(HOOK_SYSTEM, f"Song: {title}\n{src}Lyrics:\n" + "\n".join(uniq), chat, f"hooks:{title}", call)
     real = {t.strip().lower(): t for t in uniq}
     out = []
-    for x in (data or {}).get("lines") or []:
+    picked = (data or {}).get("lines")
+    for x in picked if isinstance(picked, list) else []:
         t = str(x.get("text", "")).strip().lower() if isinstance(x, dict) else ""
         if t in real:                          # the model may paraphrase: only exact lines count
             try:
                 inten = max(1, min(10, int(x.get("intensity", 5))))
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):   # json allows Infinity / NaN
                 inten = 5
             out.append({"text": real[t], "intensity": inten, "why": str(x.get("why", ""))[:120]})
     return out[:3]
@@ -180,7 +183,8 @@ def review(observations: list, chat: Optional[Chat] = None, log: Callable[[str],
             if not verdict:
                 return {"kept": list(observations), "rejected": [], "ai": "skipped (no local model answering)"}
             continue
-        for x in data.get("items") or []:
+        items_ans = data.get("items")
+        for x in items_ans if isinstance(items_ans, list) else []:
             if isinstance(x, dict) and isinstance(x.get("id"), int) and s <= x["id"] < s + REVIEW_BATCH:
                 verdict[x["id"]] = x
         log(f"ai reviewed {min(s + REVIEW_BATCH, len(observations))}/{len(observations)}")

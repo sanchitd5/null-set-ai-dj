@@ -73,6 +73,20 @@ def test_sample_source_reaches_the_model(tmp_path, monkeypatch):
     assert "Explaining My Depression to My Mother (Button Poetry) (poem about depression)" in seen[0] and got[0]["intensity"] == 9
 
 
+def test_odd_model_answers_and_a_bad_cache_never_crash(tmp_path):
+    lines = lyrics.parse_lrc(LRC)
+    inf = lambda s, u: '{"lines": [{"text": "don\'t let me go", "intensity": Infinity}]}'
+    assert set_ai.emotional_lines("E - F", lines, chat=inf) == [
+        {"text": "don't let me go", "intensity": 5, "why": ""}]
+    assert set_ai.emotional_lines("G - H", lines, chat=lambda s, u: '{"lines": 7}') == []
+    obs = [sl.Observation("bass_swap", "s", 32.0, "A", "B", 0.0, 1.0, {})]
+    r = set_ai.review(obs, chat=lambda s, u: '{"items": 3}')
+    assert [o.kind for o in r["kept"]] == ["bass_swap"]
+    for p in (tmp_path / "ai").glob("*.json"):        # a cache file that is not an object
+        p.write_text("[1, 2]", encoding="utf-8")
+    assert set_ai.emotional_lines("E - F", lines, call=False) == []
+
+
 def test_find_model_prefers_a_loaded_one_and_skips_dead_ports():
     import io
 
