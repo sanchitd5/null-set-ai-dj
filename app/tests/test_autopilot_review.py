@@ -71,11 +71,12 @@ def test_steering_keeps_clashing_keys(monkeypatch):
     assert {s["title"] for s in out} == {"Far", "Near"}
 
 
-def test_all_clash_keeps_the_best_one(monkeypatch):
-    _capture(monkeypatch, {"suggestions": [_sug("Far1", "2A"), _sug("Far2", "3B")]})
+def test_all_clash_keeps_nothing(monkeypatch):
+    # no last-resort clashing pick (it made the key/energy rules moot); the caller re-asks
+    seen = _capture(monkeypatch, {"suggestions": [_sug("Far1", "2A"), _sug("Far2", "3B")]})
     out = svc.suggest_next_tracks("T", "A", 124.0, "8A", 200.0, 0.5, "", [])
-    assert [s["title"] for s in out] == ["Far1"]
-    assert "key clash" in out[0]["rejected_reason"]
+    assert out == []
+    assert "REJECTED - these clash" in seen["user"]  # the retry named the rejects
 
 
 @pytest.mark.parametrize("raw, want", [(124, 124.0), ("124", 124.0), ("~126 BPM", 126.0),

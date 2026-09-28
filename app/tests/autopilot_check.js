@@ -151,6 +151,10 @@ console.log("autopilot core ok");
   assert.ok(!energyStepOk(7, 5, { setPos: 0.1 }).ok && energyStepOk(7, 6, { setPos: 0.1 }).ok);   // building
   assert.ok(!energyStepOk(5, 7, { setPos: 0.9 }).ok);                                              // cooling
   assert.ok(energyStepOk(3, 6, { force: true }).ok && !energyStepOk(3, 7, { force: true }).ok);   // fallback: +1 only
+  assert.ok(!energyStepOk(7, 4, { force: true }).ok && energyStepOk(7, 5, { force: true }).ok);   // force never widens a fall (9>7>4>2 slide)
+  { const { hybridWindowKey } = require("../ui/static/autopilot.js");
+    assert.equal(hybridWindowKey(2), "medium"); assert.equal(hybridWindowKey(4), "long");
+    assert.equal(hybridWindowKey(8), "quick"); assert.equal(hybridWindowKey(null), "medium"); }
   assert.ok(energyStepOk(3, 8, { rawDelta: 0.05 }).ok);                     // levels apart, measurements the same
   assert.ok(!energyStepOk(3, 8, { rawDelta: 0.3 }).ok);
   assert.ok(!energyStepOk(7, 5, { songs: 2 }).ok && energyStepOk(7, 5, { songs: 12 }).ok);   // warm-up builds, then open

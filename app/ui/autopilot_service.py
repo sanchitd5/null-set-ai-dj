@@ -528,7 +528,8 @@ def _profile_clash(cur: dict, sug: dict) -> str | None:
         return v * 10 if v <= 1.0 else v  # small models often answer on a 0-1 scale
 
     try:
-        gap = abs(_e(sug.get("energy")) - _e(cur.get("energy")))
+        cur_e = float(cur.get("energy")) if cur.get("_measured") else _e(cur.get("energy"))  # measured is already 1-10
+        gap = abs(_e(sug.get("energy")) - cur_e)
         if gap > _MAX_ENERGY_GAP:
             return f"energy gap {gap:.0f}"
     except (TypeError, ValueError):
@@ -605,12 +606,14 @@ from app.music_brain.genre import MAX_ERA_GAP, era_gap  # noqa: E402
 
 def _filter_suggestions(
     data: dict, history: list[str], occasion_set: bool = False, current_key: str | None = None,
-    allow_genre_change: bool = False, current_artist: str = "",
+    allow_genre_change: bool = False, current_artist: str = "", measured_energy: int | None = None,
 ) -> list[dict]:
     """Drop sets/interviews, exact repeats, profile clashes and (unless steering)
-    suggestions whose expected_key clashes with `current_key`. Never returns empty
-    if the model gave at least one allowed song: the closest clash is kept as a
-    last resort."""
+    suggestions whose expected_key clashes with `current_key`. A pick that clashes
+    (energy/mood/tempo feel, key, scene) is never kept as a last resort: an empty
+    list makes the caller ask again with the rejects named.
+    measured_energy: the library-measured 1-10 level of the playing song; it replaces
+    the model's own guess of the current energy in the profile check."""
     from app.ui.download_service import _is_mix, _is_non_music
 
     played = {h.lower() for h in history}
@@ -632,6 +635,8 @@ def _filter_suggestions(
     recent_bare = set().union(*[_song(h) for h in history[-REMIX_REPLAY_GAP:]]) if history else set()
     played_versions = {" ".join(str(h).lower().split()) for h in history}
     cur = data.get("current_profile")
+    if measured_energy is not None:
+        cur = {**(cur if isinstance(cur, dict) else {}), "energy": measured_energy, "_measured": True}
     ok, clashes, key_clashes, genre_jumps = [], [], [], []
     # "move" only licenses a genre jump inside an occasion: with no occasion the
     # model says "move" freely (it let Pal Pal -> Delilah through).
@@ -691,8 +696,8 @@ def _filter_suggestions(
         (clashes if reason else ok).append(s)
         if reason:
             s["rejected_reason"] = reason
-    if ok or clashes or key_clashes:
-        return ok or clashes[:1] or key_clashes[:1]
+    if ok:
+        return ok
     if genre_jumps:  # only genre jumps left: the smallest one, rather than nothing
         return [min(genre_jumps, key=lambda t: t[0])[1]]
     # everything was off-theme: keep only the best-fitting one rather than nothing
@@ -1104,8 +1109,30 @@ def suggest_next_tracks(
         data["steering"] = "move"  # the user's destination: no continuity / key filters against it
     suggestions = _filter_suggestions(
         data, history, occasion_set=bool((occasion or "").strip()) and not lead_to, current_key=camelot,
-        allow_genre_change=bool(lead_to), current_artist=artist,
+        allow_genre_change=bool(lead_to), current_artist=artist, measured_energy=measured_energy,
     )
+    # Every pick clashed (energy / mood / tempo feel / key / scene): none is kept as a
+    # last resort; ask once more with the rejects and their reasons named.
+    rejected = [x for x in data.get("suggestions", []) if isinstance(x, dict) and x.get("rejected_reason")]
+    if not suggestions and rejected and can_retry():
+        why = "; ".join(f"{x.get('artist', '')} - {x.get('title', '')} ({x['rejected_reason']})"
+                        for x in rejected)[:400]
+        print(f"[suggest] every pick clashed: {why}", flush=True)
+        try:
+            data2 = _extract_json(chat_raw(system_msg, user_msg + (
+                f"\n\nREJECTED - these clash with the playing song: {why}. Suggest songs that keep its "
+                "energy, mood, tempo feel and key family."), temperature=0.4, max_tokens=mt, priority=prio))
+            data2.setdefault("current_genre", data.get("current_genre"))
+            data2.setdefault("current_era", data.get("current_era"))
+            data2.setdefault("current_profile", data.get("current_profile"))
+            retry = _filter_suggestions(
+                data2, history, occasion_set=bool((occasion or "").strip()) and not lead_to,
+                current_key=camelot, allow_genre_change=bool(lead_to), current_artist=artist,
+                measured_energy=measured_energy)
+            if retry:
+                data, suggestions = data2, retry
+        except ValueError as exc:
+            print(f"[suggest] clash retry failed: {exc}", flush=True)
     # Genre transitions, it never jumps (user: Pal Pal -> Delilah). When every pick
     # jumped, ask once more with the rejected picks named, rather than play a jump.
     if (suggestions and str(suggestions[0].get("rejected_reason", "")).startswith(("genre jump", "era jump"))
@@ -1124,7 +1151,7 @@ def suggest_next_tracks(
             data2.setdefault("current_era", data.get("current_era"))
             retry = _filter_suggestions(
                 data2, history, occasion_set=bool((occasion or "").strip()) and not lead_to,
-                current_key=camelot, allow_genre_change=bool(lead_to), current_artist=artist)
+                current_key=camelot, allow_genre_change=bool(lead_to), current_artist=artist, measured_energy=measured_energy)
             if retry and not str(retry[0].get("rejected_reason", "")).startswith(("genre jump", "era jump")):
                 data, suggestions = data2, retry
         except ValueError as exc:
@@ -1153,7 +1180,7 @@ def suggest_next_tracks(
                 data2.setdefault("current_era", data.get("current_era"))
                 retry = _filter_suggestions(
                     data2, history, occasion_set=bool((occasion or "").strip()) and not lead_to,
-                    current_key=camelot, allow_genre_change=bool(lead_to), current_artist=artist)
+                    current_key=camelot, allow_genre_change=bool(lead_to), current_artist=artist, measured_energy=measured_energy)
                 retry = [x for x in retry if _tempo_locks(target, x.get("expected_bpm")) is not False]
                 if retry:
                     data, suggestions = data2, retry
@@ -1181,7 +1208,7 @@ def suggest_next_tracks(
             data2.setdefault("current_era", data.get("current_era"))
             retry = _filter_suggestions(
                 data2, history, occasion_set=bool((occasion or "").strip()) and not lead_to,
-                current_key=camelot, allow_genre_change=bool(lead_to), current_artist=artist)
+                current_key=camelot, allow_genre_change=bool(lead_to), current_artist=artist, measured_energy=measured_energy)
             if not moving:
                 retry = [x for x in retry if _tempo_locks(target, x.get("expected_bpm")) is not False]
             retry = [x for x in retry if _bare_title(x.get("title", "")) != seed]
@@ -1222,7 +1249,7 @@ def suggest_next_tracks(
             data3.setdefault("current_era", data.get("current_era"))
             retry = _filter_suggestions(
                 data3, history, occasion_set=bool((occasion or "").strip()) and not lead_to,
-                current_key=camelot, allow_genre_change=bool(lead_to), current_artist=artist)
+                current_key=camelot, allow_genre_change=bool(lead_to), current_artist=artist, measured_energy=measured_energy)
             retry = [x for x in retry if _bare_title(x.get("title", "")) != seed]
             real3, _ = _verify_picks(retry)
             fresh = [x for x in real3 if _bare_title(x.get("title", "")) not in heard]

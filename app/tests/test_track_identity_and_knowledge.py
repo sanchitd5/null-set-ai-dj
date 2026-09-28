@@ -50,7 +50,7 @@ def test_steering_skips_profile_clash_filter():
     data = {"current_profile": {"energy": 3, "tempo_feel": "laid-back", "mood": "chill"},
             "suggestions": [{"artist": "Diljit Dosanjh", "title": "Proper Patola", "track_profile": bhangra},
                             {"artist": "Panjabi MC", "title": "Mundian To Bach Ke", "track_profile": bhangra}]}
-    assert len(_filter_suggestions(dict(data, steering="stay"), [])) == 1    # continuity keeps only the closest clash
+    assert len(_filter_suggestions(dict(data, steering="stay"), [])) == 0    # continuity: no clash kept as last resort
     assert len(_filter_suggestions(dict(data, steering="move"), [])) == 2    # steering: both kept
 
 
