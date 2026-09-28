@@ -61,6 +61,22 @@ def test_semitones_survive_a_pyin_failure(monkeypatch):
     assert sources._semitones(np.zeros(4096), np.zeros(4096), 11025) is None
 
 
+def test_a_re_exported_set_is_cut_again(tmp_path):
+    import os
+    import shutil
+    import numpy as np
+    import soundfile as sf
+    if not shutil.which("ffmpeg"):
+        return
+    src = tmp_path / "mix.wav"
+    sf.write(src, np.full(44100 * 2, 0.1), 44100)
+    first = sl.clip_audio(src, 0.0, 1.0, tmp_path / "clips")
+    os.utime(first, (1_000_000, 1_000_000))                       # the cut is older than...
+    sf.write(src, np.full(44100 * 2, -0.5), 44100)                 # ...the mix, re-exported in place
+    again = sl.clip_audio(src, 0.0, 1.0, tmp_path / "clips")
+    assert again == first and float(sf.read(again)[0].mean()) < -0.2           # the new audio, not +0.1
+
+
 def test_clip_audio_refuses_an_empty_or_inverted_span(tmp_path):
     for t0, t1 in ((5.0, 5.0), (9.0, 2.0), (-1.0, 3.0)):
         with pytest.raises(ValueError):

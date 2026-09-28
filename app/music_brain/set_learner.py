@@ -966,7 +966,8 @@ def clip_audio(src: Path, t0: float, t1: float, out_dir: Path) -> Path:
         raise ValueError(f"bad clip span {t0}..{t1} s (needs 0 <= start < end)")
     out_dir.mkdir(parents=True, exist_ok=True)
     out = out_dir / f"{t0:09.2f}-{t1:09.2f}.wav"
-    if out.exists() and out.stat().st_size > 0:
+    # named by span only: a local mix re-exported to the same path must not reuse old cuts
+    if out.exists() and out.stat().st_size > 0 and out.stat().st_mtime >= Path(src).stat().st_mtime:
         return out
     tmp = out.with_suffix(".tmp.wav")
     subprocess.run(["ffmpeg", "-nostdin", "-loglevel", "error", "-y", "-ss", f"{t0:.3f}", "-t", f"{t1 - t0:.3f}",
