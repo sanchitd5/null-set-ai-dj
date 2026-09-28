@@ -484,14 +484,20 @@
   }
   // Which move fits this section. ctx: {vocal (share 0..1), used [kinds this song], count, barsOnTrack, barsLeft, lastAtBar, atBar}
   const REMIX_MAX_PER_SONG = 3, REMIX_GAP_BARS = 32;
+  // Vibe floor (user: drums alone on Get Lucky "killed the vibe"): an AI remix move
+  // never leaves a song without a tonal layer (bass, voice or synths). A beat alone
+  // strips the groove a disco / house record lives on. -> true when the move keeps one.
+  function keepsVibe(kind, len = 16) {
+    return remixEvents(kind, len).every((e) => !e.stems || ["bass", "vocals", "other"].some((n) => e.stems[n] !== 0));
+  }
   function remixPick(ctx) {
     if ((ctx.count || 0) >= REMIX_MAX_PER_SONG) return null;
     if ((ctx.barsOnTrack || 0) < 32 || (ctx.barsLeft || 0) < 48) return null;
     if (ctx.lastAtBar != null && ctx.atBar - ctx.lastAtBar < REMIX_GAP_BARS) return null;
     const used = new Set(ctx.used || []);
     const menu = ctx.vocal >= 0.5 ? ["vocal_hold", "acapella", "bass_out"]
-      : ctx.vocal >= 0.15 ? ["bass_out", "drum_break", "synth_hold"] : ["drum_break", "synth_hold", "bass_out"];
-    return menu.find((k) => !used.has(k)) || null;
+      : ctx.vocal >= 0.15 ? ["bass_out", "synth_hold"] : ["synth_hold", "bass_out"];
+    return menu.find((k) => !used.has(k) && keepsVibe(k)) || null;
   }
   // Hook drop (app/music_brain/hook_drop.py plan items: {cut_at, drop_at, text}):
   // drums + bass leave over a quarter bar ending on cut_at, synths duck to
@@ -618,7 +624,7 @@
       return e ? { ...r, score: r.score + (e.score - 5.5) * 3, ear: e } : r;
     }).sort((x, y) => y.score - x.score);
   }
-  const core = { mergeCombos, mergeRank, mergeLabel, mergeTransitionPlan, mergeWithEar, keepOneStem, hookDropEvents, hookDropDue, HOOK_OTHER, BREAKDOWN, breakdownFits, handoffFits, vocalShare, stemBlendPlan, STEM_BLEND_KINDS, remixEvents, remixPick, stemBridgePlan, mashupTransitionPlan,
+  const core = { keepsVibe, mergeCombos, mergeRank, mergeLabel, mergeTransitionPlan, mergeWithEar, keepOneStem, hookDropEvents, hookDropDue, HOOK_OTHER, BREAKDOWN, breakdownFits, handoffFits, vocalShare, stemBlendPlan, STEM_BLEND_KINDS, remixEvents, remixPick, stemBridgePlan, mashupTransitionPlan,
                  pickIntro, introBars, INTRO_LEVEL, levelCheck, gainsAt, faderAt, fitStemBlend, breakdownEvents,
                  masterAudibility, audibleRms, mergeFader, rawFader, deckFaderGains, mergeBooking, onTime, AUDIBLE_HZ, SILENCE_DB,
                  LEVEL_FLOOR_DB, AUDIBLE_GAIN, FADER_PARK_BARS, TYPICAL_SHARE, DIP_ALLOWED };

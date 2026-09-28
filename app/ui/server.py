@@ -920,8 +920,8 @@ def post_session_event(ev: SessionEvent):
     """The console's side of this session's log (track changes, ear flushes)."""
     from app.ui import session_log
 
-    if ev.kind not in ("track", "ear_flush", "note", "glitch"):
-        raise HTTPException(status_code=400, detail="kind must be track, ear_flush, glitch or note")
+    if ev.kind not in ("track", "ear_flush", "note", "glitch", "move"):
+        raise HTTPException(status_code=400, detail="kind must be track, ear_flush, glitch, move or note")
     # the event's own fields may reuse the log's names (a glitch report has its own "kind"):
     # those are kept as "<name>_" instead of clashing
     fields = {(f"{k}_" if k in ("kind", "t", "at") else k): v for k, v in list(ev.data.items())[:20] if isinstance(k, str)}

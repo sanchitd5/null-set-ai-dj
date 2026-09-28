@@ -2493,6 +2493,13 @@ var autopilotCore = (function () {
     } catch (e) { /* logging never breaks the set */ }
   }
   window.addEventListener("ear-flush", (e) => sessionEvent("ear_flush", e.detail));
+  // every AI move (stem moves, remix, merges, hook drops, learned moves) with the deck
+  // position, so a move that "killed the vibe" can be found in the session log
+  window.addEventListener("ai-activity", (e) => {
+    const d = e.detail || {}, dk = d.deck && window.decks && window.decks[d.deck];
+    sessionEvent("move", { move: d.kind || "", label: d.label || "", why: d.why || "", deck: d.deck || null,
+      song: history[history.length - 1] || null, pos: dk && dk._currentPosition ? Math.round(dk._currentPosition() * 10) / 10 : null });
+  });
 
   // POST /api/transition/preplan (app/music_brain/preplan.py) for the booked pair:
   // the exit window of this song, now, and A's live tempo. null when stems are

@@ -184,7 +184,16 @@ console.log("stem moves core ok");
   const base = { vocal: 0.8, used: [], count: 0, barsOnTrack: 40, barsLeft: 80, lastAtBar: null, atBar: 40 };
   assert.strictEqual(remixPick(base), "vocal_hold");
   assert.strictEqual(remixPick({ ...base, used: ["vocal_hold"] }), "acapella");
-  assert.strictEqual(remixPick({ ...base, vocal: 0 }), "drum_break");
+  assert.strictEqual(remixPick({ ...base, vocal: 0 }), "synth_hold");          // never drums alone (vibe floor)
+  assert.strictEqual(remixPick({ ...base, vocal: 0.3 }), "bass_out");
+  const { keepsVibe } = require("../ui/static/stem-moves.js");
+  assert.ok(!keepsVibe("drum_break") && keepsVibe("synth_hold") && keepsVibe("bass_out") && keepsVibe("acapella"));
+  for (const v of [0, 0.1, 0.3, 0.6, 0.9]) {
+    for (const used of [[], ["synth_hold"], ["bass_out"], ["vocal_hold", "acapella"]]) {
+      const k = remixPick({ ...base, vocal: v, used });
+      assert.ok(k === null || keepsVibe(k), `vocal ${v} used ${used}: ${k} strips every tonal stem`);
+    }
+  }
   assert.strictEqual(remixPick({ ...base, barsOnTrack: 16 }), null);            // let the song establish itself
   assert.strictEqual(remixPick({ ...base, barsLeft: 30 }), null);               // not near the exit
   assert.strictEqual(remixPick({ ...base, lastAtBar: 20 }), null);              // 32 bars apart
