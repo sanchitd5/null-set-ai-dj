@@ -186,14 +186,21 @@ var autopilotCore = (function () {
   // than 1, near the end (> 85 %) not rise more than 1. -> {ok, step, why}
   const ENERGY_MIN_RAW = 0.1;      // raw 0-1: below this the two songs measure the same, whatever the levels say
   const WARMUP_SONGS = 5;          // the set builds over its first songs; open-ended after (no known end)
+  const LOW_ENERGY_SET_MAX = 4;    // cur at or below this: the set is already playing low (sufi, relaxing) -- warmup's "build" assumption doesn't apply, don't force it up
   // o: {relaxed, force, songs (played so far), rawDelta (raw_b - raw_a)}
   function energyStepOk(cur, nxt, o = {}) {
     const step = nxt - cur, lim = (o.relaxed ? 1 : 2) + (o.force ? 1 : 0);
     if (o.rawDelta != null && Math.abs(o.rawDelta) < ENERGY_MIN_RAW) {
       return { ok: true, step, why: `energy ${cur} -> ${nxt} (measured almost the same)` };
     }
-    const arc = o.songs != null ? (o.songs < WARMUP_SONGS ? "build" : "")
+    let arc = o.songs != null ? (o.songs < WARMUP_SONGS ? "build" : "")
       : o.setPos != null && o.setPos < 0.3 ? "build" : o.setPos != null && o.setPos > 0.85 ? "cool" : "";
+    // A set already playing low energy (sufi, relaxing) isn't "building" just
+    // because it's early: WARMUP_SONGS assumes an opening ramp, which doesn't
+    // hold when the songs themselves are already calm. Let it stay calm or
+    // drop further instead of forcing it toward "build" (but still respect a
+    // genuine "cool" arc near the end -- don't spike energy up there either).
+    if (arc === "build" && Number.isFinite(cur) && cur <= LOW_ENERGY_SET_MAX) arc = "";
     if (Math.abs(step) > lim) return { ok: false, step, why: `energy ${step > 0 ? "jump" : "drop"} ${cur} -> ${nxt} (max ${lim} a song)` };
     if (!o.force && arc === "build" && step < -1) return { ok: false, step, why: `energy falls ${cur} -> ${nxt} while the set is building` };
     if (!o.force && arc === "cool" && step > 1) return { ok: false, step, why: `energy rises ${cur} -> ${nxt} while the set is cooling down` };

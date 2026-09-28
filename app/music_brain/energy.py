@@ -136,6 +136,7 @@ def level(audio_path, bpm: float) -> dict:
 
 ENERGY_MIN_RAW = 0.1       # raw 0-1: below this the two songs measure the same, whatever the levels say
 WARMUP_SONGS = 5           # the set builds over its first songs; open-ended after (no known end)
+LOW_ENERGY_SET_MAX = 4     # cur at or below this: already a low-energy set (sufi, relaxing) -- don't force "build"
 
 
 def next_ok(cur: int, nxt: int, relaxed: bool = False, force: bool = False,
@@ -145,9 +146,11 @@ def next_ok(cur: int, nxt: int, relaxed: bool = False, force: bool = False,
     autopilot.js energyStepOk(); this mirrors it exactly (golden vectors in
     app/tests/fixtures/rule_vectors.json check both).
     force: last-round fallback, one more level and no arc rule. songs: songs played
-    so far (the first WARMUP_SONGS build: no fall of more than 1). set_pos 0-1, used
-    only without songs: < 0.3 builds, > 0.85 cools. raw_delta: raw_b - raw_a; under
-    ENERGY_MIN_RAW the songs measure the same, whatever the levels say."""
+    so far (the first WARMUP_SONGS build: no fall of more than 1, unless cur is
+    already LOW_ENERGY_SET_MAX or below -- a sufi/relaxing set isn't "building"
+    just because it's early). set_pos 0-1, used only without songs: < 0.3 builds,
+    > 0.85 cools. raw_delta: raw_b - raw_a; under ENERGY_MIN_RAW the songs measure
+    the same, whatever the levels say."""
     step = nxt - cur
     lim = (RELAXED_STEP if relaxed else MAX_STEP) + (1 if force else 0)
     if raw_delta is not None and abs(raw_delta) < ENERGY_MIN_RAW:
@@ -156,6 +159,8 @@ def next_ok(cur: int, nxt: int, relaxed: bool = False, force: bool = False,
         arc = "build" if songs < WARMUP_SONGS else ""
     else:
         arc = "build" if set_pos is not None and set_pos < 0.3 else "cool" if set_pos is not None and set_pos > 0.85 else ""
+    if arc == "build" and cur is not None and cur <= LOW_ENERGY_SET_MAX:
+        arc = ""    # already a low-energy set (sufi, relaxing): don't force it to build
     if abs(step) > lim:
         return {"ok": False, "step": step, "why": f"energy {'jump' if step > 0 else 'drop'} {cur} -> {nxt} (max {lim} a song)"}
     if not force and arc == "build" and step < -1:
