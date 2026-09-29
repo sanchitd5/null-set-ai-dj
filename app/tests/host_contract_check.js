@@ -84,7 +84,7 @@ function fakeWindow() {
 function step3() {
   // engine runtime = from the factory to the end of the file; the pure cores above it are checked by their own node checks
   const modules = { "autopilot.js": "function createAutopilotEngine", "dj-mind.js": "function create(", "stem-moves.js": "function create(",
-    "riff-over-rap.js": "function create(", "ai-actions.js": "function create(" };
+    "riff-over-rap.js": "function create(", "ai-actions.js": "function create(", "artist-moves.js": "function create(" };
   const banned = [/\bwindow\./, /\bdocument\./, /\bDate\.now\b/, /\bnew Date\b/, /\bperformance\./, /\bnew (Custom)?Event\b/,
     /\brequestAnimationFrame\b/, /\blocalStorage\b/, /\bMath\.random\b/, /\bcrypto\./];
   const bad = [];
