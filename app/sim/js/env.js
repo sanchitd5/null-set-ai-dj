@@ -217,7 +217,7 @@ async function createEnv(opts) {
     for (const t of ["DOMContentLoaded", "load"]) { const ev = new Event(t); doc.dispatchEvent(ev); g.dispatchEvent(ev); }
   };
   // record every console CustomEvent the engine emits (ai-activity, ai-supermove, ai-cue, ai-energy ...)
-  for (const t of ["ai-activity", "ai-supermove", "ai-cue", "ai-energy", "ai-step", "dj-move"]) {
+  for (const t of ["ai-activity", "ai-supermove", "ai-cue", "ai-energy", "ai-step", "dj-move", "vis-moment"]) {
     g.addEventListener(t, (ev) => logs.events.push({ t: +clock.now.toFixed(3), type: t, detail: safe(ev.detail) }));
   }
   return env;

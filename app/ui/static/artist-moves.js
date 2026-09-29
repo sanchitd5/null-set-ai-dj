@@ -205,6 +205,8 @@
 
     function say(d, kind, why, extra = {}) {
       host.bus.emit("ai-activity", Object.assign({ kind: "artist_move", deck: d.id, label: `artist_move: ${kind}`, move: kind, spec: SPEC[kind], why }, extra));
+      // NULL-BOT / SHOW (mascot.js): the slip loop lands on its release (super), the rest pop in place
+      if (Number.isFinite(extra.t0)) host.bus.emit("vis-moment", kind === "slip_loop" ? { at: extra.t1, name: LABEL[kind], tier: "super", deck: d.id } : { at: extra.t0, name: LABEL[kind], tier: "accent", deck: d.id });
     }
     // a refusal is said once per phrase (key = the line / entry it was planned for)
     function refuse(d, kind, key, p) {

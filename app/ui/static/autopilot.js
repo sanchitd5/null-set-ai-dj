@@ -1156,6 +1156,7 @@ function createAutopilotEngine({ host, ai }) {
             host.log.step("merge_start", { deck: out, decision: "merge_start", why: phases.merge_start.combo, result: { ...phases.merge_start, seconds: Math.round(phases.merge_start.bars * barS * 10) / 10 } });
             host.log.step("hold", { deck: out, decision: "hold", why: `${phases.hold.phrases} phrases together`, result: phases.hold });
             host.log.step("handover", { deck: out, decision: "handover", why: "sub-bass and kick change hands on the line", result: phases.handover });
+            host.bus.emit("vis-moment", { at: xT0 + M * barS, name: "HOLD->DROP", tier: "super", deck: inn, bar: barS });   // renames the MERGE cue's takeover (mascot.js)
           }
           return secs * 1000;
         }
@@ -3139,6 +3140,7 @@ function createAutopilotEngine({ host, ai }) {
                                   a_pos: Math.round(deckPosition(outgoing) * 100) / 100 });   // A's song s at the exit (sim: exits in a breakdown)
           host.bus.emit("ai-cue", { at: t0, kind: "transition",
             deck: incoming, bar: 240 / ((host.decks[incoming] && host.decks[incoming].bpm) || 128), why: `${ranMove}: B's first downbeat` });
+          host.bus.emit("vis-moment", { at: t0, name: String(ranMove), tier: "accent", deck: incoming });   // NULL-BOT pops on every blend (a super cue at t0 wins)
         }
         later(totalMs + 500, afterBlend);
       });
@@ -3335,6 +3337,7 @@ function createAutopilotEngine({ host, ai }) {
           setTimeout(() => d.stemMix(null, offAt, 0.2), Math.max(0, (offAt - audioCtx.currentTime) * 1000 - 200));
           host.bus.emit("ai-activity", { kind: "stem-move", deck: hostDeck,
             label: `FULL MASHUP · ${plan.bars} bars`, why: `${guestName} vocal over this song's instrumental` });
+          host.bus.emit("vis-moment", { at: onAt, name: "MASHUP", tier: "super", deck: hostDeck });   // NULL-BOT: the guest vocal lands
         }
         // stem remix inside the mashup: host drums + bass out for its last quarter,
         // the guest's vocal over the host's synths, everything back on the line

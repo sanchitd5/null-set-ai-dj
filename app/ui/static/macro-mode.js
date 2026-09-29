@@ -299,6 +299,7 @@
       const el = ui.el("combo-streak");
       if (el) { el.textContent = label; el.hidden = !label; }
       if (label) console.info("combo:", label);
+      if (streak.n >= 2 && host.bus && host.audio) host.bus.emit("vis-moment", { at: host.audio.currentTime, name: `COMBO x${streak.n}`, tier: "accent" });   // NULL-BOT pops (after the fact)
     }
 
     // ---- MACRO panel -------------------------------------------------------------------------------------------------

@@ -55,6 +55,90 @@
     return null;
   }
   const isSupermove = (evt) => supermoveFor(evt) !== null;
+
+  // ---- "vis-moment": the one visual signal every move emits (NULL-BOT and the SHOW) ----
+  // detail {at (audio s, the hit), name (short caption), tier, deck, bar?, until?, source?}, emitted by the
+  // move's own planner when it books. Tiers:
+  //   super   fly-in takeover, gated (AI driving, VFX on) and de-duped (SUPERMOVE_WINDOW_S)
+  //   accent  in-place reaction at NULL's corner (a nod / pop), rate-limited to one per ACCENT_BARS bars
+  //   dance   the SHOW's Anyma-drop dance: NULL dances beside the figure on the same beat grid until `until`
+  // Legacy signals still count as super: "ai-supermove" and the CUE_MOVES "ai-cue" whys.
+  const TIERS = ["super", "accent", "dance"];
+  const ACCENT_BARS = 2, DANCE_BARS = 16, DANCE_MAX_S = 90;
+  // evt: {type, detail} -> {name, at, deck, tier, bar?, until?} | null
+  function momentFor(evt) {
+    const d = evt && evt.detail;
+    if (!d || !Number.isFinite(d.at)) return null;
+    if (evt.type !== "vis-moment") {
+      const sm = supermoveFor(evt);
+      if (sm && d.bar > 0) sm.bar = d.bar;
+      return sm ? Object.assign(sm, { tier: "super" }) : null;
+    }
+    const name = String(d.name || "").trim().toUpperCase().slice(0, 24);
+    if (!name) return null;
+    const m = { name, at: d.at, deck: deckOf(d.deck), tier: TIERS.includes(d.tier) ? d.tier : "super" };
+    if (d.bar > 0) m.bar = d.bar;
+    if (m.tier === "dance") {
+      const u = Number.isFinite(d.until) && d.until > d.at ? d.until : d.at + DANCE_BARS * (m.bar || 2);
+      m.until = Math.min(u, d.at + DANCE_MAX_S);
+    }
+    return m;
+  }
+  // The next Anyma drop (anyma-show.js core.anymaDrops, song time) within lookS of song position pos, not yet
+  // announced (done: Set of drop times). -> drop | null
+  function nextAnymaDrop(drops, pos, lookS, done) {
+    if (!Array.isArray(drops) || !Number.isFinite(pos)) return null;
+    for (const d of drops) if (d && d.at > pos && d.at - pos <= lookS && !(done && done.has(d.at))) return d;
+    return null;
+  }
+  // A legacy supermove signal ("ai-supermove", a CUE_MOVES "ai-cue") as the vis-moment it re-announces. -> detail | null
+  function legacyMoment(evt) {
+    if (!evt || evt.type === "vis-moment") return null;
+    const sm = supermoveFor(evt);
+    if (!sm) return null;
+    const vm = { at: sm.at, name: sm.name, tier: "super", deck: sm.deck, source: "cue" };
+    if (evt.detail.bar > 0) vm.bar = evt.detail.bar;
+    return vm;
+  }
+  // A vis-moment on the hit of a takeover already booked from a legacy cue (the MERGE cue, then HOLD->DROP
+  // from its planner) renames that takeover instead of being de-duped away. pending: [{hitS, sm}]. -> bool
+  const SAME_HIT_S = 0.25;
+  function renameSameHit(pending, hitS, name) {
+    const p = (pending || []).find((x) => Math.abs(x.hitS - hitS) < SAME_HIT_S);
+    if (!p || !name) return false;
+    p.sm.name = name;
+    return true;
+  }
+  // May an accent at hitS react? g: {aiActive, vfxOn, last (hit s of the last accent), hitS, barS, booked
+  // (super hit times)}. -> "" or the reason not. Never on top of a takeover (half its de-dup window).
+  function accentGate(g) {
+    if (!g.aiActive) return "AI not driving";
+    if (!g.vfxOn) return "VFX off";
+    if ((g.booked || []).some((h) => Math.abs(h - g.hitS) < SUPERMOVE_WINDOW_S / 2)) return "super";
+    const bar = g.barS > 0 ? g.barS : 2;
+    if (Number.isFinite(g.last) && Math.abs(g.hitS - g.last) < ACCENT_BARS * bar) return "rate";
+    return "";
+  }
+  // Where NULL stands while the SHOW is up (translate from the viewport centre + scale of the big bot).
+  // o: {mode ("off" | "full" | any window mode), rect (the stage's box, window modes), vw, vh, size (bot px),
+  // dancing}. full: always, bottom-left corner in front of the stage. A window stage: only while dancing,
+  // beside the stage (above it when there is no room on the right). -> {x, y, s} | null
+  function dockPlace(o) {
+    if (!o || !o.mode || o.mode === "off" || !(o.vw > 0) || !(o.vh > 0) || !(o.size > 0)) return null;
+    const vmin = Math.min(o.vw, o.vh);
+    let T, cx, cy;
+    if (o.mode === "full") {
+      T = 0.2 * vmin; cx = 16 + T / 2; cy = o.vh - 16 - T / 2;
+    } else {
+      const r = o.rect;
+      if (!o.dancing || !r || !(r.width > 0)) return null;
+      T = Math.max(48, Math.min(0.16 * vmin, r.height * 0.8));
+      if (r.right + 8 + T <= o.vw) { cx = r.right + 8 + T / 2; cy = r.bottom - T / 2; }
+      else { cx = r.left + T / 2; cy = r.top - 8 - T / 2; }
+    }
+    const f = (v) => Math.round(v * 10) / 10;
+    return { x: f(cx - o.vw / 2), y: f(cy - o.vh / 2), s: Math.round((T / o.size) * 1000) / 1000 };
+  }
   // VFX toggle state: visuals.js stores "on"/"off" under nul.vfx; the button's aria-pressed otherwise.
   function vfxOn(stored, pressed) {
     if (stored === "off") return false;
@@ -101,10 +185,11 @@
   function beatPhaseMs(nowMs, hitMs, beatMs) {
     return -((((nowMs - hitMs) % beatMs) + beatMs) % beatMs);
   }
-  if (typeof module !== "undefined" && module.exports) {
-    module.exports = { mood, LABEL, supermoveFor, isSupermove, vfxOn, supermoveGate, hitPerfMs, beatSeconds,
-                       takeoverPlan, beatPhaseMs, SUPERMOVE_WINDOW_S, CUE_MOVES };
-  }
+  const core = { mood, LABEL, supermoveFor, isSupermove, vfxOn, supermoveGate, hitPerfMs, beatSeconds,
+                 takeoverPlan, beatPhaseMs, SUPERMOVE_WINDOW_S, CUE_MOVES,
+                 TIERS, ACCENT_BARS, DANCE_BARS, DANCE_MAX_S, momentFor, accentGate, dockPlace, renameSameHit, SAME_HIT_S, legacyMoment, nextAnymaDrop };
+  root.nullBot = { core };          // anyma-show.js may reuse momentFor: one reading of the signal
+  if (typeof module !== "undefined" && module.exports) module.exports = core;
   if (typeof document === "undefined") return;
 
   const el = document.getElementById("nul-mascot");
@@ -144,9 +229,13 @@
     setTimeout(() => { st.hypeUntil = performance.now() / 1000 + 1.6; }, ms);   // "!" on the drop itself
   });
 
-  // ---- SUPERMOVE takeover (browser) ----------------------------------------
-  // One class on #nul-super runs the whole show (null-bot.css); JS only sets a
-  // few CSS variables once per takeover: no per-frame DOM writes.
+  // ---- NULL-BOT on the moves (browser) ----------------------------------------
+  // One class on #nul-super runs each state (null-bot.css); JS only sets a few
+  // CSS variables once per moment: no per-frame DOM writes.
+  //   nul-sm-on     SUPER takeover (fly in, dance, the hit on the move's audio time, fly back)
+  //   nul-sm-dock   the small NULL in front of the SHOW (full stage, or beside a window stage while it dances)
+  //   nul-sm-dance  the dock NULL dances on the Anyma drop's beat grid
+  //   nul-sm-react  ACCENT pop of the dock NULL; the top-bar NULL gets .nul-react
   const sup = document.getElementById("nul-super");
   if (sup) {
     const svg = el.querySelector("svg");
@@ -155,7 +244,8 @@
     if (svg) sup.querySelector(".nul-sm-pop").appendChild(svg.cloneNode(true));
     const cap = sup.querySelector(".nul-sm-cap"), bot = sup.querySelector(".nul-sm-bot");
     const booked = [];               // hit times (perf s) of booked takeovers, for the de-dup window
-    let endTimer = 0;
+    let endTimer = 0, lastAccent = -Infinity, reactTimer = 0, chipTimer = 0, danceTimer = 0;
+    let dock = null, dockKey = "", dance = null;   // dance: {untilMs} while the dock NULL dances
     const aiActive = () => !!(root.autopilotState && root.autopilotState.active);
     const vfx = () => {
       let s = null;
@@ -169,17 +259,78 @@
       const rate = d && typeof d._playbackRate === "function" ? d._playbackRate() : 1;
       return beatSeconds(d && d.bpm, rate, sm.bar);
     };
+    const showMode = () => (root.anymaShow && typeof root.anymaShow.mode === "string" ? root.anymaShow.mode : "off");
+
+    // The SHOW in browser full screen owns the top layer: NULL has to live inside the full-screen element
+    // to be seen at all (z-index cannot reach above it). Back to <body> when full screen ends.
+    document.addEventListener("fullscreenchange", () => {
+      const fs = document.fullscreenElement;
+      const home = fs && fs !== sup && !fs.contains(sup) ? fs : !fs && sup.parentNode !== document.body ? document.body : null;
+      if (home) home.appendChild(sup);
+      syncDock();
+    });
+
+    // dock: where NULL stands in front of the SHOW. Called on the 150 ms tick; writes only on change.
+    function syncDock() {
+      const mode = showMode(), dancing = !!dance && performance.now() < dance.untilMs;
+      if (dance && !dancing) { dance = null; sup.classList.remove("nul-sm-dance"); }
+      let rect = null;
+      if (mode !== "off" && mode !== "full" && dancing) {
+        const stg = document.querySelector(".anyma-stage");
+        rect = stg && !stg.hidden ? stg.getBoundingClientRect() : null;
+      }
+      dock = dockPlace({ mode, rect, vw: root.innerWidth, vh: root.innerHeight, size: bot.offsetWidth || 380, dancing });
+      const key = dock ? `${dock.x},${dock.y},${dock.s}` : "";
+      if (key === dockKey) return;
+      dockKey = key;
+      if (dock) {
+        sup.style.setProperty("--sm-dx", `${dock.x}px`);
+        sup.style.setProperty("--sm-dy", `${dock.y}px`);
+        sup.style.setProperty("--sm-ds", String(dock.s));
+      }
+      sup.classList.toggle("nul-sm-dock", !!dock);
+    }
+    root.setInterval(syncDock, 150);
+
+    // Anyma drops, AHEAD: while the SHOW is up, find the on-air deck's next Anyma drop with the SHOW's own
+    // detector and announce it (vis-moment tier "dance") a few seconds early, once per drop. NULL dances on it;
+    // the SHOW may take the same signal. No SHOW code needed: anymaShow.core is pure.
+    const drops = { a: { an: null, list: [], done: new Set() }, b: { an: null, list: [], done: new Set() } };
+    function watchDrops() {
+      const C = root.anymaShow && root.anymaShow.core;
+      if (!C || !C.prepTrack || !C.anymaDrops || showMode() === "off" || !root.decks || typeof audioCtx === "undefined") return;
+      const gain = (d) => (d && d.playing ? ((d.crossfaderGain && d.crossfaderGain.gain.value) || 0) * ((d.volumeGain && d.volumeGain.gain.value) || 1) : 0);
+      const id = gain(root.decks.a) >= gain(root.decks.b) ? "a" : "b", d = root.decks[id], w = drops[id];
+      if (!d || !d.playing || !d.analysis || typeof d._currentPosition !== "function") return;
+      if (w.an !== d.analysis) {
+        const an = d.analysis, hint = [an.genre, an.artist, an.title, d.trackName].filter((x) => typeof x === "string").join(" ");
+        w.an = an; w.done.clear();
+        try { const pt = C.prepTrack(an); w.list = pt ? C.anymaDrops(pt, C.anymaHint ? C.anymaHint(hint) : "") : []; } catch (_) { w.list = []; }
+      }
+      const pos = d._currentPosition(), rate = (typeof d._playbackRate === "function" && d._playbackRate()) || 1;
+      const dr = nextAnymaDrop(w.list, pos, 4 * rate, w.done);
+      if (!dr) return;
+      w.done.add(dr.at);
+      const bar = 240 / (d.bpm || 128) / rate, at = audioCtx.currentTime + (dr.at - pos) / rate;
+      root.dispatchEvent(new CustomEvent("vis-moment", { detail: { at, name: "ANYMA DROP", tier: "dance", deck: id, bar, until: at + DANCE_BARS * bar, source: "anyma" } }));
+    }
+    root.setInterval(watchDrops, 500);
+
     function show(sm) {
       // re-check at the start: the AI or the VFX may have been switched off since booking
       if (!aiActive() || !vfx()) return;
       const now = performance.now();
       const p = takeoverPlan(hitNow(sm.at), now, beatFor(sm));
       if (!p) return;
-      const r = el.getBoundingClientRect(), size = bot.offsetWidth || 1;      // one read per takeover
       const s = sup.style;
-      s.setProperty("--sm-fx", `${(r.left + r.width / 2 - root.innerWidth / 2).toFixed(1)}px`);
-      s.setProperty("--sm-fy", `${(r.top + r.height / 2 - root.innerHeight / 2).toFixed(1)}px`);
-      s.setProperty("--sm-fs", (r.width / size).toFixed(3));
+      if (dock) {                    // fly out of the dock (the top bar sits under the full SHOW)
+        s.setProperty("--sm-fx", `${dock.x}px`); s.setProperty("--sm-fy", `${dock.y}px`); s.setProperty("--sm-fs", String(dock.s));
+      } else {
+        const r = el.getBoundingClientRect(), size = bot.offsetWidth || 1;      // one read per takeover
+        s.setProperty("--sm-fx", `${(r.left + r.width / 2 - root.innerWidth / 2).toFixed(1)}px`);
+        s.setProperty("--sm-fy", `${(r.top + r.height / 2 - root.innerHeight / 2).toFixed(1)}px`);
+        s.setProperty("--sm-fs", (r.width / size).toFixed(3));
+      }
       s.setProperty("--sm-glow", sm.deck ? `var(--${sm.deck})` : "var(--ai)");
       s.setProperty("--sm-beat", `${p.beatMs.toFixed(0)}ms`);
       s.setProperty("--sm-phase", `${beatPhaseMs(now, p.hit, p.beatMs).toFixed(0)}ms`);
@@ -195,23 +346,78 @@
       el.classList.add("nul-away");
       endTimer = setTimeout(() => { sup.classList.remove("nul-sm-on"); el.classList.remove("nul-away"); }, p.end - now);
     }
-    function book(evt) {
-      const sm = supermoveFor(evt);
-      if (!sm || typeof audioCtx === "undefined") return;
-      sm.bar = evt.detail.bar;
+    const pending = [];              // {hitS, sm} of booked takeovers: a named moment on the same hit renames it
+    function bookSuper(sm, named) {
       const now = performance.now(), hitS = hitNow(sm.at) / 1000;
       while (booked.length && booked[0] < now / 1000 - SUPERMOVE_WINDOW_S) booked.shift();
-      const no = supermoveGate({ aiActive: aiActive(), vfxOn: vfx(), booked, hitS });
-      if (no) return;
+      while (pending.length && pending[0].hitS < now / 1000 - SUPERMOVE_WINDOW_S) pending.shift();
+      if (named && renameSameHit(pending, hitS, sm.name)) return;
+      if (supermoveGate({ aiActive: aiActive(), vfxOn: vfx(), booked, hitS })) return;
       const p = takeoverPlan(hitS * 1000, now, beatFor(sm));
       if (!p) return;
       booked.push(hitS);
       booked.sort((x, y) => x - y);
+      pending.push({ hitS, sm });
       setTimeout(() => show(sm), Math.max(0, p.start - now));
     }
-    root.addEventListener("ai-cue", (e) => book({ type: "ai-cue", detail: e.detail }));
-    root.addEventListener("ai-supermove", (e) => book({ type: "ai-supermove", detail: e.detail }));
+    // ACCENT: a quick pop / nod where NULL stands (top bar, and the dock when the SHOW is up), on the hit.
+    function react(sm, beatMs) {
+      if (!aiActive() || !vfx() || sup.classList.contains("nul-sm-on")) return;
+      const dur = `${Math.round(Math.max(250, Math.min(700, beatMs)))}ms`;
+      el.style.setProperty("--nul-react", dur);
+      sup.style.setProperty("--nul-react", dur);
+      el.classList.remove("nul-react"); sup.classList.remove("nul-sm-react");
+      void el.offsetWidth;           // restart the pop (at most one per 2 bars)
+      el.classList.add("nul-react"); sup.classList.add("nul-sm-react");
+      clearTimeout(reactTimer);
+      reactTimer = setTimeout(() => { el.classList.remove("nul-react"); sup.classList.remove("nul-sm-react"); }, Math.max(250, beatMs) + 80);
+      if (chip) {
+        chip.textContent = sm.name;
+        clearTimeout(chipTimer);
+        chipTimer = setTimeout(() => { chip.textContent = LABEL[cur] || LABEL.idle; }, 1500);
+      }
+    }
+    function bookAccent(sm) {
+      const now = performance.now(), hitMs = hitNow(sm.at), beatS = beatFor(sm);
+      const no = accentGate({ aiActive: aiActive(), vfxOn: vfx(), last: lastAccent, hitS: hitMs / 1000, barS: 4 * beatS, booked });
+      if (no || hitMs < now - LATE_MS || hitMs - now > MAX_LEAD_MS) return;
+      lastAccent = hitMs / 1000;
+      setTimeout(() => react(sm, beatS * 1000), Math.max(0, hitMs - now));
+    }
+    // DANCE: the SHOW's Anyma drop. The dock NULL dances on the drop's beat grid (phase from its hit) until `until`.
+    function bookDance(sm) {
+      if (!aiActive() || !vfx()) return;
+      const now = performance.now(), hitMs = hitNow(sm.at), untilMs = hitNow(sm.until), beatMs = beatFor(sm) * 1000;
+      if (!(untilMs > now) || hitMs - now > MAX_LEAD_MS) return;
+      clearTimeout(danceTimer);
+      danceTimer = setTimeout(() => {
+        const t = performance.now();
+        sup.style.setProperty("--sm-beat", `${beatMs.toFixed(0)}ms`);
+        sup.style.setProperty("--sm-phase", `${beatPhaseMs(t, hitMs, beatMs).toFixed(0)}ms`);
+        dance = { untilMs };
+        sup.classList.remove("nul-sm-dance");
+        void sup.offsetWidth;
+        sup.classList.add("nul-sm-dance");
+        st.grooveUntil = untilMs / 1000;       // the top-bar NULL grooves too (seen when the SHOW is a window)
+        syncDock();
+      }, Math.max(0, hitMs - now));
+    }
+    function book(evt) {
+      const sm = momentFor(evt);
+      if (!sm || typeof audioCtx === "undefined") return;
+      if (sm.tier === "accent") bookAccent(sm);
+      else if (sm.tier === "dance") bookDance(sm);
+      else bookSuper(sm, !(evt.detail && evt.detail.source === "cue"));
+    }
+    // One source of truth: a legacy supermove signal is re-announced as a vis-moment (source "cue"), so the
+    // SHOW and NULL book the same {at, name}; NULL itself books only from vis-moment.
+    for (const t of ["ai-cue", "ai-supermove"]) root.addEventListener(t, (e) => {
+      const vm = legacyMoment({ type: t, detail: e.detail });
+      if (vm) root.dispatchEvent(new CustomEvent("vis-moment", { detail: vm }));
+    });
+    root.addEventListener("vis-moment", (e) => book({ type: "vis-moment", detail: e.detail }));
   }
+
 
   el.addEventListener("click", () => {
     const hud = document.querySelector(".ai-hud");
