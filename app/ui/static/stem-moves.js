@@ -513,10 +513,6 @@
   }
   // Strip & rebuild leaves the voice alone: it needs a vocal that really sings in the window.
   function breakdownVocalOk(energy) { return stemPlays(energy, "vocals"); }
-  // Mean RMS per stem over the last quarter of a len-bar section from song time lineT (where a remix move acts).
-  function remixEnergy(d, lineT, barSong, len = 16) {
-    return meanOver(stemEnergyBars(d, lineT, barSong, len), Math.floor(len * 0.75), len);
-  }
   function remixPick(ctx) {
     if ((ctx.count || 0) >= REMIX_MAX_PER_SONG) return null;
     if ((ctx.barsOnTrack || 0) < 32 || (ctx.barsLeft || 0) < 48) return null;
@@ -651,19 +647,37 @@
       return e ? { ...r, score: r.score + (e.score - 5.5) * 3, ear: e } : r;
     }).sort((x, y) => y.score - x.score);
   }
-  const core = { keepsVibe, breakdownVocalOk, introAudible, mergeCombos, mergeRank, mergeLabel, mergeTransitionPlan, mergeWithEar, keepOneStem, hookDropEvents, hookDropDue, HOOK_OTHER, BREAKDOWN, breakdownFits, handoffFits, vocalShare, stemBlendPlan, STEM_BLEND_KINDS, remixEvents, remixPick, stemBridgePlan, mashupTransitionPlan,
+  // Both gates on one plan: the full-band floor (levelCheck) and the audible band
+  // (masterAudibility, a silent run of 1 s fails). e: {eOut, eIn, aOut, aIn}.
+  function gates(plan, fader, span, e, minRun, extra = {}) {
+    const lv = levelCheck(Object.assign({ events: plan.events, fader, dir: 1, span, eOut: e.eOut, eIn: e.eIn }, extra));
+    if (!lv.ok) return lv;
+    const au = masterAudibility(Object.assign({ events: plan.events, fader, dir: 1, span, eOut: e.aOut, eIn: e.aIn, minRun }, extra));
+    return au.ok ? lv : au;
+  }
+  const core = { gates, keepsVibe, breakdownVocalOk, introAudible, mergeCombos, mergeRank, mergeLabel, mergeTransitionPlan, mergeWithEar, keepOneStem, hookDropEvents, hookDropDue, HOOK_OTHER, BREAKDOWN, breakdownFits, handoffFits, vocalShare, stemBlendPlan, STEM_BLEND_KINDS, remixEvents, remixPick, stemBridgePlan, mashupTransitionPlan,
                  pickIntro, introBars, INTRO_LEVEL, levelCheck, gainsAt, faderAt, fitStemBlend, breakdownEvents,
                  masterAudibility, audibleRms, mergeFader, rawFader, deckFaderGains, mergeBooking, onTime, AUDIBLE_HZ, SILENCE_DB,
                  LEVEL_FLOOR_DB, AUDIBLE_GAIN, FADER_PARK_BARS, TYPICAL_SHARE, DIP_ALLOWED };
    if (typeof module !== "undefined" && module.exports) module.exports = core;
-   if (typeof root.document === "undefined" || typeof audioCtx === "undefined") return;
+
+  // ---- runtime: reaches the world only through the Host port (engine.js) -------------------------------
+  function create({ host }) {
+  const { setTimeout, clearTimeout, setInterval } = host.clock;
+  const audioCtx = host.audio;
+  const ui = host.ui;
+
+  // Mean RMS per stem over the last quarter of a len-bar section from song time lineT (where a remix move acts).
+  function remixEnergy(d, lineT, barSong, len = 16) {
+    return meanOver(stemEnergyBars(d, lineT, barSong, len), Math.floor(len * 0.75), len);
+  }
 
    // Minimum ramp seconds for stem moves: route through tempoRule if available,
    // else fallback. kind = "stem" or "level"; barS = seconds/bar; drop = exempt
    // (drop landing on its downbeat); deck = audible deck check.
    function minStemRamp(kind, barS, drop, deck) {
-     if (typeof root.tempoRule !== "undefined" && root.tempoRule.minRampSeconds) {
-       return root.tempoRule.minRampSeconds(kind, barS, { drop, deck });
+     if (typeof host.mod.tempoRule !== "undefined" && host.mod.tempoRule.minRampSeconds) {
+       return host.mod.tempoRule.minRampSeconds(kind, barS, { drop, deck });
      }
      // Fallback: drop or silent deck -> instant (0.005), else minimum ramp
      if (drop || !deck || !deck.playing) return 0.005;
@@ -673,7 +687,7 @@
    // ------------------------------------------------------------ browser --
   const timers = { a: [], b: [] };
   function note(deckId, label, why) {
-    root.dispatchEvent(new CustomEvent("ai-activity", { detail: { kind: "stem-move", deck: deckId, label, why } }));
+    host.bus.emit("ai-activity", { kind: "stem-move", deck: deckId, label, why });
   }
   // Audio time at which deck `d` reaches track time `t` (no loop wrap).
   function audioAt(d, t) {
@@ -729,7 +743,7 @@
   // camelot score of the two decks' keys (null: unknown)
   function keyScoreOf(out, inn) {
     const ka = out.analysis && out.analysis.key && out.analysis.key.camelot, kb = inn.analysis && inn.analysis.key && inn.analysis.key.camelot;
-    const cs = root.djMind && root.djMind.core && root.djMind.core.camelotScore;
+    const cs = host.mod.djMind && host.mod.djMind.core && host.mod.djMind.core.camelotScore;
     return cs && ka && kb ? cs(ka, kb) : null;
   }
   function camelotClash(out, inn) {
@@ -759,8 +773,8 @@
     dipReport(d, "breakdown", breakdownEvents(bars), bars, startTrackT, bar, DIP_ALLOWED.breakdown);
     const t0 = audioAt(d, startTrackT), beat = bar / 4 / rate;
     for (const [b, target, rampBeats] of plan) book(d, t0 + (b * bar) / rate, target, rampBeats * beat);
-    root.dispatchEvent(new CustomEvent("ai-cue", { detail: { at: t0 + (plan[plan.length - 1][0] * bar) / rate, kind: "drop",
-      deck: d.id, bar: bar / rate, why: "everything slams back after the strip & rebuild" } }));
+    host.bus.emit("ai-cue", { at: t0 + (plan[plan.length - 1][0] * bar) / rate, kind: "drop",
+      deck: d.id, bar: bar / rate, why: "everything slams back after the strip & rebuild" });
     note(d.id, `STRIP & REBUILD · ${bars} bars`, why || "drums out, bass out, voice alone, rebuild, drop on the line");
     return true;
   }
@@ -774,7 +788,7 @@
   //   A only       A's voice leaves over a beat on bar 0 when both would sing
   // The EQ path's fader keeps A full-mix, so the master never dips here.
   function eqIntro(outId, innId, t0, totalS, swapS, why) {
-    const out = root.decks[outId], inn = root.decks[innId];
+    const out = host.decks[outId], inn = host.decks[innId];
     if (!out || !inn || !(totalS >= 2)) return false;
     const rA = (out._playbackRate && out._playbackRate()) || 1;
     const bar = 240 / (out.bpm || 128) / rA;
@@ -817,7 +831,7 @@
   // its beat + tones join on the swap line, instead of its whole instrumental
   // appearing through the crossfader.
   function handoff(outId, innId, t0, totalS, why, swapS = 0) {
-    const out = root.decks[outId], inn = root.decks[innId];
+    const out = host.decks[outId], inn = host.decks[innId];
     if (!out || !inn) return false;
     if (!out.stemsReady && out.rearmStems) out.rearmStems("vocal handoff");
     if (!out.stemsReady || !inn.stemsReady) return false;
@@ -867,7 +881,7 @@
   // ({intro, fix, check}) or false: not both decks on live stems, or no plan
   // keeps the master above the floor (then the caller's EQ path runs instead).
   function stemBlend(kind, outId, innId, t0, bars, barS, why, opts = {}) {
-    const out = root.decks[outId], inn = root.decks[innId];
+    const out = host.decks[outId], inn = host.decks[innId];
     if (!out || !inn || !STEM_BLEND_KINDS.has(kind)) return false;
     if (!out.stemsReady && out.rearmStems) out.rearmStems("stem blend");
     if (!inn.stems || !out.stemsReady) return false;
@@ -956,7 +970,7 @@
   // Run a stem bridge: A's bar 0 at audio time t0; B starts at its track time
   // bFrom (4 B-bars before its entry line) at native tempo. Returns seconds.
   function stemBridge(outId, innId, t0, bEntryTrack, why) {
-    const out = root.decks[outId], inn = root.decks[innId];
+    const out = host.decks[outId], inn = host.decks[innId];
     if (!out || !inn) return 0;
     if (!out.stemsReady && out.rearmStems) out.rearmStems("stem bridge");
     if (!out.stemsReady || !inn.stems) return 0;
@@ -1001,8 +1015,8 @@
           Math.max(0, (at - audioCtx.currentTime) * 1000 - 250)));
        } else book(d, at, e.stems, Math.max(minStemRamp("stem", 1, false, d), e.ramp)); // e.ramp is in seconds (plan units)
     }
-    root.dispatchEvent(new CustomEvent("ai-cue", { detail: { at: t0 + plan.bEntry, kind: "drop", deck: innId, bar: barB,
-      why: "B's beat lands after the stem bridge" } }));
+    host.bus.emit("ai-cue", { at: t0 + plan.bEntry, kind: "drop", deck: innId, bar: barB,
+      why: "B's beat lands after the stem bridge" });
     console.info(`stem bridge ${outId}->${innId}: B in on its ${plan.intro === "drums" ? "drums" : "pads"}; master floor ${check.minDb.toFixed(1)} dB`);
     note(outId, `STEM BRIDGE ${outId.toUpperCase()} → ${innId.toUpperCase()}`, why ||
       `any tempo: strip A, ${aSings ? "hold its voice, " : ""}B's ${plan.intro === "drums" ? "drums (keys clash)" : "pads"} in beatless, B's beat drops on its own line`);
@@ -1015,14 +1029,7 @@
 
   // Run it. t0 = A's phrase line (audio time); bEntry = B's vocal phrase start
   // (track time); B must already carry tempo stems at A's tempo when they differ.
-  // Both gates on one plan: the full-band floor (levelCheck) and the audible band
-  // (masterAudibility, a silent run of 1 s fails). e: {eOut, eIn, aOut, aIn}.
-  function gates(plan, fader, span, e, minRun, extra = {}) {
-    const lv = levelCheck(Object.assign({ events: plan.events, fader, dir: 1, span, eOut: e.eOut, eIn: e.eIn }, extra));
-    if (!lv.ok) return lv;
-    const au = masterAudibility(Object.assign({ events: plan.events, fader, dir: 1, span, eOut: e.aOut, eIn: e.aIn, minRun }, extra));
-    return au.ok ? lv : au;
-  }
+  // (gates: pure, defined above the core so node can drive it too)
   // Measured energies of both decks over a plan, full + audible band (all null
   // when either deck has no decoded stems: typical shares, not judged for silence).
   function planEnergies(out, pA, inn, bEntry, bars) {
@@ -1038,7 +1045,7 @@
   // other combo that does (ranked: the booking's own ranking, or mergeRank on the
   // measured stems), else refused (the autopilot's next path runs).
   function mergeTransition(outId, innId, t0, bEntry, M, pick, why, ranked) {
-    const out = root.decks[outId], inn = root.decks[innId];
+    const out = host.decks[outId], inn = host.decks[innId];
     if (!out || !inn || !pick) return 0;
     if (!out.stemsReady && out.rearmStems) out.rearmStems("merge");
     if (!out.stemsReady || !inn.stems) return 0;
@@ -1067,15 +1074,15 @@
         }, Math.max(0, (at - audioCtx.currentTime) * 1000 - 700)));
       } else book(d, at, e.stems, Math.max(minStemRamp("stem", barS, false, d), e.ramp * barS));
     }
-    root.dispatchEvent(new CustomEvent("ai-cue", { detail: { at: t0 + M * barS, kind: "drop", deck: innId, bar: barS,
-      why: "B takes every stem on the line after the merge" } }));
+    host.bus.emit("ai-cue", { at: t0 + M * barS, kind: "drop", deck: innId, bar: barS,
+      why: "B takes every stem on the line after the merge" });
     note(outId, `MERGE → ${innId.toUpperCase()} · ${pick.label} · ${M} bars`, why ||
       `${pick.label}${pick.ear ? `; ear ${pick.ear.score}/10: ${pick.ear.why}` : ""}`);
     return plan.total * barS;
   }
 
   function mashupTransition(outId, innId, t0, bEntry, M, vox, why) {
-    const out = root.decks[outId], inn = root.decks[innId];
+    const out = host.decks[outId], inn = host.decks[innId];
     if (!out || !inn) return 0;
     if (!out.stemsReady && out.rearmStems) out.rearmStems("mashup");
     if (!out.stemsReady || !inn.stems) return 0;
@@ -1106,8 +1113,8 @@
           Math.max(0, (at - audioCtx.currentTime) * 1000 - 250)));
       } else book(d, at, e.stems, Math.max(minStemRamp("stem", barS, false, d), e.ramp * barS));
     }
-    root.dispatchEvent(new CustomEvent("ai-cue", { detail: { at: t0 + M * barS, kind: "drop", deck: innId, bar: barS,
-      why: "B's beat takes over after the mashup" } }));
+    host.bus.emit("ai-cue", { at: t0 + M * barS, kind: "drop", deck: innId, bar: barS,
+      why: "B's beat takes over after the mashup" });
     note(outId, `MASHUP → ${innId.toUpperCase()} · ${M} bars`, why ||
       `A's instrumental under B's vocal, hold vox, A's beat drops out, B's beat takes over on the line, 8-bar crossfade`);
     return plan.total * barS;
@@ -1118,14 +1125,15 @@
     cancel(d.id);
     const bar = 240 / (d.bpm || 128), rate = (d._playbackRate && d._playbackRate()) || 1;
     for (const e of hookDropEvents(item, bar)) book(d, audioAt(d, e.t), e.stems, e.ramp / rate);
-    root.dispatchEvent(new CustomEvent("ai-cue", { detail: { at: audioAt(d, item.drop_at), kind: "drop",
-      deck: d.id, bar: bar / rate, why: `the beat slams back after "${item.text}"` } }));
+    host.bus.emit("ai-cue", { at: audioAt(d, item.drop_at), kind: "drop",
+      deck: d.id, bar: bar / rate, why: `the beat slams back after "${item.text}"` });
     note(d.id, `HOOK DROP · "${item.text}"`, why || "beat out under the emotional line, then the drop");
     return true;
   }
 
-  root.stemMoves = { core, mergeTransition, hookDrop, breakdown, handoff, instrumental, reset, audioAt, vocalShare, stemBlend, remix, REMIX_LABEL, mashupBreak, stemBridge, mashupTransition,
+  const api = { core, mergeTransition, hookDrop, breakdown, handoff, instrumental, reset, audioAt, vocalShare, stemBlend, remix, REMIX_LABEL, mashupBreak, stemBridge, mashupTransition,
                      bridgeFader, stemEnergyBars, remixEnergy, eqIntro };
+  host.mod.stemMoves = api;       // the rail UI below reads deck state; other engine code reaches this module through host.mod
 
   // ------------------------------------------------------ stem rail UI --
   // Per deck, under the loop rail: separation status + one toggle per stem.
@@ -1133,10 +1141,10 @@
   const LABEL = { drums: "DRUMS", bass: "BASS", vocals: "VOX", other: "SYNTH" };
   let userClick = false;
   function buildRail(id) {
-    const panel = document.getElementById(`deck-${id}`);
+    const panel = ui.el(`deck-${id}`);
     const loopRail = panel && panel.querySelector(".rail");
     if (!loopRail || panel.querySelector(".stem-rail")) return;
-    const rail = document.createElement("div");
+    const rail = ui.create("div");
     rail.className = "rail stem-rail";
     rail.innerHTML = `<span class="hud-label">STEMS</span><span class="stem-status" id="stem-status-${id}">—</span>` +
       ["drums", "bass", "vocals", "other"].map((n) =>
@@ -1146,7 +1154,7 @@
     loopRail.after(rail);
     rail.addEventListener("click", (e) => {
       const b = e.target.closest(".stem-btn");
-      const d = root.decks && root.decks[id];
+      const d = host.decks && host.decks[id];
       if (!b || !d || !e.isTrusted) return;
       userClick = true;
       try {
@@ -1159,13 +1167,13 @@
     });
   }
   function paint(id, flash) {
-    const d = root.decks && root.decks[id];
-    const st = document.getElementById(`stem-status-${id}`);
+    const d = host.decks && host.decks[id];
+    const st = ui.el(`stem-status-${id}`);
     if (!d || !st) return;
     const ready = d.stemsReady, has = !!d.stems;
     st.textContent = d._meterGain ? "RIFF · KEY-LOCKED" : ready ? (d.stemState ? "LIVE STEMS" : "READY · full mix") : has ? "LOADED" : d.buffer ? "SEPARATING…" : "—";
     st.className = `stem-status${ready || d._meterGain ? " stem-ready" : d.buffer && !has ? " stem-wait" : ""}`;
-    document.querySelectorAll(`.stem-btn[data-deck="${id}"]`).forEach((b) => {
+    ui.queryAll(`.stem-btn[data-deck="${id}"]`).forEach((b) => {
       b.disabled = !ready;
       const n = b.dataset.stem;
       const v = n === "all" ? (d.stemState ? 0 : 1) : d.stemState ? d.stemState[n] : 1;
@@ -1182,24 +1190,24 @@
   // what the crowd hears of it; a muted stem keeps scrolling, dim.
   const COLS = 60, hist = {}, scopes = [];
   const buf = new Float32Array(512);
-  document.querySelectorAll(".stem-scope").forEach((c) => {
+  ui.queryAll(".stem-scope").forEach((c) => {
     const key = `${c.dataset.deck}:${c.dataset.stem}`;
     hist[key] = new Float32Array(COLS);
     scopes.push({ c, ctx: c.getContext("2d"), key, deck: c.dataset.deck, stem: c.dataset.stem });
   });
   function accent(deck) {
-    return getComputedStyle(document.getElementById(`deck-${deck}`)).getPropertyValue("--accent").trim() || "#0f6";
+    return ui.cssVar(`deck-${deck}`, "--accent") || "#0f6";
   }
   const colour = { a: null, b: null };
   let last = 0, frame = 0;
   function drawScopes(t) {
-    requestAnimationFrame(drawScopes);
+    host.clock.raf(drawScopes);
     if (t - last < 33) return;                   // ~30 fps
     last = t;
     if (!colour.a) { colour.a = accent("a"); colour.b = accent("b"); }
     frame++;
     for (const s of scopes) {
-      const d = root.decks && root.decks[s.deck];
+      const d = host.decks && host.decks[s.deck];
       const live = d && d.playing !== undefined && (d.stemsReady || d._meterGain);
       const h = hist[s.key];
       h.copyWithin(0, 1);
@@ -1220,10 +1228,13 @@
       ctx.globalAlpha = 1;
     }
   }
-  requestAnimationFrame(drawScopes);
-  root.addEventListener("ai-activity", (e) => {
+  host.clock.raf(drawScopes);
+  host.bus.on("ai-activity", (e) => {
     const d = e.detail || {};
     if (d.kind === "stems") paint(d.deck, !userClick);
   });
   setInterval(() => { paint("a"); paint("b"); }, 1000);
+  return api;
+  }
+  if (root.Engine) root.Engine.mount("stemMoves", create);
 })(typeof window !== "undefined" ? window : globalThis);

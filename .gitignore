@@ -17,3 +17,5 @@ playwright-report/
 # analyzed_setlist.json
 # mixing_plan.json
 AI DJ Brief.pdf
+# virtual set output (app/sim)
+app/sim/out/

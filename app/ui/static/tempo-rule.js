@@ -141,6 +141,6 @@
   const core = { MAX_TEMPO_PCT_PER_BAR, PITCH_RANGE_PCT, KEYLOCK_RANGE_PCT, AUDIBLE_MIN, STILL_PCT,
     MIN_LEVEL_RAMP_BEATS, MIN_STEM_RAMP_BARS,
     isAudible, glideBars, glideSeconds, tempoMove, lockRate, beatLock, beatRecipe, planFit, stemLockable, clampPitch, minRampSeconds, shouldWaitForTempoStems };
-  root.tempoRule = core;
   if (typeof module !== "undefined" && module.exports) module.exports = core;
+  if (root.Engine) root.Engine.mount("tempoRule", () => core);      // the Host port hands it to whoever asks (host.mod.tempoRule)
 })(typeof window !== "undefined" ? window : globalThis);

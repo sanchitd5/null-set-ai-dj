@@ -261,18 +261,161 @@ var autopilotCore = (function () {
     const r = store.get(pairKey(aId, bId));
     return r && (!forced || r.forced) ? r : null;
   }
-  const api = { emptyRetryMs, useLibraryFallback, rememberPairReject, pairRejected, awaitJob, keySafeRecipe, KEY_SAFE_MIN, energyStepOk, hybridWindowKey, highSpans, quantileLinear, median, exitPastHigh, learnedRecipe, vocalRecipe, stemBlendBars, stemBlendFader, phraseWaitS, introBars, FADER_PARK_BARS, homePlan, maskedGlideBars, maskedDropAt, HOME_DROP_PCT, LADDER_STEP_PCT };
+  // ---- scheduleTransition seams (pure; the virtual set in app/sim drives them) ----
+  // Beat-to-beat blends run on the pitched mix (8 %) or on key-locked tempo stems
+  // (keyLim); half / double time counts. aEff: A's heard tempo.
+  function tempoLockableAt(aEff, bBpm, lim) {
+    return [1, 2, 0.5].some((m) => Math.abs(aEff / (bBpm * m) - 1) <= lim);
+  }
+  // Recipe kind: which family of moves a recipe name runs as.
+  function recipeKind(recipe) {
+    const r = String(recipe || "").toLowerCase();
+    if (r.includes("double drop")) return "double";
+    if (r.includes("bass swap") || r.includes("drop swap")) return "bass";
+    if (r.includes("echo")) return "echo";
+    if (r.includes("filter")) return "filter";
+    // no hard cuts (user: "hard cuts are a big no"): a cut recipe that slips through
+    // (Hard Cut, Quick Cut) still runs as a bass swap on the audio clock
+    if (r.includes("cut")) return "bass";
+    if (r.includes("loop")) return "loop";
+    if (r.includes("blend")) return "blend";
+    return "default";
+  }
+  // The recipe scheduleTransition books from the matcher's pick and the live facts.
+  // o: {recipe, blend, layer (bool), aStems, bStems, aEff, bBpm, tempoStemsBpm,
+  //     keyScore (Camelot 0-1 or null), mashupFits: () => bool}
+  // -> {recipe, blend (null when dropped), dropLayer, blendClean, vocalShort, vocalCut,
+  //     vocalRule, oneSong, stemsBoth, lockS, keyRewrite {from,to}|null, cutRewrite}
+  function decideRecipe(o, tempoRule) {
+    let recipe = o.recipe || "Blend", blend = o.blend || null;
+    let vocalShort = false, vocalCut = "", vocalRule = false, blendClean = null;
+    const aStems = !!o.aStems, bStems = !!o.bStems, stemsBoth = aStems && bStems;
+    // Tempo gate (tempo-rule.js): a beat-to-beat recipe only when B locks to A's
+    // heard tempo right now (pitched mix or key-locked stems), else beatless.
+    const lockS = tempoRule.planFit({ aEff: o.aEff, bBpm: o.bBpm, stemsBoth, tempoStemsBpm: o.tempoStemsBpm });
+    const oneSong = lockS.oneSong;
+    let dropLayer = false;
+    if (!lockS.beat) { blend = null; dropLayer = true; }
+    // Beat-to-beat: when the tempos lock, hand beat to beat. Echo-outs are for
+    // tempo gaps; they turned "vocal -> beat" when used between compatible songs.
+    if (blend) {
+      // A's vocal riding over B's instrumental intro is a classic long blend;
+      // only two vocals at once clash, so keep that overlap short (bass swap).
+      const bClean = blend.b_vocal_coverage == null || blend.b_vocal_coverage <= 0.15;
+      const k = recipeKind(recipe);
+      if (!bClean) recipe = "Bass Swap";
+      else if (!["bass", "blend", "default"].includes(k)) recipe = "Long Blend";
+      blendClean = bClean;
+      // Two vocals must never sing together: the overlap has to END before B's
+      // vocal first comes in. Pick the transition length by how many bars that is.
+      if (oneSong) { recipe = "Long Blend"; blendClean = true; }
+      // stems on either deck: one singer by muting a vocal stem, never a cut
+      const vr = vocalRecipe({ vIn: blend.b_vocal_in_bars, oneSong, aStems, bStems });
+      if (vr) { vocalRule = true; recipe = vr.recipe; vocalShort = vr.short; vocalCut = vr.why; }
+    } else if (oneSong) {
+      // tempos lock (key-locked tempo stems attached, or inside the pitch range)
+      recipe = "Long Blend";
+    } else if (stemsBoth) {
+      // tempo can't lock: a stem bridge, never an echo-out (user)
+      recipe = "Stem Bridge";
+    } else if (!["echo", "filter"].includes(recipeKind(recipe))) {
+      // No stems and no tempo lock: beats cannot be layered, so don't hard-swap.
+      // Echo the outgoing song away while the new one enters on its phrase ([[Echo Out]]).
+      recipe = "Echo Out";
+    }
+    // Clashing keys never get a tonal blend: Echo Out (CLAUDE.md s4). The matcher
+    // ranked key-safe recipes for these pairs; the rewrites above turned them into
+    // Long Blend / Bass Swap without reading the key.
+    let keyRewrite = null;
+    if (!o.layer || dropLayer) {
+      const safe = keySafeRecipe(recipe, o.keyScore);
+      if (safe !== recipe) { keyRewrite = { from: recipe, to: safe }; recipe = safe; blend = null; vocalShort = false; }
+    }
+    // Never a hard cut (user): a cut the matcher or the AI plan proposed is a 4-bar Bass Swap.
+    let cutRewrite = false;
+    if (/\bcut\b/i.test(String(recipe || ""))) { recipe = "Bass Swap"; vocalShort = true; cutRewrite = true; }
+    // Mashup -> transition beats every other move when the pair fits (user)
+    if (lockS.beat && stemsBoth && o.mashupFits && o.mashupFits()) recipe = "Mashup → Transition";
+    return { recipe, blend, dropLayer, blendClean, vocalShort, vocalCut, vocalRule, oneSong, stemsBoth, lockS, keyRewrite, cutRewrite };
+  }
+  // Play-time windows by set mode, counted from when a song came in.
+  //   long   songs ride 3-6 min, long 24 s blends;  quick  40-100 s, 8 s blends
+  //   hybrid per song: weak match or high energy -> quick, low energy -> long
+  const WINDOWS = {
+    long:   { min: 180, max: 360, xf: 24, label: "LONG" },
+    medium: { min: 120, max: 240, xf: 16, label: "MID" },
+    quick:  { min: 40,  max: 100, xf: 8,  label: "QUICK" }, // user: 40-100 s (widened from 60-120)
+    bail:   { min: 30,  max: 60,  xf: 8,  label: "QUICK·bail" },
+    // steering toward the occasion's music: short bridge songs (user: 30-60 s each)
+    bridge: { min: 30,  max: 60,  xf: 8,  label: "BRIDGE" },
+  };
+  // o: {steering ("move"), famous, rem (famous song: seconds left from its entry),
+  //     mode, score, energy}
+  function playWindowFor(o) {
+    if (o.steering === "move") return WINDOWS.bridge;
+    // A famous song plays in full (user; the USB002 set rides leavemealone for
+    // 7 min): exit only in its last ~50 s, i.e. the outro.
+    if (o.famous && o.rem > 90) return { min: Math.max(60, o.rem - 50), max: Math.max(70, o.rem - 6), xf: 24, label: "FULL·famous" };
+    const weak = (o.score == null ? 50 : o.score) < 65;
+    if (o.mode === "long") return WINDOWS.long;
+    if (o.mode === "quick") return weak ? WINDOWS.bail : WINDOWS.quick;
+    if (weak) return WINDOWS.bail;
+    return WINDOWS[hybridWindowKey(o.energy)];
+  }
+  // Exit window on the playing song (track seconds), from the play window.
+  // o: {w (play window), entryPos, trackDur (Infinity when unknown)}
+  function exitBounds(o) {
+    const trackEnd = o.trackDur - o.w.xf - 2;
+    return { trackEnd, lo: Math.min(o.entryPos + o.w.min, trackEnd), hi: Math.min(o.entryPos + o.w.max, trackEnd) };
+  }
+  // (exitPick below, then exitTiming, exitHighPush)
+  // The planned exit inside the window: a blend / layer point wins, else the
+  // matcher's point clamped into the window, never before the song's first drop.
+  // o: {lo, hi, trackEnd, layerStart, blendExit, candidateATime, minExit, hasBlend}
+  function exitPick(o) {
+    let exitAt = o.layerStart != null ? o.layerStart : o.hasBlend ? o.blendExit : o.candidateATime;
+    if (!o.hasBlend && !(exitAt >= o.lo && exitAt <= o.hi)) exitAt = Math.max(o.lo, Math.min(o.hi, exitAt || o.hi));
+    // never leave before the playing song's first drop has played (server floor)
+    if (!o.hasBlend && o.minExit != null && exitAt < o.minExit && o.minExit < o.trackEnd) exitAt = o.minExit;
+    return exitAt;
+  }
+  // Exit kept on A's phrase grid (whole phrases, never seconds) and the crossfade length.
+  // o: {exitAt, nowPos, phraseS, w, oneSong, vocalShort, peak}
+  function exitTiming(o) {
+    let t = o.exitAt;
+    while (t < o.nowPos + 15) t += o.phraseS;
+    // vocalShort: xfDuration < 16 halves every bar count in executeTransition
+    // (Bass Swap 8 -> 4 bars) so the overlap ends before B's vocal.
+    const xfDuration = o.oneSong ? Math.max(16, o.w.xf) : o.vocalShort ? Math.min(8, o.w.xf) : o.peak ? Math.max(16, o.w.xf) : o.w.xf;
+    return { effectiveATime: t, xfDuration };
+  }
+  // Never transition out of A while it is at its energy high: the exit moves past it by
+  // whole phrases (not for PEAK / LAYER / pre-planned: they chose their line).
+  // o: {t (effectiveATime), phraseS, bpm, trackEnd, energyTimes, energyCurve} -> {t, moved}
+  function exitHighPush(o) {
+    if (!o.energyTimes || !o.energyCurve) return { t: o.t, moved: 0 };
+    const spans = highSpans(o.energyTimes, o.energyCurve, 240 / o.bpm);
+    const ex = exitPastHigh(o.t, 16 * 240 / o.bpm, spans, o.phraseS, o.trackEnd);
+    return { t: ex.moved ? ex.t : o.t, moved: ex.moved };
+  }
+  const api = { emptyRetryMs, useLibraryFallback, rememberPairReject, pairRejected, awaitJob, keySafeRecipe, KEY_SAFE_MIN, energyStepOk, hybridWindowKey, highSpans, quantileLinear, median, exitPastHigh, learnedRecipe, vocalRecipe, stemBlendBars, stemBlendFader, phraseWaitS, introBars, FADER_PARK_BARS, homePlan, maskedGlideBars, maskedDropAt, HOME_DROP_PCT, LADDER_STEP_PCT,
+    tempoLockableAt, recipeKind, decideRecipe, WINDOWS, playWindowFor, exitBounds, exitPick, exitTiming, exitHighPush };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   return api;
 })();
 
-(function () {
-  if (typeof window === "undefined") return;   // node: only the pure core above
+// ---- runtime: the engine reaches the world only through the Host port (engine.js): host.decks, host.clock,
+// host.api, host.bus, host.ui, host.mod (djMind, stemMoves, tempoRule, riffOverRap ...), host.log, host.random.
+function createAutopilotEngine({ host, ai }) {
+  const { setTimeout, clearTimeout, setInterval, clearInterval } = host.clock;
+  const audioCtx = host.audio;
+  const ui = host.ui;
+  const loadIntoDeck = (...a) => host.loadIntoDeck(...a);
   // Every request the autopilot makes has a deadline. Without one, a request
   // lost in a server restart never settled and the set sat in HOLD LOOP
   // forever ("Matching transition..." stuck). Budgets match the work behind
   // each endpoint (LLM queue, Demucs stems, 30-50 MB FLAC audio).
-  const _fetch = window.fetch.bind(window);
+  const _fetch = (url, opts) => host.api.fetch(url, opts);
   function deadlineFor(url) {
     const u = String(url);
     if (u.includes("/api/download")) return 300000;
@@ -311,46 +454,45 @@ var autopilotCore = (function () {
   let entryPos = 0;           // track time where the current song came in
   let currentEnergy = null;   // LLM's 1-10 energy read of the current song
   let playedIds = [];         // track ids played this set (LAYER callbacks: an earlier vocal)
-  let setStartedAt = 0;       // Date.now() when the set started (elapsed_seconds for suggest)
+  let setStartedAt = 0;       // host.clock.now() when the set started (elapsed_seconds for suggest)
   // One id per set in this browser tab: the server scopes its suggestion memory
   // to it, so another tab's set (or this tab's previous set) never counts as
   // "this set", and two tabs never share a cached suggestion.
-  const newSetId = () => (window.crypto && crypto.randomUUID ? crypto.randomUUID()
-    : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`);
+  const newSetId = () => host.random.uuid();
   let setId = newSetId();
   let beatMutedByLayer = false; // a LAYER paused the live beat layer (restore after / on stop)
   function unmuteBeatLayer() {
-    if (beatMutedByLayer && window.beatLayer) window.beatLayer.setEnabled(true);
+    if (beatMutedByLayer && host.mod.beatLayer) host.mod.beatLayer.setEnabled(true);
     beatMutedByLayer = false;
   }
 
   // ── UI refs ───────────────────────────────────────────────────────────────
-  const seedInput      = document.getElementById("ap-seed-input");
-  const occasionInput  = document.getElementById("ap-occasion-input");
-  const startBtn       = document.getElementById("ap-start-btn");
-  const stopBtn        = document.getElementById("ap-stop-btn");
-  const statusEl       = document.getElementById("ap-status");
-  const queueEl        = document.getElementById("ap-queue");
-  const xfader         = document.getElementById("crossfader");
+  const seedInput      = ui.el("ap-seed-input");
+  const occasionInput  = ui.el("ap-occasion-input");
+  const startBtn       = ui.el("ap-start-btn");
+  const stopBtn        = ui.el("ap-stop-btn");
+  const statusEl       = ui.el("ap-status");
+  const queueEl        = ui.el("ap-queue");
+  const xfader         = ui.el("crossfader");
 
   if (!startBtn) return; // panel not present
 
   // ── helpers ───────────────────────────────────────────────────────────────
   function apStatus(msg) {
     if (statusEl) statusEl.textContent = msg;
-    if (typeof setStatus === "function") setStatus(msg);
+    ui.status(msg);
   }
 
   function stagingDeck() { return activeDeck === "a" ? "b" : "a"; }
 
   function deckPosition(id) {
-    const d = window.decks && window.decks[id];
+    const d = host.decks && host.decks[id];
     return d ? d._currentPosition() : 0;
   }
   // A chosen move whose level dip IS the move (stemMoves.core.DIP_ALLOWED):
   // said out loud, never a silently skipped floor check.
   function dipAllowed(kind, what) {
-    const D = window.stemMoves && window.stemMoves.core.DIP_ALLOWED;
+    const D = host.mod.stemMoves && host.mod.stemMoves.core.DIP_ALLOWED;
     console.info(`loudness floor: dip allowed for ${what} - ${(D && D[kind]) || kind}`);
   }
   // "" when the deck's stems are live, else why not (for the recipe log).
@@ -448,7 +590,7 @@ var autopilotCore = (function () {
 
   function endAudioClock() {
     xT0 = null;
-    document.querySelectorAll("[data-ai-audio]").forEach((el) => { delete el.dataset.aiAudio; });
+    ui.queryAll("[data-ai-audio]").forEach((el) => { delete el.dataset.aiAudio; });
   }
 
   // Equal-power gains for crossfader value v (-1..1), +XF_CENTER_BOOST_DB at the centre.
@@ -459,10 +601,10 @@ var autopilotCore = (function () {
   }
 
   function audioTargetOf(el) {
-    if (!el || !window.decks) return null;
+    if (!el || !host.decks) return null;
     if (el === xfader) return { kind: "xf" };
     if (el.classList && el.classList.contains("eq-knob")) {
-      const d = window.decks[el.dataset.deck];
+      const d = host.decks[el.dataset.deck];
       const f = d && ({ low: d.lowFilter, mid: d.midFilter, high: d.highFilter })[el.dataset.band];
       return f ? { kind: "eq", param: f.gain } : null;
     }
@@ -486,7 +628,7 @@ var autopilotCore = (function () {
     // equal-power (+centre boost) curve as short linear segments
     const n = dur > 0 ? Math.max(2, Math.ceil(dur * 30)) : 1;
     for (const [idx, d] of [[0, "a"], [1, "b"]]) {
-      const p = window.decks[d].crossfaderGain.gain;
+      const p = host.decks[d].crossfaderGain.gain;
       hold(p);
       p.setValueAtTime(xfGains(n === 1 ? to : from)[idx], when);
       for (let i = 1; i < n; i++) {
@@ -497,19 +639,19 @@ var autopilotCore = (function () {
   }
 
   function eqEl(deck, band) {
-    return document.querySelector(`.eq-knob[data-deck="${deck}"][data-band="${band}"]`);
+    return ui.query(`.eq-knob[data-deck="${deck}"][data-band="${band}"]`);
   }
   function fxBtn(deck, type) {
-    return document.querySelector(`.fx-type-btn[data-deck="${deck}"][data-type="${type}"]`);
+    return ui.query(`.fx-type-btn[data-deck="${deck}"][data-type="${type}"]`);
   }
   function loopBtn(deck) {
-    return document.querySelector(`.deck-btn[data-deck="${deck}"][data-action="loop-toggle"]`);
+    return ui.query(`.deck-btn[data-deck="${deck}"][data-action="loop-toggle"]`);
   }
 
   function setRange(el, v) {
     if (!el) return;
     el.value = String(v);
-    el.dispatchEvent(new Event("input", { bubbles: true }));
+    ui.fire(el, "input", true);
   }
 
   // Linear ramp of a range input over durationMs. fromVal null = current value.
@@ -550,20 +692,20 @@ var autopilotCore = (function () {
   }
 
   function barMs(deck) {
-    const d = window.decks && window.decks[deck];
+    const d = host.decks && host.decks[deck];
     const bpm = d && d.bpm > 0 ? d.bpm : 128;
     return 240000 / bpm;
   }
 
   function setLoopLength(deck, beats) {
-    const d = window.decks && window.decks[deck];
+    const d = host.decks && host.decks[deck];
     if (d && typeof d.setLoopBeats === "function") d.setLoopBeats(beats);
-    const v = document.getElementById(`loop-value-${deck}`);
+    const v = ui.el(`loop-value-${deck}`);
     if (v) v.textContent = String(beats);
   }
 
   function setLoop(deck, on) {
-    const d = window.decks && window.decks[deck];
+    const d = host.decks && host.decks[deck];
     const btn = loopBtn(deck);
     if (!d || !btn) return;
     if (!!d.loopOn !== on) btn.click();
@@ -572,7 +714,7 @@ var autopilotCore = (function () {
   function setFx(deck, type, wet) {
     const btn = fxBtn(deck, type);
     if (btn) btn.click();
-    if (wet != null) setRange(document.querySelector(`.fx-wet[data-deck="${deck}"]`), wet);
+    if (wet != null) setRange(ui.query(`.fx-wet[data-deck="${deck}"]`), wet);
   }
 
   // Put a deck back to neutral so it is clean when it becomes the staging deck.
@@ -580,7 +722,7 @@ var autopilotCore = (function () {
   // gain-staging on the mixer): vibe gate reports gain_match_db = playing RMS
   // minus candidate RMS. Clamped to the knob's range (-12 dB .. +6 dB).
   function matchGain(outDeck, inDeck, db) {
-    const knob = (d) => document.querySelector(`.gain-knob[data-deck="${d}"]`);
+    const knob = (d) => ui.query(`.gain-knob[data-deck="${d}"]`);
     const outK = knob(outDeck), inK = knob(inDeck);
     if (!inK) return;
     const base = outK ? parseFloat(outK.value) || 1 : 1;
@@ -596,7 +738,7 @@ var autopilotCore = (function () {
     setFx(deck, "none");
     // A key-locked / tempo-matched blend leaves this deck's pitch off native;
     // never carry that into its next track (it must load at its own BPM).
-    setRange(document.querySelector(`.pitch-fader[data-deck="${deck}"]`), 0);
+    setRange(ui.query(`.pitch-fader[data-deck="${deck}"]`), 0);
   }
 
   const MASHUP_VOX = 0.7;     // B's voice under A's music but never buried (user)
@@ -608,7 +750,7 @@ var autopilotCore = (function () {
     const gap = Math.abs(aEff / idk.bpm - 1);
     if (gap > keyLockLim()) return null;
     if (gap > 0.02 && !(idk.tempoStems && Math.abs(idk.tempoStems.bpm / aEff - 1) < 0.01)) return null;
-    const cs = window.djMind && window.djMind.core && window.djMind.core.camelotScore;
+    const cs = host.mod.djMind && host.mod.djMind.core && host.mod.djMind.core.camelotScore;
     const ka = od.analysis && od.analysis.key && od.analysis.key.camelot, kb = idk.analysis && idk.analysis.key && idk.analysis.key.camelot;
     const keyOk = !cs || !ka || !kb || cs(ka, kb) >= 0.8;
     if (!keyOk && !ve.rap) return null;                                // a sung vocal over clashing chords: no
@@ -635,7 +777,7 @@ var autopilotCore = (function () {
   }
   // Mean RMS per stem over [songT, songT + bars) of deck d (null: no decoded stems).
   function stemMeans(d, songT, bars) {
-    const sm = window.stemMoves, e = sm && sm.stemEnergyBars ? sm.stemEnergyBars(d, songT, 240 / (d.bpm || 128), bars) : null;
+    const sm = host.mod.stemMoves, e = sm && sm.stemEnergyBars ? sm.stemEnergyBars(d, songT, 240 / (d.bpm || 128), bars) : null;
     if (!e) return null;
     const m = {};
     for (const n of ["drums", "bass", "vocals", "other"]) m[n] = e[n].reduce((a, b) => a + b, 0) / (e[n].length || 1);
@@ -645,9 +787,9 @@ var autopilotCore = (function () {
   // silent ear re-ranks the top 3 in the background (offline clips, nothing
   // plays) before the transition fires. Stored on B's deck as _mergePlan.
   function planMerge(aId, bId, od, idk, aT) {
-    const mf = mergeFits(od, idk), sm = window.stemMoves;
+    const mf = mergeFits(od, idk), sm = host.mod.stemMoves;
     if (!mf || !sm || !sm.core.mergeRank) return null;
-    const cs = window.djMind && window.djMind.core && window.djMind.core.camelotScore;
+    const cs = host.mod.djMind && host.mod.djMind.core && host.mod.djMind.core.camelotScore;
     const ka = od.analysis && od.analysis.key && od.analysis.key.camelot, kb = idk.analysis && idk.analysis.key && idk.analysis.key.camelot;
     const ranked = sm.core.mergeRank({ eA: stemMeans(od, aT, mf.M), eB: stemMeans(idk, mf.entry, mf.M),
       keyScore: cs && ka && kb ? cs(ka, kb) : null, bRap: mf.rap });
@@ -676,19 +818,7 @@ var autopilotCore = (function () {
     return plan;
   }
 
-  function recipeKind(recipe) {
-    const r = String(recipe || "").toLowerCase();
-    if (r.includes("double drop")) return "double";
-    if (r.includes("bass swap") || r.includes("drop swap")) return "bass";
-    if (r.includes("echo")) return "echo";
-    if (r.includes("filter")) return "filter";
-    // no hard cuts (user: "hard cuts are a big no"): a cut recipe that slips through
-    // (Hard Cut, Quick Cut) still runs as a bass swap on the audio clock
-    if (r.includes("cut")) return "bass";
-    if (r.includes("loop")) return "loop";
-    if (r.includes("blend")) return "blend";
-    return "default";
-  }
+  const recipeKind = autopilotCore.recipeKind;
 
   /**
    * Run a recipe-aware, EQ-first transition from `out` to `inn`.
@@ -743,7 +873,7 @@ var autopilotCore = (function () {
       }
     };
     {
-      const smM = window.stemMoves, odM = window.decks && window.decks[out], idM = window.decks && window.decks[inn];
+      const smM = host.mod.stemMoves, odM = host.decks && host.decks[out], idM = host.decks && host.decks[inn];
       const mp = idM && idM._mergePlan;
       if (recipe === "Stem Merge" && smM && smM.mergeTransition && mp && odM) {
         ["low", "mid", "high"].forEach((b) => { setRange(eqEl(out, b), 0); setRange(eqEl(inn, b), 0); });
@@ -761,7 +891,7 @@ var autopilotCore = (function () {
     // Needs: stems on both, B's vocal phrase, keys that agree (or B raps), and
     // B on key-locked tempo stems at A's tempo when they differ.
     {
-      const sm1 = window.stemMoves, od1 = window.decks && window.decks[out], id1 = window.decks && window.decks[inn];
+      const sm1 = host.mod.stemMoves, od1 = host.decks && host.decks[out], id1 = host.decks && host.decks[inn];
       const mt = sm1 && od1 && id1 ? mashupFits(od1, id1) : null;
       if (mt && kind !== "double") {
         ["low", "mid", "high"].forEach((b) => { setRange(eqEl(out, b), 0); setRange(eqEl(inn, b), 0); });
@@ -778,7 +908,7 @@ var autopilotCore = (function () {
     // "Echo Out is painful"). Strip A, hold its voice, B's pads in beatless, the
     // crossfader sweeps across the beatless stretch, B's beat drops on its own line.
     {
-      const sm0 = window.stemMoves, od0 = window.decks && window.decks[out], id0 = window.decks && window.decks[inn];
+      const sm0 = host.mod.stemMoves, od0 = host.decks && host.decks[out], id0 = host.decks && host.decks[inn];
       if (od0 && !od0.stemsReady && od0.rearmStems) od0.rearmStems("stem bridge");
       if (sm0 && (kind === "echo" || recipe === "Stem Bridge") && od0 && id0 && od0.stemsReady && id0.stems) {
         ["low", "mid", "high"].forEach((b) => { setRange(eqEl(out, b), 0); setRange(eqEl(inn, b), 0); });
@@ -801,8 +931,8 @@ var autopilotCore = (function () {
     // Both decks have live stems: the transition is done with stems, not EQ
     // (user: the automixer should lean on stems). Every layer gets one owner:
     // B's synths first, kick + bass swap together on the line, one singer.
-    const sm = window.stemMoves;
-    const od = window.decks && window.decks[out], idk = window.decks && window.decks[inn];
+    const sm = host.mod.stemMoves;
+    const od = host.decks && host.decks[out], idk = host.decks && host.decks[inn];
     if (od && !od.stemsReady && od.rearmStems) od.rearmStems("stem blend");
     if (sm && sm.core.STEM_BLEND_KINDS.has(kind) && od && idk && od.stemsReady && idk.stemsReady) {
       // Bars here are real bars at A's live tempo (B is locked to it), computed
@@ -926,8 +1056,8 @@ var autopilotCore = (function () {
         break;
     }
     if (!stemHandoff(kind, out, inn, (total * bar) / 1000, (swapBar * bar) / 1000) &&
-        window.stemMoves && window.stemMoves.eqIntro && kind !== "double") {
-      window.stemMoves.eqIntro(out, inn, xT0, (total * bar) / 1000, (swapBar * bar) / 1000);
+        host.mod.stemMoves && host.mod.stemMoves.eqIntro && kind !== "double") {
+      host.mod.stemMoves.eqIntro(out, inn, xT0, (total * bar) / 1000, (swapBar * bar) / 1000);
     }
     if (recipe === "Stem Bridge" || recipe === "Stem Merge") executedMove = "EQ blend";   // the stem move was refused
     return total * bar;
@@ -937,18 +1067,18 @@ var autopilotCore = (function () {
   // incoming stems): B enters as its instrumental, A's vocal rides B's beat on
   // the vocal bus, B's own vocal returns as A's fades (stem-moves.js).
   function stemHandoff(kind, out, inn, totalS, swapS = 0) {
-    if (!window.stemMoves || kind === "double" || totalS < 4) return false;
-    const od = window.decks && window.decks[out], id = window.decks && window.decks[inn];
+    if (!host.mod.stemMoves || kind === "double" || totalS < 4) return false;
+    const od = host.decks && host.decks[out], id = host.decks && host.decks[inn];
     if (!od || !id) return false;
     const ka = od.analysis && od.analysis.key && od.analysis.key.camelot;
     const kb = id.analysis && id.analysis.key && id.analysis.key.camelot;
-    const core = window.djMind && window.djMind.core;
+    const core = host.mod.djMind && host.mod.djMind.core;
     const keyScore = core && core.camelotScore ? core.camelotScore(ka, kb) : 0;
     const p0 = od._positionAt ? od._positionAt(xT0) : od._currentPosition();
-    const outVocal = window.stemMoves.vocalShare(od.analysis && od.analysis.vocal_active_regions, p0, p0 + totalS);
+    const outVocal = host.mod.stemMoves.vocalShare(od.analysis && od.analysis.vocal_active_regions, p0, p0 + totalS);
     if (!od.stemsReady && od.rearmStems) od.rearmStems("vocal handoff");
-    const fits = window.stemMoves.core.handoffFits({ outStems: od.stemsReady, inStems: id.stemsReady, keyScore, outVocal });
-    return fits && window.stemMoves.handoff(out, inn, xT0, totalS,
+    const fits = host.mod.stemMoves.core.handoffFits({ outStems: od.stemsReady, inStems: id.stemsReady, keyScore, outVocal });
+    return fits && host.mod.stemMoves.handoff(out, inn, xT0, totalS,
       `${Math.round(outVocal * 100)}% vocal in the blend, keys ${ka}->${kb}: one singer, A's voice over B's beat`, swapS);
   }
 
@@ -969,7 +1099,7 @@ var autopilotCore = (function () {
   function executeLayer(out, inn, layer, t0Audio) {
     clearRun();
     xT0 = Number.isFinite(t0Audio) ? t0Audio : audioCtx.currentTime;
-    const oa = window.decks && window.decks[out];
+    const oa = host.decks && host.decks[out];
     const bpm = oa && oa.bpm > 0 ? oa.bpm * oa._playbackRate() : 128;
     const bar = 240000 / bpm;
     const beat = bar / 4;
@@ -1005,11 +1135,11 @@ var autopilotCore = (function () {
     at(H + (2 * U) / 3, () => rampParam(xfEl, null, toXf, (U / 3) * bar));
 
     // third element: an earlier / next-next vocal over B's clean phrase
-    if (layer.third && window.mashup) {
+    if (layer.third && host.mod.mashup) {
       later(400, async () => {
         try {
           const t = layer.third;
-          if (await window.mashup.play(inn, t.plan, t.host_entry)) {
+          if (await host.mod.mashup.play(inn, t.plan, t.host_entry)) {
             mashupTag = ` | ✖ 3rd layer: vocal ${t.name || "callback"}`;
           }
         } catch (e) { console.warn("LAYER third layer failed:", e.message); }
@@ -1178,19 +1308,13 @@ var autopilotCore = (function () {
     // DJ mind hint: "dip" after a long peak (study rule 9), "callback" late in
     // the set (rule 7), "reprise" of the set's recurring hook (set study
     // mDtud5fLgFQ section 5, with energy_hook naming it). Null most of the time.
-    const hint = window.djMind && !opts.lookAhead ? window.djMind.nextEnergyNote(setPos, history) : null;
+    const hint = host.mod.djMind && !opts.lookAhead ? host.mod.djMind.nextEnergyNote(setPos, history) : null;
     const energyNote = hint ? hint.note : null;
     const energyHook = hint ? hint.hook : null;
-    const res = await fetch("/api/autopilot/suggest", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ set_id: setId, track_id: trackId, occasion: occasionWithBridge(opts), ...leadFields(opts), history: history.slice(-30), avoid: avoid.slice(-6), queue: queueNames(), set_position: setPos, set_mode: setMode(), relaxed: !!window.djSession.relaxed, energy_note: energyNote, energy_hook: energyHook, lookahead: !!opts.lookAhead,
+    const data = await ai.suggest({ set_id: setId, track_id: trackId, occasion: occasionWithBridge(opts), ...leadFields(opts), history: history.slice(-30), avoid: avoid.slice(-6), queue: queueNames(), set_position: setPos, set_mode: setMode(), relaxed: !!host.session.relaxed, energy_note: energyNote, energy_hook: energyHook, lookahead: !!opts.lookAhead,
         variety_run: varietyRun().run, variety_genre: varietyRun().genre,
         tempo_target: bridgeTarget(opts.lookAhead), tempo_note: bridgeNote(opts.lookAhead) || null,
-        elapsed_seconds: setStartedAt ? (Date.now() - setStartedAt) / 1000 : null }),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.detail || res.statusText);
+        elapsed_seconds: setStartedAt ? (host.clock.now() - setStartedAt) / 1000 : null });
     // OCCASION FIRST: the AI says the playing song is outside the occasion's
     // music ("punjabi wedding" while Fred again.. plays) -> steer, even across
     // a tempo gap (Echo Out), instead of holding out for a beat-matchable pick.
@@ -1207,12 +1331,12 @@ var autopilotCore = (function () {
     const e = data.current_profile && parseFloat(data.current_profile.energy);
     // Look-ahead describes the booked next song: keep it for when that song plays.
     if (Number.isFinite(e)) profileById[trackId] = e <= 1 ? e * 10 : e;
-    if (window.djMind && trackId === currentTrackId) window.djMind.setProfileEnergy(profileById[trackId]);
+    if (host.mod.djMind && trackId === currentTrackId) host.mod.djMind.setProfileEnergy(profileById[trackId]);
     // Look-ahead calls describe the NEXT song: they must not overwrite the
     // playing song's energy (it drives the set-mode window).
     if (Number.isFinite(e) && !opts.lookAhead) {
       currentEnergy = e <= 1 ? e * 10 : e;
-      if (window.djMind && energyNotedFor !== trackId) { energyNotedFor = trackId; window.djMind.noteEnergy(currentEnergy); }
+      if (host.mod.djMind && energyNotedFor !== trackId) { energyNotedFor = trackId; host.mod.djMind.noteEnergy(currentEnergy); }
     }
     return data.suggestions || [];
   }
@@ -1261,8 +1385,8 @@ var autopilotCore = (function () {
       return { track_id: cached.track_id, name: cached.display_name || label,
                duration: info.duration, bpm: info.bpm, suggestion: s };
     }
-    const tracks = window.dlJobs
-      ? await window.dlJobs.run(s.search_query, label)
+    const tracks = host.mod.dlJobs
+      ? await host.mod.dlJobs.run(s.search_query, label)
       : await importUrl(s.search_query);
     if (!tracks.length) throw new Error("nothing downloaded");
     const t = tracks[0];
@@ -1282,21 +1406,20 @@ var autopilotCore = (function () {
   // Can `cand` be tempo-locked to the playing deck (half/double time counts)?
   // +/-8 % on pitch; +/-15 % when the playing deck has stems: the next song
   // then plays on key-locked tempo stems (multi-BPM stem sets), no pitch shift.
-  function stemsOn() { const d = window.decks && window.decks[activeDeck]; return !!(d && d.stems); }
+  function stemsOn() { const d = host.decks && host.decks[activeDeck]; return !!(d && d.stems); }
   // key-locked stems range, shared with tempo-rule.js (+-16 %: 174 -> 125 is 28 %, never locks)
-  function keyLockLim() { return ((window.tempoRule && window.tempoRule.KEYLOCK_RANGE_PCT) || 8) / 100; }
+  function keyLockLim() { return ((host.mod.tempoRule && host.mod.tempoRule.KEYLOCK_RANGE_PCT) || 8) / 100; }
   function lockLimit() { return stemsOn() ? keyLockLim() : 0.08; }
   function tempoLockableAt(cand, lim) {
-    const d = window.decks && window.decks[activeDeck];
+    const d = host.decks && host.decks[activeDeck];
     if (!d || !d.bpm || !cand.bpm) return true;
     const aEff = d.bpm * d._playbackRate();
-    return [1, 2, 0.5].some((m) => Math.abs(aEff / (cand.bpm * m) - 1) <= lim);
+    return autopilotCore.tempoLockableAt(aEff, cand.bpm, lim);
   }
   function tempoLockable(cand) {
-    const d = window.decks && window.decks[activeDeck];
+    const d = host.decks && host.decks[activeDeck];
     if (!d || !d.bpm || !cand.bpm) return true; // unknown: let the matcher decide
-    const aEff = d.bpm * d._playbackRate();
-    return [1, 2, 0.5].some((m) => Math.abs(aEff / (cand.bpm * m) - 1) <= lockLimit());
+    return autopilotCore.tempoLockableAt(d.bpm * d._playbackRate(), cand.bpm, lockLimit());
   }
   let allowTempoJump = false; // set on the last round so the set never stalls
   // Tempo-jump budget (user: "genre switch once in a while is fine, or in the
@@ -1335,11 +1458,11 @@ var autopilotCore = (function () {
   // no sampler / fills / peak or remix moves / riff over rap, LONG set mode.
   const RELAXED_OCCASION = /\b(relax(ed|ing)?|chill(ed|out|ing)?|calm|lounge|dinner|study(ing)?|focus|sleep(y|ing)?|sunday|morning|coffee|caf[eé]|spa|yoga|meditat\w*|ambient|wind(ing)?\s*down|background|mellow|sunset|laid[\s-]*back|easy\s*listening|low[\s-]*key|unwind\w*)\b/i;
   function isRelaxedOccasion(o) { return !!o && RELAXED_OCCASION.test(o) && !HIGH_ENERGY_OCCASION.test(o); }
-  window.djSession = window.djSession || { relaxed: false };
+  // host.session ({relaxed}) is owned by the host
   function applySessionMood() {
     const relaxed = isRelaxedOccasion(occasion);
-    window.djSession.relaxed = relaxed;
-    const modeEl = document.getElementById("ap-mode");
+    host.session.relaxed = relaxed;
+    const modeEl = ui.el("ap-mode");
     if (relaxed && modeEl && modeEl.value === "hybrid") modeEl.value = "long";
     if (relaxed) apStatus(`"${occasion}" is a relaxed session → LONG mode, energy held, no sampler / fills / peak moves`);
     return relaxed;
@@ -1369,9 +1492,9 @@ var autopilotCore = (function () {
   // Every step stays beat-matched: the destination's tempo becomes a BRIDGE
   // PATH target, and each suggestion round is told how far along it is.
   let leadTo = null; // { text, kind, steps, played, cand, bpm, arrived }
-  const leadStatusEl = document.getElementById("ap-lead-status");
-  const leadBox = document.getElementById("ap-lead");
-  const leadCancel = document.getElementById("ap-lead-cancel");
+  const leadStatusEl = ui.el("ap-lead-status");
+  const leadBox = ui.el("ap-lead");
+  const leadCancel = ui.el("ap-lead-cancel");
 
   function leadStatus(msg) {
     if (leadStatusEl) leadStatusEl.textContent = msg || "";
@@ -1403,12 +1526,12 @@ var autopilotCore = (function () {
   }
 
   async function startLead(picked) {
-    const input = document.getElementById("ap-lead-input");
+    const input = ui.el("ap-lead-input");
     const text = picked ? picked.title : (input ? input.value.trim() : "");
     hideLeadResults();
     if (!text) { leadStatus("Type a song ('Artist - Title'), an artist or a genre"); return; }
     if (!active) { leadStatus("Start a set first; LEAD steers a running set"); return; }
-    const stepsEl = document.getElementById("ap-lead-steps");
+    const stepsEl = ui.el("ap-lead-steps");
     const steps = Math.max(2, Math.min(6, parseInt(stepsEl ? stepsEl.value : "4", 10) || 4));
     // a picked YouTube result is a song; typed text is a genre / artist to steer toward
     const kind = picked ? "song" : "style";
@@ -1423,7 +1546,7 @@ var autopilotCore = (function () {
       try {
         // the exact video the user picked (direct URL: live-title / length checks skip
         // what they deliberately chose, mix / interview checks still apply)
-        const tracks = window.dlJobs ? await window.dlJobs.run(picked.url, `LEAD TO: ${text}`)
+        const tracks = host.mod.dlJobs ? await host.mod.dlJobs.run(picked.url, `LEAD TO: ${text}`)
                                      : await importUrl(picked.url);
         if (!tracks.length) throw new Error("nothing downloaded");
         const t = tracks[0];
@@ -1489,7 +1612,7 @@ var autopilotCore = (function () {
   let forceJump = false;      // last-round fallback: the set never stalls on a ladder
   const BRIDGE_TOL = 0.015;   // a step counts as reached within 1.5%
   function playingBpm() {
-    const d = window.decks && window.decks[activeDeck];
+    const d = host.decks && host.decks[activeDeck];
     return d && d.bpm > 0 ? d.bpm * d._playbackRate() : 0;
   }
   function pulseNear(bpm, ref) {  // bpm, or its half/double, closest to ref
@@ -1552,7 +1675,7 @@ var autopilotCore = (function () {
   function advanceBridge() {
     if (!bridge) return;
     bridge.played++;
-    const d = window.decks && window.decks[activeDeck];
+    const d = host.decks && host.decks[activeDeck];
     const native = d && d.bpm > 0 ? d.bpm : 0;          // pitch eases home to the native tempo
     if (locks(native, bridge.toBpm)) {
       apStatus(`BRIDGE done: ${Math.round(native)} BPM locks to ${Math.round(bridge.toBpm)} BPM`);
@@ -1612,7 +1735,7 @@ var autopilotCore = (function () {
     // onset density / energy sit too far from what is playing right now.
     if (candidate.vibe && candidate.vibe.ok === false) {
       const why = (candidate.vibe.reasons || []).join("; ") || `distance ${candidate.vibe.distance}`;
-      console.warn("Autopilot vibe reject:", nextName, why); window.aiStep && window.aiStep("candidate_reject", { track_id: nextId, phase: "selection", decision: "vibe reject", why });
+      console.warn("Autopilot vibe reject:", nextName, why); host.log.step("candidate_reject", { track_id: nextId, phase: "selection", decision: "vibe reject", why });
       apStatus(`Not after this song: ${nextName} (${why}) — kept for later`);
       autopilotCore.rememberPairReject(pairRejects, currentId, nextId, why, true);   // the vibe gate ignores forceJump
       cand.keep = true; // pairwise: may fit fine after the next song
@@ -1625,10 +1748,10 @@ var autopilotCore = (function () {
     const ev = candidate.vibe;
     if (ev && Number.isFinite(ev.energy_a) && Number.isFinite(ev.energy_b)) {
       const verdict = autopilotCore.energyStepOk(ev.energy_a, ev.energy_b, {
-        relaxed: !!(window.djSession && window.djSession.relaxed), songs: history.length, force: forceJump,
+        relaxed: !!(host.session && host.session.relaxed), songs: history.length, force: forceJump,
         rawDelta: Number.isFinite(ev.energy_raw_a) && Number.isFinite(ev.energy_raw_b) ? ev.energy_raw_b - ev.energy_raw_a : null });
       if (!verdict.ok) {
-        console.warn("Autopilot energy reject:", nextName, verdict.why); window.aiStep && window.aiStep("candidate_reject", { track_id: nextId, phase: "selection", decision: "energy reject", why: verdict.why });
+        console.warn("Autopilot energy reject:", nextName, verdict.why); host.log.step("candidate_reject", { track_id: nextId, phase: "selection", decision: "energy reject", why: verdict.why });
         apStatus(`Not after this song: ${nextName} (${verdict.why}) — kept for later`);
         autopilotCore.rememberPairReject(pairRejects, currentId, nextId, verdict.why, forceJump);
         cand.keep = true;
@@ -1636,11 +1759,11 @@ var autopilotCore = (function () {
       }
       console.info("energy:", nextName, verdict.why);
       // vibe-ui.js: measured energy of the pair the gate just passed
-      window.dispatchEvent(new CustomEvent("ai-energy", { detail: { a: ev.energy_a, b: ev.energy_b, next: nextName } }));
+      host.bus.emit("ai-energy", { a: ev.energy_a, b: ev.energy_b, next: nextName });
     }
 
     // Show match score on the NEXT queue card.
-    const scoreEl = document.getElementById("ap-match-score");
+    const scoreEl = ui.el("ap-match-score");
     if (scoreEl) {
       const sc = Math.round(candidate.score || 0);
       const good = sc >= 65;
@@ -1661,7 +1784,7 @@ var autopilotCore = (function () {
     await loadIntoDeck(stagingDeck(), nextId, nextName, blob);
     // tempo gap 2-15 %: render its key-locked tempo stems now, long before the blend
     {
-      const oa1 = window.decks && window.decks[activeDeck], sd1 = window.decks && window.decks[stagingDeck()];
+      const oa1 = host.decks && host.decks[activeDeck], sd1 = host.decks && host.decks[stagingDeck()];
       if (oa1 && sd1 && oa1.bpm && sd1.useTempoStems) {
         const waitStems = async () => { for (let i = 0; i < 40 && !sd1.stems; i++) await new Promise((r) => setTimeout(r, 500)); };
         waitStems().then(() => {
@@ -1677,10 +1800,10 @@ var autopilotCore = (function () {
     }
     // Over 8 % the blend needs the key-locked stems: book the song only once they're on.
     if (cand.bpm && !tempoLockableAt(cand, 0.08) && tempoLockableAt(cand, keyLockLim())) {
-      const sd2 = window.decks && window.decks[stagingDeck()];
+      const sd2 = host.decks && host.decks[stagingDeck()];
       apStatus(`Key-locking ${nextName} to this tempo (tempo stems)…`);
-      const t2 = Date.now();
-      while (sd2 && !sd2._tempoStemsJob && Date.now() - t2 < 25000) await new Promise((r) => setTimeout(r, 500));
+      const t2 = host.clock.now();
+      while (sd2 && !sd2._tempoStemsJob && host.clock.now() - t2 < 25000) await new Promise((r) => setTimeout(r, 500));
       const ok2 = sd2 && sd2._tempoStemsJob ? await Promise.race([sd2._tempoStemsJob, new Promise((r) => setTimeout(() => r(false), 90000))]) : false;
       if (!ok2 && !forceJump) {
         apStatus(`Not now: ${nextName} needs key-locked stems that aren't ready — kept for later`);
@@ -1694,18 +1817,18 @@ var autopilotCore = (function () {
     // is the explicit fallback (allowTempoJump): that path exists to accept the
     // hard Echo Out on purpose when nothing beat-matchable is left.
     {
-      const odF = window.decks && window.decks[activeDeck], sdF = window.decks && window.decks[stagingDeck()];
+      const odF = host.decks && host.decks[activeDeck], sdF = host.decks && host.decks[stagingDeck()];
       if (odF && sdF && odF.bpm > 0) {
         if (odF.stems && !odF.stemsReady && odF.rearmStems) odF.rearmStems("plan-fit check");
         const aStemsWhyF = stemsWhy(odF), stemsBothF = !aStemsWhyF && !!sdF.stems;
-        const fit = window.tempoRule.planFit({
+        const fit = host.mod.tempoRule.planFit({
           aEff: odF.bpm * odF._playbackRate(), bBpm: sdF.bpm, stemsBoth: stemsBothF,
           tempoStemsBpm: sdF.tempoStems && sdF.tempoStems.bpm,
         });
         candidate.plannedFit = fit; // scheduleTransition re-derives with the same fn + live state
         if (!fit.smooth && !allowTempoJump) {
           console.warn("Autopilot plan-fit reject:", nextName, fit.why);
-          window.aiStep && window.aiStep("candidate_reject", { track_id: nextId, phase: "selection", decision: "plan-fit reject", why: fit.why });
+          host.log.step("candidate_reject", { track_id: nextId, phase: "selection", decision: "plan-fit reject", why: fit.why });
           apStatus(`Not after this song: ${nextName} (${fit.why}) — kept for later`);
           autopilotCore.rememberPairReject(pairRejects, currentId, nextId, fit.why, forceJump);
           cand.keep = true;
@@ -1759,7 +1882,7 @@ var autopilotCore = (function () {
   // Exit window (track seconds) for the current song, same maths as scheduleTransition.
   function exitWindow(score) {
     const w = playWindow(score);
-    const od = window.decks && window.decks[activeDeck];
+    const od = host.decks && host.decks[activeDeck];
     const trackEnd = (od && od.buffer ? od.buffer.duration : Infinity) - w.xf - 2;
     return { lo: Math.min(entryPos + w.min, trackEnd), hi: Math.min(entryPos + w.max, trackEnd) };
   }
@@ -1769,7 +1892,7 @@ var autopilotCore = (function () {
   // null -> fall back to the matcher's points (still phrase + tempo aligned).
   async function requestBlend(currentId, nextId, candidate) {
     const win = exitWindow(candidate.score || 50);
-    const od = window.decks && window.decks[activeDeck];
+    const od = host.decks && host.decks[activeDeck];
     const lo = Math.max(win.lo, deckPosition(activeDeck) + 20);
     if (!od || !(win.hi > lo)) return null;
     apStatus("Mapping vocals for a beat-to-beat blend…");
@@ -1792,8 +1915,8 @@ var autopilotCore = (function () {
       }
       // PEAK MOVES: on top of the tempo-locked plan, an entry on B's first long
       // drop for DOUBLE DROP / DROP SWAP. The DJ mind decides whether to use it.
-      const peakEl = document.getElementById("ap-peak-toggle");
-      if (window.djMind && window.djMind.planPeak && (!peakEl || peakEl.checked)) {
+      const peakEl = ui.el("ap-peak-toggle");
+      if (host.mod.djMind && host.mod.djMind.planPeak && (!peakEl || peakEl.checked)) {
         try {
           const r2 = await fetch("/api/blend/plan", {
             method: "POST",
@@ -1818,7 +1941,7 @@ var autopilotCore = (function () {
   // (one LAYER every few songs) before the server call and the full rules
   // (key, groove, vocal clash, steering, peak floor) after it.
   async function requestLayer(currentId, nextId, candidate, aiPlan, cand) {
-    const mind = window.djMind;
+    const mind = host.mod.djMind;
     if (!mind || !mind.planLayer || !mind.core || !mind.core.layerBars) return null;
     const aiProposed = !!(aiPlan && aiPlan.layer);
     const base = { steering: steering === "move", peak: false, energy: currentEnergy,
@@ -1829,7 +1952,7 @@ var autopilotCore = (function () {
       return null;
     }
     const win = exitWindow(candidate.score || 50);
-    const od = window.decks && window.decks[activeDeck];
+    const od = host.decks && host.decks[activeDeck];
     const lo = Math.max(win.lo, deckPosition(activeDeck) + 20);
     if (!od || !(win.hi > lo)) return null;
     const { maxHold, unwind } = mind.core.layerBars(setMode());
@@ -1869,14 +1992,14 @@ var autopilotCore = (function () {
   }
 
   function setDeckPitch(deckId, pct, range = 8) {
-    const d = window.decks && window.decks[deckId];
+    const d = host.decks && host.decks[deckId];
     if (!d) return;
     const v = Math.max(-range, Math.min(range, pct));
     // gradient rule: instant only while B is silent, else a glide
-    if (typeof d.aiSetPitch === "function") d.aiSetPitch(v); else d.setPitchPercent(v);
-    const fader = document.querySelector(`.pitch-fader[data-deck="${deckId}"]`);
+    if (typeof d.aiSetPitch === "function") d.aiSetPitch(v);   // the ramping setter: no bare jump
+    const fader = ui.query(`.pitch-fader[data-deck="${deckId}"]`);
     if (fader) fader.value = String(v.toFixed(1));
-    const readout = document.getElementById(`pitch-readout-${deckId}`);
+    const readout = ui.el(`pitch-readout-${deckId}`);
     if (readout) readout.textContent = `${v > 0 ? "+" : ""}${v.toFixed(1)}%`;
   }
 
@@ -1884,13 +2007,13 @@ var autopilotCore = (function () {
   // .value without an "input" event, so the fader's listener never sets the
   // rate (a real user drag still does, and cancels the glide: deck._applyRate).
   function showPitch(deckId, pct) {
-    const fader = document.querySelector(`.pitch-fader[data-deck="${deckId}"]`);
+    const fader = ui.query(`.pitch-fader[data-deck="${deckId}"]`);
     if (fader) fader.value = String(pct.toFixed(1));
-    const readout = document.getElementById(`pitch-readout-${deckId}`);
+    const readout = ui.el(`pitch-readout-${deckId}`);
     if (readout) readout.textContent = `${pct > 0 ? "+" : ""}${pct.toFixed(1)}%`;
   }
   function followPitch(deckId, untilAudioT) {
-    const d = window.decks && window.decks[deckId];
+    const d = host.decks && host.decks[deckId];
     const t = setInterval(() => {                           // 4 Hz: a control, not an animation
       if (!d || !active) { clearInterval(t); return; }
       showPitch(deckId, (d._playbackRate() - 1) * 100 - (d._bendPercent || 0));
@@ -1909,7 +2032,7 @@ var autopilotCore = (function () {
   const EASE_BARS = 32;
   let homeGen = 0;
   function easePitchHome(deckId) {
-    const d = window.decks && window.decks[deckId];
+    const d = host.decks && host.decks[deckId];
     if (!d || !d.playing || !d.bpm || typeof d.rampPitchPercent !== "function") return;
     const gen = ++homeGen, song = d.analysis;
     const alive = () => active && activeDeck === deckId && gen === homeGen && d.analysis === song && d.playing;
@@ -1984,21 +2107,21 @@ var autopilotCore = (function () {
   }
 
   async function requestMindPlan(currentId, nextId, candidate) {
-    if (!window.djMind || !window.djMind.requestPlan) return null;
+    if (!host.mod.djMind || !host.mod.djMind.requestPlan) return null;
     const win = exitWindow(candidate.score || 50);
     if (!(win.hi > win.lo)) return null;
     // Never wait past the point where the transition must be booked.
     const pos = deckPosition(activeDeck);
     apStatus("AI planning the next transition…");
-    return window.djMind.requestPlan(currentId, nextId, candidate, Object.assign(win, {
+    return host.mod.djMind.requestPlan(currentId, nextId, candidate, Object.assign(win, {
       setPosition: Math.min(history.length / 10, 1.0),
-      mashupPossible: mashupsOn() && !!window.mashup,
+      mashupPossible: mashupsOn() && !!host.mod.mashup,
       deadlineS: Math.max(win.lo, win.hi - 30) - pos - 20,
     }));
   }
 
   async function tryLibraryLockable(currentId, gen) {
-    const d = window.decks && window.decks[activeDeck];
+    const d = host.decks && host.decks[activeDeck];
     if (!d || !d.bpm) return false;
     const aEff = d.bpm * d._playbackRate();
     const key = d.analysis && d.analysis.key && d.analysis.key.camelot || "";
@@ -2034,7 +2157,7 @@ var autopilotCore = (function () {
   async function prepareTransition(currentId) {
     if (!active) return;
     const gen = ++prepGen;
-    prepStartedAt = Date.now();
+    prepStartedAt = host.clock.now();
     showQueue();
 
     // 0) LEAD TO destination is due: book it (beat-matched when the tempo
@@ -2122,7 +2245,7 @@ var autopilotCore = (function () {
       if (!suggestions.length) {
         emptyStreak++;
         console.warn(`Autopilot: model returned 0 picks (${emptyStreak} in a row)`);
-        window.aiStep && window.aiStep("suggest_empty", { decision: "0 picks", why: `${emptyStreak} empty answer(s) in a row` });
+        host.log.step("suggest_empty", { decision: "0 picks", why: `${emptyStreak} empty answer(s) in a row` });
         if (autopilotCore.useLibraryFallback(emptyStreak) && await tryLibraryLockable(currentId, gen)) { emptyStreak = 0; return; }
         if (!active || gen !== prepGen) return;
         continue;
@@ -2161,7 +2284,7 @@ var autopilotCore = (function () {
     // Tempo gap 2-15 %: render B's stems key-locked at A's tempo now, while A plays
     // (multi-BPM stem sets, cached on the server), so the blend keeps B's key.
     {
-      const oa0 = window.decks && window.decks[activeDeck], sd0 = window.decks && window.decks[stagingDeck()];
+      const oa0 = host.decks && host.decks[activeDeck], sd0 = host.decks && host.decks[stagingDeck()];
       // Never on a deck already reaching the master: a stem swap there is an instant
       // tempo jump (chanel on B jumped to 122.5 BPM 10 s after landing).
       const live0 = sd0 && (sd0 === oa0 || (sd0.onMaster && sd0.onMaster()));
@@ -2170,9 +2293,9 @@ var autopilotCore = (function () {
         const m0 = [1, 2, 0.5].reduce((b, m) => (Math.abs(aEff0 / (sd0.bpm * m) - 1) < Math.abs(aEff0 / (sd0.bpm * b) - 1) ? m : b));
         const gap0 = Math.abs(aEff0 / (sd0.bpm * m0) - 1);
         if (gap0 > 0.02 && gap0 <= keyLockLim()) {
-          sd0.useTempoStems(aEff0 / m0).then((ok) => ok && window.dispatchEvent(new CustomEvent("ai-activity", { detail: {
+          sd0.useTempoStems(aEff0 / m0).then((ok) => ok && host.bus.emit("ai-activity", {
             kind: "stem-move", deck: stagingDeck(), label: `TEMPO STEMS · ${(aEff0 / m0).toFixed(1)} BPM`,
-            why: `${nextName}: stems key-locked ${(gap0 * 100).toFixed(1)} % to this tempo, no pitch shift` } })));
+            why: `${nextName}: stems key-locked ${(gap0 * 100).toFixed(1)} % to this tempo, no pitch shift` }));
         }
       }
     }
@@ -2184,7 +2307,7 @@ var autopilotCore = (function () {
     // a long stem blend: one owner per layer, one singer, kick + bass swapped on
     // a line. No vocal-driven shortening, no cuts or spinbacks (those were only
     // there to stop two vocals or two beats clashing, which stems already solve).
-    const odS = window.decks && window.decks[activeDeck], sdS = window.decks && window.decks[stagingDeck()];
+    const odS = host.decks && host.decks[activeDeck], sdS = host.decks && host.decks[stagingDeck()];
     let vocalRule = false;
     // A stems-readiness blip (a dead source, a set swap in flight) must not
     // decide the recipe: re-arm A's decoded stems first (Open Eye Signal ->
@@ -2202,75 +2325,35 @@ var autopilotCore = (function () {
     // Re-derive with the SAME pure fn pick time used (tempoRule.planFit), only
     // re-validating live state (stems readiness, current pitch) as inputs; the
     // pick-time verdict is candidate.plannedFit, kept here only for a sanity log.
-    const lockS = window.tempoRule.planFit({ aEff: aEffS, bBpm: sdS && sdS.bpm, stemsBoth,
-      tempoStemsBpm: sdS && sdS.tempoStems && sdS.tempoStems.bpm });
-    if (candidate.plannedFit && candidate.plannedFit.smooth !== lockS.smooth) {
-      console.info("transition plan-fit:", `live state changed since pick (${candidate.plannedFit.why} -> ${lockS.why})`);
-    }
-    const oneSong = lockS.oneSong;
-    if (!lockS.beat) {
-      if (blend || layer) console.info("transition tempo:", `beatless, ${lockS.lock.why}`);
-      blend = null; layer = null;
-    }
-    const od0bpm = (window.decks && window.decks[activeDeck] && window.decks[activeDeck].bpm) || 128;
-    // Beat-to-beat: when the tempos lock, hand beat to beat. Echo-outs are for
-    // tempo gaps; they turned "vocal -> beat" when used between compatible songs.
-    if (blend) {
-      bTime = blend.entry;
-      // A's vocal riding over B's instrumental intro is a classic long blend;
-      // only two vocals at once clash, so keep that overlap short (bass swap).
-      const bClean = blend.b_vocal_coverage == null || blend.b_vocal_coverage <= 0.15;
-      const k = recipeKind(recipe);
-      if (!bClean) recipe = "Bass Swap";
-      else if (!["bass", "blend", "default"].includes(k)) recipe = "Long Blend";
-      blend.clean = bClean;
-      // Two vocals must never sing together: the overlap has to END before B's
-      // vocal first comes in (user: "vocals are overlapping"). Pick the
-      // transition length by how many bars that is.
-      if (oneSong) { recipe = "Long Blend"; blend.clean = true; }
-      // stems on either deck: one singer by muting a vocal stem, never a cut
-      const vr = autopilotCore.vocalRecipe({ vIn: blend.b_vocal_in_bars, oneSong, aStems, bStems });
-      if (vr) {
-        vocalRule = true;
-        recipe = vr.recipe; vocalShort = vr.short; vocalCut = vr.why;
-      }
-    } else if (oneSong) {
-      // tempos lock (key-locked tempo stems attached, or inside the pitch range)
-      recipe = "Long Blend";
-    } else if (stemsBoth) {
-      // tempo can't lock: a stem bridge, never an echo-out (user)
-      recipe = "Stem Bridge";
-    } else if (!["echo", "filter"].includes(recipeKind(recipe))) {
-      // No stems and no tempo lock: beats cannot be layered, so don't hard-swap.
-      // Echo the outgoing song away while the new one enters on its phrase
-      // ([[Echo Out]]). Rare now: every library song is pre-separated.
-      recipe = "Echo Out";
-    }
-    // Clashing keys never get a tonal blend: Echo Out (CLAUDE.md s4). The matcher
-    // ranked key-safe recipes for these pairs; the rewrites above turned them into
-    // Long Blend / Bass Swap without reading the key.
     const keyScoreS = (() => {
-      const cs = window.djMind && window.djMind.core && window.djMind.core.camelotScore;
+      const cs = host.mod.djMind && host.mod.djMind.core && host.mod.djMind.core.camelotScore;
       const ka = odS && odS.analysis && odS.analysis.key && odS.analysis.key.camelot;
       const kb = sdS && sdS.analysis && sdS.analysis.key && sdS.analysis.key.camelot;
       return cs && ka && kb ? cs(ka, kb) : null;
     })();
-    if (!layer) {
-      const safe = keySafeRecipe(recipe, keyScoreS);
-      if (safe !== recipe) {
-        console.info("transition recipe:", `${recipe} -> ${safe} (keys clash, camelot ${keyScoreS})`);
-        recipe = safe; blend = null; vocalShort = false;
-      }
+    // The whole recipe decision is autopilotCore.decideRecipe (pure, node-checked; the
+    // virtual set in app/sim drives the same function).
+    const dec = autopilotCore.decideRecipe({
+      recipe, blend, layer: !!layer, aStems, bStems, aEff: aEffS, bBpm: sdS && sdS.bpm,
+      tempoStemsBpm: sdS && sdS.tempoStems && sdS.tempoStems.bpm, keyScore: keyScoreS,
+      mashupFits: () => !!(odS && sdS && mashupFits(odS, sdS)),
+    }, host.mod.tempoRule);
+    const lockS = dec.lockS;
+    if (candidate.plannedFit && candidate.plannedFit.smooth !== lockS.smooth) {
+      console.info("transition plan-fit:", `live state changed since pick (${candidate.plannedFit.why} -> ${lockS.why})`);
     }
-    // Never a hard cut (user): a cut the matcher or the AI plan proposed is a Bass Swap.
-    if (/\bcut\b/i.test(String(recipe || ""))) {
-      // a cut was the matcher's answer to clashing keys: keep the overlap short (4 bars)
-      console.info("transition recipe:", `${recipe} -> 4-bar Bass Swap (no hard cuts)`);
-      recipe = "Bass Swap";
-      vocalShort = true;
+    const oneSong = dec.oneSong;
+    if (dec.dropLayer) {
+      if (blend || layer) console.info("transition tempo:", `beatless, ${lockS.lock.why}`);
+      layer = null;
     }
-    // Mashup -> transition beats every other move when the pair fits (user)
-    if (lockS.beat && stemsBoth && odS && sdS && mashupFits(odS, sdS)) recipe = "Mashup → Transition";
+    // B enters on the blend's line even when a key rewrite then drops the blend itself
+    if (blend && !dec.dropLayer) { bTime = blend.entry; blend.clean = dec.blendClean; }
+    blend = dec.blend;
+    recipe = dec.recipe; vocalShort = dec.vocalShort; vocalCut = dec.vocalCut; vocalRule = dec.vocalRule;
+    if (dec.keyRewrite) console.info("transition recipe:", `${dec.keyRewrite.from} -> ${dec.keyRewrite.to} (keys clash, camelot ${keyScoreS})`);
+    if (dec.cutRewrite) console.info("transition recipe:", "cut -> 4-bar Bass Swap (no hard cuts)");
+    const od0bpm = (host.decks && host.decks[activeDeck] && host.decks[activeDeck].bpm) || 128;
     if (layer) { bTime = layer.entry; recipe = `LAYER ${layer.hold_bars}+${layer.unwind_bars} bars`; }
     jumpPending = !blend && !oneSong;
     // why an echo / non-stem recipe: on the status line and in the console,
@@ -2278,7 +2361,7 @@ var autopilotCore = (function () {
     if (!layer && !stemsBoth) {
       const why = `${recipe}: A stems ${aStemsWhy || "live"}, B stems ${bStems ? "loaded" : "not loaded"}` +
         `${vocalCut ? `, ${vocalCut}` : ""}${blend ? "" : `, tempo gap ${(gapS * 100).toFixed(1)}%`}`;
-      console.info("transition recipe:", why); window.aiStep && window.aiStep("recipe", { deck: activeDeck, decision: recipe, why });
+      console.info("transition recipe:", why); host.log.step("recipe", { deck: activeDeck, decision: recipe, why });
       apStatus(why);
     } else if (vocalCut) console.info("transition recipe:", `${recipe}: ${vocalCut}`);
     const overlapStyle = layer ? "layer"
@@ -2290,28 +2373,22 @@ var autopilotCore = (function () {
     // Prefer the matcher's phrase-aligned exit if it falls inside the window.
     const w = playWindow(score);
     const nowPos = deckPosition(activeDeck);
-    const od = window.decks && window.decks[activeDeck];
-    const trackEnd = (od && od.buffer ? od.buffer.duration : Infinity) - w.xf - 2;
-    const lo = Math.min(entryPos + w.min, trackEnd);
-    const hi = Math.min(entryPos + w.max, trackEnd);
-    let exitAt = layer ? layer.start : blend ? blend.exit : candidate.a_time;
-    if (!blend && !(exitAt >= lo && exitAt <= hi)) exitAt = Math.max(lo, Math.min(hi, exitAt || hi));
-    // never leave before the playing song's first drop has played (server floor)
-    if (!blend && minExit != null && exitAt < minExit && minExit < trackEnd) exitAt = minExit;
+    const od = host.decks && host.decks[activeDeck];
+    const { trackEnd, lo, hi } = autopilotCore.exitBounds({ w, entryPos, trackDur: od && od.buffer ? od.buffer.duration : Infinity });
+    let exitAt = autopilotCore.exitPick({ lo, hi, trackEnd, layerStart: layer ? layer.start : null, hasBlend: !!blend,
+      blendExit: blend && blend.exit, candidateATime: candidate.a_time, minExit });
     // PEAK mode (dj-mind.js peakTransition): tempo-locked pairs only, land B's
     // drop on A's drop downbeat - Double Drop or Drop Swap. null -> blend.
-    const peakT = !layer && blend && blend.drop && window.djMind && window.djMind.planPeak
-      ? window.djMind.planPeak({ drop: blend.drop, lo: Math.max(lo, nowPos + 15), hi,
+    const peakT = !layer && blend && blend.drop && host.mod.djMind && host.mod.djMind.planPeak
+      ? host.mod.djMind.planPeak({ drop: blend.drop, lo: Math.max(lo, nowPos + 15), hi,
                                  plannedExit: exitAt, entryPos, inDeck: stagingDeck() })
       : null;
     if (peakT) { recipe = peakT.recipe; bTime = peakT.bTime; exitAt = peakT.exitAt; }
     // Keep the exit on A's phrase grid: push by whole phrases, never by seconds.
     const phraseS = 32 * 60 / od0bpm;
-    let effectiveATime = exitAt;
-    while (effectiveATime < nowPos + 15) effectiveATime += phraseS;
-    // vocalShort: xfDuration < 16 halves every bar count in executeTransition
-    // (Bass Swap 8 -> 4 bars) so the overlap ends before B's vocal.
-    const xfDuration = oneSong ? Math.max(16, w.xf) : vocalShort ? Math.min(8, w.xf) : peakT ? Math.max(16, w.xf) : w.xf;
+    const timing = autopilotCore.exitTiming({ exitAt, nowPos, phraseS, w, oneSong, vocalShort, peak: !!peakT });
+    let effectiveATime = timing.effectiveATime;
+    const xfDuration = timing.xfDuration;
     playPlanTag = ` | ${w.label} ${fmtTime(effectiveATime - entryPos)}`;
     // Pre-planned by the silent ear: B starts where the ear chose (inside A), from
     // the line it chose, the merge it heard. Only when the plan is still ahead.
@@ -2331,10 +2408,10 @@ var autopilotCore = (function () {
     // Never transition out of A while it's at its energy high: push the exit past it
     // by whole phrases (not for PEAK / LAYER / pre-planned: they chose their line).
     if (!peakT && !layer && !preplanned && od && od.analysis) {
-      const spans = autopilotCore.highSpans(od.analysis.energy_times, od.analysis.energy_curve, 240 / od0bpm);
-      const ex = autopilotCore.exitPastHigh(effectiveATime, 16 * 240 / od0bpm, spans, phraseS, trackEnd);
+      const ex = autopilotCore.exitHighPush({ t: effectiveATime, phraseS, bpm: od0bpm, trackEnd,
+        energyTimes: od.analysis.energy_times, energyCurve: od.analysis.energy_curve });
       if (ex.moved) {
-        console.info("transition timing:", `exit moved ${ex.moved} phrase(s) to ${fmtTime(ex.t)}: A is at its energy high`); window.aiStep && window.aiStep("exit_moved", { deck: activeDeck, decision: `exit +${ex.moved} phrase(s)`, why: "A is at its energy high", result: { from: effectiveATime, to: ex.t } });
+        console.info("transition timing:", `exit moved ${ex.moved} phrase(s) to ${fmtTime(ex.t)}: A is at its energy high`); host.log.step("exit_moved", { deck: activeDeck, decision: `exit +${ex.moved} phrase(s)`, why: "A is at its energy high", result: { from: effectiveATime, to: ex.t } });
         effectiveATime = ex.t;
       }
     }
@@ -2356,8 +2433,8 @@ var autopilotCore = (function () {
     // Hand the plan to the DJ mind: it may pre-clear the outgoing bass or hold
     // the exit one phrase longer (bounded by the set-mode window + 16 bars).
     const barS = 240 / ((od && od.bpm) || 128);
-    if (window.djMind) {
-      window.djMind.setPlan({
+    if (host.mod.djMind) {
+      host.mod.djMind.setPlan({
         fireAt,
         // a vocal-free blend window is exact: the mind must not hold past it
         // vocal-aware plans are exact: a DJ-mind hold would move the overlap into a vocal
@@ -2385,8 +2462,8 @@ var autopilotCore = (function () {
           recipe = ch.recipe;
           bookedRecipe = recipe;
           console.info("transition recipe (learned):", `${ch.recipe}: ${ch.why}`, pick.reasons);
-          window.dispatchEvent(new CustomEvent("ai-activity", { detail: {
-            kind: "learned", deck: activeDeck, label: `LEARNED · ${ch.recipe}`, why: ch.why } }));
+          host.bus.emit("ai-activity", {
+            kind: "learned", deck: activeDeck, label: `LEARNED · ${ch.recipe}`, why: ch.why });
         })
         .catch((e) => console.info("learned pick: none -", e.message));
     }
@@ -2396,9 +2473,9 @@ var autopilotCore = (function () {
     // key-locked stems render in time, the fire line moves to A's groove start
     // and the whole 64-bar move replaces the recipe.
     let riff = null, riffEntry = null;
-    if (!layer && !peakT && riffOn() && window.riffOverRap) {
+    if (!layer && !peakT && riffOn() && host.mod.riffOverRap) {
       const notBefore = deckPosition(activeDeck) + 25;
-      window.riffOverRap.prepare(currentId, nextId, notBefore).then((r) => {
+      host.mod.riffOverRap.prepare(currentId, nextId, notBefore).then((r) => {
         // why no riff: console for detail, the status line for a glance
         const riffNo = (why) => {
           console.info("riff over rap: no -", why);
@@ -2407,7 +2484,7 @@ var autopilotCore = (function () {
         if (!r.ok) { riffNo((r.reasons || []).join("; ") || "no plan"); return; }
         if (executed || !active || currentTrackId !== currentId) return;
         const g0 = r.plan.a_groove[0], pos = deckPosition(activeDeck);
-        const sdB = window.decks && window.decks[stagingDeck()];
+        const sdB = host.decks && host.decks[stagingDeck()];
         if (g0 < pos + 6 || g0 > hi + 60 || !(sdB && sdB.stems)) {
           riffNo(g0 < pos + 6 ? "A is past its groove" : g0 > hi + 60 ? "the groove comes too late" : "B's stems aren't loaded");
           return;
@@ -2415,23 +2492,23 @@ var autopilotCore = (function () {
         riff = r;
         fireAt = g0;
         recipe = "RIFF OVER RAP";
-        if (window.djMind) window.djMind.setPlan({ fireAt, maxFireAt: fireAt, style: "layer", preClearBars: 0 });
+        if (host.mod.djMind) host.mod.djMind.setPlan({ fireAt, maxFireAt: fireAt, style: "layer", preClearBars: 0 });
       }).catch((e) => console.warn("riff over rap:", e.message));
     }
 
     const tick = setInterval(() => {
       if (!active) { clearInterval(tick); return; }
-      if (window.djMind) fireAt = window.djMind.fireAt(fireAt);
+      if (host.mod.djMind) fireAt = host.mod.djMind.fireAt(fireAt);
       const pos = deckPosition(activeDeck);
       const left = fireAt - pos;
 
       // Live drums: 2-bar fill leading into the crossfade (glues the records),
       // rationed by the mind (study rule 8: FX stay the exception).
-      const od0 = window.decks && window.decks[activeDeck];
+      const od0 = host.decks && host.decks[activeDeck];
       const barSecs = (60 / ((od0 && od0.bpm) || 128)) * 4;
-      if (!filled && !layer && left > 0 && left <= 2 * barSecs && window.beatLayer) {
+      if (!filled && !layer && left > 0 && left <= 2 * barSecs && host.mod.beatLayer) {
         filled = true;
-        if (!window.djMind || window.djMind.fxAllowed("fill")) window.beatLayer.fill(2);
+        if (!host.mod.djMind || host.mod.djMind.fxAllowed("fill")) host.mod.beatLayer.fill(2);
       }
 
       if (left > 0.8) {
@@ -2445,15 +2522,15 @@ var autopilotCore = (function () {
       if (executed) return;
       executed = true;
       clearInterval(tick);
-      if (window.djMind) window.djMind.onTransition();
+      if (host.mod.djMind) host.mod.djMind.onTransition();
 
-      if (window.mashup) window.mashup.cancel();
+      if (host.mod.mashup) host.mod.mashup.cancel();
       mashupTag = "";
       apStatus(`Blending → ${nextName} (${recipe})…`);
 
       if (riff) {
         const outgoing = activeDeck, incoming = stagingDeck();
-        const oaR = window.decks[outgoing];
+        const oaR = host.decks[outgoing];
         const leadR = Math.max(0.05, (fireAt - deckPosition(outgoing)) / oaR._playbackRate());
         const t0R = audioCtx.currentTime + leadR;
         const ui = {
@@ -2462,9 +2539,9 @@ var autopilotCore = (function () {
           pitch: (d, pct) => setDeckPitch(d, pct),
         };
         dipAllowed("riffRelease", "RIFF OVER RAP");
-        const totalMs = window.riffOverRap.run(riff, outgoing, incoming, t0R, ui);
-        if (window.djMind && window.djMind.layering) {
-          window.djMind.layering(totalMs / 1000, { source: "RIFF",
+        const totalMs = host.mod.riffOverRap.run(riff, outgoing, incoming, t0R, ui);
+        if (host.mod.djMind && host.mod.djMind.layering) {
+          host.mod.djMind.layering(totalMs / 1000, { source: "RIFF",
             why: `riff over rap: A's groove key-locked to ${riff.plan.target_bpm} BPM, B's rap on bar 40` });
         }
         riffEntry = riff.plan.b_entry;
@@ -2474,15 +2551,15 @@ var autopilotCore = (function () {
 
       // Tempo-lock B to A, then start it sample-accurately so B's entry
       // downbeat lands exactly on A's phrase line.
-      const sd = window.decks && window.decks[stagingDeck()];
-      const oa = window.decks && window.decks[activeDeck];
+      const sd = host.decks && host.decks[stagingDeck()];
+      const oa = host.decks && host.decks[activeDeck];
       const rateA = oa ? oa._playbackRate() : 1;
       if (sd && oa && oa.bpm > 0 && sd.bpm > 0) {
         // Live A tempo (A may still be easing back from its own tempo lock);
         // half/double time counts as a match.
         // Same gate as the recipe (tempo-rule.js beatLock): key-locked tempo
         // stems keep B's key up to +-16 %, the pitched mix stays inside +-8 %.
-        const lk = window.tempoRule.beatLock({ aEff: oa.bpm * rateA, bBpm: sd.bpm,
+        const lk = host.mod.tempoRule.beatLock({ aEff: oa.bpm * rateA, bBpm: sd.bpm,
           tempoStemsBpm: sd.tempoStems && sd.tempoStems.bpm });
         if (lk.ok) setDeckPitch(stagingDeck(), lk.pct, lk.range);
       }
@@ -2509,23 +2586,23 @@ var autopilotCore = (function () {
       later(Math.max(0, leadS * 1000 - XF_LOOKAHEAD_MS), () => {
         let totalMs;
         if (layer) {
-          if (window.beatLayer && window.beatLayer.isEnabled()) {
-            window.beatLayer.setEnabled(false);
+          if (host.mod.beatLayer && host.mod.beatLayer.isEnabled()) {
+            host.mod.beatLayer.setEnabled(false);
             beatMutedByLayer = true;
           }
           totalMs = executeLayer(outgoing, incoming, layer, t0) + XF_LOOKAHEAD_MS;
           // NULL-BOT supermove (mascot.js): the LAYER starts on B's first downbeat
-          window.dispatchEvent(new CustomEvent("ai-supermove", { detail: { at: t0, name: "LAYER", deck: incoming } }));
-          if (window.djMind && window.djMind.layering) {
-            window.djMind.layering(totalMs / 1000, { source: layer.source,
+          host.bus.emit("ai-supermove", { at: t0, name: "LAYER", deck: incoming });
+          if (host.mod.djMind && host.mod.djMind.layering) {
+            host.mod.djMind.layering(totalMs / 1000, { source: layer.source,
               why: `${layer.why} - ${layer.hold_bars} bars together, bass to B on the line, A unwinds ${layer.unwind_bars} bars` });
           }
         } else {
           totalMs = executeTransition(recipe, outgoing, incoming, xfDuration, t0) + XF_LOOKAHEAD_MS;
           sessionEvent("track", { event: "transition_start", from: history[history.length - 1] || null, to: nextName, recipe: executedMove || recipe,
                                   planned: executedMove && executedMove !== recipe ? recipe : undefined, out: outgoing, in: incoming, seconds: Math.round(totalMs / 100) / 10 });
-          window.dispatchEvent(new CustomEvent("ai-cue", { detail: { at: t0, kind: "transition",
-            deck: incoming, bar: 240 / ((window.decks[incoming] && window.decks[incoming].bpm) || 128), why: `${recipe}: B's first downbeat` } }));
+          host.bus.emit("ai-cue", { at: t0, kind: "transition",
+            deck: incoming, bar: 240 / ((host.decks[incoming] && host.decks[incoming].bpm) || 128), why: `${recipe}: B's first downbeat` });
         }
         later(totalMs + 500, afterBlend);
       });
@@ -2536,14 +2613,14 @@ var autopilotCore = (function () {
         if (!active) return;
 
         // Stop the outgoing deck and put it back to neutral for its next load
-        const od = window.decks && window.decks[outgoing];
+        const od = host.decks && host.decks[outgoing];
         if (od) od.stopNow();
-        if (window.stemMoves) window.stemMoves.reset(od);   // never leave its mix muted
+        if (host.mod.stemMoves) host.mod.stemMoves.reset(od);   // never leave its mix muted
         resetDeck(outgoing);
 
         history.push(nextName);
         sessionEvent("track", { event: "transition_end", now_playing: nextName, deck: incoming, set_songs: history.length });
-        if (window.liveEar && window.liveEar.flush) window.liveEar.flush("transition done");
+        if (host.mod.liveEar && host.mod.liveEar.flush) host.mod.liveEar.flush("transition done");
         advanceLead();
         playedIds.push(nextId);
         unmuteBeatLayer();
@@ -2558,10 +2635,10 @@ var autopilotCore = (function () {
         currentTrackId = nextId;
         entryPos = riffEntry != null ? riffEntry : nextEntry;
         currentEnergy = null;
-        if (window.beatLayer) window.beatLayer.follow(activeDeck);
-        if (window.djMind) {
-          window.djMind.follow(activeDeck);
-          window.djMind.setProfileEnergy(profileById[currentTrackId]);
+        if (host.mod.beatLayer) host.mod.beatLayer.follow(activeDeck);
+        if (host.mod.djMind) {
+          host.mod.djMind.follow(activeDeck);
+          host.mod.djMind.setProfileEnergy(profileById[currentTrackId]);
         }
         easePitchHome(activeDeck);
         advanceBridge();
@@ -2583,36 +2660,19 @@ var autopilotCore = (function () {
   //        deep / low energy (<= 5/10) -> long, else in between
   let playPlanTag = "";
   function setMode() {
-    const el = document.getElementById("ap-mode");
+    const el = ui.el("ap-mode");
     const v = el ? el.value : "hybrid";
     return ["long", "quick", "hybrid"].includes(v) ? v : "hybrid";
   }
 
-  const WINDOWS = {
-    long:   { min: 180, max: 360, xf: 24, label: "LONG" },
-    medium: { min: 120, max: 240, xf: 16, label: "MID" },
-    quick:  { min: 40,  max: 100, xf: 8,  label: "QUICK" }, // user: 40-100 s (widened from 60-120)
-    bail:   { min: 30,  max: 60,  xf: 8,  label: "QUICK·bail" },
-    // steering toward the occasion's music: short bridge songs (user: 30-60 s each)
-    bridge: { min: 30,  max: 60,  xf: 8,  label: "BRIDGE" },
-  };
-
+  // The windows themselves (autopilotCore.WINDOWS) and the choice (playWindowFor) are pure.
   function playWindow(score) {
-    if (steering === "move") return WINDOWS.bridge;
-    // A famous song plays in full (user; the USB002 set rides leavemealone for
-    // 7 min): exit only in its last ~50 s, i.e. the outro. Stem breakdowns
-    // (stem-moves.js) keep it from sounding long.
-    const pd = window.decks && window.decks[activeDeck];
-    if (pd && pd.fame && pd.fame.famous && pd.buffer) {
-      const rem = pd.buffer.duration - (entryPos || 0);
-      if (rem > 90) return { min: Math.max(60, rem - 50), max: Math.max(70, rem - 6), xf: 24, label: "FULL·famous" };
-    }
-    const mode = setMode();
-    const weak = score < 65;
-    if (mode === "long") return WINDOWS.long;
-    if (mode === "quick") return weak ? WINDOWS.bail : WINDOWS.quick;
-    if (weak) return WINDOWS.bail;
-    return WINDOWS[autopilotCore.hybridWindowKey(currentEnergy)];
+    // A famous song plays in full: exit only in its last ~50 s, i.e. the outro. Stem
+    // breakdowns (stem-moves.js) keep it from sounding long.
+    const pd = host.decks && host.decks[activeDeck];
+    const famous = !!(pd && pd.fame && pd.fame.famous && pd.buffer);
+    return autopilotCore.playWindowFor({ steering, famous, rem: famous ? pd.buffer.duration - (entryPos || 0) : 0,
+      mode: setMode(), score, energy: currentEnergy });
   }
 
   // ── live mashup ("A x B") ─────────────────────────────────────────────────
@@ -2627,11 +2687,11 @@ var autopilotCore = (function () {
         body: JSON.stringify({ kind, data }) }).catch(() => {});
     } catch (e) { /* logging never breaks the set */ }
   }
-  window.addEventListener("ear-flush", (e) => sessionEvent("ear_flush", e.detail));
+  host.bus.on("ear-flush", (e) => sessionEvent("ear_flush", e.detail));
   // every AI move (stem moves, remix, merges, hook drops, learned moves) with the deck
   // position, so a move that "killed the vibe" can be found in the session log
-  window.addEventListener("ai-activity", (e) => {
-    const d = e.detail || {}, dk = d.deck && window.decks && window.decks[d.deck];
+  host.bus.on("ai-activity", (e) => {
+    const d = e.detail || {}, dk = d.deck && host.decks && host.decks[d.deck];
     sessionEvent("move", { move: d.kind || "", label: d.label || "", why: d.why || "", deck: d.deck || null,
       song: history[history.length - 1] || null, pos: dk && dk._currentPosition ? Math.round(dk._currentPosition() * 10) / 10 : null });
   });
@@ -2640,7 +2700,7 @@ var autopilotCore = (function () {
   // the exit window of this song, now, and A's live tempo. null when stems are
   // missing, B can't sit on A's tempo, the toggle is off, or nothing fits.
   async function requestPreplan(currentId, nextId, candidate) {
-    const od = window.decks && window.decks[activeDeck], sd = window.decks && window.decks[stagingDeck()];
+    const od = host.decks && host.decks[activeDeck], sd = host.decks && host.decks[stagingDeck()];
     if (!mergesOn() || !od || !sd || !od.stemsReady || !sd.stems || !od.bpm || !sd.bpm) return null;
     const aEff = od.bpm * od._playbackRate(), gap = Math.abs(aEff / sd.bpm - 1);
     if (gap > keyLockLim() || (gap > 0.02 && !(sd.tempoStems && Math.abs(sd.tempoStems.bpm / aEff - 1) < 0.01))) return null;
@@ -2663,25 +2723,25 @@ var autopilotCore = (function () {
   const PREPLAN_WAIT_MS = 35000;
 
   function mergesOn() {
-    if (window.djSession && window.djSession.relaxed) return false;
-    const t = document.getElementById("ap-merge-toggle");
+    if (host.session && host.session.relaxed) return false;
+    const t = ui.el("ap-merge-toggle");
     return !t || t.checked;
   }
 
   // Moves learned from studied sets: on unless the (optional) toggle is off.
   function learnedOn() {
-    const t = document.getElementById("ap-learned-toggle");
+    const t = ui.el("ap-learned-toggle");
     return !t || t.checked;
   }
 
   function riffOn() {
-    if (window.djSession && window.djSession.relaxed) return false;
-    const t = document.getElementById("ap-riff-toggle");
+    if (host.session && host.session.relaxed) return false;
+    const t = ui.el("ap-riff-toggle");
     return !t || t.checked;
   }
 
   function mashupsOn() {
-    const t = document.getElementById("ap-mashup-toggle");
+    const t = ui.el("ap-mashup-toggle");
     return !t || t.checked;
   }
 
@@ -2691,9 +2751,9 @@ var autopilotCore = (function () {
   }
 
   async function tryMashup(hostId, guestId, guestName, fireAt) {
-    if (!mashupsOn() || !window.mashup) return;
+    if (!mashupsOn() || !host.mod.mashup) return;
     const hostDeck = activeDeck;
-    const d = window.decks && window.decks[hostDeck];
+    const d = host.decks && host.decks[hostDeck];
     if (!d) return;
     const bar = 240 / (d.bpm || 128);
     const room = fireAt - 2 * bar - (deckPosition(hostDeck) + 10);
@@ -2718,20 +2778,20 @@ var autopilotCore = (function () {
       const pos = deckPosition(hostDeck);
       const entry = plan.host_entries.find((e) => e >= pos + 3 && e + plan.host_duration <= fireAt - bar);
       if (entry == null) return;
-      if (await window.mashup.play(hostDeck, plan, entry)) {
+      if (await host.mod.mashup.play(hostDeck, plan, entry)) {
         mashupTag = ` | ✕ ${guestName} vocal @${fmtTime(entry)} (${plan.bars} bars${plan.mute_host_vocals ? ", host instrumental" : ""})`;
-        if (plan.mute_host_vocals && window.stemMoves) {
+        if (plan.mute_host_vocals && host.mod.stemMoves) {
           // host goes instrumental for exactly the guest's phrase
-          const sm = window.stemMoves;
+          const sm = host.mod.stemMoves;
           const onAt = sm.audioAt(d, entry), offAt = sm.audioAt(d, entry + plan.host_duration);
           setTimeout(() => d.stemMix({ vocals: 0 }, onAt, 0.05), Math.max(0, (onAt - audioCtx.currentTime) * 1000 - 200));
           setTimeout(() => d.stemMix(null, offAt, 0.2), Math.max(0, (offAt - audioCtx.currentTime) * 1000 - 200));
-          window.dispatchEvent(new CustomEvent("ai-activity", { detail: { kind: "stem-move", deck: hostDeck,
-            label: `FULL MASHUP · ${plan.bars} bars`, why: `${guestName} vocal over this song's instrumental` } }));
+          host.bus.emit("ai-activity", { kind: "stem-move", deck: hostDeck,
+            label: `FULL MASHUP · ${plan.bars} bars`, why: `${guestName} vocal over this song's instrumental` });
         }
         // stem remix inside the mashup: host drums + bass out for its last quarter,
         // the guest's vocal over the host's synths, everything back on the line
-        if (window.stemMoves && d.stemsReady) window.stemMoves.mashupBreak(d, entry, plan.bars, !!plan.mute_host_vocals);
+        if (host.mod.stemMoves && d.stemsReady) host.mod.stemMoves.mashupBreak(d, entry, plan.bars, !!plan.mute_host_vocals);
       }
     } catch (e) {
       console.warn("Mashup failed:", e.message);
@@ -2747,30 +2807,30 @@ var autopilotCore = (function () {
   const heard = {};                      // track id -> audible seconds
   setInterval(() => {
     for (const id of ["a", "b"]) {
-      const d = window.decks && window.decks[id];
-      const tid = window.state && (id === "a" ? window.state.trackA : window.state.trackB);
+      const d = host.decks && host.decks[id];
+      const tid = host.state && (id === "a" ? host.state.trackA : host.state.trackB);
       if (!d || !d.playing || !tid) continue;
       const g = (d.crossfaderGain ? d.crossfaderGain.gain.value : 1) * (d.volumeGain ? d.volumeGain.gain.value : 1);
       if (g < 0.3) continue;
       heard[tid] = (heard[tid] || 0) + 1;
       if (heard[tid] === SESSION_MIN_S && !session.some((x) => x.id === tid)) {
-        const el = document.getElementById(`title-${id}`);
+        const el = ui.el(`title-${id}`);
         session.push({ id: tid, name: el ? el.textContent.trim() : tid });
         if (session.length > 60) session.shift();
       }
     }
   }, 1000);
-  window.setSession = session;
+  host.expose("setSession", session);
 
   // The audible deck, else a loaded one: {deck, trackId, name, playing}
   function currentDeck() {
     let best = null;
     for (const id of ["a", "b"]) {
-      const d = window.decks && window.decks[id];
-      const tid = window.state && (id === "a" ? window.state.trackA : window.state.trackB);
+      const d = host.decks && host.decks[id];
+      const tid = host.state && (id === "a" ? host.state.trackA : host.state.trackB);
       if (!d || !d.buffer || !tid) continue;
       const g = d.playing ? (d.crossfaderGain ? d.crossfaderGain.gain.value : 1) * (d.volumeGain ? d.volumeGain.gain.value : 1) : -1;
-      const el = document.getElementById(`title-${id}`);
+      const el = ui.el(`title-${id}`);
       const c = { deck: id, trackId: tid, name: el ? el.textContent.trim() : tid, playing: d.playing, level: g };
       if (!best || c.level > best.level) best = c;
     }
@@ -2808,17 +2868,17 @@ var autopilotCore = (function () {
     activeDeck = cur.deck;
     updateButtons();
     currentTrackId = cur.trackId;
-    const d = window.decks[cur.deck];
+    const d = host.decks[cur.deck];
     if (!d.playing) d.play(d._currentPosition() || 0, true);
-    if (xfader) { xfader.value = cur.deck === "a" ? "-1" : "1"; xfader.dispatchEvent(new Event("input")); }
+    if (xfader) { xfader.value = cur.deck === "a" ? "-1" : "1"; ui.fire(xfader, "input"); }
     entryPos = Math.max(0, d._currentPosition() - (heard[cur.trackId] || 0));
     currentEnergy = null;
-    if (window.beatLayer) window.beatLayer.follow(cur.deck);
-    if (window.djMind) { window.djMind.reset(); window.djMind.follow(cur.deck); }
+    if (host.mod.beatLayer) host.mod.beatLayer.follow(cur.deck);
+    if (host.mod.djMind) { host.mod.djMind.reset(); host.mod.djMind.follow(cur.deck); }
     const past = session.filter((x) => x.id !== cur.trackId);
     history = [...past.map((x) => x.name), cur.name];
     playedIds = [...past.map((x) => x.id), cur.trackId];
-    setStartedAt = Date.now() - 1000 * past.reduce((sum, x) => sum + (heard[x.id] || 0), 0);
+    setStartedAt = host.clock.now() - 1000 * past.reduce((sum, x) => sum + (heard[x.id] || 0), 0);
     apStatus(`▶ Set from ${cur.name}${past.length ? ` (after ${past.length} song${past.length > 1 ? "s" : ""} played)` : ""} — finding next track…`);
     startWatchdog();
     prepareTransition(currentTrackId);
@@ -2830,7 +2890,7 @@ var autopilotCore = (function () {
     occasion = occasionInput ? occasionInput.value.trim() : "";
     applySessionMood();
     // High-energy occasions run in QUICK mode unless the user picked a mode.
-    const modeEl = document.getElementById("ap-mode");
+    const modeEl = ui.el("ap-mode");
     if (modeEl && modeEl.value === "hybrid" && HIGH_ENERGY_OCCASION.test(occasion)) {
       modeEl.value = "quick";
       apStatus(`"${occasion}" is a high-energy occasion → QUICK mode`);
@@ -2870,21 +2930,21 @@ var autopilotCore = (function () {
       await loadIntoDeck("a", currentTrackId, seedName, blob);
 
       // Reset crossfader to A side
-      if (xfader) { xfader.value = "-1"; xfader.dispatchEvent(new Event("input")); }
+      if (xfader) { xfader.value = "-1"; ui.fire(xfader, "input"); }
 
       // Play deck A
-      const da = window.decks && window.decks.a;
+      const da = host.decks && host.decks.a;
       if (da) da.play(0, true);
       entryPos = 0;
       currentEnergy = null;
-      if (window.beatLayer) window.beatLayer.follow("a");
-      if (window.djMind) { window.djMind.reset(); window.djMind.follow("a"); }
+      if (host.mod.beatLayer) host.mod.beatLayer.follow("a");
+      if (host.mod.djMind) { host.mod.djMind.reset(); host.mod.djMind.follow("a"); }
 
       // the session so far steers the set too
       const past = session.filter((x) => x.id !== currentTrackId);
       history = [...past.map((x) => x.name), seedName];
       playedIds = [...past.map((x) => x.id), currentTrackId];
-      setStartedAt = Date.now();
+      setStartedAt = host.clock.now();
       apStatus(`▶ Playing: ${seedName} — finding next track in background…`);
       startWatchdog();
       prepareTransition(currentTrackId); // fire-and-forget: seed already playing
@@ -2905,7 +2965,7 @@ var autopilotCore = (function () {
     if (watchdog) clearInterval(watchdog);
     watchdog = setInterval(() => {
       if (!active || scheduledNext || !prepStartedAt) return;
-      if (Date.now() - prepStartedAt < WATCHDOG_MS) return;
+      if (host.clock.now() - prepStartedAt < WATCHDOG_MS) return;
       console.warn("Autopilot watchdog: next-song search stalled, restarting it");
       apStatus("⚠ Next-song search stalled — restarting it");
       prepareTransition(currentTrackId);
@@ -2913,36 +2973,36 @@ var autopilotCore = (function () {
   }
 
   function stop() {
-    if (window.djSession) window.djSession.relaxed = false;   // manual play: sampler etc. back
+    if (host.session) host.session.relaxed = false;   // manual play: sampler etc. back
     if (watchdog) { clearInterval(watchdog); watchdog = null; }
     active = false;
     ready.length = 0;
     cancelLead();
     scheduledNext = null;
     pendingSugs = [];
-    if (window.mashup) window.mashup.cancel();
+    if (host.mod.mashup) host.mod.mashup.cancel();
     mashupTag = "";
     clearRun();
     unmuteBeatLayer();
-    if (window.beatLayer) window.beatLayer.stop();
-    if (window.djMind) window.djMind.stop();
+    if (host.mod.beatLayer) host.mod.beatLayer.stop();
+    if (host.mod.djMind) host.mod.djMind.stop();
     apStatus("Autopilot stopped.");
     updateButtons();
   }
 
   function updateButtons() {
     if (startBtn) startBtn.disabled = active;
-    const scb = document.getElementById("ap-start-current-btn");
+    const scb = ui.el("ap-start-current-btn");
     if (scb) scb.disabled = active;
     if (stopBtn)  stopBtn.disabled  = !active;
   }
 
   // Test hook: run one transition's automation on the empty decks (no audio,
   // no set) to check the audio-clock scheduling from the console.
-  window.autopilotDebug = { executeTransition, xfGains };
+  host.expose("autopilotDebug", { executeTransition, xfGains });
 
   // Read-only view for helpers (beat-grid-ai.js).
-  window.autopilotState = {
+  host.expose("autopilotState", {
     get active() { return active; },
     get activeDeck() { return activeDeck; },
     get trackId() { return currentTrackId; },
@@ -2950,12 +3010,12 @@ var autopilotCore = (function () {
     get entryPos() { return entryPos; },
     get energy() { return currentEnergy; },
     get fireAt() { return scheduledNext ? scheduledFireAt : null; },
-    get layering() { return !!(window.djMind && window.djMind.layerActive); },
+    get layering() { return !!(host.mod.djMind && host.mod.djMind.layerActive); },
     get preplanning() { return preplanFor; },
     get next() { return scheduledNext ? { name: scheduledNext.name || null, recipe: bookedRecipe } : null; },
-  };
+  });
 
-  const leadGo = document.getElementById("ap-lead-go");
+  const leadGo = ui.el("ap-lead-go");
   if (leadGo) leadGo.addEventListener("click", () => {
     // LEAD with the list open: selected row, else the first song result, else steer
     if (leadRows.length) pickLead(leadSel >= 0 ? leadSel : (leadRows.length > 1 ? 1 : 0));
@@ -2964,8 +3024,8 @@ var autopilotCore = (function () {
   if (leadCancel) leadCancel.addEventListener("click", () => cancelLead("lead cancelled — the set carries on"));
   // LEAD TO search: YouTube results as you type (debounced); pick one = that
   // song is the destination; the first row steers toward the typed genre/artist.
-  const leadInput = document.getElementById("ap-lead-input");
-  const leadResults = document.getElementById("ap-lead-results");
+  const leadInput = ui.el("ap-lead-input");
+  const leadResults = ui.el("ap-lead-results");
   let leadSearchTimer = null, leadSearchSeq = 0, leadRows = [], leadSel = -1;
   function hideLeadResults() { if (leadResults) { leadResults.hidden = true; leadResults.innerHTML = ""; } leadRows = []; leadSel = -1; }
   function fmtDur(d) { return d ? `${Math.floor(d / 60)}:${String(Math.round(d % 60)).padStart(2, "0")}` : ""; }
@@ -3019,8 +3079,10 @@ var autopilotCore = (function () {
   });
 
   startBtn.addEventListener("click", start);
-  const startCurBtn = document.getElementById("ap-start-current-btn");
+  const startCurBtn = ui.el("ap-start-current-btn");
   if (startCurBtn) startCurBtn.addEventListener("click", () => { if (!active) startFromCurrent(); });
   if (stopBtn) stopBtn.addEventListener("click", stop);
   if (seedInput) seedInput.addEventListener("keydown", (e) => { if (e.key === "Enter") start(); });
-})();
+  return { core: autopilotCore };
+}
+if (typeof Engine !== "undefined") Engine.mount("autopilot", createAutopilotEngine);

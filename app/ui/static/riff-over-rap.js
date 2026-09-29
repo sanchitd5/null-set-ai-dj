@@ -13,7 +13,7 @@
 //    bar 24+M  8-bar crossfade: B's backing fades in as A fades, bass swap at +4
 //    bar 32+M  B carries on
 //
-// Depends on globals: audioCtx, decks (deck-controller.js).
+// The engine reaches the world only through the Host port (engine.js): host.decks, host.audio, host.clock, host.api, host.bus.
 (function (root) {
   "use strict";
 
@@ -83,18 +83,20 @@
   }
   const core = { schedule, memoPrepare };
   if (typeof module !== "undefined" && module.exports) module.exports = core;
-  if (typeof root.document === "undefined" || typeof audioCtx === "undefined") return;
 
+  function create({ host }) {
+  const { setTimeout } = host.clock;
+  const audioCtx = host.audio;
+  const fetch = (url, opts) => host.api.fetch(url, opts);
   const STEMS = ["drums", "bass", "vocals", "other"];
   const cache = new Map();          // key -> {plan, buffers}
-  const note = (label, why) => root.dispatchEvent(new CustomEvent("ai-activity",
-    { detail: { kind: "stem-move", deck: "", label, why } }));
+  const note = (label, why) => host.bus.emit("ai-activity", { kind: "stem-move", deck: "", label, why });
 
   // Plan + render + decode. Resolves {ok:true, plan, buffers} or {ok:false, reasons}
   // — the reasons are always returned to the caller, not just console-logged, so
   // the UI can show the actual "why" instead of a bare "see the console".
   function prepare(aId, bId, notBefore) {
-    return memoPrepare(cache, `${aId}>${bId}`, () => prepareUncached(aId, bId, notBefore));
+    return memoPrepare(cache, `${aId}>${bId}`, () => prepareUncached(aId, bId, notBefore), host.clock.now);
   }
   async function prepareUncached(aId, bId, notBefore) {
     const res = await fetch("/api/riff/plan", { method: "POST", headers: { "Content-Type": "application/json" },
@@ -135,7 +137,7 @@
   // Returns the run length in ms.
   function run(prep, outId, innId, t0, ui) {
     const { plan, buffers } = prep;
-    const oa = root.decks[outId], ib = root.decks[innId];
+    const oa = host.decks[outId], ib = host.decks[innId];
     const bar = plan.bar_s, ratio = plan.meta.ratio, ws = plan.meta.window_start;
     const toStretch = (t) => (t - ws) * ratio;
     const gs0 = toStretch(plan.a_groove[0]);
@@ -253,10 +255,12 @@
       for (const g of Object.values(gains)) g.disconnect();
     });
     // the auto sampler marks B's rap arriving (never A's drop: the user wants it untouched)
-    root.dispatchEvent(new CustomEvent("ai-cue", { detail: { at: at(MSH), kind: "line", deck: innId, bar: bar, why: "B's rap arrives: open hat on the line" } }));
+    host.bus.emit("ai-cue", { at: at(MSH), kind: "line", deck: innId, bar: bar, why: "B's rap arrives: open hat on the line" });
         note("RIFF OVER RAP", `${Math.round((1 / ratio - 1) * 1000) / 10}% key-locked: A's groove at B's ${plan.target_bpm} BPM, B's rap at ${Math.floor(plan.b_entry / 60)}:${String(Math.floor(plan.b_entry % 60)).padStart(2, "0")}`);
     return (at(totalBars) - audioCtx.currentTime) * 1000;
   }
 
-  root.riffOverRap = { core, prepare, run };
+  return { core, prepare, run };
+  }
+  if (root.Engine) root.Engine.mount("riffOverRap", create);
 })(typeof window !== "undefined" ? window : globalThis);
