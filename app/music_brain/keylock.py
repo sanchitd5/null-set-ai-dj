@@ -68,6 +68,13 @@ def measured_lines(tl: dict, rap_profile: Optional[dict], line_start_s: float, b
         rel, s = wp.pick_dropout_bar(rap_profile, line_start_s, bar_s, n - 8, n - 2)
         out["dropout"] = m0 + rel if rel is not None else tl["blend"] - 2
         src["dropout_bar"] = s
+    # how much of the rap is actually there under each pick, against the old fixed bars (the sim's "vocal-gap fit")
+    share = lambda bar, span: wp.active_share(rap_profile, line_start_s + (bar - m0) * bar_s, line_start_s + (bar - m0 + span) * bar_s)  # noqa: E731
+    fixed_holds = [m0 + 16 * k + 11 for k in range(n // 16)]
+    fit = {"hold_active": [share(b, 1) for b in holds], "hold_active_fixed": [share(b, 1) for b in fixed_holds]}
+    if n >= 32:
+        fit.update(dropout_active=share(out["dropout"], 2), dropout_active_fixed=share(tl["blend"] - 2, 2))
+    out["fit"] = fit
     return out, src
 
 

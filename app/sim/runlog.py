@@ -140,12 +140,38 @@ def build_run(js: dict, world, meta: dict) -> dict:
               "song_index": k + 1} for k, t in enumerate(transitions)]
     counters["candidates"] = len(rejects) + len(transitions)
     return {"meta": {**meta, "tracks_played": len(songs), "stalled": js["ended"] != "songs", "ended": js["ended"],
-                     "llm": llm_summary(world.llm_calls),
+                     "llm": llm_summary(world.llm_calls), "wf": wf_summary(world.events),
                      "replay_misses": len(world.misses), "replay_drift": len(world.drift),
                      # threads ask in any order: the list is sorted so a run's outputs are byte-stable
                      "misses": sorted(world.misses, key=lambda m: (m["what"], m["key"]))[:20]},
             "songs": songs, "transitions": transitions, "preps": preps, "rejects": rejects, "counters": counters,
             "audible": {"set": js["audible"].get("set")}}
+
+
+def wf_summary(events: list) -> dict:
+    """What the layered moves took from the waveform in this run: the server logs one `derived_params` event
+    per plan (app.music_brain.waveform_params.note). Counts parameters measured versus fallen back to the old
+    constant, and the vocal-gap fit of the riff's rap moves (share of the rap actually voiced under the bar the
+    move picked, against the old fixed bar)."""
+    ev = [e for e in events if e.get("kind") == "derived_params"]
+    by_move: dict = {}
+    fit: dict = {"hold": [], "hold_fixed": [], "dropout": [], "dropout_fixed": []}
+    for e in ev:
+        row = by_move.setdefault(e.get("move", "?"), {"plans": 0, "measured": 0, "fallback": 0})
+        row["plans"] += 1
+        row["measured"] += int(e.get("measured") or 0)
+        row["fallback"] += int(e.get("fallback") or 0)
+        f = e.get("fit") or {}
+        for k, src in (("hold", "hold_active"), ("hold_fixed", "hold_active_fixed")):
+            fit[k] += [v for v in (f.get(src) or []) if v is not None]
+        for k, src in (("dropout", "dropout_active"), ("dropout_fixed", "dropout_active_fixed")):
+            if f.get(src) is not None:
+                fit[k].append(f[src])
+    mean = lambda xs: round(sum(xs) / len(xs), 3) if xs else None  # noqa: E731
+    return {"plans": len(ev), "measured": sum(r["measured"] for r in by_move.values()),
+            "fallback": sum(r["fallback"] for r in by_move.values()), "by_move": dict(sorted(by_move.items())),
+            "hold_fit": mean(fit["hold"]), "hold_fit_fixed": mean(fit["hold_fixed"]),
+            "dropout_fit": mean(fit["dropout"]), "dropout_fit_fixed": mean(fit["dropout_fixed"])}
 
 
 def llm_summary(calls: list) -> dict:

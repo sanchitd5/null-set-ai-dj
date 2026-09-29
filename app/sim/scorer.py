@@ -76,6 +76,9 @@ DIRECTION = {
     "song_mean_s": 0, "long_blend_share": 0, "echo_out_share": -1, "plan_exec_mismatch": -1, "degraded_moves": -1,
     "discarded_plans": -1, "no_plan": -1, "empty_picks": -1, "stalls": -1, "search_rounds_extra": -1, "transitions": +1,
     "songs_played": +1, "replay_misses": -1, "replay_drift": 0,
+    "wf_params_measured": +1, "wf_params_fallback": -1, "wf_measured_share": +1, "wf_hold_fit": +1, "wf_hold_fit_fixed": 0,
+    "wf_dropout_fit": +1, "wf_dropout_fit_fixed": 0, "wfp_hold_fit": +1, "wfp_hold_fit_fixed": 0, "wfp_dropout_fit": +1,
+    "wfp_dropout_fit_fixed": 0, "wfp_level_spread": 0, "wfp_measured": +1, "wfp_fallback": -1, "bass_overlap_seconds": -1, "vocal_clash_seconds": -1,
     "llm_calls": 0, "llm_empty_replies": -1, "llm_invalid_replies": -1, "llm_latency_mean_s": 0, "http_errors": -1, "download_failures": -1, "score": -1,
 }
 
@@ -220,6 +223,22 @@ def score_run(run: dict, artists_of: Optional[Callable[[str], set]] = None, iden
         "replay_misses": run["meta"].get("replay_misses", 0), "replay_drift": run["meta"].get("replay_drift", 0), "http_errors": counters.get("http_errors", 0),
         "download_failures": counters.get("download_failures", 0),
     }
+    # informational (never in the score): what the layered moves took from the waveform, and the two audible risks they steer
+    wf = run["meta"].get("wf") or {}
+    m["wf_params_measured"], m["wf_params_fallback"] = wf.get("measured", 0), wf.get("fallback", 0)
+    total = m["wf_params_measured"] + m["wf_params_fallback"]
+    m["wf_measured_share"] = round(m["wf_params_measured"] / total, 3) if total else 0.0
+    for k in ("hold_fit", "hold_fit_fixed", "dropout_fit", "dropout_fit_fixed"):
+        if wf.get(k) is not None:
+            m["wf_" + k] = wf[k]
+    pr = wf.get("probe") or {}            # the derivations run over every loaded track (wf_probe.py), fired or not
+    for k, name in (("hold_fit", "wfp_hold_fit"), ("hold_fit_fixed", "wfp_hold_fit_fixed"), ("dropout_fit", "wfp_dropout_fit"),
+                    ("dropout_fit_fixed", "wfp_dropout_fit_fixed"), ("level_spread", "wfp_level_spread"), ("measured", "wfp_measured"),
+                    ("fallback", "wfp_fallback")):
+        if pr.get(k) is not None:
+            m[name] = pr[k]
+    m["bass_overlap_seconds"] = round(sum(float(t.get("bass_overlap_s") or 0) for t in trans), 2)
+    m["vocal_clash_seconds"] = round(sum(float(t.get("vocal_clash_s") or 0) for t in trans), 2)
     long_over = sum(max(0.0, s - MAX_SONG_S) / 60.0 for s in secs)
     pen = {
         "transitions": round(sum(r[0] for r in rows), 3),

@@ -1300,7 +1300,7 @@ def post_riff_plan(req: RiffRequest):
     # the rap moves (hold on, A's drop out) sit on B's own measured lines; the mashup length above already was
     plan["timeline"], line_src = keylock.measured_lines(plan["timeline"], wp.profile(sb["vocals"]), plan["b_entry"], plan["bar_s"])
     plan["param_sources"] = {"mashup_bars": "measured" if vr else "fallback", **line_src}
-    wp.note("riff_lines", plan["param_sources"])
+    wp.note("riff_lines", plan["param_sources"], fit=plan["timeline"].get("fit"))
     key, state = keylock.ensure(stem_service.file_hash(_track_path(req.a_id)), _cached_stems4(req.a_id), plan)
     # B's levels where it drops (16 bars from the rap), for the balance
     lo, hi = plan["b_entry"], plan["b_entry"] + 16 * plan["bar_s"]
