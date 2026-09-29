@@ -152,5 +152,16 @@ def test_learned_pick_skips_tonal_blends_on_clashing_keys():
     assert tq.learned_pick(ranked, store, key_score=0.9) is not None
 
 
+def test_learned_hard_cut_plays_as_a_bass_swap_never_a_cut():
+    # owner rule: the console never plays a Hard Cut / Quick Cut, it runs a cut as a bass swap
+    obs = [{"set_id": "s", "at": 1, "track_a": "A", "track_b": "B", "tempo_gap": 0.02, "key_score": 0.9, "detail": {}}] * 3
+    store = {"hard_cut": {"kind": "hard_cut", "what": "x", "stems": False, "live": True, "count": 3,
+                          "tempo_gap_max": 0.05, "key_score_min": 0.8, "observations": obs}}
+    ranked = tq.rank(tq.PairFeatures(124, 126, "8A", "9A"), learned=store)
+    p = tq.learned_pick(ranked, store, key_score=0.9)
+    assert p["kind"] == "hard_cut" and p["recipe"] == "Bass Swap"
+    assert tq.learned_pick(ranked, store, key_score=0.0) is None      # tonal: no swap across a key clash
+
+
 def test_keylock_stretch_capped_at_8_percent():
     assert tq.MAX_KEYLOCK_STRETCH == 0.08
