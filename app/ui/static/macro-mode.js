@@ -7,6 +7,9 @@
 //           The autopilot tries combos for the playing song FIRST, before asking the LLM; a
 //           song already loaded on the other deck that forms a combo is tried before them.
 //           Combos chain: COMBO x3: MERGE -> RIFF x RAP -> MASHUP in the VIBE strip.
+//   STUDIED a pair a famous studied set played (app/music_brain/studied_combos.py): tried before
+//           rule-only combos whatever its works score, badged in COMPATIBLE, and named
+//           "STUDIED COMBO (<DJ> set)" in the VIBE strip. Live gates still decide.
 //   MACRO   a saved, replayable set (CACHE_DIR/macros/<name>.json). When the playing song is
 //           in a macro and its next step is still valid, the autopilot takes it with
 //           probability MACRO_PREFERENCE (0.8; the rest explores). MACRO MODE plays the loaded
@@ -19,7 +22,7 @@
 
   const MACRO_PREFERENCE = 0.8;       // share of valid macro steps the autopilot takes (owner)
   const COMBO_MIN_WORKS = 65;         // = pair_atlas.COMBO_MIN_WORKS
-  const COMBO_LABEL = { merge: "MERGE", riff: "RIFF x RAP", mashup: "MASHUP", double_drop: "DOUBLE DROP", drop_swap: "DROP SWAP" };
+  const COMBO_LABEL = { merge: "MERGE", riff: "RIFF x RAP", mashup: "MASHUP", double_drop: "DOUBLE DROP", drop_swap: "DROP SWAP", studied: "STUDIED COMBO" };
   const STEM_RECIPE = /merge|mashup|stem|riff/i;
 
   // The ONE artist-spacing rule (artist-spacing.js = autopilot_service.py): a combo or macro
@@ -34,27 +37,43 @@
     return n.trim();
   }
 
+  // "STUDIED COMBO (Anyma set)": a pair a studied famous set played (pair_atlas studied evidence)
+  function studiedLabel(st) {
+    if (!st) return "";
+    const dj = (st.djs || [])[0];
+    return `STUDIED COMBO${dj ? ` (${dj} set)` : ""}`;
+  }
+
   // Combos for the playing song A, in the order the autopilot tries them.
   // o: {aId, loadedId (the other deck's song, or null), partners (atlas rows for A),
   //     played (ids), recent (names of the last songs), minWorks}
-  // -> {list: [{track_id, name, combo, label, works, plan, loaded}], skipped: [{b, why}]}
+  // -> {list: [{track_id, name, combo, label, works, plan, loaded, studied}], skipped: [{b, why}]}
+  // A studied combo (a real DJ played it) needs no works score: the live gates still judge it.
   function comboCandidates(o) {
     const played = new Set(o.played || []), minWorks = o.minWorks == null ? COMBO_MIN_WORKS : o.minWorks;
     const list = [], skipped = [];
     for (const p of o.partners || []) {
-      if (!p || !p.combo || p.b === o.aId) continue;
+      if (!p || !(p.combo || p.studied) || p.b === o.aId) continue;
       let sp = null;
       const why = played.has(p.b) ? "already played this set"
-        : p.works < minWorks ? `works ${p.works} < ${minWorks}`
+        : !p.studied && p.works < minWorks ? `works ${p.works} < ${minWorks}`
         : (sp = spacingWhy(p.b_name, o.recent)) ? sp
         : (p.played_bad || 0) > (p.played_good || 0) ? `bad played evidence (-${p.played_bad})` : null;
       if (why) { skipped.push({ b: p.b, name: p.b_name, why }); continue; }
-      list.push({ track_id: p.b, name: p.b_name, bpm: p.b_bpm, duration: p.b_duration, combo: p.combo, label: COMBO_LABEL[p.combo] || String(p.combo).toUpperCase(),
-                  works: p.works, plan: p.plan || null, loaded: p.b === o.loadedId });
+      const combo = p.combo || "studied";
+      list.push({ track_id: p.b, name: p.b_name, bpm: p.b_bpm, duration: p.b_duration, combo,
+                  label: p.studied ? studiedLabel(p.studied) : COMBO_LABEL[combo] || String(combo).toUpperCase(),
+                  works: p.works, plan: p.plan || null, loaded: p.b === o.loadedId, studied: p.studied || null });
     }
-    // the user loaded it on purpose: first; then by works (the atlas order), stable
-    list.sort((x, y) => (y.loaded - x.loaded) || (y.works - x.works));
+    // the user loaded it on purpose: first; then studied combos; then by works (the atlas order), stable
+    list.sort((x, y) => (y.loaded - x.loaded) || (!!y.studied - !!x.studied) || (y.works - x.works));
     return { list, skipped };
+  }
+
+  // Macros the tab keeps in memory (the first `n`): studied macros first, then the server order.
+  function macroOrder(list, n = 20) {
+    const st = (m) => /^studied-/.test(String(m && m.name || ""));
+    return (list || []).map((m, i) => [m, i]).sort((x, y) => (st(y[0]) - st(x[0])) || (x[1] - y[1])).map((x) => x[0]).slice(0, n);
   }
 
   // The next step of a macro the playing song is in. macros: [{name, steps}] (loaded macro
@@ -84,10 +103,11 @@
     return { take: false, draw, line: `macro: skipped (${Math.round((1 - p) * 100)}% explore)` };
   }
 
-  // Combo streak after a transition landed (combo: the combo move key, or null).
-  function streakAfter(s, combo) {
+  // Combo streak after a transition landed (combo: the combo move key, or null; label: its name
+  // in the VIBE strip when not the move's own, e.g. "STUDIED COMBO (Anyma set)").
+  function streakAfter(s, combo, label) {
     if (!combo) return { n: 0, names: [] };
-    const names = (s && s.names || []).concat([COMBO_LABEL[combo] || String(combo).toUpperCase()]);
+    const names = (s && s.names || []).concat([label || COMBO_LABEL[combo] || String(combo).toUpperCase()]);
     return { n: names.length, names };
   }
   function streakLabel(s) {
@@ -181,7 +201,7 @@
     return g.ok ? { ok: true, why: g.why || `step ${step.n}: ${g.recipe}`, recipe: g.recipe } : g;
   }
 
-  const core = { MACRO_PREFERENCE, COMBO_MIN_WORKS, COMBO_LABEL, artistOf, comboCandidates, macroCandidate,
+  const core = { MACRO_PREFERENCE, COMBO_MIN_WORKS, COMBO_LABEL, artistOf, studiedLabel, macroOrder, comboCandidates, macroCandidate,
                  macroPrefer, streakAfter, streakLabel, applyPlan, fireAt, stepGate, editStep, setToMacro, runNowCheck,
                  createRuntime: create };   // node checks drive the runtime over a fake Host
   if (typeof module !== "undefined" && module.exports) module.exports = core;
@@ -288,8 +308,8 @@
     function landed(aId, bId, info = {}) {
       const rows = [...partnersCache.entries()].filter(([k]) => k.startsWith(`${aId}|`)).flatMap(([, v]) => v.rows);
       const p = rows.find((x) => x.b === bId);
-      const combo = info.combo || (p && p.combo) || null;
-      streak = streakAfter(streak, combo);
+      const combo = info.combo || (p && (p.combo || (p.studied && "studied"))) || null;
+      streak = streakAfter(streak, combo, p && p.studied ? studiedLabel(p.studied) : null);
       stats.maxStreak = Math.max(stats.maxStreak, streak.n);
       if (combo) stats.comboPicked++;
       played.push({ a: aId, b: bId, a_name: info.aName || (p && p.a_name) || "", b_name: info.bName || (p && p.b_name) || "",
@@ -319,7 +339,7 @@
         const list = (await getJSON("/api/macros")).macros || [];
         if (sel) sel.innerHTML = `<option value="">MACROS…</option>` + list.map((m) => `<option value="${esc(m.name)}">${esc(m.name)} · ${m.songs} songs</option>`).join("");
         macros = [];
-        for (const m of list.slice(0, 20)) { try { macros.push((await getJSON(`/api/macros/${encodeURIComponent(m.name)}`)).macro); } catch (e) { /* skip */ } }
+        for (const m of macroOrder(list, 20)) { try { macros.push((await getJSON(`/api/macros/${encodeURIComponent(m.name)}`)).macro); } catch (e) { /* skip */ } }
       } catch (e) { say(`macros: ${e.message}`, false); }
     }
     async function loadMacro(name) {
@@ -414,6 +434,7 @@
         const rows = await partners(c.aId, move, 6);
         parts.push(`<h4>${title}</h4><ul>` + (rows.length ? rows.map((r) => `<li><label><input type="checkbox" data-pick="${esc(r.b)}" ${picks.has(r.b) ? "checked" : ""}/> ${esc(r.b_name)}</label>` +
           ` <span class="compat-works">${r.works}</span> <span class="compat-rec">${esc(r.best)}</span>` +
+          (r.studied ? ` <span class="compat-studied" title="${esc((r.studied.sets || []).join(", "))}">STUDIED · ${esc((r.studied.djs || []).join(", "))}</span>` : "") +
           ` <button class="hw-btn compat-arm" data-arm="${esc(r.b)}" data-move="${esc(move || "")}" title="Load on the other deck and arm this move">LOAD + ARM</button></li>`).join("")
           : `<li class="compat-empty">none</li>`) + `</ul>`);
       }

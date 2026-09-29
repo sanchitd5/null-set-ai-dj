@@ -29,6 +29,29 @@ const partners = [
   assert.strictEqual(bad.list.length, 0, "bad played evidence: no combo");
 }
 
+// 1b) studied combos (a famous studied set played the pair) rank above rule-only combos,
+//     need no works score, still yield to a song the user loaded and to played / spacing gates
+const STUD = "aaaaaaaaaaaaaaaa";
+const studied = { count: 1, sets: ["oRb_81stwy8"], djs: ["Anyma"], techniques: { stem_intro: 1 }, move: "stem_intro", recipe: "Stems Transition" };
+{
+  const rows = partners.concat([row(STUD, "Anyma - Eternity", 40, "studied", { studied })]);
+  const c = mm.comboCandidates({ aId: SEVEN, partners: rows, played: [], recent: [] });
+  assert.deepStrictEqual(c.list.map((x) => x.track_id), [STUD, LANE8, OTHER], "studied first, whatever its works");
+  assert.strictEqual(c.list[0].label, "STUDIED COMBO (Anyma set)");
+  assert.strictEqual(c.list[0].studied.sets[0], "oRb_81stwy8");
+  const loaded = mm.comboCandidates({ aId: SEVEN, loadedId: LANE8, partners: rows, played: [], recent: [] });
+  assert.deepStrictEqual(loaded.list.map((x) => x.track_id), [LANE8, STUD, OTHER], "the user's loaded song still goes first");
+  const gated = mm.comboCandidates({ aId: SEVEN, partners: rows, played: [STUD], recent: [] });
+  assert.ok(gated.skipped.some((s) => s.b === STUD && /already played/.test(s.why)), "studied is still gated");
+  const merged = mm.comboCandidates({ aId: SEVEN, partners: [row(STUD, "Anyma - Eternity", 90, "merge", { studied })], played: [], recent: [] });
+  assert.deepStrictEqual([merged.list[0].combo, merged.list[0].label], ["merge", "STUDIED COMBO (Anyma set)"], "a studied merge keeps its move");
+  assert.strictEqual(mm.studiedLabel({ djs: [] }), "STUDIED COMBO");
+  assert.deepStrictEqual(mm.macroOrder([{ name: "combo-x" }, { name: "studied-set-a" }, { name: "b" }, { name: "studied-a-3" }], 3).map((m) => m.name),
+    ["studied-set-a", "studied-a-3", "combo-x"], "studied macros are kept in the tab first");
+  assert.strictEqual(mm.streakLabel(mm.streakAfter(mm.streakAfter(null, "merge"), "studied", "STUDIED COMBO (Anyma set)")),
+    "COMBO x2: MERGE -> STUDIED COMBO (Anyma set)");
+}
+
 // 2) macro preference: ~80 % of valid steps over many seeded draws; an invalid step is never taken
 function mulberry(seed) { return () => { seed = (seed + 0x6D2B79F5) >>> 0; let t = seed; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
 {
@@ -129,5 +152,8 @@ function mulberry(seed) { return () => { seed = (seed + 0x6D2B79F5) >>> 0; let t
   rt.landed(SEVEN, LANE8, { recipe: "Stem Merge" });
   assert.strictEqual(els["combo-streak"].textContent, "COMBO x1: MERGE");
   assert.strictEqual(rt.stats.maxStreak, 1);
+  partners.push(row(STUD, "Anyma - Eternity", 40, "studied", { studied }));     // same array the partners cache holds
+  rt.landed(SEVEN, STUD, { recipe: "Stems Transition" });
+  assert.strictEqual(els["combo-streak"].textContent, "COMBO x2: MERGE -> STUDIED COMBO (Anyma set)", "VIBE line names the studied set");
   console.log("macro mode OK");
 })().catch((e) => { console.error(e); process.exit(1); });
