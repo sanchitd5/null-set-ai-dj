@@ -12,15 +12,20 @@
 #
 #   ./start.sh                start (replacing any earlier copies), open the browser
 #   ./start.sh --no-open      same, without opening a browser tab
-#   ./start.sh --single-omni  ONE model for everything: the live ear's Qwen3-Omni
-#                             also makes the autopilot's text decisions (no separate
-#                             text model: ~17 GB less RAM; the picks come from the
-#                             omni model, and ear + picks share one server)
-#   PORT=8010 ./start.sh      use another port (flags combine: --single-omni --no-open)
+#   ./start.sh --dual         two models instead: a separate text model (mlx_lm.server)
+#                             for the picks plus the ear's Qwen3-Omni
+#   PORT=8010 ./start.sh      use another port (flags combine: --dual --no-open)
+#
+# DEFAULT is ONE model for everything (the old --single-omni, still accepted): the
+# live ear's Qwen3-Omni also makes the autopilot's text decisions, so there is no
+# separate text model (~17 GB less RAM) and ear + picks share one server. That server
+# batches concurrent requests (mlx-vlm continuous batching), so a short ear call does
+# not queue behind a long pick; OMNI_MAX_SEQS (default 2) caps concurrent sequences to
+# bound KV-cache memory. Without the mlx-vlm venv the script falls back to --dual.
 #
 # Settings live in .env (LLM_BACKEND, MLX_MODEL, MLX_PORT, OLLAMA_MODEL,
-# OMNI_MODEL, OMNI_PORT). The ear is optional: without its venv the hold loop
-# uses the DSP rules. Without mlx (not Apple Silicon) the app falls back to Ollama.
+# OMNI_MODEL, OMNI_PORT, OMNI_MAX_SEQS). The ear is optional: without its venv the
+# hold loop uses the DSP rules. Without mlx (not Apple Silicon) the app falls back to Ollama.
 set -uo pipefail
 
 cd "$(dirname "$0")"
@@ -37,12 +42,14 @@ fi
 
 PORT="${PORT:-8000}"
 OPEN=1
-SINGLE_OMNI=0
+SINGLE_OMNI=1           # default: one shared omni server; --dual for a separate text model
+SINGLE_OMNI_ASKED=0     # --single-omni given explicitly: a missing omni venv is then an error
 for arg in "$@"; do
   case "$arg" in
     --no-open) OPEN=0 ;;
-    --single-omni) SINGLE_OMNI=1 ;;
-    -h|--help) sed -n '2,23p' "$0"; exit 0 ;;
+    --single-omni) SINGLE_OMNI=1; SINGLE_OMNI_ASKED=1 ;;
+    --dual) SINGLE_OMNI=0 ;;
+    -h|--help) sed -n '2,27p' "$0"; exit 0 ;;
     *) echo "unknown option: $arg (see ./start.sh --help)" >&2; exit 2 ;;
   esac
 done
@@ -52,6 +59,7 @@ MLX_PORT="${MLX_PORT:-8081}"
 OMNI_PY="${OMNI_PY:-$HOME/.venvs/mlx-vlm/bin/python}"
 OMNI_MODEL="${OMNI_MODEL:-mlx-community/Qwen3-Omni-30B-A3B-Instruct-4bit}"
 OMNI_PORT="${OMNI_PORT:-8901}"
+OMNI_MAX_SEQS="${OMNI_MAX_SEQS:-2}"
 # YouTube cookies (Netscape cookies.txt from a logged-in browser) for yt-dlp's bot
 # checks: app.music_brain.yt_guard adds them only after a plain request is refused.
 # Kept outside the repo; never commit it (it is your YouTube login).
@@ -92,13 +100,15 @@ if [[ "${LLM_BACKEND:-auto}" != "ollama" && "$(uname -m)" == "arm64" ]] && "$PY"
 fi
 RUN_EAR=0
 [[ -x "$OMNI_PY" ]] && RUN_EAR=1
-if (( SINGLE_OMNI )); then
-  if (( ! RUN_EAR )); then
+if (( SINGLE_OMNI && ! RUN_EAR )); then
+  if (( SINGLE_OMNI_ASKED )); then
     echo "--single-omni needs the mlx-vlm venv at $OMNI_PY (or set OMNI_PY)" >&2
     exit 1
   fi
-  RUN_LLM=0   # the omni server makes the decisions too
+  say "no mlx-vlm venv at $OMNI_PY: falling back to --dual (separate text model)"
+  SINGLE_OMNI=0
 fi
+(( SINGLE_OMNI )) && RUN_LLM=0   # the omni server makes the decisions too
 
 # ---- replace earlier copies (detached ones from older start.sh runs) ----------
 free_port() {
@@ -128,9 +138,11 @@ start_llm() {
 }
 start_ear() {
   # from /tmp: mlx-vlm lives in its own venv and must not import this repo's packages
-  (cd /tmp && exec "$OMNI_PY" -m mlx_vlm.server --model "$OMNI_MODEL" --host 127.0.0.1 --port "$OMNI_PORT") >>"$LOG_EAR" 2>&1 &
+  # --max-num-seqs bounds the continuous-batching batch (each sequence holds KV cache)
+  (cd /tmp && exec "$OMNI_PY" -m mlx_vlm.server --model "$OMNI_MODEL" --host 127.0.0.1 --port "$OMNI_PORT" \
+      --max-num-seqs "$OMNI_MAX_SEQS") >>"$LOG_EAR" 2>&1 &
   PID_EAR=$!
-  say "ear  pid $PID_EAR  $OMNI_MODEL on :$OMNI_PORT"
+  say "ear  pid $PID_EAR  $OMNI_MODEL on :$OMNI_PORT (max $OMNI_MAX_SEQS concurrent sequences)"
 }
 start_app() {
   # The ear always follows this script's omni server. With --single-omni the
