@@ -448,6 +448,162 @@
     return { events: ev.sort((a, b) => a.bar - b.bar), total: M + 8 };
   }
 
+  // ---- ARTIST SIGNATURE MOVES, batch B (research/notes/artist-signature-techniques.md) ----------------
+  // Both run in the mashup slot as variants of the mashup transition (user: "mashup beats every other move").
+  //  S1 filter_loop  Guetta on Erick Morillo (SOURCED): "make a loop on four bars and then play with the external
+  //                  filters, delays, and acapellas live". A's last vocal-free bars loop (stemSlices on drums, bass,
+  //                  other), A's low shelf sweeps to the kill and its mids dip (the console's filter is its EQ) with a
+  //                  short echo, B's vocal enters on the fresh pass; on the line B's beat drops, A's loop fades over
+  //                  one bar. Booked when the full mashup has no room left in A: the loop IS the room.
+  //  S9 drums_host   Dom Dolla edits (SOURCED), Four Tet / Anyma mechanics GUESS: A strips to drums only, B's vocal
+  //                  rides it. Nothing pitched from A sounds under B, so the Camelot gate is waived (drumsWaiver,
+  //                  owner rule) when A's drums are measured energetic.
+  const ARTIST_SLICE_MAX_S = 38;       // deck-controller SLICE_MAX_S is 40 audio s: one slice window stays under it
+  const medianOf = (a) => {
+    const s = (a || []).filter(Number.isFinite).sort((x, y) => x - y);
+    if (!s.length) return null;
+    const m = s.length >> 1;
+    return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+  };
+  // median and median absolute deviation (the margin: a track's own spread, not a constant)
+  function spread(a) {
+    const med = medianOf(a);
+    return med == null ? null : { med, mad: medianOf(a.filter(Number.isFinite).map((x) => Math.abs(x - med))) };
+  }
+  // Drums per bar from a drums-stem envelope ({t0, hop, v}): level = RMS over the bar, density = share of its
+  // 16th-note hops at or above `thr` (the track's median active hop). -> {level: [], density: []}
+  function drumsBars(env, t0, bar, n, thr) {
+    const level = [], density = [];
+    if (!env || !env.v || !env.v.length || !(bar > 0)) return { level, density };
+    for (let i = 0; i < n; i++) {
+      const a = Math.floor((t0 + i * bar - env.t0) / env.hop + 1e-9), b = Math.floor((t0 + (i + 1) * bar - env.t0) / env.hop + 1e-9);
+      let sq = 0, on = 0, c = 0;
+      for (let k = Math.max(0, a); k < Math.min(env.v.length, b); k++) { sq += env.v[k] ** 2; if (env.v[k] >= thr) on++; c++; }
+      if (!c) break;
+      level.push(Math.sqrt(sq / c)); density.push(on / c);
+    }
+    return { level, density };
+  }
+  // The track-wide active-hop threshold of a drums envelope: median of the hops above INTRO_MIN_RMS.
+  const activeThr = (env) => medianOf(((env && env.v) || []).filter((x) => x >= INTRO_MIN_RMS)) || INTRO_MIN_RMS;
+  // OWNER RULE (drumsOnlyKeyWaiver, default on): the Camelot gate is waived for a DRUMS-ONLY layer when
+  //  (1) role "host": the drums stem is energetic over the window (its median bar level AND density strictly above
+  //      the same track's median + median absolute deviation) and the other, pitched track is not on the master
+  //      at that moment; or
+  //  (2) role "enter": the drums enter over a stem of the other track that is already sounding on the master.
+  // A pitched stem of the drums track still audible: the key gate stands. Sub-bass owner, vocal clash and the
+  // loudness gates are the caller's, unchanged.
+  // c: {enabled, role, win: {level, density}, track: {level, density}, pitchedOn, otherOnMaster, otherStemSounding}
+  // -> {granted, why, text: "drums_waiver: granted|refused: <why>", measured}
+  function drumsWaiver(c) {
+    const res = (granted, why, measured = null) => ({ granted, why, text: `drums_waiver: ${granted ? "granted" : "refused"}: ${why}`, measured });
+    if (!c || !c.enabled) return res(false, "drumsOnlyKeyWaiver is off");
+    if (c.pitchedOn) return res(false, "a pitched stem of the drums track is audible: the key gate stands");
+    const w = c.win || {}, lvl = medianOf(w.level), den = medianOf(w.density);
+    if (lvl == null || den == null) return res(false, "the drums stem could not be measured over the window");
+    if (lvl < INTRO_MIN_RMS) return res(false, "the drums stem is silent over the window");
+    const m = { level: +lvl.toFixed(4), density: +den.toFixed(3) };
+    if (c.role === "enter") {
+      return c.otherStemSounding ? res(true, "drums enter over the other track's stem already on the master", m)
+        : res(false, "no stem of the other track is sounding on the master for the drums to enter over", m);
+    }
+    if (c.otherOnMaster) return res(false, "the pitched track is already on the master", m);
+    const tl = spread((c.track || {}).level), td = spread((c.track || {}).density);
+    if (!tl || !td) return res(false, "the track's own drums could not be measured", m);
+    Object.assign(m, { track_level: +tl.med.toFixed(4), level_margin: +tl.mad.toFixed(4), track_density: +td.med.toFixed(3), density_margin: +td.mad.toFixed(3) });
+    if (!(lvl > tl.med + tl.mad)) return res(false, `drums level ${lvl.toFixed(3)} not above the track's median ${tl.med.toFixed(3)} + margin ${tl.mad.toFixed(3)}`, m);
+    if (!(den > td.med + td.mad)) return res(false, `drums density ${den.toFixed(2)} not above the track's median ${td.med.toFixed(2)} + margin ${td.mad.toFixed(2)}`, m);
+    return res(true, `energetic drums (level ${lvl.toFixed(3)}, density ${den.toFixed(2)} over the track's median + margin), the pitched track is off the master`, m);
+  }
+  // S9 plan, bars from A's line (the mashup's bar 0). A strips to drums (lifted ~+2 dB so the host does not
+  // sag); B starts silent and its vocal only rises once A's pitched stems are gone (rule 1: the pitched track
+  // is not on the master while A still has one up). On the line B's beat and tones drop and A's drums leave
+  // with the same short ramp (a drum swap, not a cut). Holds as in the mashup.
+  function drumsHostPlan(M, v) {
+    const ev = [
+      { bar: 0, deck: "out", stems: { vocals: 0, bass: 0, other: 0, drums: 1.25 }, ramp: 0.25 },
+      { bar: 0, deck: "in", start: true, stems: { drums: 0, bass: 0, vocals: 0, other: 0 }, ramp: 0 },
+      { bar: 0.25, deck: "in", stems: { vocals: v }, ramp: 0.75 },
+      { bar: M / 2, deck: "in", stems: { vocals: Math.min(1, v * 1.3) }, ramp: 2 },
+      { bar: M, deck: "out", stems: { drums: 0 }, ramp: 0.05 },
+      { bar: M, deck: "in", stems: { drums: 1, bass: 1, other: 1, vocals: 1 }, ramp: 0.05 },
+      { bar: M + 1, deck: "in", stems: null, ramp: 0.05 },
+    ];
+    for (let s = 0; s + 16 <= M; s += 16) {
+      if (s + 16 === M) continue;
+      ev.push({ bar: s + 12, deck: "in", hold: { stem: "vocals", fromBar: s + 11, bars: 1, untilBar: s + 16 } });
+    }
+    return { events: ev.sort((a, b) => a.bar - b.bar), total: M + 8, kind: "drums_host" };
+  }
+  // Which mashup variant a pair gets, from its measured facts (owner: "two variants exist, used depending on
+  // song pair"). f: {keyOk, rap, M (full-mashup bars that fit A, 0: no room), drums: () => drumsHostFits result,
+  // loop: () => filterLoopFits result}; the fits are called only when their case applies.
+  // -> {name: "mashup" | "drums_host" | "filter_loop" | null, why, fit}
+  function mashupVariant(f) {
+    if (!f.keyOk && !f.rap) {
+      if (!f.M) return { name: null, why: "keys clash and no room for a drums-host mashup" };
+      const dh = f.drums();
+      return dh && dh.ok ? { name: "drums_host", why: `keys clash, drums waiver granted: ${dh.why}`, fit: dh }
+        : { name: null, why: `keys clash, drums waiver refused: ${(dh && dh.why) || "unmeasured"}` };
+    }
+    if (f.M) return { name: "mashup", why: `keys agree${f.rap ? " (or B raps)" : ""}, ${f.M} bars of room in A` };
+    const fl = f.loop();
+    return fl && fl.ok ? { name: "filter_loop", why: `no room for the full mashup in A: ${fl.why}`, fit: fl }
+      : { name: null, why: `no room for the full mashup, filter loop refused: ${(fl && (fl.reason || fl.why)) || "unmeasured"}` };
+  }
+  // S1 plan. c: {pA (A's song time at bar 0, a bar line), barA (A song s per bar), rate (A's playback rate),
+  //   bpmEff (A's heard BPM), before: A's per-stem RMS per bar over the 4 bars before pA ({drums, bass, vocals,
+  //   other}: arrays, oldest first) | null, aLeftBars (A song bars after pA), centroidHz (A's mix over the loop,
+  //   measured) | null, bLineBeats (B's first sung line from its entry, beats) | null, v (B vocal gain)}
+  // Loop length: 4 bars when all 4 bars before the line are vocal-free with the drums up, else 2 (the last 2),
+  // else refused. Passes: 2 when B's line is longer than the loop (or unknown), else 1 (4 + 4 lands on B's
+  // 8-bar line). -> plan | {ok: false, gate, reason}
+  function filterLoopPlan(c) {
+    const no = (gate, reason) => ({ ok: false, gate, reason });
+    const fallbacks = [];
+    const b = c.before;
+    if (!b || !Array.isArray(b.vocals) || b.vocals.length < 2) return no("unmeasured", "A's stems before the line could not be measured");
+    const clean = (i) => (b.vocals[i] || 0) < INTRO_MIN_RMS && (b.drums[i] || 0) >= INTRO_MIN_RMS;
+    let cleanBars = 0;
+    for (let i = b.vocals.length - 1; i >= 0 && clean(i); i--) cleanBars++;
+    const L = cleanBars >= 4 ? 4 : cleanBars >= 2 ? 2 : 0;
+    if (!L) return no("vocal_in_loop", `only ${cleanBars} vocal-free bars with drums before the line (need 2)`);
+    const lv = b.drums.slice(-L).map((x, i) => Math.hypot(x, b.bass[b.bass.length - L + i] || 0, b.other[b.other.length - L + i] || 0));
+    const hi = Math.max(...lv), lo = Math.min(...lv);
+    if (hi / Math.max(lo, 1e-9) > 3) return no("unsteady", `the loop's bars swing ${(hi / Math.max(lo, 1e-9)).toFixed(1)}x in level`);
+    let bLine = c.bLineBeats;
+    if (!(bLine > 0)) { bLine = null; fallbacks.push("b_line"); }
+    let passes = L === 4 ? (bLine == null || bLine > 16 ? 2 : 1) : 2;
+    const loopS = L * c.barA;
+    // the loop plays passes + 1 times: the last pass fades under B's drop, so A's live song never returns
+    while (passes >= 1 && ((passes + 1) * loopS) / (c.rate || 1) > ARTIST_SLICE_MAX_S) passes--;
+    if (passes < 1) return no("slice_cap", `a ${L}-bar loop is longer than the ${ARTIST_SLICE_MAX_S} s slice cap`);
+    const M = L * passes;
+    if (!(c.aLeftBars >= (passes + 1) * L + 1)) return no("a_ends", `${Math.floor(c.aLeftBars || 0)} bars left in A (need ${(passes + 1) * L + 1})`);
+    const w0 = c.pA - loopS;
+    const slices = Array.from({ length: passes + 1 }, (_, i) => ({ from: w0, dur: loopS, off: i * loopS }));
+    // echo: 1/2 beat when that is a slapback (<= 0.35 s), else 1/4 beat; wet under the 0.35 cap
+    const beatS = 60 / (c.bpmEff || 128);
+    const delay = { time: +(beatS / 2 <= 0.35 ? beatS / 2 : beatS / 4).toFixed(4), division: beatS / 2 <= 0.35 ? "1/2" : "1/4", wet: 0.3 };
+    fallbacks.push("delay_wet");
+    // filter: the low shelf (120 Hz) always sweeps to the kill (sub to B on the line); the mids dip deeper the
+    // brighter A's loop is (the high-pass "end" = half A's spectral centroid, 150 Hz..1 kHz)
+    let hpHz;
+    if (c.centroidHz > 0) hpHz = Math.round(Math.max(150, Math.min(1000, c.centroidHz / 2)));
+    else { hpHz = 400; fallbacks.push("centroid"); }
+    const filter = { lowDb: -26, midDb: -Math.round(12 * Math.max(0, Math.min(1, (hpHz - 150) / 850))), hpHz, fromBar: 0, toBar: M - 0.25 };
+    const events = [
+      { bar: 0, deck: "out", stems: { vocals: 0 }, ramp: 0.25 },
+      { bar: 0, deck: "in", start: true, stems: { drums: 0, bass: 0, vocals: c.v, other: 0 }, ramp: 0 },
+      { bar: M, deck: "in", stems: { drums: 1, bass: 1, other: 1, vocals: 1 }, ramp: 0.05 },
+      { bar: M, deck: "out", stems: { drums: 0, bass: 0, other: 0 }, ramp: 1 },
+      { bar: M + 2, deck: "in", stems: null, ramp: 0.05 },
+    ];
+    return { ok: true, kind: "filter_loop", L, passes, M, total: M + 8, events, slices, sliceStems: ["drums", "bass", "other"], filter, delay, fallbacks,
+      params: { loop_bars: L, passes, mashup_bars: M, clean_bars: cleanBars, b_line_beats: bLine, hp_hz: hpHz, mid_db: filter.midDb, delay_s: delay.time, delay_div: delay.division, wet: delay.wet },
+      why: `filter loop: A's last ${L} vocal-free bars looped x${passes + 1} under a low-shelf sweep (mids ${filter.midDb} dB) + ${delay.division}-beat echo, B's vocal on the fresh pass, B's beat on bar ${M}` };
+  }
+
   // Stem bridge: across ANY tempo gap, no echo-out (user: "Echo Out is painful").
   // No two beats ever overlap, so the tempos never meet:
   //   A bar 0   A's drums out            (strip)
@@ -782,7 +938,8 @@
   const core = { holdPlan, subOwnerCheck, holdUnclean, overlapBars, regionsToBars, HOLD_PHRASE_BARS, HOLD_MAX_PHRASES, HANDOVER_BARS, MERGE_START_BARS, HOLD_TEMPO_CAP, HOLD_KEY_MIN, gates, keepsVibe, breakdownVocalOk, introAudible, introGate, INTRO_MAX_UNDER_DB, mergeCombos, mergeRank, mergeLabel, mergeTransitionPlan, mergeWithEar, keepOneStem, hookDropEvents, hookDropDue, HOOK_OTHER, BREAKDOWN, breakdownFits, handoffFits, vocalShare, stemBlendPlan, STEM_BLEND_KINDS, remixEvents, remixPick, stemBridgePlan, mashupTransitionPlan,
                  pickIntro, introBars, INTRO_LEVEL, levelCheck, gainsAt, faderAt, fitStemBlend, breakdownEvents,
                  masterAudibility, audibleRms, mergeFader, rawFader, deckFaderGains, mergeBooking, onTime, AUDIBLE_HZ, SILENCE_DB,
-                 LEVEL_FLOOR_DB, AUDIBLE_GAIN, FADER_PARK_BARS, TYPICAL_SHARE, DIP_ALLOWED };
+                 LEVEL_FLOOR_DB, AUDIBLE_GAIN, FADER_PARK_BARS, TYPICAL_SHARE, DIP_ALLOWED,
+                 drumsBars, activeThr, drumsWaiver, drumsHostPlan, filterLoopPlan, mashupVariant, ARTIST_SLICE_MAX_S };
    if (typeof module !== "undefined" && module.exports) module.exports = core;
 
   // ---- runtime: reaches the world only through the Host port (engine.js) -------------------------------
@@ -1214,14 +1371,180 @@
     return plan.total * barS;
   }
 
-  function mashupTransition(outId, innId, t0, bEntry, M, vox, why) {
+  // ---- artist moves in the mashup slot (S1 filter_loop, S9 drums_host): measured fits -------------------------
+  // Refusal lines once per deck, phrase and reason; toggles ap-artist-<id> (all on by default).
+  const artistSaid = new Map();
+  function artistSay(key, line) {
+    if (artistSaid.has(key)) return false;
+    if (artistSaid.size > 300) artistSaid.clear();
+    artistSaid.set(key, 1);
+    console.info(line);
+    return true;
+  }
+  const artistOn = (id) => ui.flag(`ap-artist-${id}`, true);
+  const lmCore = () => (host.mod.learnedMoves && host.mod.learnedMoves.core) || root.learnedMovesCore || null;
+  // the first 8-bar line at or after song time t (the booking does not know its line yet)
+  function lineAfter(d, t) {
+    const ph = (d.analysis && d.analysis.phrase_boundaries_8bar) || [];
+    for (const p of ph) if (p >= t - 0.05) return p;
+    return t;
+  }
+  // Whole-track drums stats of deck d (16th-note envelope of its drums stem), cached per song + stem set.
+  function drumsStats(d) {
+    const st = d.stems, lm = lmCore();
+    if (!st || !st.drums || !st.drums.getChannelData || !lm || !(d.bpm > 0)) return null;
+    if (d._drumStats && d._drumStats.stems === st && d._drumStats.ana === d.analysis) return d._drumStats;
+    const bar = 240 / d.bpm, dur = (d.buffer && d.buffer.duration) || st.drums.duration || 0;
+    const env = lm.envelope(st.drums.getChannelData(0), st.drums.sampleRate, 0, dur, bar / 16, st.lag || 0, st.ratio || 1);
+    const thr = activeThr(env);
+    const db = (d.analysis && d.analysis.downbeat_times) || [];
+    const t0 = db.length ? db[0] : 0;
+    d._drumStats = { stems: st, ana: d.analysis, env, thr, bar, track: drumsBars(env, t0, bar, Math.floor((dur - t0) / bar), thr) };
+    return d._drumStats;
+  }
+  // S9: may deck od host B's vocal on its drums alone, with the key gate waived? M: the mashup bars.
+  // pA: A's song time at bar 0 (null: A's next 8-bar line). -> {ok, kind, M, waiver, why} (logged either way)
+  function drumsHostFits(od, idk, M, pA) {
+    if (!od || !idk || !(M > 0)) return { ok: false, why: "no pair or no room" };
+    const p = Number.isFinite(pA) ? pA : lineAfter(od, od._currentPosition());
+    const barA = 240 / (od.bpm || 128), key = `${od.id}:${Math.floor(p / (8 * barA))}`;
+    const ds = od.stemsReady ? drumsStats(od) : null;
+    const w = drumsWaiver({ enabled: artistOn("drumsOnlyKeyWaiver"), role: "host", win: ds ? drumsBars(ds.env, p, barA, M, ds.thr) : null,
+      track: ds ? ds.track : null, pitchedOn: false, otherOnMaster: !!(idk.playing && idk._onAir && idk._onAir()) });
+    if (artistSay(`${key}:${w.text}`, `${w.text} (deck ${od.id.toUpperCase()} drums under ${idk.id.toUpperCase()}'s vocal, ${M} bars)`)) {
+      host.log.step("drums_waiver", { deck: od.id, decision: w.granted ? "granted" : "refused", why: w.why, result: w.measured || {} });
+    }
+    return w.granted ? { ok: true, kind: "drums_host", M, waiver: w, why: `${M}-bar drums-only host: B's vocal over A's drums alone, key gate waived (${w.why})` }
+      : { ok: false, waiver: w, why: w.text };
+  }
+  // zero-crossing estimate of the spectral centroid of a mix over [t0, t1) song s (8 windows of 2048 samples)
+  function centroidHz(d, t0, t1) {
+    const b = d.buffer;
+    if (!b || !b.getChannelData) return null;
+    const ch = b.getChannelData(0), sr = b.sampleRate, s0 = Math.max(1, Math.floor(t0 * sr)), s1 = Math.min(ch.length, Math.floor(t1 * sr));
+    if (s1 - s0 < 4096) return null;
+    let z = 0, n = 0;
+    for (let w = 0; w < 8; w++) {
+      const a = s0 + Math.floor(((s1 - s0 - 2048) * w) / 7);
+      for (let j = a; j < a + 2048; j++) { if ((ch[j] >= 0) !== (ch[j - 1] >= 0)) z++; n++; }
+    }
+    return n ? (z / n) * sr / 2 : null;
+  }
+  // S1: does a filter loop fit A -> B at A's song time pA (null: A's next line)? force: on demand (the toggle
+  // is the user's own click). -> filterLoopPlan result ({ok: true, ...} | {ok: false, gate, reason}; refusal logged)
+  function filterLoopFits(od, idk, ve, v, pA, force) {
+    if (!od || !idk || !ve) return { ok: false, gate: "pair", reason: "no pair with a known vocal entry" };
+    if (!force && !artistOn("filter_loop")) return { ok: false, gate: "toggle", reason: "filter loop is off" };
+    const p = Number.isFinite(pA) ? pA : lineAfter(od, od._currentPosition());
+    const barA = 240 / (od.bpm || 128), rate = (od._playbackRate && od._playbackRate()) || 1;
+    const key = `${od.id}:${Math.floor(p / (8 * barA))}`;
+    const refuse = (gate, reason) => { artistSay(`${key}:${gate}`, `artist move filter_loop skipped: ${gate}: ${reason}`); return { ok: false, gate, reason }; };
+    if (!od.stemsReady || !idk.stems) return refuse("stems", "stems on both decks are needed");
+    const e = stemEnergyBars(od, p - 4 * barA, barA, 4);
+    let bLine = null;
+    const lm = lmCore(), sv = idk.stems.vocals;
+    if (lm && sv && sv.getChannelData && idk.bpm > 0) {
+      const beatB = 60 / idk.bpm;
+      const env = lm.envelope(sv.getChannelData(0), sv.sampleRate, ve.entry, ve.entry + 32 * beatB, beatB / 4, idk.stems.lag || 0, idk.stems.ratio || 1);
+      const ln = lm.vocalLines(env)[0];
+      if (ln) bLine = Math.round((ln.e - Math.max(ln.s, ve.entry)) / beatB);
+    }
+    const plan = filterLoopPlan({ pA: p, barA, rate, bpmEff: od.bpm * rate, before: e, aLeftBars: od.buffer ? (od.buffer.duration - p) / barA : 0,
+      centroidHz: centroidHz(od, p - 4 * barA, p), bLineBeats: bLine, v });
+    return plan.ok ? plan : refuse(plan.gate, plan.reason);
+  }
+  // ---- on demand (AI ACTIONS "filter_loop" / "drums_host"): the loaded pair, now, on the host's next 8-bar line.
+  // Skips only the autopilot's own booking; every safety gate stands (stems, tempo lock, key or waiver, room,
+  // loudness). The crossfader follows mergeFader like the autopilot's mashup. -> {ok, why}
+  function artistRunNow(id) {
+    const ds = host.decks || {};
+    const hId = ["a", "b"].find((k) => ds[k] && ds[k].playing && (!ds[k]._onAir || ds[k]._onAir()));
+    if (!hId) return { ok: false, why: "nothing is playing on the master" };
+    const nId = hId === "a" ? "b" : "a", out = ds[hId], inn = ds[nId];
+    if (host.mod.djMind && host.mod.djMind.transitioning) return { ok: false, why: "a transition is running" };
+    if (!inn || !inn.buffer || !inn.analysis) return { ok: false, why: `load a song on deck ${nId.toUpperCase()} first` };
+    if (inn.playing) return { ok: false, why: `deck ${nId.toUpperCase()} is already playing` };
+    if (!out.stemsReady || !inn.stems) return { ok: false, why: "stems on both decks are needed" };
+    const ve = inn._vocalEntry;
+    if (!ve || ve.entry == null) return { ok: false, why: `deck ${nId.toUpperCase()}'s vocal entry is not measured yet` };
+    const rate = (out._playbackRate && out._playbackRate()) || 1, aEff = out.bpm * rate, gap = Math.abs(aEff / inn.bpm - 1);
+    if (!(gap <= HOLD_TEMPO_CAP)) return { ok: false, why: `tempo gap ${(gap * 100).toFixed(1)} % over the 8 % cap` };
+    if (gap > 0.02 && !(inn.tempoStems && Math.abs(inn.tempoStems.bpm / aEff - 1) < 0.01)) return { ok: false, why: "B needs key-locked tempo stems at A's tempo" };
+    const barA = 240 / out.bpm, barS = barA / rate, pos = out._currentPosition();
+    const line = ((out.analysis && out.analysis.phrase_boundaries_8bar) || []).find((p) => (p - pos) / rate >= 2 * barS);
+    if (line == null) return { ok: false, why: "no 8-bar line left in this song" };
+    const ks = keyScoreOf(out, inn);
+    let variant, M;
+    if (id === "filter_loop") {
+      if (ks != null && ks < 0.8 && !ve.rap) return { ok: false, why: `keys clash (camelot ${ks}): a sung vocal over A's loop needs 0.8` };
+      variant = filterLoopFits(out, inn, ve, 0.7, line, true);
+      if (!variant.ok) return { ok: false, why: `${variant.gate}: ${variant.reason}` };
+      M = variant.M;
+    } else {
+      const left = (out.buffer.duration - line) / barA;
+      M = left >= 26 ? 16 : left >= 17 ? 8 : 0;
+      if (!M) return { ok: false, why: `${Math.floor(left)} bars left in A (need 17)` };
+      variant = ks != null && ks < 0.8 ? drumsHostFits(out, inn, M, line) : { ok: true, kind: "drums_host", M, why: `${M}-bar drums-only host (keys agree: no waiver needed)` };
+      if (!variant.ok) return { ok: false, why: variant.why };
+    }
+    const t0 = audioAt(out, line);
+    const secs = mashupTransition(hId, nId, t0, ve.entry, M, 0.7, `on demand: ${variant.why}`, variant);
+    if (!secs) return { ok: false, why: "the loudness / audibility gates refused it (see the console log)" };
+    const xf = ui.el("crossfader"), dir = hId === "a" ? 1 : -1, steps = 16;
+    for (const m of mergeFader(M)) {
+      for (let i = 1; i <= steps; i++) {
+        const v = (m.from + (m.to - m.from) * (i / steps)) * dir;
+        setTimeout(() => { if (xf) { xf.value = String(v); ui.fire(xf, "input", true); } }, Math.max(0, (t0 + (m.bar + (m.bars * i) / steps) * barS - audioCtx.currentTime) * 1000));
+      }
+    }
+    setTimeout(() => { if (out.playing) out.stopNow(); }, Math.max(0, (t0 + secs - audioCtx.currentTime) * 1000 + 300));
+    return { ok: true, why: variant.why };
+  }
+  // S1 side of A: loop A's window (stemSlices on drums / bass / other, vocal out), the EQ sweep on the audio
+  // clock (ramps, never steps) and the echo; all undone two bars after the line (A is silent by then).
+  function armFilterLoop(out, t0, barS, plan) {
+    const endT = t0 + (plan.M + 2) * barS;
+    timers[out.id].push(setTimeout(() => {
+      if (!out.playing) return;
+      if (!out.stemMix({ vocals: 0 }, t0 - 0.03, 0.02)) return void console.info("artist move filter_loop: A's stem mode refused, plain mashup");
+      const booked = plan.sliceStems.filter((n) => out.stemSlices(n, plan.slices, t0));
+      if (booked.length < plan.sliceStems.length) {
+        booked.forEach((n) => out.releaseSlices(n));
+        console.info(`artist move filter_loop: A's loop refused (${booked.length}/${plan.sliceStems.length} stems), plain mashup`);
+      }
+      const f = plan.filter, sweepEnd = t0 + f.toBar * barS;
+      for (const [node, db] of [[out.lowFilter, f.lowDb], [out.midFilter, f.midDb]]) {
+        if (!node || !node.gain) continue;
+        node.gain.cancelScheduledValues(t0);
+        node.gain.setValueAtTime(0, t0);
+        node.gain.linearRampToValueAtTime(db, sweepEnd);
+        node.gain.setValueAtTime(db, endT);
+        node.gain.linearRampToValueAtTime(0, endT + 0.1);
+      }
+    }, Math.max(0, (t0 - audioCtx.currentTime) * 1000 - 300)));
+    const fx = host.mod.fxUnits && host.mod.fxUnits[out.id];
+    if (!fx) { plan.fallbacks.push("delay:no_fx_unit"); return; }
+    timers[out.id].push(setTimeout(() => {
+      if (!out.playing) return;
+      fx.setType("echo");
+      const dl = fx.effect && (fx.effect.nodes || []).find((n) => n && n.delayTime);
+      if (dl) dl.delayTime.value = plan.delay.time;
+      fx.setWet(plan.delay.wet);
+      fx.setActive(true);
+    }, Math.max(0, (t0 - audioCtx.currentTime) * 1000)));
+    timers[out.id].push(setTimeout(() => fx.setActive(false), Math.max(0, (endT - audioCtx.currentTime) * 1000)));
+  }
+
+  // variant: null (the mashup), {kind: "drums_host", ...} (S9) or a filterLoopPlan (S1).
+  function mashupTransition(outId, innId, t0, bEntry, M, vox, why, variant) {
     const out = host.decks[outId], inn = host.decks[innId];
     if (!out || !inn) return 0;
     if (!out.stemsReady && out.rearmStems) out.rearmStems("mashup");
     if (!out.stemsReady || !inn.stems) return 0;
     const barS = 240 / (out.bpm || 128) / ((out._playbackRate && out._playbackRate()) || 1);
     const bRate = (out.bpm * out._playbackRate()) / inn.bpm;          // B follows A's tempo (key-locked stems)
-    const plan = mashupTransitionPlan(M, vox);
+    const vk = variant && variant.kind;
+    const plan = vk === "filter_loop" ? variant : vk === "drums_host" ? drumsHostPlan(M, vox) : mashupTransitionPlan(M, vox);
     const barB = 240 / inn.bpm;
     // B's voice is its intro stem (A's is out on bar 0: one singer). Floor check
     // (full band + audible band) against the fader the autopilot runs (mergeFader).
@@ -1229,11 +1552,14 @@
     const lv = gates(plan, mergeFader(M), plan.total, planEnergies(out, pA, inn, bEntry, plan.total + 1), 1 / barS);
     if (!lv.ok) {
       console.info(`mashup ${outId}->${innId} refused: ${lv.reason}`);
+      if (vk) console.info(`artist move ${vk} skipped: gates: ${lv.reason}`);
       return 0;
     }
     cancel(outId); cancel(innId);
+    if (vk === "filter_loop") armFilterLoop(out, t0, barS, plan);
     for (const e of plan.events) {
       const d = e.deck === "out" ? out : inn, at = t0 + e.bar * barS;
+      if (vk === "filter_loop" && e.deck === "out" && e.bar === 0) continue;   // armFilterLoop mutes A's vocal before the line
       if (e.start) {
         timers[innId].push(setTimeout(() => {
           inn.rampPitchPercent((bRate - 1) * 100, 0.005);
@@ -1248,8 +1574,17 @@
     }
     host.bus.emit("ai-cue", { at: t0 + M * barS, kind: "drop", deck: innId, bar: barS,
       why: "B's beat takes over after the mashup" });
-    note(outId, `MASHUP → ${innId.toUpperCase()} · ${M} bars`, why ||
-      `A's instrumental under B's vocal, hold vox, A's beat drops out, B's beat takes over on the line, 8-bar crossfade`);
+    if (vk) {
+      const label = vk === "filter_loop" ? "FILTER LOOP" : "DRUMS HOST";
+      const w = `${why || plan.why || variant.why}${plan.fallbacks && plan.fallbacks.length ? ` (constants: ${plan.fallbacks.join(", ")})` : ""}`;
+      console.info(`artist move ${vk}: ${w}`);
+      host.log.step("artist_move", { deck: outId, decision: `artist_move: ${vk}`, why: w,
+        result: { params: plan.params || { mashup_bars: M, waiver: variant.waiver && variant.waiver.measured }, fallbacks: plan.fallbacks || [], t0, t1: t0 + plan.total * barS } });
+      note(outId, `MASHUP → ${innId.toUpperCase()} · ${label} · ${M} bars`, w);
+    } else {
+      note(outId, `MASHUP → ${innId.toUpperCase()} · ${M} bars`, why ||
+        `A's instrumental under B's vocal, hold vox, A's beat drops out, B's beat takes over on the line, 8-bar crossfade`);
+    }
     return plan.total * barS;
   }
 
@@ -1264,7 +1599,29 @@
     return true;
   }
 
+  // AI ACTIONS wiring (owner contract): aiActions.register when it exists, else the "ai-action" {id} bus event;
+  // one run per click (a second path within 1 s is the same click). The run is
+  // logged to the step log and its result (or the named refusal) goes to the status line.
+  const ARTIST_LABEL = { filter_loop: "FILTER LOOP", drums_host: "DRUMS HOST" };
+  const onDemand = {}, lastRun = {};
+  for (const id of Object.keys(ARTIST_LABEL)) {
+    onDemand[id] = () => {
+      const now = host.clock.now();
+      if (lastRun[id] && now - lastRun[id].at < 1000) return lastRun[id].r;
+      let r;
+      try { r = artistRunNow(id); } catch (e) { r = { ok: false, why: String((e && e.message) || e) }; }
+      lastRun[id] = { at: now, r };
+      host.log.step("artist_run_now", { deck: "", decision: r.ok ? `artist_move: ${id}` : "refused", why: r.why });
+      ui.status(`${ARTIST_LABEL[id]}: ${r.ok ? r.why : `refused - ${r.why}`}`);
+      if (!r.ok) note("", `✗ ${ARTIST_LABEL[id]}`, r.why);
+      return r;
+    };
+  }
+  setTimeout(() => { const aa = host.mod.aiActions; if (aa && typeof aa.register === "function") for (const id of Object.keys(onDemand)) aa.register(id, onDemand[id]); }, 0);
+  host.bus.on("ai-action", (e) => { const id = e && e.detail && e.detail.id; if (onDemand[id]) onDemand[id](); });
+
   const api = { core, mergeTransition, hookDrop, breakdown, handoff, instrumental, reset, audioAt, vocalShare, stemBlend, remix, REMIX_LABEL, mashupBreak, stemBridge, mashupTransition,
+                     filterLoopFits, drumsHostFits, artistRunNow, runNow: artistRunNow, onDemand,
                      bridgeFader, stemEnergyBars, remixEnergy, eqIntro };
   host.mod.stemMoves = api;       // the rail UI below reads deck state; other engine code reaches this module through host.mod
 

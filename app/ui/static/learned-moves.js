@@ -351,6 +351,126 @@
       why: `${c.waiting ? "waiting for B: " : ""}last ${L} beats of this ${c.label || "section"} looped ${passes + 1}x (+${ext} beats), release on the phrase line` };
   }
 
+  // ------------------------------------------------------------------ ARTIST MOVES (batch B, in-song)
+  // research/notes/artist-signature-techniques.md. Not learned from a set: no store sighting, own toggles
+  // (ap-artist-<id>, on by default), the same song gates (cap, spacing, exit guard) and vocal gates.
+  //   vocal_swap      S7, Steve Angello (SOURCED): "remove a snippet of a vocal because I want to fit in another
+  //                   vocal". One sung line of A muted, a line of B's vocal stem of the same length (within half a
+  //                   beat) played in the hole on the beat grid; A's instrumental plays on.
+  //   acapella_build  S8, Andrea Oliva / Tiffany Calver (SOURCED): a 1/2 to 2 bar vocal fragment looped through a
+  //                   build section, released on the drop line (the section map says build, or the next is a drop).
+  const ARTIST_KINDS = ["vocal_swap", "acapella_build"];
+  const ARTIST_LABEL = { vocal_swap: "LINE SWAP", acapella_build: "ACAPELLA BUILD" };
+  const SWAP_MIN_BEATS = 4, SWAP_MAX_BEATS = 16;       // a line of 1 to 4 bars
+  const SWAP_FIT_BEATS = 0.5;                          // |A's line - B's line| (spec S7)
+  const SWAP_KEY_SUNG = 0.8, SWAP_KEY_RAP = 0.6;       // KB Acapella Overlay: a sung line over A's chords needs 0.8
+  const SWAP_TEMPO_CAP = 0.08, SWAP_PITCH_MAX = 0.02;  // tempo cap 8 %; B's buffer plays at most 2 % off pitch
+  CAP_BEATS.vocal_swap = SWAP_MAX_BEATS;
+  CAP_BEATS.acapella_build = 32;
+
+  // S7. c also: {bLines [{s, e, rms}] B's vocal lines (B song s), bBeat (B song s per beat), bGrid0 (B's beat grid
+  //   origin), bRate (buffer rate for B at A's heard tempo), tempoGap (|aEff / bBpm - 1|), keyScore | null, bRap,
+  //   bPlaying}
+  function planVocalSwap(c) {
+    const g = vocalGate(c);
+    if (g) return g;
+    if (c.bPlaying) return no("b_playing", "the other deck is playing: no line swap over a running transition");
+    if (!c.bLines || !c.bLines.length) return no("no_b_vocal", "the other deck's vocal lines are not measured (no stems)");
+    const kMin = c.bRap ? SWAP_KEY_RAP : SWAP_KEY_SUNG;
+    if (c.keyScore != null && c.keyScore < kMin) return no("key", `camelot ${c.keyScore} under ${kMin} for ${c.bRap ? "a rap" : "a sung"} line`);
+    if (!(c.tempoGap <= SWAP_TEMPO_CAP)) return no("tempo_cap", `tempo gap ${((c.tempoGap || 0) * 100).toFixed(1)} % over the 8 % cap`);
+    if (!(Math.abs((c.bRate || 0) - 1) <= SWAP_PITCH_MAX)) return no("pitch", `B's line would play ${(Math.abs((c.bRate || 0) - 1) * 100).toFixed(1)} % off pitch (needs key-locked tempo stems)`);
+    const beat = c.bar / 4, { tMin, end } = window0(c), fallbacks = [];
+    const aLines = vocalLines(c.env);
+    let best = null;
+    for (const ln of aLines) {
+      if (ln.s < tMin) continue;                                     // never cut into a line already sounding
+      const hs = snapBeat(ln.s, c.lineT, beat, "floor"), he = snapBeat(ln.e, c.lineT, beat, "ceil");
+      const hb = Math.round((he - hs) / beat);
+      if (hs < tMin || he > end + 1e-6 || hb < SWAP_MIN_BEATS || hb > SWAP_MAX_BEATS) continue;
+      if (aLines.some((o) => o !== ln && o.e > hs + 1e-6 && o.s < he - 1e-6)) continue;   // the hole holds one line only
+      const aLen = (ln.e - ln.s) / beat;
+      for (let i = 0; i < c.bLines.length; i++) {
+        const b = c.bLines[i], bLen = (b.e - b.s) / c.bBeat;
+        const err = Math.abs(bLen - aLen);
+        if (err >= SWAP_FIT_BEATS) continue;
+        const from = snapBeat(b.s, c.bGrid0 || 0, c.bBeat, "floor");
+        if (i > 0 && c.bLines[i - 1].e > from + 0.02) continue;      // B's previous line would bleed in
+        const nextS = i + 1 < c.bLines.length ? c.bLines[i + 1].s : Infinity;
+        const dur = Math.min(hb * c.bBeat, nextS - from - 0.02);
+        if (!(dur > (b.e - from) - 1e-6)) continue;                   // the slice must hold B's whole line
+        const cand = { ln, b, hs, he, hb, from, dur, err };
+        if (!best || err < best.err - 1e-9 || (Math.abs(err - best.err) < 1e-9 && b.rms > best.b.rms)) best = cand;
+      }
+      if (best) break;                                               // the first A line that has a partner
+    }
+    if (!best) return no("no_fit", `no line of B within ${SWAP_FIT_BEATS} beat of an A line of 1 to 4 bars in this phrase`);
+    const x = exitBlock(c, best.he);
+    if (x) return x;
+    const gain = +clamp(best.ln.rms / Math.max(best.b.rms, 1e-6), 0.5, 1.2).toFixed(2);
+    return { ok: true, kind: "vocal_swap", stem: "vocals", start: best.hs, end: best.he, beats: best.hb, slices: null, fallbacks,
+      guest: { from: best.from, dur: best.dur, rate: c.bRate, gain },
+      grid_err_s: Math.abs(best.hs - snapBeat(best.hs, c.lineT, beat)), cap_beats: CAP_BEATS.vocal_swap,
+      params: { hole_beats: best.hb, a_line_s: +(best.ln.e - best.ln.s).toFixed(2), b_line_s: +(best.b.e - best.b.s).toFixed(2), fit_err_beats: +best.err.toFixed(2),
+        gain, b_from: +best.from.toFixed(3), b_rate: +c.bRate.toFixed(4) },
+      why: `A's ${best.hb}-beat line muted, B's line (${best.err.toFixed(2)} beat off in length) sung in the hole, A's instrumental plays on` };
+  }
+
+  // S8. c as planVocalLoop (env over the phrase, envFull over the 16 bars before it too), label / nextLabel.
+  // Window: the last W beats before the phrase line (the drop), W = the largest multiple of the fragment <= the
+  // room and the 32-beat cap; the fragment: the latest sung line before the window end that fills L beats.
+  function planAcapellaBuild(c) {
+    if (!c.force && !(c.label === "build" || c.nextLabel === "drop")) return no("section", `a ${c.label || "unlabelled"} section before a ${c.nextLabel || "unlabelled"} one: no build`);
+    const g = vocalGate(c);
+    if (g) return g;
+    const beat = c.bar / 4, fallbacks = [];
+    const { tMin, end } = window0(c);
+    const lines = vocalLines(c.envFull || c.env).filter((l) => l.s < end);
+    if (!lines.length) return no("no_line", "no sung line in or before this build");
+    const room = Math.floor((end - snapBeat(tMin, c.lineT, beat, "ceil")) / beat + 1e-6);
+    let best = null;
+    for (const ln of lines.slice().reverse()) {
+      const from = snapBeat(ln.s, c.lineT, beat, "floor");
+      for (const L of LOOP_LEN_BEATS) {
+        if (from + L * beat > ln.e + 0.5 * beat) continue;
+        if (coverage(c.envFull || c.env, from, from + L * beat, ln.thr) < 0.6) continue;
+        const W = Math.floor(Math.min(room, CAP_BEATS.acapella_build) / L) * L;
+        if (W < 2 * L) continue;
+        best = { ln, from, L, W };
+        break;
+      }
+      if (best) break;
+    }
+    if (!best) return no("no_slice", "no sung fragment of 1/2 to 2 bars repeats at least twice before the drop");
+    const start = end - best.W * beat;
+    if (start < tMin - 1e-6) return no("late", "the build window starts behind the playhead");
+    const x = exitBlock(c, end);
+    if (x) return x;
+    const plays = best.W / best.L;
+    const slices = Array.from({ length: plays }, (_, i) => ({ from: best.from, dur: best.L * beat, off: i * best.L * beat }));
+    return { ok: true, kind: "acapella_build", stem: "vocals", start, end, beats: best.W, slices, fallbacks,
+      grid_err_s: Math.abs(start - snapBeat(start, c.lineT, beat)), cap_beats: CAP_BEATS.acapella_build,
+      params: { loop_beats: best.L, plays, window_beats: best.W, line_rms: +best.ln.rms.toFixed(4), ends_on_drop: true, section: c.label || null, next: c.nextLabel || null },
+      why: `build: a ${best.L}-beat vocal fragment x${plays} up to the drop line, released on it` };
+  }
+  const ARTIST_PLANNERS = { vocal_swap: planVocalSwap, acapella_build: planAcapellaBuild };
+  // The artist kinds on c: toggles, the song gates (unless on demand: `force` skips only the cap / spacing /
+  // early gates, never a safety gate), the planner. -> {plan | null, refusals}
+  const RATE_GATES = new Set(["cap", "cooldown", "early"]);
+  function artistPick(c, flags = {}, only = null, force = false) {
+    const refusals = [];
+    for (const kind of only ? [only] : ARTIST_KINDS) {
+      if (!force && flags[kind] === false) { refusals.push({ kind, gate: "toggle", reason: `${kind} is off (ap-artist-${kind})` }); continue; }
+      const g = songGate(c, kind);
+      if (g && !(force && RATE_GATES.has(g.gate))) { refusals.push({ kind, gate: g.gate, reason: g.reason }); continue; }
+      let p;
+      try { p = ARTIST_PLANNERS[kind](c); } catch (e) { p = no("error", String((e && e.message) || e)); }
+      if (!p.ok) { refusals.push({ kind, gate: p.gate, reason: p.reason }); continue; }
+      return { plan: p, refusals };
+    }
+    return { plan: null, refusals };
+  }
+
   // ------------------------------------------------------------------ choosing one
   const PLANNERS = { vocal_loop: planVocalLoop, vocal_resequence: planResequence, vocal_chop: planChop, loop_extend: planLoopExtend };
   // c.vocalShare (0..1 over the phrase) steers the order: a sung phrase prefers vocal moves, an instrumental one a loop.
@@ -378,7 +498,8 @@
 
   const core = { KINDS, LABEL, CAP_BEATS, MAX_PER_SONG, GAP_BARS, EXIT_GUARD_BARS, MIN_LEAD_S, MIN_RMS, LOOP_LEN_BEATS, EXTEND_LOOP_BEATS,
     median, quantile, snapBeat, stemPlays, envelope, envAt, coverage, vocalLines, ruleBlocks, parseStore, moveGate, songGate, vocalGate,
-    planVocalLoop, planResequence, planChop, planLoopExtend, pick };
+    planVocalLoop, planResequence, planChop, planLoopExtend, pick,
+    ARTIST_KINDS, ARTIST_LABEL, planVocalSwap, planAcapellaBuild, artistPick };
   root.learnedMovesCore = core;
   if (typeof module !== "undefined" && module.exports) module.exports = core;
 
@@ -438,27 +559,87 @@
       return { ok: true, at, until };
     }
 
-    // One call per phrase from dj-mind.js. o: {pos, bar, phrase, lineT, entryT, exitT, st (dj-mind state), loop (loop helper)}
-    // -> {kind, busyS, why} when a move was booked, else null (refusals are logged, once per kind and phrase).
-    function tick(d, o) {
-      if (!store) { if (host.clock.now() - loadedAt > 300000) load(); return null; }
-      const r = attempt(d, o, null);
-      return r && r.kind ? r : null;
+    // ---- artist moves (S7 vocal_swap, S8 acapella_build) --------------------------------------------------------
+    const artistFlags = () => { const f = {}; for (const k of ARTIST_KINDS) f[k] = host.ui.flag(`ap-artist-${k}`, true); return f; };
+    // B's vocal lines over its whole song (its vocal stem's envelope), cached per song + stem set
+    function guestLines(b) {
+      const st = b && b.stems, v = st && st.vocals;
+      if (!v || !v.getChannelData || !(b.bpm > 0)) return null;
+      if (b._artistLines && b._artistLines.stems === st && b._artistLines.ana === b.analysis) return b._artistLines.lines;
+      const dur = (b.buffer && b.buffer.duration) || v.duration || 0;
+      const lines = vocalLines(envelope(v.getChannelData(0), v.sampleRate, 0, dur, 15 / b.bpm, st.lag || 0, st.ratio || 1));
+      b._artistLines = { stems: st, ana: b.analysis, lines };
+      return lines;
     }
-    // On demand (ai-actions.js through dj-mind learnedNow): one kind on the next line, same o as tick. Only the
-    // rate gates are skipped (songGate onDemand); toggles, store, safety and planner gates still refuse.
-    // -> {kind, busyS, why} | {refused: "<gate>: <reason>"}
-    function demand(d, kind, o) {
-      if (!KINDS.includes(kind)) return { refused: `unknown: no learned move ${kind}` };
-      if (!store) { load(); return { refused: "store: the learned moves are still loading" }; }
-      return attempt(d, o, kind);
+    function swapCtx(d) {
+      const b = host.decks && host.decks[other(d.id)];
+      if (!b || !b.stems || !(b.bpm > 0)) return { bLines: null, bPlaying: !!(b && b.playing) };
+      const aEff = (d.bpm || 128) * ((d._playbackRate && d._playbackRate()) || 1);
+      const cs = host.mod.djMind && host.mod.djMind.core && host.mod.djMind.core.camelotScore;
+      const ka = d.analysis && d.analysis.key && d.analysis.key.camelot, kb = b.analysis && b.analysis.key && b.analysis.key.camelot;
+      return { bLines: guestLines(b), bBeat: 60 / b.bpm, bGrid0: (b.analysis && b.analysis.beat_times && b.analysis.beat_times[0]) || 0,
+        bRate: ((b.stems.ratio || 1) * aEff) / b.bpm, tempoGap: Math.abs(aEff / b.bpm - 1), keyScore: cs && ka && kb ? cs(ka, kb) : null,
+        bRap: !!(b._vocalEntry && b._vocalEntry.rap), bPlaying: !!b.playing };
     }
-    function attempt(d, o, only) {
-      const no = (why) => (only ? { refused: why } : null);
-      const dl = host.ui.flag("ap-learned-toggle", true);
-      if (!dl) return no("toggle: learned moves are off (ap-learned-toggle)");
-      if (!d || !d.playing) return no("deck: nothing is playing");
-      const f = flags();
+    // S7 runtime: A's live vocal muted over the hole (20 ms edges, in A's vocal gaps: the hole is snapped outward
+    // to the beat), B's line from B's vocal buffer, high-passed at 120 Hz (A keeps the sub), into A's vocal stem
+    // chain (A's EQ and fader); the full mix back after. Nothing is armed when the deck cannot play the window.
+    function runSwap(d, plan) {
+      const b = host.decks && host.decks[other(d.id)], sm = host.mod.stemMoves;
+      const at = sm.audioAt(d, plan.start), lead = at - audioCtx.currentTime;
+      if (lead < 0.35) return { ok: false, gate: "late", reason: `the window starts in ${lead.toFixed(2)} s (min 0.35)` };
+      if (!d.stemsLiveAt || !d.stemsLiveAt(at)) return { ok: false, gate: "stems_not_live", reason: "the deck's stems are not sounding at the window start" };
+      const bus = d.stemGain && d.stemGain.vocals, live = d.stemLive && d.stemLive.vocals, buf = b && b.stems && b.stems.vocals;
+      if (!bus || !live || !buf) return { ok: false, gate: "no_stem_bus", reason: "the deck's vocal stem chain or B's vocal buffer is missing" };
+      if ((d._slices && d._slices.vocals) || (d._holds && d._holds.vocals) || d._artistSwap) return { ok: false, gate: "busy", reason: "the vocal stem is already sliced / held" };
+      const rate = (d._playbackRate && d._playbackRate()) || 1, until = at + (plan.end - plan.start) / rate, xf = 0.02, k = b.stems.ratio || 1;
+      const gSec = Math.min(until - at, (plan.guest.dur * k) / plan.guest.rate);
+      timers[d.id].push(setTimeout(() => {
+        if (!d.playing) return;
+        if (!d.stemMix({}, at - 0.01, 0.01)) return void console.info("artist move vocal_swap skipped: stem mode refused");
+        const src = audioCtx.createBufferSource(), hp = audioCtx.createBiquadFilter(), g = audioCtx.createGain();
+        src.buffer = buf; src.playbackRate.value = plan.guest.rate;
+        hp.type = "highpass"; hp.frequency.value = 120;
+        g.gain.setValueAtTime(0, at); g.gain.linearRampToValueAtTime(plan.guest.gain, at + xf);
+        g.gain.setValueAtTime(plan.guest.gain, at + gSec - xf); g.gain.linearRampToValueAtTime(0, at + gSec);
+        src.connect(hp); hp.connect(g); g.connect(bus);
+        src.start(at, Math.max(0, (plan.guest.from + (b.stems.lag || 0)) * k));
+        src.stop(at + gSec + 0.02);
+        const lg = live.gain;
+        lg.cancelScheduledValues(at); lg.setValueAtTime(1, at); lg.linearRampToValueAtTime(0, at + xf);
+        lg.setValueAtTime(0, until - xf); lg.linearRampToValueAtTime(1, until);
+        const rec = d._artistSwap = { src, until, live: lg };
+        src.onended = () => { g.disconnect(); if (d._artistSwap === rec) d._artistSwap = null; };
+        timers[d.id].push(setTimeout(() => { if (d.playing) d.stemMix(null, until + 0.03, 0.02); }, Math.max(0, (until - audioCtx.currentTime) * 1000 - 200)));
+      }, Math.max(0, lead * 1000 - 250)));
+      return { ok: true, at, until };
+    }
+    // One artist kind on c (all of them when `only` is null); logs, books, counts. force: on demand.
+    function runArtist(d, o, c, only, force) {
+      Object.assign(c, swapCtx(d), { force: !!force });
+      const res = artistPick(c, artistFlags(), only, force);
+      const gk = `${d.id}:${o.phrase}:artist`;
+      const refused = res.refusals.filter((x) => x.gate !== "toggle");
+      if (!force && refused.length && !tag.has(gk)) {
+        tag.set(gk, 1);
+        for (const x of refused) console.info(`artist move ${x.kind} skipped: ${x.gate}: ${x.reason}`);
+      }
+      if (!res.plan) return { ok: false, why: res.refusals.length ? `${res.refusals[0].gate}: ${res.refusals[0].reason}` : "nothing fits" };
+      const plan = res.plan, rate = c.rate, r = d._learned;
+      cancel(d.id);
+      const run = plan.kind === "vocal_swap" ? runSwap(d, plan) : runSlices(d, plan);
+      if (!run.ok) { console.info(`artist move ${plan.kind} skipped: ${run.gate}: ${run.reason}`); return { ok: false, why: `${run.gate}: ${run.reason}` }; }
+      r.used.push(plan.kind); r.count++; r.lastAtBar = c.atBar;
+      const why = `${plan.why}${plan.fallbacks.length ? ` (constants: ${plan.fallbacks.join(", ")})` : ""}`;
+      console.info(`artist move ${plan.kind}: ${why}`);
+      console.info(`variant: artist ${plan.kind} for ${d.id.toUpperCase()} -> ${other(d.id).toUpperCase()}: ${plan.kind === "vocal_swap" ? "a B line fits an A line within half a beat" : "a build section with a sung fragment"}`);
+      host.log.step("artist_move", { deck: d.id, decision: `artist_move: ${plan.kind}`, why, result: { params: plan.params, fallbacks: plan.fallbacks, t0: run.at, t1: run.until } });
+      say(d, `ARTIST MOVE · ${ARTIST_LABEL[plan.kind]}`, why, { move: plan.kind, artist: true, params: plan.params, fallbacks: plan.fallbacks, t0: run.at, t1: run.until,
+        beats: plan.beats, cap_beats: plan.cap_beats, grid_err_s: +plan.grid_err_s.toFixed(4) });
+      return { ok: true, kind: plan.kind, why, busyS: Math.max(0, (plan.end - o.pos) / rate) };
+    }
+    // the in-song context of deck d at the phrase o describes (both the learned and the artist kinds read it)
+    function songCtx(d, o) {
       const st = o.st || {}, rate = (d._playbackRate && d._playbackRate()) || 1;
       const r = d._learned || (d._learned = { used: [], count: 0, lastAtBar: null, variant: 0 });
       const beat = o.bar / 4, sm = host.mod.stemMoves;
@@ -480,6 +661,37 @@
         const eb = sm.stemEnergyBars ? sm.stemEnergyBars(d, o.lineT, o.bar, PHRASE_BARS) : null;
         if (eb) c.barRms = eb.drums.map((_, i) => Math.sqrt(["drums", "bass", "vocals", "other"].reduce((s, n) => s + eb[n][i] ** 2, 0)));
       }
+      return c;
+    }
+    // One call per phrase from dj-mind.js. o: {pos, bar, phrase, lineT, entryT, exitT, st (dj-mind state), loop (loop helper)}
+    // -> {kind, busyS, why} when a move was booked, else null (refusals are logged, once per kind and phrase).
+    function tick(d, o) {
+      if (!store && host.clock.now() - loadedAt > 300000) load();
+      const r = attempt(d, o, null);
+      return r && r.kind ? r : null;
+    }
+    // On demand (ai-actions.js through dj-mind learnedNow): one kind on the next line, same o as tick. Only the
+    // rate gates are skipped (songGate onDemand); toggles, store, safety and planner gates still refuse.
+    // -> {kind, busyS, why} | {refused: "<gate>: <reason>"}
+    function demand(d, kind, o) {
+      if (!KINDS.includes(kind) && !ARTIST_KINDS.includes(kind)) return { refused: `unknown: no learned move ${kind}` };
+      if (!store && !ARTIST_KINDS.includes(kind)) { load(); return { refused: "store: the learned moves are still loading" }; }
+      return attempt(d, o, kind);
+    }
+    function attempt(d, o, only) {
+      const no = (why) => (only ? { refused: why } : null);
+      if (!d || !d.playing) return no("deck: nothing is playing");
+      const c = songCtx(d, o), rate = c.rate, beat = o.bar / 4, atBar = c.atBar, r = d._learned;
+      // artist kinds first (each fits only a narrow case: a build, a line pair); on demand only the one asked for
+      const artOnly = only && ARTIST_KINDS.includes(only) ? only : null;
+      if (!only || artOnly) {
+        const art = runArtist(d, o, c, artOnly, !!artOnly);
+        if (art.ok) return { kind: art.kind, why: art.why, busyS: art.busyS };
+        if (artOnly) return { refused: art.why };
+      }
+      if (!store) return no("store: the learned moves are still loading");
+      if (!host.ui.flag("ap-learned-toggle", true)) return no("toggle: learned moves are off (ap-learned-toggle)");
+      const f = flags();
       const res = pick(c, store, f, only ? { only } : {});   // a stemless deck has no envelope: the vocal kinds refuse by name
       const gk = `${d.id}:${o.phrase}`;
       const refused = res.refusals.filter((x) => !(x.gate === "toggle" || x.gate === "store" || x.gate === "user_rule"));
@@ -502,6 +714,7 @@
       r.used.push(plan.kind); r.count++; r.lastAtBar = atBar; r.variant++;
       const why = `${plan.why}${plan.fallbacks.length ? ` (constants: ${plan.fallbacks.join(", ")})` : ""}`;
       console.info(`learned move ${plan.kind}: ${why}`);
+      console.info(`variant: learned ${plan.kind} for ${d.id.toUpperCase()} -> ${other(d.id).toUpperCase()}: no artist move fits this phrase, the learned sighting does`);
       say(d, `LEARNED MOVE · ${LABEL[plan.kind]}`, why, { move: plan.kind, params: plan.params, fallbacks: plan.fallbacks, t0: run.at, t1: run.until,
         beats: plan.beats, cap_beats: plan.cap_beats, grid_err_s: +plan.grid_err_s.toFixed(4), seen: store[plan.kind].seen });
       return { kind: plan.kind, why, busyS: Math.max(0, ((plan.end + (plan.kind === "loop_extend" ? plan.beats * beat : 0)) - o.pos) / rate) };
@@ -517,9 +730,49 @@
       if (!d) return;
       cancel(d.id);
       if (d._slices && d._slices.vocals && d.releaseSlices) { d.releaseSlices("vocals"); if (d.stemMix) d.stemMix(null, 0, 0.02); }
+      const sw = d._artistSwap;
+      if (sw) {
+        const t = audioCtx.currentTime;
+        try { sw.src.stop(t + 0.03); } catch (e) { /* already stopped */ }
+        sw.live.cancelScheduledValues(t); sw.live.setValueAtTime(sw.live.value, t); sw.live.linearRampToValueAtTime(1, t + 0.03);
+        d._artistSwap = null;
+        if (d.stemMix) d.stemMix(null, 0, 0.02);
+      }
     }
+    // On demand (AI ACTIONS "vocal_swap" / "acapella_build"): the playing deck, from now to its phrase line. Skips
+    // only the per-song cap, the spacing and the early-song gates (and S8's build-section placement); never a
+    // safety gate (vocal clash, stems, key, tempo, exit guard, transition running). -> {ok, why}
+    function runNow(id) {
+      if (!ARTIST_KINDS.includes(id)) return { ok: false, why: `unknown move ${id}` };
+      const ds = host.decks || {};
+      const d = ["a", "b"].map((k) => ds[k]).find((x) => x && x.playing && (!x._onAir || x._onAir()));
+      if (!d) return { ok: false, why: "nothing is playing on the master" };
+      const mind = host.mod.djMind;
+      if (mind && mind.transitioning) return { ok: false, why: "a transition is running" };
+      const bar = 240 / (d.bpm || 128), pos = d._currentPosition(), db = (d.analysis && d.analysis.downbeat_times) || [];
+      const t0 = db.length ? db[0] : 0, ph = Math.floor((pos - t0) / (8 * bar) + 1e-6);
+      const o = { pos, bar, phrase: ph, lineT: t0 + ph * 8 * bar, entryT: d._mindEntry || 0, exitT: d.buffer ? d.buffer.duration : null,
+        st: { mashupActive: !!(host.mod.mashup && host.mod.mashup.active) } };
+      return runArtist(d, o, songCtx(d, o), id, true);
+    }
+    const onDemand = {}, lastRun = {};
+    for (const id of ARTIST_KINDS) {
+      onDemand[id] = () => {
+        const now = host.clock.now();
+        if (lastRun[id] && now - lastRun[id].at < 1000) return lastRun[id].r;          // the same click on two paths
+        let r;
+        try { r = runNow(id); } catch (e) { r = { ok: false, why: String((e && e.message) || e) }; }
+        lastRun[id] = { at: now, r };
+        host.log.step("artist_run_now", { deck: "", decision: r.ok ? `artist_move: ${id}` : "refused", why: r.why });
+        host.ui.status(`${ARTIST_LABEL[id]}: ${r.ok ? r.why : `refused - ${r.why}`}`);
+        return r;
+      };
+    }
+    // AI ACTIONS wiring (owner contract): aiActions.register when it exists, else the "ai-action" {id} bus event
+    setTimeout(() => { const aa = host.mod.aiActions; if (aa && typeof aa.register === "function") for (const id of ARTIST_KINDS) aa.register(id, onDemand[id]); }, 0);
+    host.bus.on("ai-action", (e) => { const id = e && e.detail && e.detail.id; if (onDemand[id]) onDemand[id](); });
     load();
-    const api = { core, tick, demand, cancel, stop, noteFiller, load, get store() { return store; } };
+    const api = { core, tick, demand, cancel, stop, noteFiller, load, runNow, onDemand, get store() { return store; } };
     host.mod.learnedMoves = api;
     return api;
   }

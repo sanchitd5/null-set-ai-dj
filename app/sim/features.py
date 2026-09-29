@@ -53,6 +53,10 @@ CATALOG = {
     "artist_cue_tease": ("in-song", "artist move S14: 1-2 beat high-passed stabs of B's drum hit before B enters"),
     "artist_roll": ("in-song", "artist move S12: 1/2-beat roll of A's drums at low wet into B's entry"),
     "artist_perc_bridge": ("in-song", "artist move S11: third-deck percussion bridge (refused: two decks)"),
+    "artist_filter_loop": ("transition", "artist S1: A's last vocal-free bars looped under a filter sweep + echo, B's vocal over it (mashup slot)"),
+    "artist_drums_host": ("transition", "artist S9: A drums only under B's vocal, key gate waived when A's drums are energetic (mashup slot)"),
+    "artist_vocal_swap": ("in-song", "artist S7: one sung line of A muted, B's line of the same length in the hole"),
+    "artist_acapella_build": ("in-song", "artist S8: a vocal fragment looped through a build, released on the drop"),
     "mashup_break": ("in-song", "remix inside a mashup"),
     "auto_sampler": ("in-song", "sampler / one-shot hits on drops"),
     "dj_mind": ("in-song", "DJ mind decisions (fakeout, beat boost, stutter, filter build, hold loop ...)"),
@@ -367,6 +371,17 @@ def feature_table(js: dict, world, run: dict) -> dict:
         m = re.match(r"^artist move (slip_loop|cue_tease|roll|perc_bridge) skipped: (\w+)", t)
         if m:
             F[f"artist_{m.group(1)}"].refused[m.group(2)] += 1         # the gate that failed (artist-moves.js)
+        m = re.match(r"^artist move (filter_loop|drums_host|vocal_swap|acapella_build)(?:: | skipped: (\w+))", t)
+        if m:                                                   # batch B artist moves (informational)
+            f = F[f"artist_{m.group(1)}"]
+            if m.group(2):
+                f.refused[m.group(2)] += 1
+            else:
+                f.executed += 1
+                f.instances.append(round(c.get("t") or 0, 1))
+        m = re.match(r"^drums_waiver: (granted|refused): (.*?)(?: \(deck |$)", t)
+        if m:
+            F["artist_drums_host"].details.append(f"waiver {m.group(1)}: {m.group(2)[:80]}")
         m = re.match(r"^remix (\w): (\w+) skipped", t)
         if m:
             F.get(f"remix_{m.group(2)}", F["remix_synth_hold"]).refused["skipped"] += 1
