@@ -25,6 +25,11 @@ Pipeline (the manual USB002 study, research/notes/set-study-gfF8jzBVWvM.md, as c
 5. Learn.     Observations merge into data/cache/learned_techniques.json;
               techniques.rank() loads them as conditional techniques with
               the tempo gap / key score ranges they were seen at.
+6. Macros.    (agent_bridge learn-set, unless --no-macros) the set's songs are
+              registered as library tracks (set_import.learn_macros = import-set)
+              and the pair atlas is rebuilt incrementally, writing the macros
+              studied-<id>-<n> and studied-set-<id>. Offline; a failure there
+              lands in the result's `macros.error`, the learn still succeeds.
 
 Vocal re-sequencing is learned and reported, not performed (live=False).
 """

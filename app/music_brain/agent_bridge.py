@@ -121,13 +121,23 @@ def preview(
     return payload
 
 
-def learn_set(source: str, tracklist: Optional[str] = None, download: bool = True, jobs: int = 2, ai: bool = True) -> dict:
+def learn_set(source: str, tracklist: Optional[str] = None, download: bool = True, jobs: int = 2, ai: bool = True,
+              macros: bool = True) -> dict:
     """Study a DJ set (URL or file): stems, per-stem song matching, transition and
-    vocal re-cut extraction; merges learned techniques into the store."""
+    vocal re-cut extraction; merges learned techniques into the store. Then (macros=True)
+    imports the set's songs as library tracks and rebuilds the pair atlas incrementally,
+    which writes studied-<set_id>-<n> + studied-set-<set_id>; offline, never downloads.
+    That step never fails the learn: its outcome is the `macros` field
+    ({imported, skipped, written[], error})."""
     from app.music_brain.set_learner import learn_set as _learn
 
-    return _learn(source, tracklist=tracklist, download=download, jobs=jobs, ai=ai,
-                  log=lambda m: print(m, file=sys.stderr, flush=True))
+    log = lambda m: print(m, file=sys.stderr, flush=True)  # noqa: E731
+    report = _learn(source, tracklist=tracklist, download=download, jobs=jobs, ai=ai, log=log)
+    if macros:
+        from app.music_brain.set_import import learn_macros
+
+        report["macros"] = learn_macros(report["set_id"], log=log)
+    return report
 
 
 def hook_drops(path: str, title: str, top_n: int = 3, render: bool = False, ai: bool = True) -> dict:
@@ -214,6 +224,8 @@ def _build_parser() -> argparse.ArgumentParser:
     p_learn.add_argument("--no-download", action="store_true", help="Use only songs already in data/songs/.")
     p_learn.add_argument("--no-ai", action="store_true", help="Skip the local-LLM review of detected moves.")
     p_learn.add_argument("--jobs", type=int, default=2, help="Demucs runs at once (default 2; each holds a model in memory).")
+    p_learn.add_argument("--no-macros", action="store_true",
+                         help="Skip the import-set + incremental atlas build that writes this set's studied macros.")
 
     sub.add_parser("learned", help="List techniques learned from studied sets.")
     sub.add_parser("learn-status", help="Progress of running / recent set studies (human readable, no server needed).")
@@ -285,7 +297,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         elif args.command == "list-recipes":
             payload = list_recipes()
         elif args.command == "learn-set":
-            payload = learn_set(args.source, tracklist=args.tracklist, download=not args.no_download, jobs=args.jobs, ai=not args.no_ai)
+            payload = learn_set(args.source, tracklist=args.tracklist, download=not args.no_download, jobs=args.jobs, ai=not args.no_ai,
+                                macros=not args.no_macros)
         elif args.command == "hook-drop":
             payload = hook_drops(args.audio, args.title, top_n=args.top_n, render=args.render, ai=not args.no_ai)
         elif args.command == "source":

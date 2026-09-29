@@ -226,3 +226,52 @@ def summary(rows: List[dict]) -> dict:
             "reused": sum(1 for r in rows if r["action"] == "reuse"),
             "skipped": [{"position": r["position"], "title": r["title"], "why": r["why"]} for r in rows if r["action"] == "skip"],
             "errors": [{"position": r["position"], "title": r["title"], "error": r["error"]} for r in rows if r.get("error")]}
+
+
+def learn_macros(set_id: str, cache_dir: Optional[Path] = None, log: Callable[[str], None] = lambda m: None,
+                 build: Optional[Callable[..., dict]] = None) -> dict:
+    """learn-set's last step: import-set then an incremental pair_atlas build (default, not --full:
+    unchanged pairs are kept, only the new tracks' pairs are scored) that writes the macros.
+    -> {"imported", "skipped", "written": this set's macro names, "error": None | str}; never raises.
+    Serialized by an flock on CACHE_DIR/pair_atlas.lock, so two studies finishing together
+    build one after the other (the second sees both sets) instead of dropping each other's macros."""
+    from app.music_brain.config import CACHE_DIR
+
+    cache_dir = Path(cache_dir or CACHE_DIR)
+    out = {"imported": 0, "skipped": 0, "written": [], "error": None}
+    try:
+        rows = apply(plan(cache_dir, set_id))
+        s = summary(rows)
+        out["imported"], out["skipped"] = s["imported"] + s["cut"], len(s["skipped"])
+        if s["errors"]:
+            out["error"] = f"import: {len(s['errors'])} failed ({s['errors'][0]['error']})"[:200]
+        if build is None:
+            from app.music_brain.pair_atlas import build
+        with _atlas_lock(cache_dir):
+            doc = build(cache_dir, seed_macros_to=cache_dir, log=log)
+        sid = re.escape(set_id)
+        mine = re.compile(rf"studied-{sid}-\d+|studied-set-{sid}")
+        out["written"] = [m["name"] for m in doc.get("seeded", []) if mine.fullmatch(m["name"])]
+    except Exception as exc:  # noqa: BLE001 -- the learn result stands whatever happens here
+        out["error"] = f"{type(exc).__name__}: {exc}"[:200]
+    return out
+
+
+class _atlas_lock:
+    """Exclusive flock on CACHE_DIR/pair_atlas.lock (no-op where fcntl is missing, e.g. Windows)."""
+
+    def __init__(self, cache_dir: Path):
+        self.path = Path(cache_dir) / "pair_atlas.lock"
+
+    def __enter__(self):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.fh = open(self.path, "a")
+        try:
+            import fcntl
+            fcntl.flock(self.fh, fcntl.LOCK_EX)
+        except ImportError:
+            pass
+        return self
+
+    def __exit__(self, *exc):
+        self.fh.close()          # closing releases the lock
