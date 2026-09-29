@@ -88,7 +88,7 @@ def atlas_partners(a: str, move: Optional[str] = None, n: int = 10, combo: bool 
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
     if move in (None, "merge", "supermove"):
-        rows = seed_rows(a, {r["b"] for r in (idx.by_a.get(a, []) if idx else [])}) + rows
+        rows = seed_rows(a, {r["b"] for r in (idx.rows(a) if idx else [])}) + rows
     if idx is None:
         return {"a": a, "partners": rows[:max(1, min(100, n))], "built": False}
     if combo:
@@ -171,7 +171,7 @@ def post_macro_from_session(session: str, name: Optional[str] = None):
 
 @router.post("/api/macros/plan-from-picks")
 def post_plan_from_picks(body: PicksBody):
-    atlas = pa.load(ATLAS_CACHE_DIR)       # the full atlas: every pair of the picks, not just top partners
+    atlas = pa.load_for(body.ids, ATLAS_CACHE_DIR)   # every pair of the picks (their shards only), not just top partners
     if atlas is None:
         raise HTTPException(status_code=409, detail="no pair atlas yet: run `python3 -m app.music_brain.pair_atlas build`")
     try:

@@ -23,7 +23,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+import threading
 import urllib.request
 import uuid
 from pathlib import Path
@@ -359,21 +361,45 @@ def learn_tracklist_macro(source: str, tracklist: Optional[str] = None, download
     return res
 
 
+_HELD: Dict[str, list] = {}          # lock path -> [RLock, depth, open file]; one flock per process
+_HELD_GUARD = threading.Lock()
+
+
 class _atlas_lock:
-    """Exclusive flock on CACHE_DIR/pair_atlas.lock (no-op where fcntl is missing, e.g. Windows)."""
+    """Exclusive flock on CACHE_DIR/pair_atlas.lock (no-op where fcntl is missing, e.g. Windows).
+    Re-entrant within a process: pair_atlas.build takes it itself, and callers that already hold it
+    (import, learn, knowledge seed) nest without deadlocking on their own flock; other threads wait."""
 
     def __init__(self, cache_dir: Path):
         self.path = Path(cache_dir) / "pair_atlas.lock"
 
     def __enter__(self):
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.fh = open(self.path, "a")
-        try:
-            import fcntl
-            fcntl.flock(self.fh, fcntl.LOCK_EX)
-        except ImportError:
-            pass
+        with _HELD_GUARD:
+            self.slot = _HELD.setdefault(os.path.abspath(self.path), [threading.RLock(), 0, None])
+        self.slot[0].acquire()
+        if self.slot[1] == 0:
+            try:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                fh = open(self.path, "a")
+            except OSError:
+                self.slot[0].release()
+                raise
+            try:
+                import fcntl
+                fcntl.flock(fh, fcntl.LOCK_EX)
+            except ImportError:
+                pass
+            except OSError:
+                fh.close()
+                self.slot[0].release()
+                raise
+            self.slot[2] = fh
+        self.slot[1] += 1
         return self
 
     def __exit__(self, *exc):
-        self.fh.close()          # closing releases the lock
+        self.slot[1] -= 1
+        if self.slot[1] == 0:
+            self.slot[2].close()          # closing releases the flock
+            self.slot[2] = None
+        self.slot[0].release()

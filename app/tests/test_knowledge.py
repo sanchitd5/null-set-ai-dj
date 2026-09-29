@@ -66,8 +66,53 @@ def test_export_is_deterministic(src, tmp_path):
     kn.export(src["cache"], other)
     assert _all_bytes(other) == first
     assert set(first) == {"macros/studied-s1-1.json", "macros/chain-1-anyma.json", "learned_techniques.json",
-                          "pair_atlas.json.gz", "names.json"}
+                          "atlas/meta.json", f"atlas/pairs/{A}.json.gz", f"atlas/pairs/{B}.json.gz", "names.json"}
     assert src["rep"]["macros"] == 2 and src["rep"]["observations"] == 1 and src["rep"]["atlas"]["pairs"] == 3
+
+
+def test_export_segmented_round_trip_and_small_diffs(src):
+    out = src["out"]
+    slim = kn.load_atlas(out)
+    assert set(slim["pairs"]) == {f"{A}>{B}", f"{B}>{C}", f"{A}>{C}"} and set(slim["tracks"]) == {A, B, C}
+    before = _all_bytes(out)
+    # a rebuild alone (new built_at, macros re-stamped "created"): no tracked file changes
+    atlas = pa.load(src["cache"])
+    atlas["built_at"] = 99.0
+    pa.write_atlas(atlas, pa.atlas_path(src["cache"]))
+    for p in mc.macros_dir(src["cache"]).glob("*.json"):
+        m = json.loads(p.read_text())
+        m["created"] = 12345.0
+        p.write_text(json.dumps(m))
+    assert kn.export(src["cache"], out)["changed"] == []
+    assert _all_bytes(out) == before
+    # one pair changes: its A shard, plus meta.json (its built_at now moves with the content)
+    atlas["pairs"][f"{B}>{C}"]["works"] = 71
+    pa.write_atlas(atlas, pa.atlas_path(src["cache"]))
+    assert kn.export(src["cache"], out)["changed"] == [f"atlas/pairs/{B}.json.gz", "atlas/meta.json"]
+    assert kn.load_atlas(out)["pairs"][f"{B}>{C}"]["works"] == 71
+
+
+def test_rewriting_an_unchanged_seed_macro_keeps_created(src):
+    p = mc.macros_dir(src["cache"]) / "chain-1-anyma.json"
+    before, stamp = p.read_bytes(), p.stat().st_mtime_ns
+    m = mc.write_seed({"name": "chain-1-anyma", "source": "atlas:chain",
+                       "steps": [{"a": A, "b": B, "recipe": "Bass Swap"}, {"a": B, "b": C, "recipe": "Echo Out"}]},
+                      src["cache"])
+    assert m["created"] == json.loads(before)["created"]
+    assert p.read_bytes() == before and p.stat().st_mtime_ns == stamp, "an unchanged macro is not rewritten"
+
+
+def test_seed_still_reads_the_old_single_gz(src, tmp_path):
+    import gzip
+    old = tmp_path / "oldk"
+    old.mkdir()
+    slim = kn.load_atlas(src["out"])
+    (old / kn.ATLAS).write_bytes(gzip.compress(json.dumps(slim).encode(), mtime=0))
+    (old / kn.NAMES).write_bytes((src["out"] / kn.NAMES).read_bytes())
+    cache = _cache(tmp_path / "away", dict(NAMES))
+    rep = kn.seed(cache, old)
+    assert rep["pairs"] == 3 and set(pa.load(cache)["pairs"]) == set(slim["pairs"])
+    assert (pa.atlas_path(cache) / pa.META).is_file(), "seeded into the segmented local folder"
 
 
 def test_export_has_no_private_strings(src):

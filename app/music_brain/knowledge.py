@@ -7,10 +7,13 @@ session logs, absolute paths or e-mail addresses (export refuses to write any).
     python3 -m app.music_brain.knowledge export [--cache-dir D] [--out K]   cache -> knowledge/
     python3 -m app.music_brain.knowledge import [--cache-dir D] [--src K]   knowledge/ -> cache
 
-Files: macros/<name>.json, learned_techniques.json, pair_atlas.json.gz (slim: slim_atlas),
-names.json (track id -> "Artist - Title"). Output is deterministic (sorted keys, stable order,
-gzip without a timestamp), and a file is rewritten only when its bytes change, so git diffs
-stay small.
+Files: macros/<name>.json, learned_techniques.json, names.json (track id -> "Artist - Title"),
+and the slim atlas (slim_atlas) segmented as atlas/meta.json (schema, rules, built_at, slim, stats,
+tracks, shards) + atlas/pairs/<a>.json.gz (one gzip shard per A), so a new song changes a few
+shards, not one 2 MB blob. Import still reads an old single pair_atlas.json.gz; export replaces
+it. Output is deterministic (sorted keys, stable order, gzip without a timestamp; an unchanged
+macro keeps its tracked "created", an unchanged atlas its tracked built_at), and a file is
+rewritten only when its bytes change, so git diffs stay small.
 
 Track ids are sha256(bytes)[:16]: another download of the same song has another id, so import
 resolves every id by NAME (dedup_songs.identity) onto the local library. The local cache always
@@ -35,7 +38,9 @@ HERE = Path(__file__).resolve().parent
 KNOWLEDGE_DIR = HERE / "knowledge"          # tests point this at tmp (conftest)
 MACROS = "macros"
 LEARNED = "learned_techniques.json"
-ATLAS = "pair_atlas.json.gz"
+ATLAS = "pair_atlas.json.gz"                # the old single-file slim atlas (still read, removed by export)
+ATLAS_DIR, ATLAS_META = "atlas", "meta.json"  # segmented: atlas/meta.json + atlas/pairs/<a>.json.gz
+_SHARD_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
 NAMES = "names.json"
 STAMP = "knowledge_seed.json"
 KEEP, PER_MOVE = 60, 20                     # slim atlas: the server Index's own selection per A
@@ -142,11 +147,66 @@ def slim_atlas(atlas: dict, keep: int = KEEP, per_move: int = PER_MOVE) -> dict:
                       "source_pairs": len(atlas["pairs"])}}
 
 
-def load_atlas(src: Optional[Path] = None) -> Optional[dict]:
+def _gz_json(p: Path):
     try:
-        return json.loads(gzip.decompress((Path(src or KNOWLEDGE_DIR) / ATLAS).read_bytes()).decode("utf-8"))
+        return json.loads(gzip.decompress(p.read_bytes()).decode("utf-8"))
     except (OSError, ValueError, EOFError):
         return None
+
+
+def load_atlas(src: Optional[Path] = None) -> Optional[dict]:
+    """The tracked slim atlas as one dict: the segmented atlas/ folder (meta.json + pairs/<a>.json.gz),
+    else the old single pair_atlas.json.gz (read for migration)."""
+    src = Path(src or KNOWLEDGE_DIR)
+    meta = _read(src / ATLAS_DIR / ATLAS_META)
+    if not isinstance(meta, dict):
+        old = _gz_json(src / ATLAS)
+        return old if isinstance(old, dict) else None
+    doc = {k: v for k, v in meta.items() if k != "shards"}
+    doc["pairs"] = {}
+    for a in meta.get("shards") or []:
+        if not _SHARD_ID.fullmatch(str(a)):
+            continue
+        ps = _gz_json(src / ATLAS_DIR / "pairs" / f"{a}.json.gz")
+        if isinstance(ps, dict):
+            doc["pairs"].update(ps)
+    return doc
+
+
+def _export_atlas(slim: dict, out: Path) -> dict:
+    """slim atlas -> knowledge/atlas/: one gzip shard per A (plain JSON would be ~61 MB), a shard is
+    rewritten only when its bytes change, stale shards and the old single pair_atlas.json.gz removed.
+    meta.json keeps its old built_at when nothing else in the atlas changed (a rebuild alone is no diff)."""
+    root = out / ATLAS_DIR
+    by_a: Dict[str, dict] = {}
+    for k, p in slim["pairs"].items():
+        if not _SHARD_ID.fullmatch(str(p["a"])):
+            raise ValueError(f"knowledge export refused: track id {p['a']!r} is not a shard name")
+        by_a.setdefault(p["a"], {})[k] = p
+    changed, size = [], 0
+    for a, ps in sorted(by_a.items()):
+        data = gzip.compress(_dump(ps, compact=True), compresslevel=9, mtime=0)
+        size += len(data)
+        if _write_bytes(root / "pairs" / f"{a}.json.gz", data):
+            changed.append(f"{ATLAS_DIR}/pairs/{a}.json.gz")
+    for p in sorted((root / "pairs").glob("*.json.gz")) if (root / "pairs").is_dir() else []:
+        if p.name[:-len(".json.gz")] not in by_a:
+            p.unlink()
+            changed.append(f"{ATLAS_DIR}/pairs/{p.name}")
+    meta = {k: v for k, v in slim.items() if k != "pairs"}
+    meta["shards"] = sorted(by_a)
+    old = _read(root / ATLAS_META)
+    if not changed and isinstance(old, dict) and \
+            {k: v for k, v in old.items() if k != "built_at"} == {k: v for k, v in meta.items() if k != "built_at"}:
+        meta["built_at"] = old.get("built_at")
+    data = _dump(meta)
+    size += len(data)
+    if _write_bytes(root / ATLAS_META, data):
+        changed.append(f"{ATLAS_DIR}/{ATLAS_META}")
+    if (out / ATLAS).exists():
+        (out / ATLAS).unlink()                     # the old single file: replaced by atlas/
+        changed.append(ATLAS)
+    return {"changed": changed, "bytes": size, "shards": len(by_a)}
 
 
 # ---------------------------------------------------------------------------------------- export
@@ -171,7 +231,12 @@ def export(cache_dir: Optional[Path] = None, out: Optional[Path] = None,
             m = mc.normalize(raw)
         except ValueError:
             continue
-        files[f"{MACROS}/{m['name']}.json"] = m
+        rel = f"{MACROS}/{m['name']}.json"
+        old = _read(out / rel)
+        if isinstance(old, dict) and "created" in old and \
+                {k: v for k, v in old.items() if k != "created"} == {k: v for k, v in m.items() if k != "created"}:
+            m = dict(m, created=old["created"])     # a rebuild re-stamps created; unchanged macro, no diff
+        files[rel] = m
         ids.update(m["tracks"])
     n_macros = len(files)
     learned = _read(cache / LEARNED)
@@ -198,11 +263,11 @@ def export(cache_dir: Optional[Path] = None, out: Optional[Path] = None,
     changed = [k for k, v in files.items() if _write_bytes(out / k, _dump(v))]
     rep = {"out": out.name, "macros": n_macros, "observations": n_obs, "names": len(names), "changed": changed}
     if slim:
-        data = gzip.compress(_dump(slim, compact=True), compresslevel=9, mtime=0)
-        if _write_bytes(out / ATLAS, data):
-            changed.append(ATLAS)
+        arep = _export_atlas(slim, out)
+        changed.extend(arep["changed"])
         rep["atlas"] = {"tracks": slim["stats"]["tracks"], "pairs": slim["stats"]["pairs"],
-                        "source_pairs": slim["stats"]["source_pairs"], "bytes_gz": len(data)}
+                        "source_pairs": slim["stats"]["source_pairs"], "shards": arep["shards"],
+                        "bytes": arep["bytes"]}
     log(f"knowledge: {n_macros} macros, {n_obs} observations, {len(changed)} files changed")
     return rep
 
@@ -321,8 +386,8 @@ def _seed_atlas(cache: Path, src: Path, res: _Resolver, pa, lock) -> object:
         return "tracked atlas is stale (rules changed): rebuild and export"
     with lock(cache):
         path = pa.atlas_path(cache)
-        local = pa.load(cache)
-        if local is None and path.exists():
+        local = pa.load(cache)                     # migrates an old single pair_atlas.json first
+        if local is None and ((path / pa.META).exists() or pa._legacy(path).exists()):
             return "local atlas unreadable: left alone"
         if local is not None and local.get("rules") != ka["rules"]:
             return "local atlas has other rules: left alone"
@@ -340,7 +405,7 @@ def _seed_atlas(cache: Path, src: Path, res: _Resolver, pa, lock) -> object:
             added += 1
         if added:
             doc.setdefault("stats", {})["knowledge_pairs"] = added
-            _write_bytes(path, json.dumps(doc, separators=(",", ":")).encode("utf-8"))
+            pa.write_atlas(doc, path)              # only the shards the new pairs touch change
         return added
 
 
