@@ -37,8 +37,19 @@
   const root = { get decks() { return host.decks; }, get state() { return host.state; }, get stemMoves() { return host.mod.stemMoves; },
     get mashup() { return host.mod.mashup; }, get autoSampler() { return host.mod.autoSampler; }, get riffOverRap() { return host.mod.riffOverRap; } };
 
-  const say = (label, why, ok = true) => host.bus.emit("ai-activity",
-    { kind: "stem-move", deck: "", label: `${ok ? "" : "✗ "}${label}`, why });
+  // every on-demand action: the step log (step-log.js collects ai-activity) and the status line
+  const say = (label, why, ok = true) => {
+    host.bus.emit("ai-activity", { kind: "stem-move", deck: "", label: `${ok ? "" : "✗ "}${label}`, why });
+    ui.status(`${label}: ${ok ? "" : "refused, "}${why}`);
+  };
+  // learned in-song moves, one kind now (dj-mind learnedNow -> learned-moves demand: only the rate gates skipped)
+  const learned = (kind, label) => () => {
+    const c = ctx(false); if (c.err) return say(label, c.err, false);
+    const mind = host.mod.djMind;
+    if (!mind || !mind.learnedNow) return say(label, "SET MIND not loaded", false);
+    const r = mind.learnedNow(c.h, kind);
+    return r.refused ? say(label, r.refused, false) : say(label, r.why);
+  };
 
   function hostDeck() {
     let best = null, lv = -1;
@@ -178,16 +189,64 @@
       });
       say("RIFF × RAP", `armed: starts at ${fmt(g0)} (in ${Math.round((g0 - pos) / c.rate)} s)`);
     },
+
+    // merge -> hold -> transition on the loaded pair from the host's next line (autopilot planMerge /
+    // holdPlan, the set's own gates; the refusal names the gate). Not while the set runs.
+    merge_hold() {
+      const c = ctx(true); if (c.err) return say("MERGE → HOLD", c.err, false);
+      const ap = host.mod.autopilot;
+      if (!ap || !ap.mergeNow) return say("MERGE → HOLD", "autopilot not loaded", false);
+      const r = ap.mergeNow({ out: c.h, inn: c.nId, aId: trackId(c.h), bId: trackId(c.nId), aT: c.line, t0: c.T });
+      return r.ok ? say("MERGE → HOLD", `at ${fmt(c.line)}: ${r.why}`) : say("MERGE → HOLD", r.why, false);
+    },
+    learned_vocal_loop: learned("vocal_loop", "VOX LOOP"),
+    learned_vocal_resequence: learned("vocal_resequence", "RE-CUT"),
+    learned_vocal_chop: learned("vocal_chop", "CHOPS"),
+    learned_loop_extend: learned("loop_extend", "EXTEND"),
   };
   function trackId(id) { return root.state ? (id === "a" ? root.state.trackA : root.state.trackB) : null; }
   function fmt(t) { return `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, "0")}`; }
 
-  ui.queryAll("[data-ai-action]").forEach((b) => b.addEventListener("click", async () => {
-    b.classList.add("ai-action-busy");
-    try { await ACTIONS[b.dataset.aiAction](); } catch (e) { say(b.textContent.trim(), e.message, false); }
-    finally { setTimeout(() => b.classList.remove("ai-action-busy"), 600); }
-  }));
-  return { core, ...ACTIONS };
+  // Buttons for the actions above that the page does not carry yet (the HTML stays untouched).
+  const NEW_BUTTONS = [
+    ["merge_hold", "MERGE → HOLD", "TRANSITIONS", "Merge the other deck in on the next line, hold both songs together, then hand over (the set's merge gates)"],
+    ["learned_vocal_loop", "VOX LOOP", "LEARNED", "Learned move now: one vocal line looped on the beat (learned rate limits skipped, safety gates kept)"],
+    ["learned_vocal_resequence", "RE-CUT", "LEARNED", "Learned move now: the vocal re-cut in a new order on the bar grid"],
+    ["learned_vocal_chop", "CHOPS", "LEARNED", "Learned move now: short vocal chops on the 1/8 grid"],
+    ["learned_loop_extend", "EXTEND", "LEARNED", "Learned move now: a break / intro extended by looping (needs SET MIND on this deck)"],
+  ];
+  const bar = ui.el("ai-actions");
+  if (bar && ui.create) {
+    for (const [id, label, group, title] of NEW_BUTTONS) {
+      if (ui.query(`[data-ai-action="${id}"]`)) continue;
+      const b = ui.create("button");
+      b.className = "hw-btn ai-action";
+      b.dataset.aiAction = id; b.dataset.group = group; b.title = title; b.textContent = label;
+      if (bar.appendChild) bar.appendChild(b);
+    }
+  }
+
+  // Contract for other modules: any [data-ai-action="<id>"] button runs ACTIONS[id] or a handler added with
+  // register(id, fn); an id with neither is emitted as "ai-action" {id} on the host bus (window).
+  function register(id, fn) {
+    if (typeof fn !== "function") throw new Error(`aiActions.register(${id}): fn must be a function`);
+    ACTIONS[id] = fn;
+  }
+  // (the Host bus: a window CustomEvent in the browser; engine modules never construct events themselves)
+  function dispatch(id) { host.bus.emit("ai-action", { id }); }
+  function bind(b) {
+    if (!b || !b.dataset || b.dataset.aiBound) return;
+    b.dataset.aiBound = "1";
+    b.addEventListener("click", async () => {
+      const id = b.dataset.aiAction;
+      b.classList.add("ai-action-busy");
+      try { if (typeof ACTIONS[id] === "function") await ACTIONS[id](); else dispatch(id); }
+      catch (e) { say(b.textContent.trim(), e.message, false); }
+      finally { setTimeout(() => b.classList.remove("ai-action-busy"), 600); }
+    });
+  }
+  ui.queryAll("[data-ai-action]").forEach(bind);
+  return { core, ...ACTIONS, register, bind };
   }
   if (root.Engine) root.Engine.mount("aiActions", create);
 })(typeof window !== "undefined" ? window : globalThis);

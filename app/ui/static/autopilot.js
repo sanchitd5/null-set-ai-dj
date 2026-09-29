@@ -978,7 +978,9 @@ function createAutopilotEngine({ host, ai }) {
   }
   // The gate that stopped the hold plan (or every merge): one console line the sim parses
   // ("merge gate: <gate>: <why>[; classic merge]") and one step for the live step log.
+  let lastMergeGate = null;   // the last gate logged, for the on-demand refusal (mergeNow)
   function mergeGateLog(deck, gate, why, classic, tried) {
+    lastMergeGate = { gate, why, classic: !!classic };
     console.info("merge gate:", `${gate}: ${why}${classic ? "; classic merge" : ""}`);
     host.log.step("merge_gate", { deck, decision: classic ? "classic merge" : "refused", why: `${gate}: ${why}`, result: { gate, tried: tried || [] } });
   }
@@ -3590,6 +3592,32 @@ function createAutopilotEngine({ host, ai }) {
   if (startCurBtn) startCurBtn.addEventListener("click", () => { if (!active) startFromCurrent(); });
   if (stopBtn) stopBtn.addEventListener("click", stop);
   if (seedInput) seedInput.addEventListener("keydown", (e) => { if (e.key === "Enter") start(); });
-  return { core: autopilotCore };
+
+  // On demand (ai-actions.js MERGE -> HOLD): merge -> hold -> transition on the loaded pair, A's song time aT
+  // (a phrase line) at audio time t0. The same planMerge / holdPlan gates as the set; a refusal names the
+  // gate. Not while the set runs: its own booking owns the transition timers (clearRun).
+  // o: {out, inn (deck ids), aId, bId (track ids), aT, t0} -> {ok, why}
+  function mergeNow(o) {
+    if (active) return { ok: false, why: "autopilot: the set is running, it books its own merges" };
+    const od = host.decks[o.out], idk = host.decks[o.inn];
+    if (!od || !idk || !od.playing) return { ok: false, why: "deck: nothing is playing" };
+    if (idk.playing) return { ok: false, why: `deck: deck ${o.inn.toUpperCase()} is already playing` };
+    if (!mergesOn()) return { ok: false, why: "off: MERGE is off (ap-merge-toggle)" };
+    lastMergeGate = null;
+    const bFallback = ((idk.analysis && idk.analysis.phrase_boundaries_8bar) || [0])[0] || 0;
+    const mp = planMerge(o.aId, o.bId, od, idk, o.aT, bFallback);
+    if (!mp) {
+      const g = lastMergeGate;
+      return { ok: false, why: g ? `${g.gate}: ${g.why}` : "merge: no plan for this pair" };
+    }
+    const totalMs = executeTransition("Stem Merge", o.out, o.inn, 16, o.t0);
+    const ran = executedMove || "Stem Merge";
+    later(Math.max(0, (o.t0 - audioCtx.currentTime) * 1000) + totalMs + 300, () => { if (!active) od.stopNow(); });
+    const hp = mp.phases;
+    return { ok: true, ran, why: ran === "Stem Merge"
+      ? `${mp.pick ? mp.pick.label + " · " : ""}${mp.M} bars${hp ? `, hold ${hp.hold.bars} bars` : ", fixed length"}`
+      : `merge refused at fire time, ran ${ran}` };
+  }
+  return { core: autopilotCore, mergeNow };
 }
 if (typeof Engine !== "undefined") Engine.mount("autopilot", createAutopilotEngine);

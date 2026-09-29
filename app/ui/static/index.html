@@ -11,6 +11,7 @@
   <link rel="stylesheet" href="/null-bot.css" />
   <link rel="stylesheet" href="/vibe.css" />
   <link rel="stylesheet" href="/anyma-show.css" />
+  <link rel="stylesheet" href="/toggle-drawer.css" />
   <script src="https://unpkg.com/wavesurfer.js@7/dist/wavesurfer.min.js"></script>
   <script src="https://unpkg.com/wavesurfer.js@7/dist/plugins/regions.min.js"></script>
 </head>
@@ -315,6 +316,8 @@
     <button class="hw-btn ai-action" data-ai-action="vocal_throw" data-group="ARTIST FX" title="S5 now: throw the last word of the next vocal line into an echo, the voice back after the tail (needs stems)">VOX THROW</button>
     <button class="hw-btn ai-action" data-ai-action="sweep_dir" data-group="ARTIST FX" title="S6 now: a 4-bar filter sweep in the measured direction, back over one bar">SWEEP DIR</button>
     <button class="hw-btn ai-action" data-ai-action="supermove_replay" data-group="ARTIST FX" title="Replay this song's last NULL-BOT supermove: brake on the next phrase line, back to its downbeat (only after a supermove)">REWIND REPLAY</button>
+    <button class="hw-btn" id="ai-more-btn" type="button" title="Every other on-demand move: grouped, searchable">MORE ACTIONS ▾</button>
+    <aside id="ai-more-drawer" hidden></aside>
   </div>
 
   <section class="deck-panel deck-a" id="deck-a" data-deck="a">
@@ -833,6 +836,8 @@
       <button class="hw-btn accent-btn" id="ap-start-btn">▶ START SET</button>
       <button class="hw-btn" id="ap-start-current-btn" title="Start the set from the song playing now (or loaded on a deck): no download, no restart. The songs you've already played this session steer the suggestions">▶ FROM CURRENT</button>
       <button class="hw-btn" id="ap-stop-btn" disabled>■ STOP</button>
+      <button class="hw-btn" id="ap-moves-btn" type="button" title="All AI move toggles: search, groups, all on / off">AI MOVES <span id="ap-moves-count"></span></button>
+      <aside id="ap-drawer" hidden></aside>
       <label class="hud-label" title="Synced drum machine: sparse fills, build rolls and breakdown kicks on the playing deck's beatgrid">
         <input type="checkbox" id="ap-drums-toggle" checked /> LIVE DRUMS
       </label>
@@ -1042,5 +1047,6 @@
 <script src="/beat-grid-ai.js"></script>
 <script src="/vibe-ui.js"></script>
 <script src="/marquee.js"></script>
+<script src="/toggle-drawer.js"></script>
 </body>
 </html>
