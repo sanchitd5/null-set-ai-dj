@@ -326,7 +326,7 @@
       const d = (e && e.detail) || {};
       if (type === "ai-cue" && Number.isFinite(d.at)) cues = pruneCues(cues, clock()).concat([{ ...d }]);
       if (type === "ai-activity" && d.kind === "stems" && d.deck) flash(d.deck);
-      if (type === "ai-activity" && (d.kind === "stem-move" || d.kind === "learned_move") && d.deck) flash(d.deck);
+      if (type === "ai-activity" && (d.kind === "stem-move" || d.kind === "learned_move" || d.kind === "artist_move") && d.deck) flash(d.deck);
       const entry = feedEntry(type, d);
       if (entry) { feed = feedPush(feed, entry, Date.now()); feedDirty = true; }
       dirty = true;
