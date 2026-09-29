@@ -32,6 +32,36 @@ def test_set_level_report_counts_variety_fx_breakdown_exits_and_overlap():
     assert r["overlap_seconds"] == {"n": 3, "min": 10.0, "p50": 20.0, "p90": 30.0, "max": 30.0, "mean": 20.0}
 
 
+def test_s16_hit_share_target_and_note():
+    from app.ui import autopilot_service as ap
+
+    assert ap.hit_share_target("late night club") is None
+    assert ap.hit_share_target("Wedding: all the HITS please") == ap.HIT_SHARE_HITS
+    assert ap.hit_share_target("underground warehouse, fresh music") == ap.HIT_SHARE_NEW
+    assert ap.hit_share_target("hits and underground") is None          # both: the brief does not choose
+    assert ap.hit_share_note("anthems", 0, 1) == ""                      # too few measured songs
+    assert "songs this crowd already knows" in ap.hit_share_note("anthems and bangers", 1, 4)
+    assert ap.hit_share_note("anthems", 3, 4) == ""                      # 0.75, on target
+    assert "lesser-known" in ap.hit_share_note("new music only", 3, 4)
+    assert ap.hit_share_note("club", 0, 8) == ""                         # no target: no steering
+
+
+def test_s16_fame_counts_only_uses_cached_answers(monkeypatch, tmp_path):
+    from app.ui import server
+
+    monkeypatch.setattr(server, "FAME_PATH", tmp_path / "fame.json")
+    monkeypatch.setattr(server, "_fame", {"a": {"famous": True}, "b": {"famous": False}})
+    monkeypatch.setattr(server, "_track_names", {"a": "X - Hit", "b": "Y - Deep", "c": "Z - Unknown"})
+    assert server._fame_counts(["X - Hit", "Y - Deep", "Z - Unknown", "Not loaded"]) == (1, 2)
+
+
+def test_familiar_and_edits_share():
+    run = {"transitions": [], "songs": [{"name": "A - Song (Extended Mix)"}, {"name": "B - Song"}, {"name": "C - Song (VIP)"}]}
+    r = features.set_level_report({"console": [], "session_events": []}, run, {}, {"A - Song (Extended Mix)": True, "B - Song": False})
+    assert r["familiar_share"] == 0.5 and r["familiar_known"] == 2
+    assert r["edits_share"] == round(2 / 3, 3)
+
+
 def test_set_level_metrics_are_informational_not_scored():
     """The headline score must not move with the new metrics."""
     for k in scorer.SET_LEVEL_KEYS:

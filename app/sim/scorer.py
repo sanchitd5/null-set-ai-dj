@@ -79,9 +79,11 @@ DIRECTION = {
     "llm_calls": 0, "llm_empty_replies": -1, "llm_invalid_replies": -1, "llm_latency_mean_s": 0, "http_errors": -1, "download_failures": -1, "score": -1,
     "recipe_variety": 0, "distinct_recipes": 0, "max_recipe_repeat_run": 0, "fx_budget_spent": 0, "fx_budget_refused": 0,
     "fx_density_per_30min": 0, "exits_checked": 0, "exits_in_breakdown": -1, "overlap_seconds": 0,
+    "familiar_share": 0, "familiar_known": 0, "edits_share": 0,
 }
 SET_LEVEL_KEYS = ("recipe_variety", "distinct_recipes", "max_recipe_repeat_run", "fx_budget_spent", "fx_budget_refused",
-                  "fx_budget_by_kind", "fx_density_per_30min", "exits_checked", "exits_in_breakdown", "overlap_seconds")
+                  "fx_budget_by_kind", "fx_density_per_30min", "exits_checked", "exits_in_breakdown", "overlap_seconds",
+                  "familiar_share", "familiar_known", "edits_share")
 
 
 def _real_artists_of(name: str) -> set:

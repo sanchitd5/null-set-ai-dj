@@ -211,13 +211,19 @@ def learned_moves_report(js: dict, F: dict) -> dict:
             "vocal_clash_s": round(metrics["vocal_clash_s"], 2)}
 
 
-def set_level_report(js: dict, run: dict, by_name: dict) -> dict:
+EDIT_RE = re.compile(r"\b(edit|re-?edit|rework|bootleg|flip|vip|extended|remix|mashup|club mix|dub)\b", re.I)
+
+
+def set_level_report(js: dict, run: dict, by_name: dict, fame: Optional[dict] = None) -> dict:
     """Set-level habits (research/notes/artist-signature-techniques.md S16-S22), informational only:
     recipe variety and the longest run of one recipe, FX budget answers (fx-budget.js console lines),
     exits that started inside A's breakdown (A's song position at transition_start, the shared
-    preplan.breakdown_spans rule on A's analysis) and the overlap seconds of each transition."""
+    preplan.breakdown_spans rule on A's analysis), the overlap seconds of each transition, the share
+    of famous songs among those with a fame answer (S16, fame: name -> famous) and of edits (S17)."""
     from app.music_brain import preplan
 
+    names = [s.get("name") or "" for s in run.get("songs") or []]
+    known = [bool(fame[n]) for n in names if fame and n in fame]
     trans = run.get("transitions") or []
     recipes = [str(t.get("recipe_executed") or "") for t in trans]
     run_max, cur = 0, 0
@@ -253,6 +259,8 @@ def set_level_report(js: dict, run: dict, by_name: dict) -> dict:
         "exits_checked": checked, "exits_in_breakdown": len(inside), "exits_in_breakdown_at": inside,
         "overlap_seconds": {"n": len(ov), "min": q(0), "p50": q(0.5), "p90": q(0.9), "max": q(1.0 - 1e-9),
                             "mean": round(sum(ov) / len(ov), 1) if ov else 0.0},
+        "familiar_share": round(sum(known) / len(known), 3) if known else None, "familiar_known": len(known),
+        "edits_share": round(sum(1 for n in names if EDIT_RE.search(n)) / len(names), 3) if names else 0.0,
     }
 
 
@@ -508,7 +516,9 @@ def feature_table(js: dict, world, run: dict) -> dict:
     never = sorted(k for k, v in table.items() if v["triggered"] == 0)
     return {"table": table, "never_triggered": never, "triggered": sorted(k for k in table if table[k]["triggered"]),
             "cookbook": {"viable": sorted(probe["viable"]), "top1": sorted(probe["top1"]), "total": probe["total"]},
-            "learned_moves": learned, "set_level": set_level_report(js, run, by_name)}
+            "learned_moves": learned,
+            "set_level": set_level_report(js, run, by_name, {server._track_names[t]: bool(f.get("famous"))
+                                                              for t, f in server._fame.items() if t in server._track_names})}
 
 
 def recipe_probe(run: dict, by_name: dict) -> dict:

@@ -1986,6 +1986,18 @@ def _clean_hook(hook: Optional[str]) -> str:
     return " ".join(s.split())[:ENERGY_HOOK_MAX]
 
 
+def _fame_counts(names: list[str], last: int = 8) -> tuple[int, int]:
+    """(famous, known) over the last songs played that already have a fame answer (no lookups here)."""
+    if not _fame and FAME_PATH.exists():
+        try:
+            _fame.update(json.loads(FAME_PATH.read_text()))
+        except ValueError:
+            pass
+    ids = {nm: tid for tid, nm in _track_names.items()}
+    got = [_fame[ids[n]] for n in names[-last:] if n in ids and ids[n] in _fame]
+    return sum(1 for f in got if f.get("famous")), len(got)
+
+
 def _occasion_with_note(occasion: Optional[str], note: Optional[str], variety: str = "",
                         hook: Optional[str] = None) -> str:
     base = occasion or ""
@@ -2096,7 +2108,7 @@ def _autopilot_suggest_impl(req: AutopilotSuggestRequest):
     import traceback
     import numpy as np
     from app.ui import engine
-    from app.ui.autopilot_service import SET_MODES
+    from app.ui.autopilot_service import SET_MODES, hit_share_note
 
     suggest_next_tracks = engine.current().suggest
 
@@ -2183,7 +2195,9 @@ def _autopilot_suggest_impl(req: AutopilotSuggestRequest):
             avg_energy=avg_energy,
             measured_energy=measured_energy,
             occasion=_occasion_with_note(req.occasion, req.energy_note,
-                                         _variety_note(req.variety_run, req.variety_genre),
+                                         "; ".join(x for x in (_variety_note(req.variety_run, req.variety_genre),
+                                                               hit_share_note(req.occasion, *_fame_counts(req.history)))
+                                                   if x),
                                          hook=req.energy_hook),
             history=req.history + req.avoid + req.queue[:6],
             set_position=set_position,
