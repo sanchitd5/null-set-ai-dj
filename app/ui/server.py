@@ -2429,5 +2429,9 @@ def get_track_audio(track_id: str):
     return FileResponse(path)
 
 
+from app.ui.atlas_api import router as _atlas_router  # noqa: E402 -- pair atlas + macros (/api/atlas, /api/macros)
+
+app.include_router(_atlas_router)
+
 if STATIC_DIR.exists():
     app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")
