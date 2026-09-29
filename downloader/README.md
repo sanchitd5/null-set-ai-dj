@@ -36,7 +36,7 @@ YouTube_Audio_Downloader/
 1. Double-click `run.bat`.
 2. A terminal window will open:
    - Paste any YouTube link(s) and press **Enter** to download.
-   - Type `songs` to switch download target directly to `DJAITest/songs/`.
+   - Type `songs` to switch download target directly to `data/songs/`.
    - Type `open` and press **Enter** to open the active downloads folder in File Explorer.
    - Type `q` or `exit` to close the tool.
 

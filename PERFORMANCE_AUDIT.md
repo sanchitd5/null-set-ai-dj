@@ -1,6 +1,6 @@
 # PERFORMANCE_AUDIT.md — Live DJ Engine Efficiency & Zero-Lag Architecture
 
-> **Repository:** `AI-DJ-Mixing-System` (`DJAITest`)  
+> **Repository:** `null-set-ai-dj`  
 > **Status:** Completed Performance & Latency Audit (Engineering Optimization Only)  
 > **Target:** 60 FPS locked UI, sub-15ms audio latency, zero dropouts/glitches during live performance  
 > **Scope:** Pure efficiency, algorithmic, and architectural optimizations — zero feature changes  

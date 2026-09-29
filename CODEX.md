@@ -1,6 +1,6 @@
 # CODEX.md — OpenAI Codex & Copilot Instructions
 
-> **Repository:** `AI-DJ-Mixing-System` (`DJAITest`)  
+> **Repository:** `null-set-ai-dj`  
 > **Environment:** Windows PowerShell / Python 3.10+ / Web Audio API / Librosa / PyTorch (Demucs) / FastAPI  
 > **Knowledge Base:** Embedded Obsidian DJ Knowledge Base (`./DJ/`)  
 > **Cross-Agent Standards:** Multi-agent operating model alongside `AGENTS.md` and `CLAUDE.md`.  
@@ -25,7 +25,7 @@ All assistants share identical ground-truth specifications in `./DJ/`, `IDEAS.md
 ## 2. Repository Layout & Architecture Overview
 
 ```
-DJAITest/
+null-set-ai-dj/
 ├── app/                        # Main application suite
 │   ├── music_brain/            # Core AI transition & DSP engine (analyzer, matcher, stems, renderer)
 │   ├── ui/                     # FastAPI backend (server.py) + Web Audio DJ Console (static/)

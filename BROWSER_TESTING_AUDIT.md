@@ -1,6 +1,6 @@
 # Browser Testing & Verification Audit Report
 
-> **Repository:** `AI-DJ-Mixing-System` (`DJAITest`)  
+> **Repository:** `null-set-ai-dj`  
 > **Component:** AI Music Brain — Interactive DJ Workbench & Live Transition Foundation  
 > **Date:** September 10, 2026  
 > **Environment:** Windows 11, Node.js v22.14.0, Playwright v1.58.2 (Chromium Desktop & Mobile), Python 3.10.11 / FastAPI  

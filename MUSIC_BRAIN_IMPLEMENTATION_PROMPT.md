@@ -1,6 +1,6 @@
 # Master Implementation Prompt: AI Music Brain Engine & DJ Assistant
 
-> **Target Repository:** `AI-DJ-Mixing-System` (`DJAITest`)
+> **Target Repository:** `null-set-ai-dj`
 > **This is the single unified spec** for the AI Music Brain — it supersedes and merges the original
 > functional spec (`ai_dj_assistant_spec.md`) and every feature discussed since. Do not maintain a
 > separate spec document; extend this one.
@@ -203,7 +203,7 @@ disclaimer as any DJ software.)
 ## 2. Directory Structure
 
 ```
-DJAITest/
+null-set-ai-dj/
 ├── DJ/                                 # Ground-truth Obsidian Knowledge Base
 │   ├── 02 - Music Theory/              # Camelot key, phrasing & 32-beat boundaries
 │   ├── 04 - Core Techniques/           # EQ real estate, loops, effects mastery

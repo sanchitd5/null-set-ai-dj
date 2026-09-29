@@ -104,7 +104,7 @@ def _get(params: dict) -> List[dict]:
     import urllib.request
 
     req = urllib.request.Request(f"{LRCLIB}?{urllib.parse.urlencode(params)}",
-                                 headers={"User-Agent": "AI-DJ-Mixing-System (set learner)"})
+                                 headers={"User-Agent": "null-set-ai-dj (set learner)"})
     with urllib.request.urlopen(req, timeout=15) as r:
         return json.loads(r.read()) or []
 
@@ -207,7 +207,7 @@ def lrclib_get(track_id: int) -> dict:
     import urllib.request
 
     req = urllib.request.Request(f"https://lrclib.net/api/get/{int(track_id)}",
-                                 headers={"User-Agent": "AI-DJ-Mixing-System (set learner)"})
+                                 headers={"User-Agent": "null-set-ai-dj (set learner)"})
     with urllib.request.urlopen(req, timeout=15) as r:
         return json.loads(r.read())
 

@@ -1,6 +1,6 @@
 # IDEAS.md — Feature Architecture & Future Roadmap
 
-> **Repository:** `AI-DJ-Mixing-System` (`DJAITest`)  
+> **Repository:** `null-set-ai-dj`  
 > **Status:** Planning & Feature Design Specification (Documentation Only)  
 > **Last Updated:** September 2026  
 

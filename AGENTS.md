@@ -1,6 +1,6 @@
 # AGENTS.md — AI Agent Operating Guide
 
-> **Repository:** `AI-DJ-Mixing-System` (`DJAITest`)  
+> **Repository:** `null-set-ai-dj`  
 > **Dual Architecture:** Python Audio Processing Pipeline + Native Obsidian DJ Knowledge Base  
 > **Last Updated:** September 2026
 
@@ -27,7 +27,7 @@ All three assistants share the identical ground-truth specifications in `./DJ/` 
 This repository unites two complementary domains:
 
 ```
-DJAITest/
+null-set-ai-dj/
 ├── app/                        # Main application suite
 │   ├── music_brain/            # Core AI transition & DSP engine (analyzer, matcher, stems, renderer)
 │   ├── ui/                     # FastAPI backend (server.py) + Web Audio DJ Console (static/)
@@ -286,5 +286,5 @@ Agents can verify the health of the repository and vault by checking:
 * **Audio Downloader:** `YouTube_Audio_Downloader/downloader.py` and `run.bat` present.
 * **Vault File count:** All 78+ notes present in `./DJ/`.
 * **Configuration:** `.obsidian/app.json`, `.obsidian/core-plugins.json`, and `.obsidian/appearance.json` exist.
-* **Vault Registration:** `C:\Users\kaiwa\Documents\DJAITest` registered in `%APPDATA%\obsidian\obsidian.json`.
+* **Vault Registration:** The repo root is registered in `%APPDATA%\obsidian\obsidian.json`.
 * **Git Status:** `.obsidian/` and `DJ/` tracked locally.

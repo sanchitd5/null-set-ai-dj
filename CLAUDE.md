@@ -1,6 +1,6 @@
 # CLAUDE.md — Claude Code Project Instructions
 
-> **Repository:** `AI-DJ-Mixing-System` (`DJAITest`)  
+> **Repository:** `null-set-ai-dj`  
 > **Dual Architecture:** Python Audio Processing Pipeline + Native Obsidian DJ Knowledge Base (`./DJ/`)  
 > **Cross-Agent Compatibility:** Claude Code (`CLAUDE.md`), Antigravity (`AGENTS.md`), and OpenAI Codex (`CODEX.md`).
 
@@ -193,4 +193,4 @@ When writing or modifying code in `mixing_engine.py`, `structure_detector.py`, o
 
 ## 6. Full Cross-Agent Documentation
 
-For extended details, review the master multi-agent specification in [`AGENTS.md`](file:///C:/Users/kaiwa/Documents/DJAITest/AGENTS.md).
+For extended details, review the master multi-agent specification in [`AGENTS.md`](AGENTS.md).
