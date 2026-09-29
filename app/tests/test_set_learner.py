@@ -515,3 +515,25 @@ def test_a_stuck_position_on_repeating_drums_is_no_loop():
     assert not any(o.kind == "loop_extend" for o in sl.transitions(_rows(spans, 0, 200), songs, "s"))
     songs[0] = sl.SongData("A - One", 0.0, 120.0, None, {"drums": sl.onset_env(_clicks(120, 9))})
     assert any(o.kind == "loop_extend" for o in sl.transitions(_rows(spans, 0, 200), songs, "s"))
+
+
+def test_concurrent_merges_keep_both_sets(tmp_path):
+    """Two learn-set runs finishing together: the store lock serialises load -> save,
+    so neither run's observations are dropped by the other's write."""
+    import threading
+
+    p = tmp_path / "learned.json"
+    sets = [f"set{i}" for i in range(8)]
+
+    def run(sid):
+        sl.merge([sl.Observation("bass_swap", sid, 60.0, "A", "B", 0.01, 1.0, {})], path=p)
+
+    threads = [threading.Thread(target=run, args=(s,)) for s in sets]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    seen = {o["set_id"] for o in sl.load_learned(p)["bass_swap"]["observations"]}
+    assert seen == set(sets)
+    assert (tmp_path / "learned.lock").exists()
+    assert not list(tmp_path.glob("*.tmp"))

@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -801,7 +802,14 @@ def merge(observations: List[Observation], path: Path = LEARNED_PATH,
           set_ids: Sequence[str] = ()) -> Dict[str, dict]:
     """Merge into the store. Re-learning the same set replaces its old observations;
     set_ids names the sets being re-learned, so a re-study that now finds nothing
-    (wrong download caught, every move rejected) still clears what it found before."""
+    (wrong download caught, every move rejected) still clears what it found before.
+    Load -> write runs under _store_lock, so two learn-set runs finishing together
+    cannot drop each other's observations."""
+    with _store_lock(path):
+        return _merge_locked(observations, path, set_ids)
+
+
+def _merge_locked(observations: List[Observation], path: Path, set_ids: Sequence[str]) -> Dict[str, dict]:
     store = load_learned(path)
     sets = {o.set_id for o in observations} | set(set_ids)
     for entry in store.values():
@@ -822,10 +830,31 @@ def merge(observations: List[Observation], path: Path = LEARNED_PATH,
     return store
 
 
+class _store_lock:
+    """Exclusive flock on <store>.lock beside the learned store, held across load -> save.
+    No-op where fcntl is missing (Windows), same as set_import's atlas lock."""
+
+    def __init__(self, path: Path):
+        self.path = Path(path).with_suffix(".lock")
+
+    def __enter__(self):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.fh = open(self.path, "a")
+        try:
+            import fcntl
+            fcntl.flock(self.fh, fcntl.LOCK_EX)
+        except ImportError:
+            pass
+        return self
+
+    def __exit__(self, *exc):
+        self.fh.close()          # closing releases the lock
+
+
 def _save(store: Dict[str, dict], path: Path) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
+    tmp = path.with_suffix(f".{os.getpid()}.tmp")   # per process: concurrent writers never share a tmp
     tmp.write_text(json.dumps(store, indent=2), encoding="utf-8")
     tmp.replace(path)
 
@@ -841,6 +870,11 @@ def add_user_rule(kind: str, text: str = "", disable: Optional[bool] = None, pat
     text = (text or "").strip()
     if not text and disable is None:
         raise ValueError("give a rule text, --disable or --enable")
+    with _store_lock(path):
+        return _add_user_rule_locked(kind, text, disable, path)
+
+
+def _add_user_rule_locked(kind: str, text: str, disable: Optional[bool], path: Path) -> dict:
     store = load_learned(path)
     what, stems, live = KINDS[kind]
     e = store.setdefault(kind, {"kind": kind, "what": what, "stems": stems, "live": live, "observations": [], "count": 0,
