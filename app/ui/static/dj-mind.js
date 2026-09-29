@@ -1021,11 +1021,17 @@
       const lo = eqBand(id, "low"), mid = eqBand(id, "mid");
       let t = ms(L - pos);
       later(t, () => { if (deckId === id) { ramp(lo, LOW_KILL, ms(2 * bar - beat)); ramp(mid, FILTER_MID_DB, ms(2 * bar - beat)); } });
-      for (const [lenBeats, playBeats] of [[1, 4], [0.5, 2], [0.25, 2]]) {
-        later(t, () => { if (deckId === id) loopAt(d, id, L, lenBeats); });
-        t += ms(playBeats * beat);
+      // [S4] Angello / Cox: with a drum stem the roll is ONE kick slice retriggered 1/4 > 1/8 > 1/16 and a beat
+      // of silence (fx-moves.js kickRoll), under the same riser; without one, the whole-deck loop roll.
+      const kr = host.mod.fxMoves && host.mod.fxMoves.kickRoll(id, end, lastPhrase);
+      if (kr) t += ms(8 * beat);
+      else {
+        for (const [lenBeats, playBeats] of [[1, 4], [0.5, 2], [0.25, 2]]) {
+          later(t, () => { if (deckId === id) loopAt(d, id, L, lenBeats); });
+          t += ms(playBeats * beat);
+        }
       }
-      later(t - 10, () => { if (deckId === id) { loopRelease(d, id, end); setKnob(lo, 0); setKnob(mid, 0); } });
+      later(t - 10, () => { if (deckId === id) { if (!kr) loopRelease(d, id, end); setKnob(lo, 0); setKnob(mid, 0); } });
       busyUntil = nowS() + t / 1000 + 1;
     } else if (dec.action === "beat_boost") {
       // [[Fred again.. Case Study]]: live drums over the record, here one

@@ -167,6 +167,8 @@ function createEffect(type, bpm) {
   return { input, output, nodes };
 }
 
+const WET_BAND_TYPES = ["reverb", "echo", "pingpong"];
+
 class FXUnit {
   constructor(deck) {
     this.deck = deck;
@@ -197,7 +199,31 @@ class FXUnit {
     if (this.type === "none") return;
     this.effect = createEffect(this.type, this.deck.bpm);
     this.deck.fxInput.connect(this.effect.input);
-    this.effect.output.connect(this.wetGain);
+    const band = this._wetBand();
+    if (!band) { this.effect.output.connect(this.wetGain); return; }
+    // [S3] Angello "reverb only on the mids": the wet return is band-limited
+    // (high-pass + low-pass), so a tail never carries sub-bass or hats.
+    const hp = audioCtx.createBiquadFilter(), lp = audioCtx.createBiquadFilter();
+    hp.type = "highpass"; hp.frequency.value = band.low;
+    lp.type = "lowpass"; lp.frequency.value = band.high;
+    this.effect.output.connect(hp); hp.connect(lp); lp.connect(this.wetGain);
+    this.effect.nodes.push(hp, lp);
+    this.band = band;
+  }
+
+  // wetBand: reverb / echo / ping-pong sends are band-limited unless the
+  // console's ap-fx-wet_band (or the artist-moves master) is unchecked.
+  // Edges from the deck's measured brightness (fx-moves.js bandEdges).
+  _wetBand() {
+    this.band = null;
+    if (!WET_BAND_TYPES.includes(this.type)) return null;
+    const box = (id) => { const el = typeof document !== "undefined" && document.getElementById(id); return el ? el.checked : true; };
+    if (!box("ap-fx-toggle") || !box("ap-fx-wet_band")) return null;
+    const fm = window.fxMoves, core = window.fxMovesCore;
+    const band = fm && fm.bandFor ? fm.bandFor(this.deck) : core ? core.bandEdges(null) : { low: 300, high: 4000, fallbacks: [] };
+    const fb = band.fallbacks && band.fallbacks.length ? ` (constants: ${band.fallbacks.join(", ")})` : "";
+    console.info(`artist move wet_band: ${this.type} send on deck ${this.deck.id} band-limited ${band.low}-${band.high} Hz${fb}`);
+    return band;
   }
 
   _applyMix() {

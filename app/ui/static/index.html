@@ -309,6 +309,12 @@
     <button class="hw-btn" data-ai-action="artist-tease" data-group="ARTIST LOOPS" title="Cue tease now: stabs of the other deck's first drum hit on the backbeat before the next line (or its planned entry), high-passed, drums only">CUE TEASE</button>
     <button class="hw-btn" data-ai-action="artist-roll" data-group="ARTIST LOOPS" title="Roll now: 1/2-beat repeats of this song's drums at low wet over the last bar before the next line">ROLL</button>
     <button class="hw-btn" data-ai-action="artist-perc" data-group="ARTIST LOOPS" title="Percussion bridge from a third deck (refused: this console has two decks)">PERC BRIDGE</button>
+    <button class="hw-btn ai-action" data-ai-action="mid_blend" data-group="ARTIST FX" title="S2 now: dip the other deck's mids under this song's melody until it resolves (both decks on the master)">MID BLEND</button>
+    <button class="hw-btn ai-action" data-ai-action="wet_band" data-group="ARTIST FX" title="S3 now: a 2-bar reverb throw on the mids only, from the next bar">MID SEND</button>
+    <button class="hw-btn ai-action" data-ai-action="kick_roll" data-group="ARTIST FX" title="S4 now: kick roll 1/4 > 1/8 > 1/16 into the next phrase line (needs stems)">KICK ROLL</button>
+    <button class="hw-btn ai-action" data-ai-action="vocal_throw" data-group="ARTIST FX" title="S5 now: throw the last word of the next vocal line into an echo, the voice back after the tail (needs stems)">VOX THROW</button>
+    <button class="hw-btn ai-action" data-ai-action="sweep_dir" data-group="ARTIST FX" title="S6 now: a 4-bar filter sweep in the measured direction, back over one bar">SWEEP DIR</button>
+    <button class="hw-btn ai-action" data-ai-action="supermove_replay" data-group="ARTIST FX" title="Replay this song's last NULL-BOT supermove: brake on the next phrase line, back to its downbeat (only after a supermove)">REWIND REPLAY</button>
   </div>
 
   <section class="deck-panel deck-a" id="deck-a" data-deck="a">
@@ -871,6 +877,13 @@
         <input type="checkbox" id="ap-artist-roll" checked /> ROLL</label>
       <label class="hud-label" data-group="ARTIST LOOPS" title="S11 percussion bridge from a third deck (Conducta, sourced): needs a third deck, which this console does not have, so it never plays; the refusal is logged">
         <input type="checkbox" id="ap-artist-perc_bridge" checked /> PERC BRIDGE</label>
+      <label class="hud-label" data-group="ARTIST FX" title="Artist-signature FX moves (research/notes/artist-signature-techniques.md, batch A). Off: none of them play. Unverified by ear: judged by measured gates only"><input type="checkbox" id="ap-fx-toggle" checked /> ARTIST FX</label>
+      <label class="hud-label" data-group="ARTIST FX" title="S2 melodic long blend (Anyma / Afterlife style, mechanism from a genre guide): B's mids dipped until A's melody resolves, reverb swell on A's exit"><input type="checkbox" id="ap-fx-mid_blend" checked /> MID BLEND</label>
+      <label class="hud-label" data-group="ARTIST FX" title="S3 Steve Angello, sourced: reverb / echo sends on the mids only (no sub, no hats in the tail)"><input type="checkbox" id="ap-fx-wet_band" checked /> MID SEND</label>
+      <label class="hud-label" data-group="ARTIST FX" title="S4 Angello / Carl Cox, sourced: the drum stem's kick retriggered 1/4, 1/8, 1/16 into the drop, a beat of silence, the drop on the downbeat"><input type="checkbox" id="ap-fx-kick_roll" checked /> KICK ROLL</label>
+      <label class="hud-label" data-group="ARTIST FX" title="S5 Serato stem FX, sourced (the Guetta link is a guess): the last word of A's vocal thrown into an echo as the vocal stem mutes"><input type="checkbox" id="ap-fx-vocal_throw" checked /> VOX THROW</label>
+      <label class="hud-label" data-group="ARTIST FX" title="S6 melodic techno guide: the outgoing filter sweep goes low-pass or high-pass from B's first-bars brightness"><input type="checkbox" id="ap-fx-sweep_dir" checked /> SWEEP DIR</label>
+      <label class="hud-label" data-group="ARTIST FX" title="Owner decision: after a big NULL-BOT supermove, brake on the phrase line and play the supermove again (once per song, rare). The only rewind the AI may play"><input type="checkbox" id="ap-fx-supermove_replay" checked /> REWIND REPLAY</label>
       <label class="hud-label" title="Phrase-level DJ moves: pre-clear, sub drops, loops, beat jumps, rolls, filter builds, echo throws">
         <input type="checkbox" id="ap-mind-toggle" checked /> SET MIND
       </label>
@@ -1013,6 +1026,7 @@
 <script src="/browser.js"></script>
 <script src="/stem-moves.js"></script>
 <script src="/learned-moves.js"></script>
+<script src="/fx-moves.js"></script>
 <script src="/riff-over-rap.js"></script>
 <script src="/auto-sampler.js"></script>
 <script src="/ai-actions.js"></script>
