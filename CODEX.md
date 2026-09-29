@@ -97,7 +97,14 @@ python -m app.music_brain.agent_bridge preview data/songs/input.mp3 data/songs/i
 
 # Download YouTube audio (320kbps CBR MP3)
 python downloader/downloader.py -o data/songs "<youtube_url>"
+
+# Virtual set sim: score a whole autopilot set offline (lower is better); see app/sim/README.md
+python3 -m app.sim.suite --check
+python3 -m app.sim.virtual_set --replay NAME --out DIR
+python3 -m app.sim.compare A/report.json B/report.json
 ```
+
+Live-console rules the sim enforces (details in `CLAUDE.md` section 4 and `app/sim/LEARNINGS.md`): tonal blends need Camelot >= 0.8 else Echo Out; key-locked stretch capped at 8%; the energy last-round `force` widens rises only; a stem intro or strip on a silent stem is refused.
 
 ---
 
