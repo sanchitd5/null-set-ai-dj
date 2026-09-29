@@ -13,13 +13,17 @@
 // long particle dissolve, learned/artist moves are small accents.
 // Anyma drops (a long dip or build, then a hard jump on a phrase line, found
 // once per track) cut to the figure, which DANCES on the beat for 16-32 bars.
-// SHOW AUTO (#ap-show-auto): while the AI drives, the AI sizes the stage
-// itself (full on big moments, embedded in calm phrases), logged as
-// `show: full|embedded: <why>`. It never calls the browser Fullscreen API.
+// SHOW (#ap-show-toggle) = the Anyma look in the DJ elements themselves
+// (anyma-ui.js: platters, waveform lanes, VIBE strip, meters), no stage, no
+// overlay, no translucent panels. SHOW AUTO (#ap-show-auto) = the director may
+// run the in-element moments (drops, anticipation, the dancing figure); it never
+// opens the stage. STAGE (#show-stage) is the only way to the full-page WebGL
+// takeover: manual and sticky. It never calls the browser Fullscreen API.
+// (core.autoStep, the old stage-sizing rules, stays pure and tested but unused.)
 //
 // Layout: a pure `core` (music state, scene choice, trigger mapping, director,
 // adaptive quality; node-checked by app/tests/anyma_show_check.js) and a thin
-// WebGL glue that only runs while SHOW is on and the page is visible. NULL-BOT
+// glue that only runs while SHOW is on and the page is visible. NULL-BOT
 // (z 880) stays above the stage (z 870). Nothing here touches the audio graph:
 // stem levels are read from the decks' decoded stem buffers.
 (function (root) {
@@ -710,8 +714,9 @@
   // ---- DOM / WebGL glue --------------------------------------------------
   // Thin on purpose: reads deck state and console events through the Host
   // port, feeds the pure core, draws. Nothing is allocated per frame.
-  // SHOW (#ap-show-toggle, autopilot drawer) turns it on embedded behind the waveforms + decks;
-  // STAGE (#show-stage, top bar) fills the page with it. Default off.
+  // SHOW (#ap-show-toggle, autopilot drawer) turns the look on inside the DJ elements
+  // (mode "elements", anyma-ui.js, ticked on the shared visuals.js loop); STAGE
+  // (#show-stage, top bar) is the manual full-page WebGL takeover. Default off.
   const doc = root.document;
   const toggle = doc.getElementById("ap-show-toggle"), stageBtn = doc.getElementById("show-stage");
   root.anymaShow = { core };
@@ -731,11 +736,9 @@
   let reduced = !!(mq && mq.matches);
   if (mq && mq.addEventListener) mq.addEventListener("change", (e) => { reduced = e.matches; });
 
-  // stage: an embedded background layer of the console, not a floating box.
-  // EMBEDDED: behind the waveforms + decks (#wave-stage .. .workspace), sized to that
-  // band by a ResizeObserver. FULL: behind the whole console. OFF: hidden, no GL.
-  // It sits at z-index -1 in the page, so every console control paints above it,
-  // and NULL-BOT (fixed, z 880) and the VFX canvas (z 850) stay above too.
+  // stage (STAGE only): a background layer behind the whole console, not a floating
+  // box. OFF / elements: hidden, no GL. It sits at z-index -1 in the page, so every
+  // console control paints above it, and NULL-BOT (z 880) and the VFX canvas (z 850) too.
   const stage = doc.createElement("div");
   stage.className = "anyma-stage"; stage.hidden = true;
   stage.setAttribute("aria-hidden", "true");
@@ -743,15 +746,7 @@
   const led = doc.createElement("div"); led.className = "anyma-led";
   const dbg = doc.createElement("pre"); dbg.className = "anyma-debug"; dbg.hidden = true;
   stage.append(cv, led, dbg);
-  const bandTop = doc.querySelector(".wave-stage"), bandEnd = doc.querySelector(".workspace");
-  doc.body.insertBefore(stage, bandTop || doc.body.firstChild);
-  // EMBEDDED band = top of the waveform section to the bottom of the deck row
-  function placeBand() {
-    if (mode !== "embed" || !bandTop) { stage.style.top = stage.style.height = ""; return; }
-    const y0 = bandTop.getBoundingClientRect().top + root.scrollY;
-    const y1 = (bandEnd || bandTop).getBoundingClientRect().bottom + root.scrollY;
-    stage.style.top = `${Math.round(y0)}px`; stage.style.height = `${Math.max(1, Math.round(y1 - y0))}px`;
-  }
+  doc.body.insertBefore(stage, doc.body.firstChild);
 
   // ---- state (all allocated once) ----
   const dir = core.createDirector((Date.now() & 0xffff) | 1);
@@ -762,13 +757,13 @@
   const tracks = { a: { an: null, pt: null, drops: [], prev: NaN }, b: { an: null, pt: null, drops: [], prev: NaN } };
   const dance = core.danceNew();
   let danceAmt = 0;
-  // SHOW AUTO (#ap-show-auto, VISUALS group, default on): the AI picks stage / window
+  // SHOW AUTO (#ap-show-auto, VISUALS group, default on): in-element moments allowed
   const autoBox = doc.getElementById("ap-show-auto");
-  const auto = core.autoNew();
-  let userHit = false, escHit = false, manualHit = false, evMoment = null, dropMoment = null, mergePh = null;
   const booked = new Map(), upcoming = [];   // key -> {key, kind, at (director clock), deck}
   let danceOn = false;
-  const autoIn = { on: false, driving: false, mode: "off", ms, moment: null, user: false, esc: false, manual: false };
+  // in-element look input (anyma-ui.js core), per-deck music state for the off-air deck
+  let uiIn = null;   // allocated once, on the first element step
+  const msEl = { a: core.musicStateNew(), b: core.musicStateNew() };
   const pose = new Float64Array(6), mvp = new Float32Array(16), proj = new Float32Array(16), view = new Float32Array(16);
   let mode = "off", active = false, gl = null, prog = null, U = null, A = null, geo = null, raf = 0, lastT = 0;
   let onAir = null, lastCueT = -Infinity, arm = 0, travel = 0, psize = 2, W = 1, H = 1;
@@ -785,7 +780,6 @@
     if (bm) booked.set(bm.key, Object.assign(bm, { at: Number.isFinite(an) ? now + (bm.at - an) : now }));
     if (!ev) return;
     if (ev.type === "transition") lastCueT = now;
-    if (type === "ai-cue" && e && e.detail && e.detail.kind === "peak") evMoment = { kind: "peak move", evidence: e.detail.why || "" };
     core.queueEvent(dir, ev);
   };
   const h0 = hostOf();
@@ -823,17 +817,6 @@
     const tags = Array.isArray(an.tags) ? an.tags.join(" ") : "";
     return [el ? el.textContent : "", an.genre, an.artist, an.title, tags, d.trackName].filter((x) => typeof x === "string").join(" ");
   }
-  // merge -> hold on the booked Stem Merge (the vibe strip's phase math)
-  function mergeHold() {
-    const ap = root.autopilotState, vc = root.vibeUi && root.vibeUi.core, ds = decksNow();
-    const out = ap && ap.active ? ds[ap.activeDeck] : null, inn = out ? (out === ds.a ? ds.b : ds.a) : null;
-    const plan = inn && ap.next && /stem merge/i.test(ap.next.recipe || "") ? inn._mergePlan : null;
-    if (!plan || !vc || typeof out._currentPosition !== "function") { mergePh = null; return null; }
-    const ph = vc.mergePhase(plan, (out._currentPosition() - plan.aT) / (240 / (out.bpm || 128)));
-    const hit = mergePh === "merge" && ph === "hold";
-    mergePh = ph;
-    return hit ? { kind: "merge -> hold", evidence: (plan.pick && plan.pick.label) || "" } : null;
-  }
   function upcomingNow(now, d, pos) {
     upcoming.length = 0;
     for (const [k, m] of booked) if (m.at < now - 2) booked.delete(k); else upcoming.push(m);
@@ -843,20 +826,57 @@
     }
     return upcoming;
   }
-  function stepAuto(now, d, pos) {
-    const ap = root.autopilotState;
-    let moment = dropMoment || evMoment || mergeHold();
-    if (!moment && dir.last === "supermove") moment = { kind: "supermove", evidence: "" };
-    else if (!moment && dir.last === "drop") moment = { kind: "drop", evidence: ms.section || "" };
-    dropMoment = evMoment = null;
-    autoIn.on = !!(autoBox && autoBox.checked) && active; autoIn.driving = !!(ap && ap.active === true) || !!(d && d.playing && ms.ok);
-    autoIn.mode = mode; autoIn.moment = moment; autoIn.upcoming = upcomingNow(now, d, pos); autoIn.user = userHit; autoIn.esc = escHit; autoIn.manual = manualHit;
-    const r = core.autoStep(auto, autoIn, now);
-    userHit = escHit = manualHit = false;
-    if (!r) return;
-    if (r.mode !== mode) setMode(r.mode);
-    const line = `show: ${r.mode === "full" ? "full" : "embedded"}: ${r.why}`;
-    if (typeof root.aiStep === "function") root.aiStep("show", { decision: line, why: r.evidence || r.why, phase: "show" });
+  // the anticipation queue's soonest moment ahead (booked + predicted), or null
+  function nextMoment(now, d, pos) {
+    let best = null;
+    for (const m of upcomingNow(now, d, pos)) if (m.at > now && (!best || m.at < best.at)) best = m;
+    return best;
+  }
+  // one shared step: the on-air deck's music -> director, dance sync, stems, drives
+  function step(now, dt) {
+    const d = pickDeck(), pt = d ? trackOf(onAir, d) : null;
+    const pos = d && typeof d._currentPosition === "function" ? d._currentPosition() : NaN;
+    core.musicState(pt, pos, d && d.bpm, ms);
+    // Anyma drop crossed on the on-air deck: the figure dances
+    const tr = d ? tracks[onAir] : null;
+    if (tr) {
+      const dr = ms.ok ? core.dropCrossed(tr.drops, tr.prev, pos) : null;
+      tr.prev = ms.ok ? pos : NaN;
+      if (dr) core.queueEvent(dir, { type: "anyma", at: now });
+    }
+    core.stepDirector(dir, ms, now, dt, reduced);
+    // the Anyma-drop dance, for NULL-BOT to dance in sync: "show-dance" {active, at0, beatS}
+    const dOn = now < dir.danceUntil;
+    if (dOn !== danceOn) {
+      danceOn = dOn;
+      const an = audioNow(), h = hostOf();
+      const detail = { active: dOn, at0: Number.isFinite(an) ? an - (now - dir.danceFrom) : NaN, beatS: ms.ok ? ms.beat : NaN };
+      if (h && h.bus) h.bus.emit("show-dance", detail);
+      else if (typeof root.dispatchEvent === "function" && typeof CustomEvent === "function") root.dispatchEvent(new CustomEvent("show-dance", { detail }));
+    }
+    core.stemsStep(st, d && ms.ok && readStems(d, pos) ? raw : null, dt);
+    core.drives(ms, st, dv);
+    core.dancePose(ms, dv, reduced, dance);
+    return elements(now, dt, d, pos);
+  }
+  // the DJ elements (anyma-ui.js): true while anything there still moves
+  function elements(now, dt, d, pos) {
+    const ui = root.anymaUi;
+    if (!ui) return false;
+    if (!uiIn) uiIn = ui.core.inputNew();
+    const ds = decksNow(), I = uiIn;
+    I.on = active; I.auto = !!(autoBox && autoBox.checked); I.onAir = onAir; I.now = now;
+    I.last = dir.last; I.red = dir.red; I.dance = dir.dance; I.scene = dir.scene;
+    for (const id of ["a", "b"]) {
+      const dd = ds[id], s = I[id];
+      s.playing = !!(dd && dd.playing);
+      if (id === onAir) { s.ms = ms; s.eye = st.live ? dv.eye : NaN; s.weight = st.live ? dv.weight : NaN; continue; }
+      const p = s.playing && dd.analysis ? trackOf(id, dd) : null;
+      core.musicState(p, p && typeof dd._currentPosition === "function" ? dd._currentPosition() : NaN, dd && dd.bpm, msEl[id]);
+      s.ms = msEl[id]; s.eye = NaN; s.weight = NaN;
+    }
+    I.next = I.auto ? nextMoment(now, d, pos) : null;
+    return ui.update(I, dt, reduced, dance, core.POSES[dance.poseIdx]);
   }
   // RMS of each decoded stem around the play position (read-only, strided)
   function readStems(d, pos) {
@@ -965,12 +985,7 @@ void main() {
     cv.width = W; cv.height = H;
     psize = 9 * H / 900;                                    // px at 1 unit from the camera
   }
-  root.addEventListener("resize", () => { if (active) { placeBand(); resize(); } });
-  // the band follows the console layout (waveform zoom, panels opening), not a timer
-  if (typeof root.ResizeObserver === "function") {
-    const ro = new root.ResizeObserver(() => { if (active) { placeBand(); resize(); } });
-    for (const el of [bandTop, bandEnd, doc.body]) if (el) ro.observe(el);
-  }
+  root.addEventListener("resize", () => { if (mode === "full") resize(); });
 
   // column-major perspective * lookAt, written into mvp
   function camera(scene, shot, shotT) {
@@ -1010,40 +1025,43 @@ void main() {
     if (g.ln && la > 0.005) { bindRec(g.lb); gl.uniform1f(U.u_line, 1); gl.uniform1f(U.u_alpha, la); gl.drawArrays(gl.LINES, 0, g.ln); }
   }
 
-  // ---- loop: only while SHOW is on and the page is visible ----
-  function wake() { if (!raf && active && gl && !doc.hidden) raf = root.requestAnimationFrame(frame); }
+  // ---- loops: only while SHOW is on and the page is visible ----
+  // elements: a tick on the shared visuals.js loop (own rAF only if that loop is missing);
+  // full: the STAGE's own WebGL loop, which steps the elements too
+  const shared = () => (root.nulVisuals && typeof root.nulVisuals.addTick === "function" ? root.nulVisuals : null);
+  function tick(now, dt) {
+    if (mode !== "elements" || doc.hidden) return false;
+    // classic look: SHOW draws nothing in the elements, so it does no work either
+    if (!doc.documentElement.classList.contains("anyma-look")) { if (root.anymaUi) root.anymaUi.update(null, dt, reduced); return false; }
+    const moving = step(now, dt);
+    const d = onAir ? decksNow()[onAir] : null;
+    return moving || !!(d && d.playing) || dir.queue.length > 0 || now < dir.danceUntil;
+  }
+  function wake() {
+    if (raf || !active || doc.hidden) return;
+    if (mode === "full") { if (gl) raf = root.requestAnimationFrame(frame); return; }
+    const sv = shared();
+    if (sv) { sv.wake(); return; }
+    raf = root.requestAnimationFrame(ownTick);
+  }
+  function ownTick() {
+    raf = 0;
+    const now = nowS(), dt = lastT ? Math.min(0.1, now - lastT) : 1 / 60;
+    lastT = now;
+    if (tick(now, dt)) wake(); else lastT = 0;
+  }
+  // a deck starting wakes a settled elements loop (the shared loop has its own 1 s check)
+  root.setInterval(() => { if (mode === "elements" && !raf && !shared()) wake(); }, 1000);
   function frame() {
     raf = 0;
-    if (!active || !gl || doc.hidden) return;
+    if (mode !== "full" || !gl || doc.hidden) return;
     raf = root.requestAnimationFrame(frame);
     const t0 = perf(), now = t0 / 1000;
     const gapMs = lastT ? (now - lastT) * 1000 : 1000 / 60;
     const dt = lastT ? Math.min(0.1, now - lastT) : 1 / 60;
     lastT = now;
 
-    const d = pickDeck(), pt = d ? trackOf(onAir, d) : null;
-    const pos = d && typeof d._currentPosition === "function" ? d._currentPosition() : NaN;
-    core.musicState(pt, pos, d && d.bpm, ms);
-    // Anyma drop crossed on the on-air deck: the figure dances, SHOW AUTO may go full
-    const tr = d ? tracks[onAir] : null;
-    if (tr) {
-      const dr = ms.ok ? core.dropCrossed(tr.drops, tr.prev, pos) : null;
-      tr.prev = ms.ok ? pos : NaN;
-      if (dr) { core.queueEvent(dir, { type: "anyma", at: now }); dropMoment = { kind: "anyma drop", evidence: core.dropEvidence(dr) }; }
-    }
-    core.stepDirector(dir, ms, now, dt, reduced);
-    stepAuto(now, d, pos);
-    // the Anyma-drop dance, for NULL-BOT to dance in sync: "show-dance" {active, at0, beatS}
-    const dOn = now < dir.danceUntil;
-    if (dOn !== danceOn) {
-      danceOn = dOn;
-      const an = audioNow(), h = hostOf();
-      const detail = { active: dOn, at0: Number.isFinite(an) ? an - (now - dir.danceFrom) : NaN, beatS: ms.ok ? ms.beat : NaN };
-      if (h && h.bus) h.bus.emit("show-dance", detail);
-      else if (typeof root.dispatchEvent === "function" && typeof CustomEvent === "function") root.dispatchEvent(new CustomEvent("show-dance", { detail }));
-    }
-    core.stemsStep(st, d && ms.ok && readStems(d, pos) ? raw : null, dt);
-    core.drives(ms, st, dv);
+    step(now, dt);
 
     // scene drives: arms rise with a build, corridor speed follows energy, scan line once per bar
     const armTo = !ms.ok ? 0.1 : ms.cls === "build" ? 0.2 + 0.6 * ms.phrasePhase : ms.cls === "drop" ? 0.95 : ms.cls === "groove" ? 0.3 : 0.08;
@@ -1060,8 +1078,7 @@ void main() {
     gl.uniform1f(U.u_travel, travel); gl.uniform1f(U.u_scan, scan); gl.uniform1f(U.u_glitch, dir.glitch);
     gl.uniform1f(U.u_psize, psize); gl.uniform1f(U.u_red, dir.red);
     gl.uniform1f(U.u_flash, (reduced ? 0 : dir.flash * 0.6) + dir.accent * 0.25);
-    // DANCE: beat-locked pose of the figure (only drawn into the figure scene)
-    core.dancePose(ms, dv, reduced, dance);
+    // DANCE: beat-locked pose of the figure (only drawn into the figure scene; step() posed it)
     danceAmt = dir.dance * dance.amp;
     const P = core.POSES[dance.poseIdx];
     gl.uniform1f(U.u_sway, dance.sway); gl.uniform1f(U.u_nod, dance.nod); gl.uniform1f(U.u_hit, dance.hit);
@@ -1080,58 +1097,51 @@ void main() {
         + `scene ${dir.scene}/${dir.shot}${dir.prev ? ` <- ${dir.prev} ${(dir.mix * 100).toFixed(0)}%` : ""}  last ${dir.last || "-"}\n`
         + `deck ${onAir || "-"}  ${ms.ok ? `${ms.cls} bar ${ms.barIdx} phrase ${ms.phraseIdx} e ${ms.energy.toFixed(2)}${ms.vocal ? " vocal" : ""}` : "idle"}\n`
         + `stems ${st.live ? "live" : "grid"}  pulse ${dv.pulse.toFixed(2)} weight ${dv.weight.toFixed(2)} eye ${dv.eye.toFixed(2)}\n`
-        + `auto ${autoBox && autoBox.checked ? `${auto.mode} (${auto.why || "-"})${now < auto.pausedUntil ? " paused" : ""}` : "off"}`
-        + `  dance ${dir.dance.toFixed(2)}  drops ${onAir ? tracks[onAir].drops.length : 0}`;
+        + `auto ${autoBox && autoBox.checked ? "moments on" : "off"}  dance ${dir.dance.toFixed(2)}  drops ${onAir ? tracks[onAir].drops.length : 0}`;
     }
   }
 
-  // mode: "off" | "embed" (background of waveforms + decks) | "full" (console takeover). No floating window.
+  // mode: "off" | "elements" (the look inside the DJ elements, no stage) | "full"
+  // (the manual STAGE takeover). No floating window, no embedded band.
   function setMode(m) {
-    if (m !== "off" && m !== "embed" && m !== "full") return;
-    if (m !== "off" && !gl && !initGL()) {
-      m = "off";
-      if (toggle) toggle.title = "SHOW needs WebGL, which this browser did not give";
-      if (typeof setStatus === "function") setStatus("SHOW needs WebGL");
+    if (m !== "off" && m !== "elements" && m !== "full") return;
+    if (m === "full" && !gl && !initGL()) {
+      m = "elements";
+      if (stageBtn) stageBtn.title = "STAGE needs WebGL, which this browser did not give";
+      if (typeof setStatus === "function") setStatus("STAGE needs WebGL");
     }
+    if (raf) root.cancelAnimationFrame(raf);
+    raf = 0;
     mode = m; active = m !== "off";
-    stage.hidden = !active;
+    const sv = shared();
+    if (sv) { if (m === "elements") sv.addTick(tick); else sv.removeTick(tick); }
+    stage.hidden = m !== "full";
     stage.classList.toggle("anyma-full", m === "full");
-    doc.body.classList.toggle("show-embed", m === "embed");
     doc.body.classList.toggle("show-full", m === "full");
-    placeBand();
     if (toggle) toggle.checked = active;
     if (stageBtn) { stageBtn.setAttribute("aria-pressed", String(m === "full")); stageBtn.classList.toggle("vfx-on", m === "full"); stageBtn.textContent = m === "full" ? "IN CONSOLE" : "STAGE"; }
-    if (active) { resize(); lastT = 0; fpsT = nowS(); wake(); return; }
-    if (raf) root.cancelAnimationFrame(raf);
-    raf = 0; dir.queue.length = 0;
+    lastT = 0;
+    if (m === "full") resize();
+    if (active) { fpsT = nowS(); wake(); return; }
+    dir.queue.length = 0;
+    if (root.anymaUi) root.anymaUi.update(null, 0, reduced);   // elements back to the plain look
   }
-  if (toggle) { toggle.checked = false; toggle.addEventListener("change", () => setMode(toggle.checked ? (mode === "full" ? "full" : "embed") : "off")); }
-  if (stageBtn) stageBtn.addEventListener("click", () => { manualHit = true; setMode(mode === "full" ? "embed" : "full"); });
-  // Esc leaves the stage for the window
-  root.addEventListener("keydown", (e) => { if (mode === "full" && e.key === "Escape") { escHit = true; setMode("embed"); } });
-  // any hand on the decks or the mixer: back to the window, SHOW AUTO pauses 2 minutes
-  const onHand = (e) => {
-    if (!e.isTrusted || !active || !e.target || typeof e.target.closest !== "function") return;
-    if (mode === "full" && e.target.closest(".deck-panel, .mixer")) userHit = true;
-  };
-  for (const t of ["pointerdown", "input"]) doc.addEventListener(t, onHand, { capture: true, passive: true });
+  if (toggle) { toggle.checked = false; toggle.addEventListener("change", () => setMode(toggle.checked ? (mode === "full" ? "full" : "elements") : "off")); }
+  // STAGE: manual and sticky; only the user opens or closes it (button or Esc)
+  if (stageBtn) stageBtn.addEventListener("click", () => setMode(mode === "full" ? "elements" : "full"));
+  root.addEventListener("keydown", (e) => { if (mode === "full" && e.key === "Escape") setMode("elements"); });
   doc.addEventListener("visibilitychange", () => {
     if (doc.hidden) { if (raf) root.cancelAnimationFrame(raf); raf = 0; lastT = 0; } else wake();
   });
   root.anymaShow = { core, setMode, get mode() { return mode; }, stats() { dbg.hidden = !dbg.hidden; },
     debug() {
-      const now = nowS(), ap = root.autopilotState, i = autoIn;
+      const now = nowS(), ap = root.autopilotState, look = root.anymaUi ? root.anymaUi.look : null;
       const next = upcoming.filter((m) => m.at > now).sort((x, y) => x.at - y.at)[0] || null;
-      const whyNot = mode === "full" ? "" : !active ? "SHOW off" : !(autoBox && autoBox.checked) ? "SHOW AUTO unchecked"
-        : !ms.ok ? "no on-air deck with analysis" : !i.driving ? "AI not driving and no deck playing"
-        : now < auto.pausedUntil ? `paused ${(auto.pausedUntil - now).toFixed(0)}s (user input / Esc)`
-        : next ? `waiting: ${next.kind} in ${(next.at - now).toFixed(1)}s (goes full 1 phrase ahead)`
-        : auto.pending ? `waiting for phrase line: ${auto.pending.kind}` : "no moment coming (min-bar / 32-bar rules)";
-      return { mode, active, autoOn: i.on, aiDriving: !!(ap && ap.active), driving: i.driving, onAir,
+      return { mode, active, moments: !!(autoBox && autoBox.checked), aiDriving: !!(ap && ap.active), onAir,
+        look: doc.documentElement.classList.contains("anyma-look") ? "anyma" : "classic (SHOW draws nothing)",
         music: { ok: ms.ok, bar: ms.barIdx, phrase: ms.phraseIdx, cls: ms.cls, energy: +(ms.energy || 0).toFixed(2) },
         director: { scene: dir.scene, last: dir.last, queue: dir.queue.length, dance: +dir.dance.toFixed(2) },
-        auto: { mode: auto.mode, started: auto.started, pending: auto.pending, why: auto.why, ahead: auto.ahead,
-          holdUntil: auto.holdUntil - now, pausedFor: Math.max(0, auto.pausedUntil - now) },
-        lastEvents: seen.slice(), next, whyNotFull: whyNot };
+        elements: look ? { scene: look.scene, countdown: look.countdown, red: +look.red.toFixed(2), dropDeck: look.dropDeck } : null,
+        lastEvents: seen.slice(), next, stage: mode === "full" ? "up (manual)" : "down: STAGE is manual only" };
     } };
 })(typeof window !== "undefined" ? window : globalThis);

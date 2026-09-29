@@ -1,19 +1,13 @@
-/* SHOW mode stage (anyma-show.js): a background layer baked into the console,
-   never a floating box. z-index -1 in the page: every console control paints
-   above it, the VFX canvas (850) and NULL-BOT (880) stay above too.
-   WINDOW (body.show-embed): the band behind the waveforms + decks; JS sets top
-   and height from the layout. FULL (body.show-full): behind the whole console. */
+/* STAGE takeover (anyma-show.js), manual only: a background layer baked into the
+   console, never a floating box. z-index -1 in the page: every console control
+   paints above it, the VFX canvas (850) and NULL-BOT (880) stay above too.
+   SHOW on alone draws no stage: the look lives in the DJ elements (anyma-ui.css). */
 .anyma-stage {
   position: absolute; left: 0; right: 0; top: 0; height: 0; z-index: -1;
   background: #000; overflow: hidden; pointer-events: none;
 }
 .anyma-stage.anyma-full { position: fixed; inset: 0; height: auto; }
-/* WINDOW: dim the show behind the UI (not the UI): translucent panels keep the
-   waveforms, beat grid, cue markers and controls legible on top */
-body.show-embed .wave-stage, body.show-embed .wave-viewport, body.show-embed .wave-lane,
-body.show-embed .deck-panel, body.show-embed .mixer { background: rgba(4, 6, 10, 0.62); }
-body.show-embed .workspace { background: transparent; }
-/* FULL: the show owns the background; the console floats over it, translucent,
+/* FULL (body.show-full): the show owns the background; the console floats over it, translucent,
    every control still visible and clickable (Esc or WINDOW gets back) */
 body.show-full .topbar, body.show-full .vibe-bar, body.show-full .fx-bar, body.show-full .wave-stage,
 body.show-full .wave-viewport, body.show-full .wave-lane, body.show-full .panel,
