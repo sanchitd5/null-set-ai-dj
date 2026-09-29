@@ -167,3 +167,12 @@ def test_marquee_js():
     res = subprocess.run([shutil.which("node"), str(Path(__file__).with_name("marquee_check.js"))],
                          capture_output=True, text=True, timeout=30)
     assert res.returncode == 0, res.stderr or res.stdout
+
+
+def test_tempo_render_gate_matches_client_8pct_cap(monkeypatch, tmp_path):
+    monkeypatch.setattr(keylock, "render_tempo", lambda key, stems, ratio: None)
+    monkeypatch.setattr(keylock, "KEYLOCK_DIR", tmp_path)
+    assert keylock.ensure_tempo("b" * 64, {}, 124.0, 110.0)["state"].startswith("error")   # 11 %: refused
+    assert keylock.ensure_tempo("b" * 64, {}, 100.0, 115.0)["state"].startswith("error")   # 15 %: refused
+    assert not keylock.ensure_tempo("b" * 64, {}, 100.0, 108.0)["state"].startswith("error")  # 8 %: ok
+    assert keylock.MAX_TEMPO_STRETCH < 0.09
