@@ -841,6 +841,15 @@
       <label class="hud-label" title="Remix on the go with stems: in some 16-bar sections the AI holds the vocal's last bar (hold on), drops to the acapella, a drum break, bass out or a synth hold, and brings everything back on the line. Max 3 per song, 32 bars apart">
         <input type="checkbox" id="ap-remix-toggle" checked /> STEM REMIX
       </label>
+      <label class="hud-label" data-group="SET HABITS" title="FX budget (John Summit: let the songs talk): at most about 2 wet / loop / vocal moves per 4 phrases, 3 per song, 10 per 30 minutes, one per transition. Off: every move plays (still counted)">
+        <input type="checkbox" id="ap-fxbudget-toggle" checked /> FX BUDGET
+      </label>
+      <label class="hud-label" data-group="SET HABITS" title="Breakdown ownership: a transition never starts inside the playing song's breakdown; it moves to the phrase before it, else on to the drop. Off: exits may land in a breakdown">
+        <input type="checkbox" id="ap-breakdown-toggle" checked /> BREAKDOWN
+      </label>
+      <label class="hud-label" data-group="SET HABITS" title="Let the song finish: when the set holds its energy (last 3 songs within 1 level, at the recent peak, past the warm-up), a song plays to its outro instead of a short window. Not in QUICK mode, never two in a row, never a song with over 6 min left">
+        <input type="checkbox" id="ap-finish-toggle" checked /> LET IT FINISH
+      </label>
       <label class="hud-label" title="Moves learned from studied DJ sets (the transition picks and the in-song moves below). Off: none of them play">
         <input type="checkbox" id="ap-learned-toggle" checked /> LEARNED
       </label>
@@ -980,6 +989,7 @@
 <script src="/visuals.js"></script>
 <script src="/anyma-show.js"></script>
 <script src="/tempo-rule.js"></script>
+<script src="/fx-budget.js"></script>
 <script src="/deck-controller.js"></script>
 <script src="/fx-rack.js"></script>
 <script src="/automation.js"></script>

@@ -189,6 +189,51 @@ var autopilotCore = (function () {
     while (hits(t) && t + phraseS <= limit && moved < 12) { t += phraseS; moved++; }
     return hits(t) ? { t: exit, clear: false, moved: 0 } : { t, clear: true, moved };
   }
+  // S22 breakdown ownership (research/notes/artist-signature-techniques.md): A's breakdowns
+  // [[t0, t1]], same rule as app/music_brain/preplan.breakdown_spans (golden vectors in
+  // app/tests/fixtures/rule_vectors.json): energy <= its 30th percentile AND 0.15 x range under
+  // its median, between the first and last frame at or above the median (not intro / outro),
+  // joined across gaps up to 2 bars, at least 8 bars long. Thresholds GUESSED from counts.
+  const BD_PCT = 30, BD_BELOW_MEDIAN = 0.15, BD_JOIN_BARS = 2, BD_MIN_BARS = 8;
+  function breakdownSpans(times, curve, bar) {
+    if (!times || !curve || times.length < 4 || times.length !== curve.length) return [];
+    const sorted = [...curve].sort((x, y) => x - y);
+    const range = sorted[sorted.length - 1] - sorted[0];
+    if (!(range > 1e-6)) return [];                                  // flat
+    const med = median(sorted), thr = Math.min(quantileLinear(sorted, BD_PCT / 100), med - BD_BELOW_MEDIAN * range);
+    let first = null, last = null;
+    for (let i = 0; i < times.length; i++) {
+      if (curve[i] >= med) { if (first === null) first = times[i]; last = times[i]; }
+    }
+    const spans = [];
+    for (let i = 0; i < times.length; i++) {
+      const t = times[i];
+      if (curve[i] > thr || t <= first || t >= last) continue;
+      const prev = spans[spans.length - 1];
+      if (prev && t - prev[1] <= BD_JOIN_BARS * bar) prev[1] = t;
+      else spans.push([t, t]);
+    }
+    const hop = times[1] - times[0];
+    return spans.filter(([x, y]) => y + hop - x >= BD_MIN_BARS * bar).map(([x, y]) => [x, y + hop]);
+  }
+  // Exit kept out of A's breakdowns by whole phrases: first the latest phrase before the
+  // breakdown (the section before it, no earlier than `lo`), else the first one past its end
+  // (the drop, no later than `limit`). Neither fits -> unchanged, clear false (logged, not refused).
+  function exitOutOfBreakdown(exit, spans, phraseS, lo, limit) {
+    const inBd = (x) => spans.some(([a, b]) => x >= a && x < b);
+    if (!inBd(exit) || !(phraseS > 0)) return { t: exit, clear: !inBd(exit), moved: 0 };
+    for (let k = 1; k <= 12; k++) {
+      const t = exit - k * phraseS;
+      if (t < lo) break;
+      if (!inBd(t)) return { t, clear: true, moved: -k };
+    }
+    for (let k = 1; k <= 12; k++) {
+      const t = exit + k * phraseS;
+      if (t > limit) break;
+      if (!inBd(t)) return { t, clear: true, moved: k };
+    }
+    return { t: exit, clear: false, moved: 0 };
+  }
   // The live rule; app/music_brain/energy.next_ok mirrors it (same golden vectors,
   // app/tests/fixtures/rule_vectors.json): at most 2 levels a song (1 relaxed,
   // +1 on the last-round fallback); early in the set (< 30 %) it may not fall more
@@ -222,6 +267,21 @@ var autopilotCore = (function () {
       if (peak > LOW_ENERGY_SET_MAX && peak - nxt > MAX_BELOW_PEAK) return { ok: false, step, why: `energy ${cur} -> ${nxt} drains the set: ${peak - nxt} below its recent peak ${peak}` };
     }
     return { ok: true, step, why: `energy ${cur} -> ${nxt}` };
+  }
+  // "Let the song finish" gate (research/notes/dj-hidden-practices.md item 10); the same rule as
+  // app/music_brain/energy.at_target (golden vectors): out of the warm-up (or a low set), the last
+  // 3 measured levels within 1 of each other, the playing song within 1 of the recent peak. GUESS numbers.
+  const TARGET_SONGS = 3, TARGET_TOL = 1;
+  function energyAtTarget(recent, songs) {
+    const lv = (recent || []).filter((v) => v != null);
+    if (lv.length < TARGET_SONGS) return { ok: false, why: `only ${lv.length} measured songs` };
+    const cur = lv[lv.length - 1];
+    if (songs < WARMUP_SONGS && cur > LOW_ENERGY_SET_MAX) return { ok: false, why: "the set is still building" };
+    const last = lv.slice(-TARGET_SONGS), lo = Math.min(...last), hi = Math.max(...last);
+    if (hi - lo > TARGET_TOL) return { ok: false, why: `energy still moving (${lo}-${hi})` };
+    const peak = Math.max(...lv.slice(-PEAK_WINDOW));
+    if (peak - cur > TARGET_TOL) return { ok: false, why: `energy ${cur} under the recent peak ${peak}` };
+    return { ok: true, why: `energy holding at ${cur}` };
   }
 
   // HYBRID window class by measured energy. Very low energy (<= 3) rides MID, not LONG:
@@ -366,14 +426,22 @@ var autopilotCore = (function () {
     // steering toward the occasion's music: short bridge songs (user: 30-60 s each)
     bridge: { min: 30,  max: 60,  xf: 8,  label: "BRIDGE" },
   };
-  // o: {steering ("move"), famous, rem (famous song: seconds left from its entry),
-  //     mode, score, energy}
+  // o: {steering ("move"), famous, rem (famous / finish song: seconds left from its entry),
+  //     mode, score, energy, finish}
+  const FINISH_MAX_S = 360;        // = WINDOWS.long.max; GUESS
   function playWindowFor(o) {
     if (o.steering === "move") return WINDOWS.bridge;
     // A famous song plays in full (user; the USB002 set rides leavemealone for
     // 7 min): exit only in its last ~50 s, i.e. the outro.
     if (o.famous && o.rem > 90) return { min: Math.max(60, o.rem - 50), max: Math.max(70, o.rem - 6), xf: 24, label: "FULL·famous" };
     const weak = (o.score == null ? 50 : o.score) < 65;
+    // Let the song finish (dj-hidden-practices item 10): the set holds its energy target
+    // (o.finish, energyAtTarget), so this song plays to its outro like a famous one. Never in
+    // QUICK (the user asked for quick), never over a weak match's bail, never on a song with
+    // more than FINISH_MAX_S left (no 7-minute holds). The exit stays before the audible end.
+    if (o.finish && o.mode !== "quick" && !weak && o.rem > 90 && o.rem <= FINISH_MAX_S) {
+      return { min: Math.max(60, o.rem - 50), max: Math.max(70, o.rem - 6), xf: 24, label: "FULL·finish" };
+    }
     if (o.mode === "long") return WINDOWS.long;
     if (o.mode === "quick") return weak ? WINDOWS.bail : WINDOWS.quick;
     if (weak) return WINDOWS.bail;
@@ -435,6 +503,14 @@ var autopilotCore = (function () {
     const spans = highSpans(o.energyTimes, o.energyCurve, 240 / o.bpm);
     const ex = exitPastHigh(o.t, 16 * 240 / o.bpm, spans, o.phraseS, o.trackEnd);
     return { t: ex.moved ? ex.t : o.t, moved: ex.moved };
+  }
+  // S22: never start the blend inside A's breakdown (A owns the room). Same exemptions as
+  // exitHighPush. o: {t, lo (earliest allowed, e.g. now + 15 s), phraseS, bpm, trackEnd,
+  // energyTimes, energyCurve} -> {t, moved (phrases, negative = earlier), clear}
+  function exitBreakdownPush(o) {
+    if (!o.energyTimes || !o.energyCurve || !(o.bpm > 0)) return { t: o.t, moved: 0, clear: true };
+    const spans = breakdownSpans(o.energyTimes, o.energyCurve, 240 / o.bpm);
+    return exitOutOfBreakdown(o.t, spans, o.phraseS, o.lo == null ? -Infinity : o.lo, o.trackEnd);
   }
   // ---- pre-render readiness (next song's stems + key-locked tempo stems made BEFORE the booking) ------
   // Measured on 25 real transitions (data/cache/sessions): the booking follows the deck load by a
@@ -515,7 +591,8 @@ var autopilotCore = (function () {
   }
   const api = { prerenderTargets, readinessNeeds, aTempoAtEntry, deferBudgetS, deferDecision, orderByReadiness, DEFER_MAX_S, DEFER_MIN_LEAD_S, PREFER_READY_JUMP,
     emptyRetryMs, useLibraryFallback, rememberPairReject, pairRejected, awaitJob, keySafeRecipe, KEY_SAFE_MIN, energyStepOk, hybridWindowKey, highSpans, quantileLinear, median, exitPastHigh, learnedRecipe, vocalRecipe, stemBlendBars, stemBlendFader, phraseWaitS, introBars, FADER_PARK_BARS, homePlan, maskedGlideBars, maskedDropAt, HOME_DROP_PCT, LADDER_STEP_PCT,
-    tempoLockableAt, recipeKind, decideRecipe, planSkipReason, WINDOWS, playWindowFor, exitBounds, exitPick, exitTiming, exitHighPush, audibleEnd, entryClamp, SILENT_FLOOR };
+    tempoLockableAt, recipeKind, decideRecipe, planSkipReason, WINDOWS, playWindowFor, exitBounds, exitPick, exitTiming, exitHighPush, audibleEnd, entryClamp, SILENT_FLOOR,
+    breakdownSpans, exitOutOfBreakdown, exitBreakdownPush, energyAtTarget, FINISH_MAX_S };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   return api;
 })();
@@ -2785,10 +2862,23 @@ function createAutopilotEngine({ host, ai }) {
       console.info("transition recipe:", `Stem Merge (pre-planned): ${pp.direction}, B from ${fmtTime(pp.b_start)} at A ${fmtTime(pp.a_in)}, ` +
         `${pp.bars} bars, ${pp.label}${pp.ear ? `, ear ${pp.ear.score}/10` : ""}`);
     }
+    // S22 breakdown ownership: the blend never starts inside A's breakdown; back to the
+    // section before it, else on to the drop (whole phrases). Before the high push so a
+    // move onto the drop is then carried past A's high.
+    if (!peakT && !layer && !preplanned && od && od.analysis && host.ui.flag("ap-breakdown-toggle", true)) {
+      const bd = autopilotCore.exitBreakdownPush({ t: effectiveATime, lo: Math.max(lo, nowPos + 15), phraseS, bpm: od0bpm, trackEnd,
+        energyTimes: od.analysis.energy_times, energyCurve: od.analysis.energy_curve });
+      if (bd.moved) {
+        console.info("transition timing:", `exit moved ${bd.moved} phrase(s) to ${fmtTime(bd.t)}: A is in its breakdown`); host.log.step("exit_moved", { deck: activeDeck, decision: `exit ${bd.moved > 0 ? "+" : ""}${bd.moved} phrase(s)`, why: "A is in its breakdown", result: { from: effectiveATime, to: bd.t } });
+        effectiveATime = bd.t;
+      } else if (!bd.clear) {
+        console.info("transition timing:", `exit at ${fmtTime(effectiveATime)} is inside A's breakdown, no phrase fits outside it`);
+      }
+    }
     // Never transition out of A while it's at its energy high: push the exit past it
     // by whole phrases (not for PEAK / LAYER / pre-planned: they chose their line).
     if (!peakT && !layer && !preplanned && od && od.analysis) {
-      const ex = autopilotCore.exitHighPush({ t: effectiveATime, phraseS, bpm: od0bpm, trackEnd,
+      const ex =autopilotCore.exitHighPush({ t: effectiveATime, phraseS, bpm: od0bpm, trackEnd,
         energyTimes: od.analysis.energy_times, energyCurve: od.analysis.energy_curve });
       if (ex.moved) {
         console.info("transition timing:", `exit moved ${ex.moved} phrase(s) to ${fmtTime(ex.t)}: A is at its energy high`); host.log.step("exit_moved", { deck: activeDeck, decision: `exit +${ex.moved} phrase(s)`, why: "A is at its energy high", result: { from: effectiveATime, to: ex.t } });
@@ -2990,7 +3080,8 @@ function createAutopilotEngine({ host, ai }) {
           bookedRecipe = ranMove;   // VIBE strip ("playing X") and ap.next read this
           if (ranMove !== recipe) host.log.step("recipe_executed", { deck: outgoing, decision: ranMove, why: `booked ${recipe}, ran ${ranMove}` });
           sessionEvent("track", { event: "transition_start", from: history[history.length - 1] || null, to: nextName, recipe: ranMove,
-                                  planned: ranMove !== recipe ? recipe : undefined, out: outgoing, in: incoming, seconds: Math.round(totalMs / 100) / 10 });
+                                  planned: ranMove !== recipe ? recipe : undefined, out: outgoing, in: incoming, seconds: Math.round(totalMs / 100) / 10,
+                                  a_pos: Math.round(deckPosition(outgoing) * 100) / 100 });   // A's song s at the exit (sim: exits in a breakdown)
           host.bus.emit("ai-cue", { at: t0, kind: "transition",
             deck: incoming, bar: 240 / ((host.decks[incoming] && host.decks[incoming].bpm) || 128), why: `${ranMove}: B's first downbeat` });
         }
@@ -3063,9 +3154,17 @@ function createAutopilotEngine({ host, ai }) {
     // breakdowns (stem-moves.js) keep it from sounding long.
     const pd = host.decks && host.decks[activeDeck];
     const famous = !!(pd && pd.fame && pd.fame.famous && pd.buffer);
-    return autopilotCore.playWindowFor({ steering, famous, rem: famous ? autopilotCore.audibleEnd(pd.analysis, pd.buffer.duration) - (entryPos || 0) : 0,
+    // let the song finish: the set holds its energy target; never two songs in a row (GUESS: variety)
+    const idx = history.length;
+    const finish = !famous && !!(pd && pd.buffer) && host.ui.flag("ap-finish-toggle", true)
+      && (lastFinishIdx === idx || idx - lastFinishIdx >= 2) && autopilotCore.energyAtTarget(playedEnergies(), idx).ok;
+    const w = autopilotCore.playWindowFor({ steering, famous, finish,
+      rem: famous || finish ? autopilotCore.audibleEnd(pd.analysis, pd.buffer.duration) - (entryPos || 0) : 0,
       mode: setMode(), score, energy: currentEnergy });
+    if (w.label === "FULL·finish") lastFinishIdx = idx;
+    return w;
   }
+  let lastFinishIdx = -9;
 
   // ── live mashup ("A x B") ─────────────────────────────────────────────────
   // Before the transition, lay the NEXT track's vocal over one instrumental
@@ -3264,7 +3363,7 @@ function createAutopilotEngine({ host, ai }) {
     if (!d.playing) d.play(d._currentPosition() || 0, true);
     if (xfader) { xfader.value = cur.deck === "a" ? "-1" : "1"; ui.fire(xfader, "input"); }
     entryPos = Math.max(0, d._currentPosition() - (heard[cur.trackId] || 0));
-    currentEnergy = null;
+    currentEnergy = null; lastFinishIdx = -9;
     if (host.mod.beatLayer) host.mod.beatLayer.follow(cur.deck);
     if (host.mod.djMind) { host.mod.djMind.reset(); host.mod.djMind.follow(cur.deck); }
     const past = session.filter((x) => x.id !== cur.trackId);
@@ -3328,7 +3427,7 @@ function createAutopilotEngine({ host, ai }) {
       const da = host.decks && host.decks.a;
       if (da) da.play(0, true);
       entryPos = 0;
-      currentEnergy = null;
+      currentEnergy = null; lastFinishIdx = -9;
       if (host.mod.beatLayer) host.mod.beatLayer.follow("a");
       if (host.mod.djMind) { host.mod.djMind.reset(); host.mod.djMind.follow("a"); }
 

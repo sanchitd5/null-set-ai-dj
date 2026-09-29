@@ -137,6 +137,49 @@ def in_high(spans: Sequence[tuple], t0: float, t1: float) -> bool:
     return any(t0 < y and t1 > x for x, y in spans)
 
 
+# S22 breakdown ownership (research/notes/artist-signature-techniques.md): "rushing through breakdowns" is a
+# mistake, breakdowns "are emotional peaks" (melodic techno guide, SECONDARY). A breakdown here is a measured
+# low: energy at or under the song's BD_PCT percentile AND BD_BELOW_MEDIAN x range under its median (it must
+# stand out, as high_spans' highs do), between the song's first and last frame at or above the median (so not
+# the intro or outro), joined across gaps up to BD_JOIN_BARS, at least BD_MIN_BARS long. On the analysis cache
+# (452 songs): 48 % of songs have one or more, median 25 s long (p90 44 s). The thresholds are GUESSES
+# tuned on those counts, not on listening.
+BD_PCT = 30
+BD_BELOW_MEDIAN = 0.15
+BD_JOIN_BARS = 2
+BD_MIN_BARS = 8
+
+
+def breakdown_spans(ana: dict, bar_s: float) -> List[tuple]:
+    """A's breakdowns [(t0, t1)] (song s). The console's autopilot.js breakdownSpans() is the same rule;
+    app/tests/fixtures/rule_vectors.json checks both."""
+    et, ec = ana.get("energy_times") or [], ana.get("energy_curve") or []
+    if len(et) < 4 or len(ec) != len(et):
+        return []
+    ec_arr = np.asarray(ec, float)
+    rng = float(ec_arr.max() - ec_arr.min())
+    if rng <= 1e-6:
+        return []                                    # flat: nothing stands out as a breakdown
+    med = float(np.median(ec_arr))
+    thr = min(float(np.percentile(ec_arr, BD_PCT)), med - BD_BELOW_MEDIAN * rng)
+    loud = [i for i, c in enumerate(ec) if c >= med]
+    first, last = et[loud[0]], et[loud[-1]]
+    spans: List[list] = []
+    for t, c in zip(et, ec):
+        if c > thr or t <= first or t >= last:
+            continue
+        if spans and t - spans[-1][1] <= BD_JOIN_BARS * bar_s:
+            spans[-1][1] = t
+        else:
+            spans.append([t, t])
+    hop = et[1] - et[0]
+    return [(x, y + hop) for x, y in spans if y + hop - x >= BD_MIN_BARS * bar_s]
+
+
+def in_breakdown(spans: Sequence[tuple], t: float) -> bool:
+    return any(x <= t < y for x, y in spans)
+
+
 def candidates(a: dict, b: dict, bpm_a: float, bpm_b: float, lo: float, hi: float, now: float,
                eA: Dict[str, np.ndarray], eB: Dict[str, np.ndarray], key_score: Optional[float],
                b_rap: bool = False) -> List[dict]:
@@ -145,6 +188,7 @@ def candidates(a: dict, b: dict, bpm_a: float, bpm_b: float, lo: float, hi: floa
     dur_a, dur_b = float(a.get("duration") or 0), float(b.get("duration") or 0)
     lines_a = [t for t in (a.get("phrase_boundaries_8bar") or []) if lo <= t <= hi]
     highs = high_spans(a, bar_a)          # never transition out of A while A is at its high
+    breakdowns = breakdown_spans(a, bar_a)  # S22: never start the blend inside A's breakdown (A owns the room)
     if len(lines_a) > MAX_HANDOVERS:                        # spread over the window
         idx = np.linspace(0, len(lines_a) - 1, MAX_HANDOVERS).round().astype(int)
         lines_a = [lines_a[i] for i in sorted(set(idx))]
@@ -156,6 +200,8 @@ def candidates(a: dict, b: dict, bpm_a: float, bpm_b: float, lo: float, hi: floa
             if a_in < now + MIN_LEAD_S + PLAN_BUDGET_S or h + 8 * bar_a > dur_a:
                 continue
             if in_high(highs, a_in, h + 8 * bar_a):   # B would come in / A leave during A's high
+                continue
+            if in_breakdown(breakdowns, a_in) or in_breakdown(breakdowns, h):  # B in / A out mid-breakdown
                 continue
             for bs in b_starts(b, bar_b, dur_b):
                 b_line = bs["t"] + L * bar_b                # B's song time on the handover line

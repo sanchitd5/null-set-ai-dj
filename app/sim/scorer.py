@@ -80,7 +80,13 @@ DIRECTION = {
     "wf_dropout_fit": +1, "wf_dropout_fit_fixed": 0, "wfp_hold_fit": +1, "wfp_hold_fit_fixed": 0, "wfp_dropout_fit": +1,
     "wfp_dropout_fit_fixed": 0, "wfp_level_spread": 0, "wfp_measured": +1, "wfp_fallback": -1, "bass_overlap_seconds": -1, "vocal_clash_seconds": -1,
     "llm_calls": 0, "llm_empty_replies": -1, "llm_invalid_replies": -1, "llm_latency_mean_s": 0, "http_errors": -1, "download_failures": -1, "score": -1,
+    "recipe_variety": 0, "distinct_recipes": 0, "max_recipe_repeat_run": 0, "fx_budget_spent": 0, "fx_budget_refused": 0,
+    "fx_density_per_30min": 0, "exits_checked": 0, "exits_in_breakdown": -1, "overlap_seconds": 0,
+    "familiar_share": 0, "familiar_known": 0, "edits_share": 0, "full_playthrough_count": 0, "overlap_share": 0,
 }
+SET_LEVEL_KEYS = ("recipe_variety", "distinct_recipes", "max_recipe_repeat_run", "fx_budget_spent", "fx_budget_refused",
+                  "fx_budget_by_kind", "fx_density_per_30min", "exits_checked", "exits_in_breakdown", "overlap_seconds",
+                  "familiar_share", "familiar_known", "edits_share", "full_playthrough_count", "overlap_share")
 
 
 def _real_artists_of(name: str) -> set:
@@ -260,6 +266,12 @@ def score_run(run: dict, artists_of: Optional[Callable[[str], set]] = None, iden
             m[name] = pr[k]
     m["bass_overlap_seconds"] = round(sum(float(t.get("bass_overlap_s") or 0) for t in trans), 2)
     m["vocal_clash_seconds"] = round(sum(float(t.get("vocal_clash_s") or 0) for t in trans), 2)
+    # SET-LEVEL habits (features.set_level_report), informational only: variety, the FX budget, exits
+    # inside A's breakdown (S22: should be 0), overlap seconds.
+    sl = (run.get("features") or {}).get("set_level") or {}
+    for k in SET_LEVEL_KEYS:
+        if k in sl:
+            m[k] = sl[k]
     long_over = sum(max(0.0, s - MAX_SONG_S) / 60.0 for s in secs)
     pen = {
         "transitions": round(sum(r[0] for r in rows), 3),

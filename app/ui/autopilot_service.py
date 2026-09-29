@@ -503,6 +503,41 @@ def _set_arc_phase(set_position: float) -> str:
     return "cool-down (wind down)"
 
 
+# S16 hits versus new (research/notes/artist-signature-techniques.md): Guetta "if I see that they really want to
+# hear my hits, then I'm going to play more of my hits" (DJ LIFE, SOURCED). No crowd sensor: the proxy is the
+# user's brief (its words set a target share of famous songs) against the MEASURED share so far (the server's
+# fame lookups, YouTube views >= FAMOUS_VIEWS, of the songs played). The words and the numbers are GUESSES.
+HIT_WORDS = ("hits", "anthem", "classics", "singalong", "sing-along", "sing along", "throwback", "bangers",
+             "crowd favourite", "crowd favorite", "karaoke", "everyone knows")
+NEW_WORDS = ("underground", "new music", "new releases", "fresh", "deep cut", "unreleased", "lesser known",
+             "lesser-known", "discover", "b-side")
+HIT_SHARE_HITS, HIT_SHARE_NEW, HIT_SHARE_SLACK, HIT_SHARE_MIN_KNOWN = 0.7, 0.2, 0.15, 2
+
+
+def hit_share_target(brief: str | None) -> float | None:
+    """Target share of famous songs the brief asks for, or None (the brief says nothing: no steering)."""
+    b = " ".join(str(brief or "").lower().split())
+    hits, new = any(w in b for w in HIT_WORDS), any(w in b for w in NEW_WORDS)
+    if hits == new:
+        return None                                  # neither, or both: the brief does not choose
+    return HIT_SHARE_HITS if hits else HIT_SHARE_NEW
+
+
+def hit_share_note(brief: str | None, famous: int, known: int) -> str:
+    """One line for the prompt when the measured share of famous songs is off the brief's target, else ""."""
+    target = hit_share_target(brief)
+    if target is None or known < HIT_SHARE_MIN_KNOWN:
+        return ""
+    share = famous / known
+    if share < target - HIT_SHARE_SLACK:
+        return (f"only {famous} of the last {known} songs were well-known hits and the brief asks for hits - "
+                f"make at least two of your picks songs this crowd already knows and will sing")
+    if share > target + HIT_SHARE_SLACK:
+        return (f"{famous} of the last {known} songs were big hits and the brief asks for new music - "
+                f"favour newer releases and lesser-known tracks over the famous anthems")
+    return ""
+
+
 _MOOD_CLASH = {
     frozenset({"euphoric", "dark"}),
     frozenset({"euphoric", "chill"}),
