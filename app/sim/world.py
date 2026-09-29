@@ -34,8 +34,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional
 
-from app.sim.pool import (FIXTURES_DIR, MARKER, SHARED_DIR, Pool, marker_bytes, marker_hash, round_floats)
+from app.sim.pool import FIXTURES_DIR, SHARED_DIR, Pool, round_floats
 from app.sim.stubllm import LLM, StubLLM, split_name
+from app.sim.synth import read_tag
 
 FIXTURE_VERSION = 1
 _WORD = re.compile(r"[a-z0-9]+")
@@ -71,7 +72,7 @@ class World:
         self.fixtures_dir = Path(fixtures_dir) if fixtures_dir else FIXTURES_DIR
         self.dir = self.fixtures_dir / name
         self.ctx: dict = {}                  # set by the driver: {song_index, phase, current, ...}
-        self.vclock: Callable[[], float] = lambda: 0.0
+        self._vt = 0.0
         self.events: list = []
         self.misses: list = []               # replay answers that had to leave the recording
         self.downloads = 0
@@ -83,6 +84,7 @@ class World:
         self._patched: list = []
         self._last_net = 0.0
         self.last_llm_key = ""
+        self._synth: dict = {}               # audio hash -> {mix, stems} synthesised files of this run
         self.fatal: Optional[WorldError] = None     # set when a needed dependency is missing: the run stops
         self._live_curves: dict = {}
         self.seed_track: Optional[dict] = None
@@ -114,8 +116,8 @@ class World:
         orig_hash = analyzer._file_hash
 
         def file_hash(path):
-            h = marker_hash(Path(path))
-            return h if h else orig_hash(path)
+            tag = read_tag(Path(path))              # a synthetic file names the real song it stands for
+            return tag["hash"] if tag and tag.get("hash") else orig_hash(path)
 
         self._patch(analyzer, "_file_hash", file_hash)
         self._patch(vibe, "_file_hash", file_hash)
@@ -173,14 +175,14 @@ class World:
             pass
 
         orig_load = librosa.load
-        pat = re.compile(r"^sim://stems/([0-9a-f]+)/(\w+)$")
+        synth_dir = str(self.run_cache / "synth")
 
         def load(path, sr=22050, mono=True, offset=0.0, duration=None, **kw):
-            m = pat.match(str(path))
-            if not m:
+            tag = read_tag(Path(path)) if str(path).startswith(synth_dir) else None
+            if not tag or tag.get("stem") not in ("drums", "bass", "vocals", "other"):
                 return orig_load(path, sr=sr, mono=mono, offset=offset, duration=duration, **kw)
             a = np.zeros(1, dtype=np.float32).view(Tagged)
-            a.tag = (m.group(1), m.group(2), round(float(offset or 0.0), 3))
+            a.tag = (tag["hash"], tag["stem"], round(float(offset or 0.0), 3))
             return a, sr
 
         def entry(h):
@@ -226,10 +228,11 @@ class World:
         return self._live_curves[tid]
 
     def pick_seed(self, rng) -> str:
-        """The seeded random seed track: run.json's when replaying, else drawn from the library."""
+        """The seeded random seed track, as the seed URL the console's START box takes
+        ("ytmsearch:Artist - Title": the same download route a user's seed goes through).
+        Replay: the fixture's seed; otherwise drawn from the source library."""
         if self.mode == "replay":
-            st = self.fx["seed_track"]
-            return self.register_seed(st["name"], audio_hash=st["hash"])
+            return self._seed_url(self.fx["seed_track"]["name"])
         if self.library is None:
             raise WorldError("no source library to draw a seed track from (set DATA_DIR)")
         lib = self.library.tracks()
@@ -237,11 +240,13 @@ class World:
             raise WorldError(f"the source library {self.library.data} has no usable tracks")
         t = lib[rng.randrange(len(lib))]
         self.seed_track = {"hash": t.hash, "name": t.name}
-        if self.mode == "library":
-            self._entry_for(t.hash)
-            return self.register_seed(t.name, audio_hash=t.hash)
-        self._copy_seed_caches(t)
-        return self.register_seed(t.name, audio_path=t.audio)
+        if self.mode == "live":
+            self._copy_seed_caches(t)
+        return self._seed_url(t.name)
+
+    @staticmethod
+    def _seed_url(name: str) -> str:
+        return f"ytmsearch:{name}"
 
     def _copy_seed_caches(self, t) -> None:
         """live: the seed's own analysis / vibe / energy / stems are reused from the source
@@ -291,6 +296,13 @@ class World:
         return done
 
     # ---- events ---------------------------------------------------------------------
+    def set_time(self, t: float) -> None:
+        """The console's virtual clock (seconds), stamped on each request it makes."""
+        self._vt = t
+
+    def vclock(self) -> float:
+        return self._vt
+
     def _emit(self, kind: str, **fields) -> None:
         t = round(self.vclock(), 3)
         ev = {"t": 1_790_000_000.0 + t, "at": time.strftime("%H:%M:%S", time.gmtime(t)), "kind": str(kind)[:40]}
@@ -299,26 +311,52 @@ class World:
         self.events.append(ev)
 
     # ---- LLM ------------------------------------------------------------------------
-    def _llm_key(self, kind: str) -> tuple:
-        """(fixture key, call number). The key names the situation (song index, phase, the song
-        playing / the pair, k-th call there) so a reply is only ever replayed into it."""
-        c = self.ctx
-        base = f"{c.get('song_index', 0)}|{kind}|{c.get('current', '')}"
-        n = self._llm_n.get(base, 0)
-        self._llm_n[base] = n + 1
-        return f"{base}|{n}", n
+    _NOW = re.compile(r'NOW PLAYING: "(.*?)" by ')
+
+    def _llm_call_info(self, system: str, user: str) -> dict:
+        """What a model call is, read off the call itself (the console drives it, the sim does not
+        announce it): its kind (suggest / lookahead by the gate's priority, plan, ear), the
+        signature of the exact prompt, the song playing, and which call of that kind this is."""
+        import hashlib
+
+        from app.ui.llm_gate import gate
+
+        prio = None
+        try:
+            snap = gate.snapshot()
+            prio = (snap.get("in_flight") or {}).get("priority") if isinstance(snap.get("in_flight"), dict) else snap.get("in_flight")
+        except Exception:
+            pass
+        m = self._NOW.search(user)
+        if "NOW PLAYING" in user:
+            kind = "lookahead" if str(prio).lower().startswith("look") else "suggest"
+        elif user.startswith("CURRENT song:"):
+            kind = "plan"
+        else:
+            kind = str(prio or "other").lower()
+        sig = hashlib.sha1(f"{system}\n{user}".encode("utf-8")).hexdigest()[:16]
+        n = self._llm_n.get(kind, 0)
+        self._llm_n[kind] = n + 1
+        return {"kind": kind, "sig": sig, "cur": m.group(1) if m else "", "ord": n}
 
     def _chat_call(self, system, user, temperature, timeout, model, max_tokens) -> str:
-        kind = self.ctx.get("phase") or "suggest"
-        key, n_call = self._llm_key(kind)
+        info = self._llm_call_info(system, user)
+        kind, key = info["kind"], f"{info['kind']}|{info['sig']}"
         self.last_llm_key = key
-        ctx = dict(self.ctx, n_call=n_call)
+        ctx = {"phase": kind, "n_call": info["ord"], "n_picks": 5, "current": info["cur"], "song_index": len(self.ctx.get("history", [])),
+               **{k: v for k, v in self.ctx.items() if k in ("history", "avoid", "queue", "current_meta")}}
         if self.mode == "replay":
+            # exact prompt first; a drifted prompt (a rule changed what the model is asked) falls back to
+            # the reply recorded for the same song, else the fallback model. Every fallback is a miss.
             for e in self.fx["llm"]:
-                if e["key"] == key and not e.get("_used"):
+                if e.get("sig") == info["sig"] and not e.get("_used"):
                     e["_used"] = True
                     return e["reply"]
-            self.misses.append({"what": "llm", "key": key})
+            self.misses.append({"what": "llm", "key": key, "cur": info["cur"]})
+            for e in self.fx["llm"]:
+                if e["kind"] == kind and e.get("cur") == info["cur"] and info["cur"] and not e.get("_used"):
+                    e["_used"] = True
+                    return e["reply"]
             if self.llm is None:
                 self.fatal = WorldError(f"replay miss: no recorded model reply for {key} and no fallback model")
                 raise self.fatal
@@ -338,7 +376,7 @@ class World:
                 raise self.fatal from exc
             self.fx.setdefault("llm_elapsed", {})[key] = round(time.monotonic() - t0, 2)
         if self.record:
-            self.fx["llm"].append({"key": key, "kind": kind, "reply": reply})
+            self.fx["llm"].append({"kind": kind, "sig": info["sig"], "cur": info["cur"], "ord": info["ord"], "reply": reply})
         return reply
 
     # ---- YouTube edges ----------------------------------------------------------------
@@ -430,7 +468,7 @@ class World:
                 self.fx["downloads"][url] = [{"name": p.stem, "hash": self._orig["file_hash"](p), "suffix": p.suffix}
                                              for p in paths]
             return paths
-        # replay / library: a placeholder file per recorded download
+        # replay / library: the song's audio is synthesised from its frozen energy curves (synth.py)
         if self.mode == "replay" and url in self.fx["downloads"]:
             found = self.fx["downloads"][url]
         else:
@@ -444,12 +482,18 @@ class World:
                 m = self._lib_match(re.sub(r"^\w*search\d*:", "", url))
             if not m:
                 raise WorldError(f"nothing downloadable for {url!r}")
-            found = [{"name": m[1], "hash": m[0], "suffix": ".mp3"}]
+            found = [{"name": m[1], "hash": m[0], "suffix": ".wav"}]
+        from app.sim.synth import synth_track
+
         output_dir.mkdir(parents=True, exist_ok=True)
         paths = []
         for f in found:
-            p = output_dir / f"{f['name']}{f.get('suffix', '.mp3')}"
-            p.write_bytes(marker_bytes(f["hash"]))
+            entry = self._entry_for(f["hash"])
+            files = self._synth.get(f["hash"])
+            if files is None:
+                files = self._synth[f["hash"]] = synth_track(entry, self.run_cache / "synth" / f["hash"], name="mix")
+            p = output_dir / f"{f['name']}.wav"
+            shutil.copyfile(files["mix"], p)
             paths.append(p)
             self.downloads += 1
         if self.record and self.mode == "library":
@@ -465,10 +509,10 @@ class World:
         path = server._tracks.get(track_id)
         if path is None:
             return False
-        h = marker_hash(path)
-        if h is None:                      # a real file (live)
+        tag = read_tag(Path(path))
+        if not tag or not tag.get("hash"):    # a real file (live)
             return self._register_live(track_id, path)
-        entry = self._entry_for(h)
+        entry = self._entry_for(tag["hash"])
         self._install_entry(track_id, path, entry)
         return True
 
@@ -492,8 +536,9 @@ class World:
         for suffix, key in (("v5.json", "analysis"), ("vibe.json", "vibe"), ("energy.json", "energy")):
             (a / f"{h}.{suffix}").write_text(json.dumps(entry[key]), encoding="utf-8")
         server._vocal_regions[track_id] = [list(r) for r in entry.get("vocals") or []]
-        if entry.get("stems"):
-            server._stem_cache[track_id] = {n: f"sim://stems/{h}/{n}" for n in ("drums", "bass", "vocals", "other")}
+        files = self._synth.get(h)
+        if files and files["stems"]:
+            server._stem_cache[track_id] = dict(files["stems"])
         self._tracks[track_id] = entry
         self.touched[h] = entry.get("name", "")
 
@@ -512,32 +557,6 @@ class World:
         except Exception:
             pass
         return True
-
-    def register_seed(self, name: str, audio_hash: Optional[str] = None, audio_path: Optional[Path] = None) -> str:
-        """Put the seed track in the run's library and return its track id."""
-        from app.ui import server
-
-        up = server.UPLOAD_DIR
-        up.mkdir(parents=True, exist_ok=True)
-        if audio_path is not None:                               # live: the real file, copied
-            data = Path(audio_path).read_bytes()
-            import hashlib
-
-            tid = hashlib.sha256(data).hexdigest()[:16]
-            dest = up / f"{tid}{Path(audio_path).suffix}"
-            if not dest.exists():
-                dest.write_bytes(data)
-        else:                                                     # replay / library: a placeholder
-            import hashlib
-
-            data = marker_bytes(audio_hash)
-            tid = hashlib.sha256(data).hexdigest()[:16]
-            dest = up / f"{tid}.mp3"
-            dest.write_bytes(data)
-        server._tracks[tid] = dest
-        server._remember_track_name(tid, name)
-        self._queue_stems(tid)
-        return tid
 
     # ---- energy ------------------------------------------------------------------------
     def _library_raws(self) -> list:

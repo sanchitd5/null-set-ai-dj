@@ -1,0 +1,75 @@
+// Entry of the headless console: boots the console's own scripts on the virtual clock, starts a
+// set exactly as a user does (seed URL in the START box, click START), lets it play until the
+// requested number of songs has played, stops it, and writes what happened to cfg.out.
+//
+//   node app/sim/js/run-set.js cfg.json
+//   cfg = { port, seedUrl, mode, tracks, occasion, seed, maxSeconds, out, echo, toggles: {id: bool} }
+"use strict";
+const fs = require("fs");
+const path = require("path");
+const { createEnv, safe } = require("./env");
+const { Sampler, analyseWindow } = require("./graph");
+
+const STATIC = path.resolve(__dirname, "..", "..", "ui", "static");
+
+async function main() {
+  const cfg = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+  // paint-only scripts (waveforms, canvas visuals, marquee) are not part of the engine: skipped
+  const skip = cfg.skip || ["stem-wave.js", "visuals.js", "marquee.js"];
+  const env = await createEnv({ staticDir: STATIC, port: cfg.port, seed: cfg.seed || 1, echo: !!cfg.echo, skip });
+  env.loadScripts();
+  if (cfg.profile) env.clock.profile = new Map();
+  const $ = (id) => document.getElementById(id);
+  $("ap-mode").value = cfg.mode || "long";
+  $("ap-seed-input").value = cfg.seedUrl;
+  $("ap-occasion-input").value = cfg.occasion || "";
+  for (const [id, on] of Object.entries(cfg.toggles || {})) { const el = $(id); if (el) el.checked = !!on; }
+
+  if (cfg.watchdog) {           // debugging aid: real-time heartbeat of the virtual run
+    require("timers").setInterval(() => {
+      const c = env.logs.console;
+      const line = `[watchdog] virtual ${env.clock.now.toFixed(1)}s firings ${env.clock.firings} pendingNet ${env.net.inflight} last: ${c.length ? c[c.length - 1].text.slice(0, 160) : ""}\n`;
+      fs.appendFileSync(cfg.watchlog || "/dev/stderr", line);
+    }, 5000).unref();
+  }
+  await env.clock.run(0.5);
+  const sampler = new Sampler(env);       // what the audio graph would have played, every 250 ms
+  sampler.start();
+  $("ap-start-btn").click();
+  const want = Math.max(1, (cfg.tracks || 4) - 1);
+  let why = "";
+  const stop = () => {
+    if (env.net.marks.transitionEnd >= want) { why = "songs"; return true; }
+    return false;
+  };
+  const res = await env.clock.run(cfg.maxSeconds || 4000, stop);
+  if (!why) why = res === "idle" ? "idle" : "time";
+  // let the last transition's tail play out, then stop the set like the STOP button
+  await env.clock.run(env.clock.now + 30);
+  $("ap-stop-btn").click();
+  await env.clock.run(env.clock.now + 2);
+
+  // audible-effect windows: each transition (start .. end) and the whole set
+  const ev = env.net.sessionEvents.filter((e) => e.kind === "track" && e.data);
+  const starts = ev.filter((e) => e.data.event === "transition_start");
+  const ends = ev.filter((e) => e.data.event === "transition_end");
+  const windows = starts.map((s, i) => {
+    const t1 = (ends[i] && ends[i].t) || s.t + (s.data.seconds || 30);
+    return { i, from: s.data.from, to: s.data.to, recipe: s.data.recipe, planned: s.data.planned, t0: s.t, t1, ...analyseWindow(sampler.series, s.t - 1, t1) };
+  });
+  const whole = sampler.series.length ? analyseWindow(sampler.series, sampler.series[0].t + 5, sampler.series[sampler.series.length - 1].t) : null;
+  const series1hz = sampler.series.filter((s, k) => k % 4 === 0).map((s) => [s.t, +(10 * Math.log10(Math.max(1e-18, s.P))).toFixed(1),
+    +(10 * Math.log10(Math.max(1e-18, (s.decks.a || { P: 0 }).P))).toFixed(1), +(10 * Math.log10(Math.max(1e-18, (s.decks.b || { P: 0 }).P))).toFixed(1)]);
+  const profile = env.clock.profile ? [...env.clock.profile.entries()].sort((a, b) => b[1].ms - a[1].ms).slice(0, 20).map(([k, v]) => `${v.ms.toFixed(0)}ms ${v.n}x ${k}`) : undefined;
+  const out = {
+    profile,
+    ended: why, virtual_seconds: +env.clock.now.toFixed(2), timer_firings: env.clock.firings,
+    scripts: env.scripts, errors: env.logs.errors, console: env.logs.console, events: env.logs.events,
+    net: env.net.log, session_events: env.net.sessionEvents, audible: { transitions: windows, set: whole, series_1hz: series1hz },
+    audio_errors: env.audio ? env.audio._errors : [],
+    dom_misses: [...(document.misses || [])].slice(0, 50),
+  };
+  fs.writeFileSync(cfg.out, JSON.stringify(out));
+  process.exit(0);
+}
+main().catch((e) => { process.stderr.write(`headless run crashed: ${e && e.stack}\n`); process.exit(1); });

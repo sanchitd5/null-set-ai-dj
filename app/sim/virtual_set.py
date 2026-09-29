@@ -597,7 +597,8 @@ class Sim:
         self.transitions.append({
             "i": idx, "from": cur.name, "to": nxt.name, "from_id": cur.id, "to_id": nxt.id,
             "from_bpm": round(cur.bpm, 2), "to_bpm": round(nxt.bpm, 2), "from_key": cur.key, "to_key": nxt.key,
-            "key_score": b["key_score"], "beat_locked": beat, "tempo_pct": round(tempo_pct, 3),
+            "key_score": b["key_score"], "key_kb": self._kb_key_score(cur.key, nxt.key),
+            "beat_locked": beat, "tempo_pct": round(tempo_pct, 3),
             "tempo_jump": not beat, "recipe_matcher": b["planned_by_matcher"], "recipe_planned": b["recipe"],
             "recipe_executed": move["executed"], "path": move["path"], "kind": move["kind"], "refused": move["refused"],
             "degraded": move["degraded"], "dead_air_s": move["dead_air_s"], "min_db": move["min_db"], "intro": move["intro"],
@@ -625,6 +626,16 @@ class Sim:
         self.scheduled_name = None
         self.songs.append(self._song_row(nxt))
         self.log("track", event="transition_end", now_playing=nxt.name, set_songs=len(self.history))
+
+    @staticmethod
+    def _kb_key_score(a: str, b: str):
+        """The KB Camelot score (recipe_matcher.camelot_distance_score) the scorer judges keys by."""
+        from app.music_brain.recipe_matcher import camelot_distance_score
+
+        try:
+            return camelot_distance_score(a, b)[0] if a and b else None
+        except ValueError:
+            return None
 
     def _song_row(self, t: Trk) -> dict:
         return {"i": len(self.history) - 1, "id": t.id, "name": t.name, "bpm": round(t.bpm, 2), "key": t.key, "level": t.level,

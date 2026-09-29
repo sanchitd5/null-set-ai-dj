@@ -1,0 +1,15 @@
+{
+  "note": "Fixtures replayed by `python3 -m app.sim.suite`. Add a run: record a fixture (README) and list it here. Names are app/sim/fixtures/<name>/.",
+  "runs": [
+    {"name": "lib-s1-long", "seed": 1, "tracks": 10, "mode": "long"},
+    {"name": "lib-s1-quick", "seed": 1, "tracks": 10, "mode": "quick"},
+    {"name": "lib-s2-long", "seed": 2, "tracks": 10, "mode": "long"},
+    {"name": "lib-s2-quick", "seed": 2, "tracks": 10, "mode": "quick"},
+    {"name": "lib-s3-long", "seed": 3, "tracks": 10, "mode": "long"},
+    {"name": "lib-s3-quick", "seed": 3, "tracks": 10, "mode": "quick"},
+    {"name": "lib-s4-long", "seed": 4, "tracks": 10, "mode": "long"},
+    {"name": "lib-s4-quick", "seed": 4, "tracks": 10, "mode": "quick"},
+    {"name": "lib-s5-long", "seed": 5, "tracks": 10, "mode": "long"},
+    {"name": "lib-s5-quick", "seed": 5, "tracks": 10, "mode": "quick"}
+  ]
+}

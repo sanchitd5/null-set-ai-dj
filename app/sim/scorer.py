@@ -1,18 +1,29 @@
 """The feedback signal: one deterministic number plus the metrics behind it.
 
 `score_run(run)` takes the run dict a virtual set produces (virtual_set.Sim.run_data) and
-returns {score, metrics, penalties, worst, ...}. No clock, no randomness, no dict-order
-dependence: the same run always scores the same.
+returns {score, metrics, penalties, breakdown, worst, ...}. No clock, no randomness, no
+dict-order dependence: the same run always scores the same.
 
 HEADLINE `score`: LOWER IS BETTER, 0 is a set with nothing to complain about. It is the sum
 of penalty points divided by the number of transitions, so 10-song and 14-song sets compare.
 
+Key vocabulary. Two Camelot tables exist in the code base: the KB one (recipe_matcher
+camelot_distance_score: 1.0 / 0.9 / 0.85 / 0.8 / diagonal 0.75 / -2h 0.6 / distant 0.3, and 0
+for 3+ hours apart = a CLASH, CLAUDE.md section 4) and the console's (dj-mind.js camelotScore,
+0 for everything not in the KB's first four rows). The scorer judges by the KB table
+(`key_kb`); the console's number (`key_score`) is what its decisions used and is reported as
+`key_clash_rate` (score < 0.8, the literal task metric).
+
 Penalty weights (points), per event unless noted. They rank what a listener notices first:
 
-  key_clash_blend      12    a tonal blend (Long Blend / Bass Swap / stem blend) across keys with
-                             Camelot score < 0.8: two harmonic records for 16-32 bars
-  key_clash             4    any transition across keys < 0.8 (Echo Out / Stem Bridge included)
-  key_zero              5    Camelot score 0 (3+ hours apart)
+  key_clash_blend      12    a tonal blend (Long Blend / Bass Swap / stem blend / layer) across a
+                             KB clash: two harmonic records for 16-32 bars
+  key_hard_clash        4    a KB clash (3+ hours) between two consecutive songs at all (the
+                             selection let it through; Echo Out / Stem Bridge only limit the damage)
+  key_weak_blend        1    a tonal blend across a weak key move (KB score 0.3-0.75)
+  key_weak              0.5  a weak key move (KB score above 0 and below 0.8)
+  key_false_rewrite     2    the console rewrote a blend to Echo Out for keys the KB does not
+                             call a clash (a blend lost for nothing)
   tempo_over_cap        8    B stretched past the 8 % cap (should be impossible: the rule gate)
   tempo_stretch         0.4  per percent of stretch on every beat-locked transition (smearing)
   tempo_jump            2    a transition across a tempo gap the pitch fader cannot lock
@@ -33,8 +44,8 @@ Penalty weights (points), per event unless noted. They rank what a listener noti
   no_plan               0.5  a transition without a parsed AI plan (rules only)
   discarded_plan        1    a blend / layer plan the rules threw away (key rewrite, beatless)
 
-The `worst` list is the five transitions with the highest per-transition penalty (the
-transition-level rows above), each with its reasons.
+The `worst` list is the five transitions with the highest per-transition penalty, each with its
+reasons. `breakdown` sums every category over the set: the top entries are the failures to fix.
 """
 from __future__ import annotations
 
@@ -42,27 +53,29 @@ from collections import Counter
 from typing import Callable, Optional
 
 WEIGHTS = {
-    "key_clash_blend": 12.0, "key_clash": 4.0, "key_zero": 5.0, "tempo_over_cap": 8.0, "tempo_stretch": 0.4,
-    "tempo_jump": 2.0, "unlocked_overlap": 0.5, "dead_air": 1.5, "silent_intro": 3.0, "plan_mismatch": 3.0,
-    "degraded": 1.5, "energy_fall": 2.0, "energy_falls_ge3": 3.0, "same_artist": 4.0, "artist_run": 2.0,
-    "repeat_song": 10.0, "short_song": 2.0, "long_song": 1.0, "empty_pick": 2.0, "stall": 6.0, "no_plan": 0.5,
-    "discarded_plan": 1.0,
+    "key_clash_blend": 12.0, "key_hard_clash": 4.0, "key_weak_blend": 1.0, "key_weak": 0.5, "key_false_rewrite": 2.0,
+    "tempo_over_cap": 8.0, "tempo_stretch": 0.4, "tempo_jump": 2.0, "unlocked_overlap": 0.5, "dead_air": 1.5,
+    "silent_intro": 3.0, "plan_mismatch": 3.0, "degraded": 1.5, "energy_fall": 2.0, "energy_falls_ge3": 3.0,
+    "same_artist": 4.0, "artist_run": 2.0, "repeat_song": 10.0, "short_song": 2.0, "long_song": 1.0,
+    "empty_pick": 2.0, "stall": 6.0, "no_plan": 0.5, "discarded_plan": 1.0,
 }
 KEY_SAFE_MIN = 0.8
 TEMPO_CAP_PCT = 8.0
 MIN_SONG_S, MAX_SONG_S = 90.0, 420.0
-TONAL_KINDS = {"blend", "bass", "default", "filter", "loop", "double"}
+TONAL_KINDS = {"blend", "bass", "default", "filter", "loop", "double", "layer"}
+NON_TONAL_MOVES = ("Echo Out", "Stem Bridge", "Backspin", "Breakdown", "EQ blend")
 
 # direction of "better" per metric for compare.py: -1 lower is better, +1 higher is better, 0 informational
 DIRECTION = {
-    "key_clash_rate": -1, "key_clash_count": -1, "key_clash_blends": -1, "key_zero_count": -1,
+    "key_clash_rate": -1, "key_clash_count": -1, "key_hard_clash_count": -1, "key_clash_blends": -1, "key_weak_blends": -1,
+    "key_false_rewrites": -1, "key_zero_count": -1,
     "tempo_stretch_max_pct": -1, "tempo_stretch_mean_pct": -1, "tempo_over_cap": -1, "tempo_jumps": -1,
     "dead_air_seconds": -1, "dead_air_transitions": -1, "unlocked_overlap_seconds": -1, "silent_intros": -1,
     "energy_max_fall": -1, "energy_falls_ge3": -1, "energy_peak": 0, "energy_final": 0,
-    "same_artist_repeats": -1, "max_artist_run": -1, "repeat_songs": -1, "song_min_s": +1, "song_max_s": 0, "song_mean_s": 0,
-    "long_blend_share": 0, "plan_exec_mismatch": -1, "degraded_moves": -1, "discarded_plans": -1, "no_plan": -1,
-    "empty_picks": -1, "stalls": -1, "search_rounds_extra": -1, "transitions": +1, "songs_played": +1,
-    "replay_misses": -1, "http_errors": -1, "download_failures": -1, "score": -1,
+    "same_artist_repeats": -1, "max_artist_run": -1, "repeat_songs": -1, "short_songs": -1, "song_min_s": +1, "song_max_s": 0,
+    "song_mean_s": 0, "long_blend_share": 0, "echo_out_share": -1, "plan_exec_mismatch": -1, "degraded_moves": -1,
+    "discarded_plans": -1, "no_plan": -1, "empty_picks": -1, "stalls": -1, "search_rounds_extra": -1, "transitions": +1,
+    "songs_played": +1, "replay_misses": -1, "http_errors": -1, "download_failures": -1, "score": -1,
 }
 
 
@@ -78,54 +91,64 @@ def _identity(name: str) -> str:
     return _bare_title(name.split(" - ", 1)[-1])
 
 
+def _kb(t: dict):
+    """KB Camelot score of the pair (recorded by the driver); the console's when absent."""
+    return t["key_kb"] if t.get("key_kb") is not None else t.get("key_score")
+
+
+def _tonal(t: dict) -> bool:
+    return t.get("path") in ("stem_blend", "eq", "layer") and t.get("kind") in TONAL_KINDS \
+        and t.get("recipe_executed") not in NON_TONAL_MOVES
+
+
 def transition_penalty(t: dict) -> tuple:
-    """(points, [reasons]) of one transition row."""
-    p, why = 0.0, []
-    ks = t.get("key_score")
-    clash = ks is not None and ks < KEY_SAFE_MIN
-    if clash:
-        p += WEIGHTS["key_clash"]
-        why.append(f"key clash {t.get('from_key')}->{t.get('to_key')} (camelot {ks})")
-        tonal = t.get("path") in ("stem_blend", "eq", "layer") and t.get("kind") in (TONAL_KINDS | {"layer"}) \
-            and t.get("recipe_executed") not in ("Echo Out", "Stem Bridge", "Backspin", "Breakdown", "EQ blend")
-        if tonal:
-            p += WEIGHTS["key_clash_blend"]
-            why.append(f"tonal {t.get('recipe_executed')} across the clash")
-    if ks == 0:
-        p += WEIGHTS["key_zero"]
+    """(points, [reasons], {category: points}) of one transition row."""
+    parts: dict = {}
+    why: list = []
+
+    def add(cat: str, pts: float, reason: str = "") -> None:
+        parts[cat] = parts.get(cat, 0.0) + pts
+        if reason:
+            why.append(reason)
+
+    kb = _kb(t)
+    hard = kb is not None and kb == 0
+    weak = kb is not None and 0 < kb < KEY_SAFE_MIN
+    if hard:
+        add("key_hard_clash", WEIGHTS["key_hard_clash"], f"key clash {t.get('from_key')}->{t.get('to_key')} (3+ hours apart)")
+        if _tonal(t):
+            add("key_clash_blend", WEIGHTS["key_clash_blend"], f"tonal {t.get('recipe_executed')} across the clash")
+    elif weak:
+        add("key_weak", WEIGHTS["key_weak"])
+        if _tonal(t):
+            add("key_weak_blend", WEIGHTS["key_weak_blend"], f"tonal {t.get('recipe_executed')} across weak keys {t.get('from_key')}->{t.get('to_key')} ({kb})")
+    if t.get("key_rewrite") and kb is not None and kb > 0:
+        add("key_false_rewrite", WEIGHTS["key_false_rewrite"],
+            f"{t['key_rewrite']['from']} -> {t['key_rewrite']['to']} for keys the KB does not call a clash ({t.get('from_key')}->{t.get('to_key')}, KB {kb})")
     pct = float(t.get("tempo_pct") or 0.0)
     if t.get("beat_locked") and pct > 0:
-        p += WEIGHTS["tempo_stretch"] * pct
+        add("tempo_stretch", WEIGHTS["tempo_stretch"] * pct)
         if pct > TEMPO_CAP_PCT + 1e-6:
-            p += WEIGHTS["tempo_over_cap"]
-            why.append(f"stretch {pct:.1f}% over the {TEMPO_CAP_PCT:.0f}% cap")
+            add("tempo_over_cap", WEIGHTS["tempo_over_cap"], f"stretch {pct:.1f}% over the {TEMPO_CAP_PCT:.0f}% cap")
     if t.get("tempo_jump"):
-        p += WEIGHTS["tempo_jump"]
-        why.append(f"tempo jump {t.get('from_bpm')}->{t.get('to_bpm')} BPM")
+        add("tempo_jump", WEIGHTS["tempo_jump"], f"tempo jump {t.get('from_bpm')}->{t.get('to_bpm')} BPM")
     uo = float(t.get("unlocked_overlap_s") or 0.0)
     if uo:
-        p += WEIGHTS["unlocked_overlap"] * uo
-        why.append(f"{uo:.0f}s of beats overlapping at unlockable tempos")
+        add("unlocked_overlap", WEIGHTS["unlocked_overlap"] * uo, f"{uo:.0f}s of beats overlapping at tempos that never lock")
     da = float(t.get("dead_air_s") or 0.0)
     if da:
-        p += WEIGHTS["dead_air"] * da
-        why.append(f"{da:.1f}s estimated dead air")
+        add("dead_air", WEIGHTS["dead_air"] * da, f"{da:.1f}s estimated dead air")
     if t.get("silent_intro"):
-        p += WEIGHTS["silent_intro"]
-        why.append(f"silent intro stem ({t.get('intro')})")
+        add("silent_intro", WEIGHTS["silent_intro"], f"silent intro stem ({t.get('intro')})")
     if t.get("recipe_planned") != t.get("recipe_executed"):
-        p += WEIGHTS["plan_mismatch"]
-        why.append(f"planned {t.get('recipe_planned')} but executed {t.get('recipe_executed')}")
+        add("plan_mismatch", WEIGHTS["plan_mismatch"], f"planned {t.get('recipe_planned')} but executed {t.get('recipe_executed')}")
     if t.get("degraded"):
-        p += WEIGHTS["degraded"]
-        why.append(str(t.get("refused") or "stem move refused"))
+        add("degraded", WEIGHTS["degraded"], str(t.get("refused") or "stem move refused"))
     if not t.get("plan_parsed"):
-        p += WEIGHTS["no_plan"]
+        add("no_plan", WEIGHTS["no_plan"])
     if t.get("blend_dropped") or t.get("key_rewrite"):
-        p += WEIGHTS["discarded_plan"]
-        if t.get("key_rewrite"):
-            why.append(f"key rewrite {t['key_rewrite']['from']}->{t['key_rewrite']['to']}")
-    return p, why
+        add("discarded_plan", WEIGHTS["discarded_plan"])
+    return sum(parts.values()), why, parts
 
 
 def score_run(run: dict, artists_of: Optional[Callable[[str], set]] = None, identity: Optional[Callable[[str], str]] = None) -> dict:
@@ -133,15 +156,19 @@ def score_run(run: dict, artists_of: Optional[Callable[[str], set]] = None, iden
     identity = identity or _identity
     songs, trans, counters = run["songs"], run["transitions"], run["counters"]
     n_t = len(trans)
-    rows = []
+    rows, breakdown = [], Counter()
     for t in trans:
-        p, why = transition_penalty(t)
+        p, why, parts = transition_penalty(t)
         rows.append((p, t["i"], t["from"], t["to"], why))
+        breakdown.update(parts)
 
     ks = [t["key_score"] for t in trans if t.get("key_score") is not None]
+    kbs = [_kb(t) for t in trans if _kb(t) is not None]
     clash = [t for t in trans if t.get("key_score") is not None and t["key_score"] < KEY_SAFE_MIN]
-    clash_blend = [t for t in clash if t.get("path") in ("stem_blend", "eq", "layer") and t.get("kind") in (TONAL_KINDS | {"layer"})
-                   and t.get("recipe_executed") not in ("Echo Out", "Stem Bridge", "Backspin", "Breakdown", "EQ blend")]
+    hard = [t for t in trans if _kb(t) is not None and _kb(t) == 0]
+    weak_blend = [t for t in trans if _kb(t) is not None and 0 < _kb(t) < KEY_SAFE_MIN and _tonal(t)]
+    clash_blend = [t for t in hard if _tonal(t)]
+    false_rw = [t for t in trans if t.get("key_rewrite") and _kb(t) is not None and _kb(t) > 0]
     pcts = [float(t["tempo_pct"]) for t in trans if t.get("beat_locked")]
     levels = [s["level"] for s in songs if s.get("level") is not None]
     drops = [a - b for a, b in zip(levels, levels[1:]) if a > b]
@@ -160,7 +187,8 @@ def score_run(run: dict, artists_of: Optional[Callable[[str], set]] = None, iden
     m = {
         "songs_played": len(songs), "transitions": n_t,
         "key_clash_count": len(clash), "key_clash_rate": round(len(clash) / len(ks), 3) if ks else 0.0,
-        "key_clash_blends": len(clash_blend), "key_zero_count": sum(1 for k in ks if k == 0),
+        "key_hard_clash_count": len(hard), "key_clash_blends": len(clash_blend), "key_weak_blends": len(weak_blend),
+        "key_false_rewrites": len(false_rw), "key_zero_count": sum(1 for k in ks if k == 0),
         "tempo_stretch_max_pct": round(max(pcts), 2) if pcts else 0.0,
         "tempo_stretch_mean_pct": round(sum(pcts) / len(pcts), 2) if pcts else 0.0,
         "tempo_over_cap": sum(1 for x in pcts if x > TEMPO_CAP_PCT + 1e-6),
@@ -172,10 +200,12 @@ def score_run(run: dict, artists_of: Optional[Callable[[str], set]] = None, iden
         "energy_max_fall": max(drops) if drops else 0, "energy_falls_ge3": sum(1 for d in drops if d >= 3),
         "energy_peak": max(levels) if levels else None, "energy_final": levels[-1] if levels else None,
         "same_artist_repeats": same_artist, "max_artist_run": max_run, "repeat_songs": repeats,
+        "short_songs": sum(1 for s in secs if s < MIN_SONG_S),
         "song_min_s": round(min(secs), 1) if secs else None, "song_max_s": round(max(secs), 1) if secs else None,
         "song_mean_s": round(sum(secs) / len(secs), 1) if secs else None,
         "recipes": dict(sorted(recipes.items())),
         "long_blend_share": round(recipes.get("Long Blend", 0) / n_t, 3) if n_t else 0.0,
+        "echo_out_share": round(recipes.get("Echo Out", 0) / n_t, 3) if n_t else 0.0,
         "plan_exec_mismatch": sum(1 for t in trans if t.get("recipe_planned") != t.get("recipe_executed")),
         "degraded_moves": sum(1 for t in trans if t.get("degraded")),
         "discarded_plans": sum(1 for t in trans if t.get("blend_dropped") or t.get("key_rewrite")),
@@ -185,7 +215,6 @@ def score_run(run: dict, artists_of: Optional[Callable[[str], set]] = None, iden
         "replay_misses": run["meta"].get("replay_misses", 0), "http_errors": counters.get("http_errors", 0),
         "download_failures": counters.get("download_failures", 0),
     }
-    short = sum(1 for s in secs if s < MIN_SONG_S)
     long_over = sum(max(0.0, s - MAX_SONG_S) / 60.0 for s in secs)
     pen = {
         "transitions": round(sum(r[0] for r in rows), 3),
@@ -194,7 +223,7 @@ def score_run(run: dict, artists_of: Optional[Callable[[str], set]] = None, iden
         "same_artist": WEIGHTS["same_artist"] * same_artist,
         "artist_run": WEIGHTS["artist_run"] * max(0, max_run - 2),
         "repeat_song": WEIGHTS["repeat_song"] * repeats,
-        "short_song": WEIGHTS["short_song"] * short,
+        "short_song": WEIGHTS["short_song"] * m["short_songs"],
         "long_song": round(WEIGHTS["long_song"] * long_over, 3),
         "empty_pick": WEIGHTS["empty_pick"] * m["empty_picks"],
         "stall": WEIGHTS["stall"] * m["stalls"],
@@ -202,9 +231,14 @@ def score_run(run: dict, artists_of: Optional[Callable[[str], set]] = None, iden
     total = sum(pen.values())
     score = round(total / max(1, n_t), 3)
     worst = sorted(rows, key=lambda r: (-r[0], r[1]))[:5]
+    bd = {k: round(v, 3) for k, v in breakdown.items()}
+    for k, v in pen.items():
+        if k != "transitions" and v:
+            bd[k] = round(v, 3)
     return {
-        "version": 1, "score": score, "score_direction": "lower is better", "penalty_total": round(total, 3),
+        "version": 2, "score": score, "score_direction": "lower is better", "penalty_total": round(total, 3),
         "penalties": {k: round(v, 3) for k, v in sorted(pen.items())},
+        "breakdown": dict(sorted(bd.items(), key=lambda kv: (-kv[1], kv[0]))),
         "metrics": m, "weights": WEIGHTS,
         "worst": [{"transition": r[1], "from": r[2], "to": r[3], "penalty": round(r[0], 2), "reasons": r[4]} for r in worst if r[0] > 0],
         "meta": {k: run["meta"].get(k) for k in ("seed", "mode", "tracks_played", "world", "name", "stalled", "fixture_source")},
