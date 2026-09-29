@@ -1,0 +1,70 @@
+/* Anyma look baked into the DJ elements (anyma-ui.js). Only with the ANYMA LOOK
+   style (html.anyma-look) and SHOW on (html.anyma-el); classic is untouched.
+   Every layer is absolutely placed inside an element that already exists, fixed
+   size, pointer-events none: nothing reflows, controls stay clickable. JS writes
+   only opacity / transform per frame. */
+.an-ring, .an-burst, .an-face, .an-clip { display: none; }
+.anyma-look.anyma-el .an-ring, .anyma-look.anyma-el .an-burst,
+.anyma-look.anyma-el .an-face, .anyma-look.anyma-el .an-clip { display: block; }
+
+/* ---- platters: a ring of light on the kick, scaled by the bass; a cyan burst on a drop */
+.an-ring, .an-burst {
+  position: absolute; inset: -3px; border-radius: 50%; pointer-events: none;
+  opacity: 0; will-change: opacity, transform;
+}
+.an-ring { box-shadow: 0 0 0 1px #3fd8ff, 0 0 12px rgba(63, 216, 255, 0.55); }
+.an-burst { box-shadow: 0 0 0 2px #3fd8ff, 0 0 18px rgba(63, 216, 255, 0.7); }
+.anyma-look.anyma-el .jog-wheel { box-shadow: 0 0 0 6px #05070c, 0 12px 28px rgba(0, 0, 0, 0.8), inset 0 0 22px rgba(0, 0, 0, 0.85); }
+.anyma-look.anyma-el .jog-indicator { background: #cfe9ff; box-shadow: 0 0 6px #3fd8ff; }
+/* centre label -> a small android face: black, thin ice rim, two eye slits lit by the vocal */
+.anyma-look.anyma-el .jog-label-ring {
+  background: radial-gradient(circle at 50% 38%, #0b1016, #000 72%);
+  border: 1px solid rgba(207, 233, 255, 0.55);
+  box-shadow: 0 0 10px rgba(63, 216, 255, 0.25);
+}
+.anyma-look.anyma-el .jog-label, .anyma-look.anyma-el .jog-mode { color: #cfe9ff; font-weight: 400; }
+.an-face {
+  position: absolute; left: 50%; top: 17px; width: 46px; height: 6px; margin-left: -23px;
+  pointer-events: none; opacity: 0.25; will-change: opacity;
+}
+.an-face b {
+  position: absolute; top: 0; width: 16px; height: 4px; border-radius: 2px;
+  background: #3fd8ff; box-shadow: 0 0 6px #3fd8ff;
+}
+.an-face b:first-child { left: 0; }
+.an-face b:last-child { right: 0; }
+
+/* ---- waveform lanes: ice / cyan, a scan line per bar, brightening toward the drop */
+.an-clip { position: absolute; inset: 0; overflow: hidden; pointer-events: none; z-index: 6; }
+.an-glow {
+  position: absolute; inset: 0; opacity: 0; will-change: opacity;
+  background: linear-gradient(180deg, rgba(63, 216, 255, 0.16), rgba(207, 233, 255, 0.05) 50%, rgba(63, 216, 255, 0.16));
+}
+.an-scan {
+  position: absolute; left: 0; right: 0; top: 0; height: 100%; opacity: 0; will-change: opacity, transform;
+  background: linear-gradient(180deg, rgba(207, 233, 255, 0.85) 0 1px, transparent 1px);
+}
+/* the dancing figure: small, right end of the lane, inside it */
+.an-fig { position: absolute; right: 6px; top: 0; width: 56px; height: 100%; }
+.anyma-look.anyma-el .wave-lane { background: #000; }
+.anyma-look.anyma-el .beat-tick { background: rgba(207, 233, 255, 0.08); }
+.anyma-look.anyma-el .beat-tick.downbeat { background: rgba(207, 233, 255, 0.22); }
+.anyma-look.anyma-el .beat-tick.phrase { width: 1px; background: #cfe9ff; opacity: 0.55; box-shadow: 0 0 4px rgba(63, 216, 255, 0.8); }
+.anyma-look.anyma-el .beat-tick .bar-num { color: #3fd8ff; font-weight: 400; }
+.anyma-look.anyma-el .lane-tag { background: #cfe9ff; }
+
+/* ---- meters / crossfader: cyan light; red only while a supermove is up */
+/* (clipping still reads: a peak segment goes bright ice with a stronger glow) */
+.anyma-look.anyma-el :is(.vu-ladder, .vu-h) span.on,
+.anyma-look.anyma-el :is(.vu-ladder, .vu-h) span.on.warn { background: #3fd8ff; box-shadow: 0 0 5px rgba(63, 216, 255, 0.6); }
+.anyma-look.anyma-el :is(.vu-ladder, .vu-h) span.on.peak { background: #cfe9ff; box-shadow: 0 0 8px #3fd8ff; }
+.anyma-look.anyma-el.an-red :is(.vu-ladder, .vu-h) span.on.warn,
+.anyma-look.anyma-el.an-red :is(.vu-ladder, .vu-h) span.on.peak { background: #ff2238; box-shadow: 0 0 6px rgba(255, 34, 56, 0.6); }
+.anyma-look.anyma-el #crossfader::-webkit-slider-thumb { box-shadow: 0 2px 8px rgba(0, 0, 0, 0.9), inset 0 0 0 1px #3fd8ff, 0 0 8px rgba(63, 216, 255, 0.55); }
+.anyma-look.anyma-el.an-red #crossfader::-webkit-slider-thumb { box-shadow: 0 2px 8px rgba(0, 0, 0, 0.9), inset 0 0 0 1px #ff2238, 0 0 8px rgba(255, 34, 56, 0.5); }
+.anyma-look.anyma-el #crossfader::-moz-range-thumb { box-shadow: inset 0 0 0 1px #3fd8ff, 0 0 8px rgba(63, 216, 255, 0.55); }
+.anyma-look.anyma-el.an-red #crossfader::-moz-range-thumb { box-shadow: inset 0 0 0 1px #ff2238, 0 0 8px rgba(255, 34, 56, 0.5); }
+
+@media (prefers-reduced-motion: reduce) {
+  .an-scan { display: none !important; }
+}

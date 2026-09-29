@@ -34,7 +34,7 @@ function superMoves(events) {
 async function main() {
   const cfg = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
   // paint-only scripts (waveforms, canvas visuals, marquee) are not part of the engine: skipped
-  const skip = cfg.skip || ["stem-wave.js", "visuals.js", "anyma-show.js", "marquee.js"];
+  const skip = cfg.skip || ["stem-wave.js", "visuals.js", "anyma-show.js", "anyma-ui.js", "marquee.js"];
   const env = await createEnv({ staticDir: STATIC, port: cfg.port, seed: cfg.seed || 1, echo: !!cfg.echo, skip });
   env.loadScripts();
   if (cfg.profile) env.clock.profile = new Map();
