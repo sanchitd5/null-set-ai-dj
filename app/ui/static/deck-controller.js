@@ -1085,7 +1085,7 @@ class Deck {
   // while it plays; the deck polls, decodes the stems, measures their lag
   // against the mix and attaches them sample-locked.
   async _loadVocals(trackId, analysis) {
-    for (let i = 0; i < 60; i++) {                       // ~10 min of polling
+    for (let i = 0; i < 200; i++) {                      // ~10 min of polling (3 s apart)
       if (this.analysis !== analysis) return;            // another song loaded
       try {
         const res = await fetch(`/api/tracks/${trackId}/stems?separate=1`);
@@ -1107,7 +1107,7 @@ class Deck {
           return;
         }
       } catch (e) { console.warn("stems:", e.message); return; }
-      await new Promise((r) => setTimeout(r, 10000));
+      await new Promise((r) => setTimeout(r, 3000));     // stems land on the deck within ~3 s of the server having them
     }
   }
 
