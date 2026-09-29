@@ -201,11 +201,13 @@ async function createEnv(opts) {
     const skip = new Set(opts.skip || []);
     for (const src of order) {
       const name = src.replace(/^\//, "");
-      if (skip.has(name)) { env.scripts.push({ name, skipped: true }); continue; }
+      if (skip.has(name) || name === "host-browser.js") { env.scripts.push({ name, skipped: true }); continue; }
       const file = path.join(staticDir, name);
       try {
         vm.runInThisContext(fs.readFileSync(file, "utf8"), { filename: file });
         env.scripts.push({ name, ok: true });
+        // composition root: once engine.js is in, the sim's own Host goes in (host-browser.js is the live console's)
+        if (name === "engine.js") g.Engine.use(require("./host-sim").createSimHost(env));
       } catch (e) {
         env.scripts.push({ name, ok: false, error: String(e && e.stack || e).split("\n").slice(0, 3).join(" | ") });
         logs.errors.push({ t: +clock.now.toFixed(3), where: `load ${name}`, error: String(e && e.stack || e).slice(0, 800) });

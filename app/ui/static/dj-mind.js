@@ -706,7 +706,12 @@
                  layerBars, layerVeto, layerDecision, LAYER_EVERY };
   root.djMindCore = core;
   if (typeof module !== "undefined" && module.exports) module.exports = core;
-  if (typeof document === "undefined") return;
+
+  // ---- runtime: reaches the world only through the Host port (engine.js) -------------------------------
+  function create({ host, ai }) {
+  const { setTimeout, clearTimeout, setInterval, clearInterval } = host.clock;
+  const audioCtx = host.audio;
+  const ui = host.ui;
 
   // ------------------------------------------------------------------ runtime
   const TICK_MS = 250;
@@ -720,7 +725,7 @@
 
   let deckId = null, timer = null, timers = [];
   let lastPhrase = null, trackIdx = 0, subdropTrackIdx = -9;
-  let lastMoveAt = -Infinity;                   // performance.now() seconds
+  let lastMoveAt = -Infinity;                   // host.clock.perfNow() seconds
   let holdsUsed = 0, preCleared = false, instantShown = false;
   let plan = null;                              // {fireAt, maxFireAt, style, preClearBars}
   let aiMoves = [], aiFor = null;               // validated AI moves for the playing song
@@ -740,15 +745,15 @@
   let boostTrackIdx = -9, lastBoostAt = -Infinity;
   let profileE = null;                          // LLM current_profile energy of the playing song
 
-  const nowS = () => performance.now() / 1000;
-  const deck = () => (deckId && window.decks ? window.decks[deckId] : null);
+  const nowS = () => host.clock.perfNow() / 1000;
+  const deck = () => (deckId && host.decks ? host.decks[deckId] : null);
   const barSecsOf = (d) => 240 / ((d && d.bpm) || 128);
 
-  function eqLow(id) { return document.querySelector(`.eq-knob[data-deck="${id}"][data-band="low"]`); }
+  function eqLow(id) { return ui.query(`.eq-knob[data-deck="${id}"][data-band="low"]`); }
   function setKnob(el, v) {
     if (!el) return;
     el.value = String(v);
-    el.dispatchEvent(new Event("input", { bubbles: true }));
+    ui.fire(el, "input", true);
   }
   function later(ms, fn) { const t = setTimeout(fn, Math.max(0, ms)); timers.push(t); }
   function ramp(el, to, ms) {
@@ -759,9 +764,9 @@
   function cancelMoves() { timers.forEach(clearTimeout); timers = []; }
 
   function render(dec) {
-    const nowEl = document.getElementById("ap-mind-now");
-    const logEl = document.getElementById("ap-mind-log");
-    const panel = document.getElementById("ap-mind");
+    const nowEl = ui.el("ap-mind-now");
+    const logEl = ui.el("ap-mind-log");
+    const panel = ui.el("ap-mind");
     if (!nowEl) return;
     const tag = dec.source || (dec.action === "holdloop" ? "SAFETY" : dec.action !== "ride" ? "RULE" : "");
     const peakTag = (p) => (p ? `<span class="ap-mind-tag ap-mind-tag-peak">PEAK</span>` : "");
@@ -780,9 +785,9 @@
 
   // -- deck loop / fx helpers (reuse deck-controller + fx-rack, no new DSP) --
   function loopUi(id, d) {
-    const btn = document.querySelector(`.deck-btn[data-deck="${id}"][data-action="loop-toggle"]`);
+    const btn = ui.query(`.deck-btn[data-deck="${id}"][data-action="loop-toggle"]`);
     if (btn) btn.classList.toggle("loop-active", !!d.loopOn);
-    const v = document.getElementById(`loop-value-${id}`);
+    const v = ui.el(`loop-value-${id}`);
     if (v) v.textContent = String(d.loopBeats);
   }
   // Loop `beats` from track time `start` (grid point), exact: loopOn + seek.
@@ -826,14 +831,14 @@
     loopUi(id, d);
   }
   function fxEcho(id, on) {
-    const u = window.fxUnits && window.fxUnits[id];
+    const u = host.mod.fxUnits && host.mod.fxUnits[id];
     if (!u) return;
     if (on) { u.setType("echo"); u.setWet(0.6); u.setActive(true); } else u.setActive(false);
     if (typeof updateFxTypeButtons === "function") updateFxTypeButtons(id);
     if (typeof updateFxPad === "function") updateFxPad(id);
   }
   function eqBand(id, band) {
-    return document.querySelector(`.eq-knob[data-deck="${id}"][data-band="${band}"]`);
+    return ui.query(`.eq-knob[data-deck="${id}"][data-band="${band}"]`);
   }
 
   function aDropLines(d, bar) {
@@ -850,7 +855,7 @@
     const rate = (d._playbackRate && d._playbackRate()) || 1;
     const long = mergeSections(a.sections, bar);
     const sec = sectionAt(long, pos);
-    const mode = document.getElementById("ap-mode");
+    const mode = ui.el("ap-mode");
     const idx = phraseAt(a.downbeat_times, pos, bar);
     const [p0, p1] = phraseBounds(a.downbeat_times, idx, bar);
     const plen = p1 - p0;
@@ -890,7 +895,7 @@
       overlapStyle: plan ? plan.style : null,
       preClearBars: plan ? plan.preClearBars : 8,
       preCleared, instantShown, holdsUsed,
-      mashupActive: !!(window.mashup && window.mashup.active),
+      mashupActive: !!(host.mod.mashup && host.mod.mashup.active),
       subdropThisTrack: subdropTrackIdx === trackIdx,
       subdropLastTrack: subdropTrackIdx === trackIdx - 1,
       secsSinceMove: nowS() - lastMoveAt,
@@ -900,14 +905,14 @@
       skipHitsDrop: { 8: dropIn(8), 16: dropIn(16) },
       remixUsed, remixCount: remixUsed.length, lastRemixPhrase,
       onAir: !!(d._onAir && d._onAir()),
-      relaxed: !!(root.djSession && root.djSession.relaxed),
+      relaxed: !!(host.session && host.session.relaxed),
       aiMove,
       rate,
       // PEAK mode
       peakOn: peakOn(), profileEnergy: profileE, energyQ3: energyQ3(long),
       bigBlock: plan && plan.style === "peak" ? "the transition is this song's big moment"
         : bigMomentBlock("fakeout", trackIdx, bigLog, (pos - (d._mindEntry || 0)) / bar, nowS()),
-      drumsOn: !!(window.beatLayer && window.beatLayer.boostUntil && window.beatLayer.isEnabled()),
+      drumsOn: !!(host.mod.beatLayer && host.mod.beatLayer.boostUntil && host.mod.beatLayer.isEnabled()),
       boostThisTrack: boostTrackIdx === trackIdx, secsSinceBoost: nowS() - lastBoostAt,
       lastBarVocal: vocalShare(a.vocal_active_regions, p1 - bar, p1),
       peakKind: plan ? plan.peakKind : null, peakWhy: plan ? plan.peakWhy : null,
@@ -992,7 +997,7 @@
         at(end - bar, () => { setKnob(lo, LOW_KILL); setKnob(hi, LOW_KILL); });
         at(end, () => { setKnob(lo, 0); setKnob(hi, 0); });
       } else {
-        const vol = document.querySelector(`.volume-fader[data-deck="${id}"]`);
+        const vol = ui.query(`.volume-fader[data-deck="${id}"]`);
         let was = null;
         at(end - beat, () => { was = vol ? vol.value : null; setKnob(vol, 0); });
         at(end, () => { if (was != null) setKnob(vol, was); });
@@ -1015,7 +1020,7 @@
       // [[Fred again.. Case Study]]: live drums over the record, here one
       // 8-bar phrase of open hats + claps inside a peak drop (beat-layer.js).
       boostTrackIdx = trackIdx; lastBoostAt = nowS();
-      if (window.beatLayer && window.beatLayer.boostUntil) window.beatLayer.boostUntil(end);
+      if (host.mod.beatLayer && host.mod.beatLayer.boostUntil) host.mod.beatLayer.boostUntil(end);
     }
   }
 
@@ -1037,7 +1042,7 @@
     // Silent pre-check (live-ear.js): every candidate is scored on the deck's
     // buffer before anything is heard; the crowd only hears the winner.
     const cands = holdLoopCandidates(anchor, d._mindEntry, bar, a.downbeat_times, a.vocal_active_regions);
-    const ear = window.liveEar && window.liveEar.precheck;
+    const ear = host.mod.liveEar && host.mod.liveEar.precheck;
     const scored = ear ? ear(d, cands.flatMap((c) => [c, { start: c.start, bars: (c.jumpOut - c.start) / bar, _jump: c }]), bar) : [];
     const seamOf = (c) => {
       if (!ear) return null;
@@ -1051,8 +1056,8 @@
     holdLoop = { start: span.start, bars: span.bars, seam: choice.score,
                  tried: cands.map((c) => ({ start: c.start, bars: c.bars, seam: seamOf(c), vocalClean: c.vocalClean })) };
     emitAi("precheck", { deck: deckId, span, score: choice.score, tried: holdLoop.tried.length });
-    if (window.liveEar && window.liveEar.silentEar) {
-      window.liveEar.silentEar(d, { start: span.start, bars: span.bars, seam: { score: choice.score } }, bar)
+    if (host.mod.liveEar && host.mod.liveEar.silentEar) {
+      host.mod.liveEar.silentEar(d, { start: span.start, bars: span.bars, seam: { score: choice.score } }, bar)
         .then((r) => { if (r && holdLoop) { holdLoop.omni = r; emitAi("silent-ear", { deck: id, result: r }); } });
     }
     const go = () => {
@@ -1062,7 +1067,7 @@
       holdLoop.since = nowS();
       // The span crosses a sung line: loop the instrumental (live stems), so it
       // plays like an extended break instead of a chopped singer.
-      if (span.vocalClean === false && window.stemMoves && window.stemMoves.instrumental(d, true)) {
+      if (span.vocalClean === false && host.mod.stemMoves && host.mod.stemMoves.instrumental(d, true)) {
         holdLoop.instrumental = true;
       }
     };
@@ -1116,7 +1121,7 @@
     const moveTo = snap(info.start - PHRASE_BARS * bar);
     // Silent check before the crowd hears it: the moved loop must not score
     // worse than the one playing.
-    const pre = window.liveEar && window.liveEar.precheck;
+    const pre = host.mod.liveEar && host.mod.liveEar.precheck;
     const moveSeam = pre ? (pre(d, [{ start: moveTo, bars: info.bars }], bar)[0].seam || {}).score : null;
     const moveOk = moveSeam == null || holdLoop.seam == null || moveSeam >= holdLoop.seam - 0.05;
     if (action === "move_loop" && info.canMove && !cutsVocal(moveTo) && !cutsVocal(moveTo + info.bars * bar) && moveOk) {
@@ -1140,7 +1145,7 @@
   // it (stem-moves.js, the USB002 move), on a phrase line, with the vocal
   // carrying the bars and room left before the planned exit.
   function stemBreakdownTick(d, pos, bar) {
-    const sm = window.stemMoves;
+    const sm = host.mod.stemMoves;
     if (!sm || !d.stemsReady || d._breakdownDone) return false;
     const [phraseStart] = phraseBounds(d.analysis && d.analysis.downbeat_times, phraseAt(d.analysis && d.analysis.downbeat_times, pos, bar), bar);
     if (Math.abs(pos - phraseStart) > bar / 2) return false;          // only right on the line
@@ -1164,9 +1169,9 @@
   // and slams back on the phrase line after it. Needs live stems; not in a
   // relaxed session; never within 4 bars of the planned exit.
   function hookDropTick(d, pos, bar) {
-    const sm = window.stemMoves;
+    const sm = host.mod.stemMoves;
     if (!sm || !sm.hookDrop || !d.stemsReady || d._hookDropDone || !(d.hookDrops && d.hookDrops.length)) return false;
-    if (root.djSession && root.djSession.relaxed) return false;
+    if (host.session && host.session.relaxed) return false;
     const it = sm.core.hookDropDue(d.hookDrops, pos, bar, plan ? plan.fireAt : null);
     if (!it || !sm.hookDrop(d, it, (it.why || []).join("; "))) return false;
     d._hookDropDone = true;
@@ -1179,7 +1184,7 @@
   // Remix on the go: on 16-bar lines (every 2nd phrase from the song's entry),
   // a stem move in that section (stem-moves.js remixPick / remixEvents).
   function stemRemixTick(d, pos, bar, phrase) {
-    const sm = window.stemMoves;
+    const sm = host.mod.stemMoves;
     if (!sm || !d.stemsReady || !toggleOn("ap-remix-toggle")) return false;
     const entryPhrase = phraseAt(d.analysis && d.analysis.downbeat_times, d._mindEntry || 0, bar);
     if ((phrase - entryPhrase) % 2 !== 0) return false;                  // 16-bar lines only
@@ -1211,8 +1216,7 @@
   }
   // AI activity bus for the overlays (ai-overlay.js).
   function emitAi(kind, detail) {
-    if (typeof window.dispatchEvent !== "function" || typeof CustomEvent === "undefined") return;
-    window.dispatchEvent(new CustomEvent("ai-activity", { detail: { kind, ...detail } }));
+    host.bus.emit("ai-activity", { kind, ...detail });
   }
   // What the overlays draw on the waveforms: exit window, hold loop, vocals.
   function overlayState() {
@@ -1262,7 +1266,7 @@
   }
 
   // -- AI plan (one LLM call per song pair; rules re-check every move) -------
-  const toggleOn = (id) => { const el = document.getElementById(id); return !el || el.checked; };
+  const toggleOn = (id) => { const el = ui.el(id); return !el || el.checked; };
   const mindOn = () => toggleOn("ap-mind-toggle");
   const aiOn = () => mindOn() && toggleOn("ap-ai-toggle");
   const peakOn = () => mindOn() && toggleOn("ap-peak-toggle");
@@ -1270,7 +1274,7 @@
   const clock = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, "0")}`;
 
   function renderPlan(p) {
-    const el = document.getElementById("ap-mind-plan");
+    const el = ui.el("ap-mind-plan");
     if (!el) return;
     if (!p) { el.innerHTML = ""; el.hidden = true; return; }
     const c = p.candidate || {};
@@ -1296,12 +1300,10 @@
     const ctrl = new AbortController();
     const waitMs = planWaitMs(win.deadlineS);
     const t = setTimeout(() => ctrl.abort(), waitMs);
-    const mode = document.getElementById("ap-mode");
+    const mode = ui.el("ap-mode");
     renderPlan({ candidate: { recipe: "planning…" }, exit: null, moves: [], reasons: {} });
     try {
-      const res = await fetch("/api/autopilot/plan", {
-        method: "POST", headers: { "Content-Type": "application/json" }, signal: ctrl.signal,
-        body: JSON.stringify({
+      const res = await ai.plan({
           track_a_id: currentId, track_b_id: nextId,
           now: d._currentPosition(), entry: d._mindEntry || 0,
           window_lo: win.lo, window_hi: win.hi,
@@ -1314,8 +1316,7 @@
           peak_moves: peakOn(),
           big_moment_ok: !(plan && plan.style === "peak") &&
             !bigMomentBlock("fakeout", trackIdx, bigLog, BIG_MIN_BARS, nowS() + 60),
-        }),
-      });
+      }, { signal: ctrl.signal });
       const p = await res.json();
       if (!res.ok) throw new Error(p.detail || res.statusText);
       if (trackIdx !== forTrack || deckId !== id) return null;   // song changed meanwhile
@@ -1377,7 +1378,7 @@
       if (holdLoop.washed) ramp(eqBand(id, "mid"), 0, (bar * 1000) / rate);
       // Instrumental hold: the vocal returns on the release line (a handoff
       // transition may take it straight onto the bus instead).
-      if (holdLoop.instrumental && window.stemMoves) window.stemMoves.instrumental(d, false, end);
+      if (holdLoop.instrumental && host.mod.stemMoves) host.mod.stemMoves.instrumental(d, false, end);
       later(((end - pos) * 1000) / rate - 10, () => { if (deckId === id) loopRelease(d, id, end); });
       plan.fireAt = plan.maxFireAt = end + 0.1;
       say({ action: "holdloop", rule: "safety", why: "next song ready - releasing the loop into the transition" }, pos);
@@ -1396,7 +1397,7 @@
   // Rule 8: a pre-crossfade drum fill every other transition at most, never on
   // an instant swap (the swap itself is the event).
   function fxAllowed(kind) {
-    if (root.djSession && root.djSession.relaxed) return false;   // relaxed: no fills, no FX
+    if (host.session && host.session.relaxed) return false;   // relaxed: no fills, no FX
     if (kind !== "fill") return true;
     if (plan && (plan.style === "instant" || plan.style === "peak")) return false;
     if (transitions - lastFillTransition < 2) return false;
@@ -1420,14 +1421,14 @@
   // Peak transition for the booked pair (autopilot.js scheduleTransition hook).
   // ctx: {drop (blend plan, entry_mode "drop"), lo, hi, plannedExit, entryPos, inDeck}
   function planPeak(ctx) {
-    if (root.djSession && root.djSession.relaxed) return null;       // relaxed: never a peak swap
+    if (host.session && host.session.relaxed) return null;       // relaxed: never a peak swap
     const d = deck();
     if (!d || !ctx || !ctx.drop) return null;
     const a = d.analysis || {}, bar = barSecsOf(d);
-    const inn = window.decks && window.decks[ctx.inDeck];
+    const inn = host.decks && host.decks[ctx.inDeck];
     const b = (inn && inn.analysis) || {};
     const bE = aDropLines(inn || {}, barSecsOf(inn)).find((x) => Math.abs(x.t - ctx.drop.entry) <= barSecsOf(inn));
-    const mode = document.getElementById("ap-mode");
+    const mode = ui.el("ap-mode");
     return peakTransition({
       peakOn: peakOn(),
       // song-level only: a transition changes the vibe, so "has a drop" is not enough
@@ -1447,9 +1448,11 @@
                      trackIdx = 0; subdropTrackIdx = -9; lastMoveAt = -Infinity;
                      transitions = 0; lastFillTransition = -9; lastLayerTransition = -9; layerRun = null; }
 
-  window.djMind = { follow, stop, reset, setPlan, fireAt, onTransition, fxAllowed,
+  return { follow, stop, reset, setPlan, fireAt, onTransition, fxAllowed,
                     noteEnergy, nextEnergyNote, requestPlan, planPeak, setProfileEnergy,
                     planLayer, layering, get layerActive() { return !!layerRun; }, core,
                     holdLoopInfo, holdLoopAct, overlayState,
                     get transitioning() { return inTransition; } };
+  }
+  if (root.Engine) root.Engine.mount("djMind", create);
 })(typeof window !== "undefined" ? window : globalThis);

@@ -10,7 +10,8 @@ const path = require("path");
 const { createEnv, safe } = require("./env");
 const { Sampler, analyseWindow } = require("./graph");
 
-const STATIC = path.resolve(__dirname, "..", "..", "ui", "static");
+// the console's scripts; SIM_STATIC_DIR points at another copy (used to try a change before it lands)
+const STATIC = process.env.SIM_STATIC_DIR || path.resolve(__dirname, "..", "..", "ui", "static");
 
 // NULL-BOT supermoves: the mascot's own pure rule (mascot.js supermoveFor) over the engine's events
 function loadPure(file) {       // a console file's node exports, in a sandbox with no window / document

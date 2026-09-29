@@ -12,7 +12,8 @@
 //   VOCAL SWAP      host drops to its instrumental / back to the full mix
 //   RIFF × RAP      armed: runs when the host reaches its groove (if the pair fits)
 //
-// Depends on globals: audioCtx, decks, stemMoves, riffOverRap, autoSampler, mashup.
+// Reaches the world only through the Host port (engine.js): host.decks, host.mod (stemMoves, riffOverRap,
+// autoSampler, mashup), host.ui, host.clock, host.api, host.bus.
 (function (root) {
   "use strict";
 
@@ -27,12 +28,19 @@
   }
   const core = { nextLine };
   if (typeof module !== "undefined" && module.exports) module.exports = core;
-  if (typeof root.document === "undefined" || typeof audioCtx === "undefined") return;
 
-  const say = (label, why, ok = true) => root.dispatchEvent(new CustomEvent("ai-activity",
-    { detail: { kind: "stem-move", deck: "", label: `${ok ? "" : "✗ "}${label}`, why } }));
+  function create({ host }) {
+  const { setTimeout } = host.clock;
+  const audioCtx = host.audio;
+  const ui = host.ui;
+  const fetch = (url, opts) => host.api.fetch(url, opts);
+  const root = { get decks() { return host.decks; }, get state() { return host.state; }, get stemMoves() { return host.mod.stemMoves; },
+    get mashup() { return host.mod.mashup; }, get autoSampler() { return host.mod.autoSampler; }, get riffOverRap() { return host.mod.riffOverRap; } };
 
-  function host() {
+  const say = (label, why, ok = true) => host.bus.emit("ai-activity",
+    { kind: "stem-move", deck: "", label: `${ok ? "" : "✗ "}${label}`, why });
+
+  function hostDeck() {
     let best = null, lv = -1;
     for (const id of ["a", "b"]) {
       const d = root.decks[id];
@@ -44,7 +52,7 @@
   }
   const other = (id) => (id === "a" ? "b" : "a");
   function ctx(needNext) {
-    const h = host();
+    const h = hostDeck();
     if (!h) return { err: "nothing is playing" };
     const d = root.decks[h], n = root.decks[other(h)];
     if (needNext && !(n && n.buffer && n.analysis)) return { err: `load a song on deck ${other(h).toUpperCase()} first` };
@@ -53,8 +61,8 @@
     const line = nextLine(d.analysis && d.analysis.phrase_boundaries_8bar, pos, rate, 2 * bar / rate, bar);
     return { h, d, n, nId: other(h), bar, rate, pos, line, T: audioCtx.currentTime + (line - pos) / rate };
   }
-  const setRange = (el, v) => { if (el) { el.value = String(v); el.dispatchEvent(new Event("input", { bubbles: true })); } };
-  const eq = (deck, band) => document.querySelector(`.eq-knob[data-deck="${deck}"][data-band="${band}"]`);
+  const setRange = (el, v) => { if (el) { el.value = String(v); ui.fire(el, "input", true); } };
+  const eq = (deck, band) => ui.query(`.eq-knob[data-deck="${deck}"][data-band="${band}"]`);
 
   const ACTIONS = {
     async mix() {
@@ -67,7 +75,7 @@
       const entry = (n.analysis.phrase_boundaries_8bar || [0])[0] || 0;
       const barS = c.bar / c.rate;
       n.play(entry, false, c.T);
-      const xf = document.getElementById("crossfader");
+      const xf = ui.el("crossfader");
       ["low", "mid", "high"].forEach((b) => { setRange(eq(c.h, b), 0); setRange(eq(c.nId, b), 0); });
       if (sm && c.d.stemsReady && n.stems) {
         await new Promise((r) => setTimeout(r, 120));        // next's stem sources are booked with its play()
@@ -162,7 +170,7 @@
       const g0 = prep.plan.a_groove[0], pos = c.d._currentPosition();
       if (g0 < pos + 1) return say("RIFF × RAP", `this song is past its groove (${fmt(g0)})`, false);
       const t0 = audioCtx.currentTime + (g0 - pos) / c.rate;
-      const xf = document.getElementById("crossfader");
+      const xf = ui.el("crossfader");
       root.riffOverRap.run(prep, c.h, c.nId, t0, {
         xf: (inn, f) => setRange(xf, (inn === "b" ? 1 : -1) * f),
         eq: (d, band, v) => setRange(eq(d, band), v),
@@ -174,10 +182,12 @@
   function trackId(id) { return root.state ? (id === "a" ? root.state.trackA : root.state.trackB) : null; }
   function fmt(t) { return `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, "0")}`; }
 
-  document.querySelectorAll("[data-ai-action]").forEach((b) => b.addEventListener("click", async () => {
+  ui.queryAll("[data-ai-action]").forEach((b) => b.addEventListener("click", async () => {
     b.classList.add("ai-action-busy");
     try { await ACTIONS[b.dataset.aiAction](); } catch (e) { say(b.textContent.trim(), e.message, false); }
     finally { setTimeout(() => b.classList.remove("ai-action-busy"), 600); }
   }));
-  root.aiActions = { core, ...ACTIONS };
+  return { core, ...ACTIONS };
+  }
+  if (root.Engine) root.Engine.mount("aiActions", create);
 })(typeof window !== "undefined" ? window : globalThis);
