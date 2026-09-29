@@ -935,6 +935,9 @@
       <label class="hud-label" data-group="ATLAS" title="MACRO_PREFERENCE: share of the time a known macro's next step is taken when the playing song is in a saved macro (the rest explores)">
         MACRO PREF <input type="number" id="ap-macro-pref" min="0" max="1" step="0.05" value="0.8" aria-label="Macro preference" />
       </label>
+      <label class="hud-label" data-group="ATLAS" title="FOLLOW SET: the autopilot suggests a studied famous set's songs first (the next song in the set order, then the songs played around it, then the rest), every live gate still applies; the LLM is asked only when none passes. Missing songs download through the normal suggest path. Auto: follow the set the playing song belongs to">
+        FOLLOW SET <select id="ap-follow-set" aria-label="Follow a studied set"><option value="">auto</option><option value="none">off</option></select>
+      </label>
     </div>
   </div>
 

@@ -1820,5 +1820,6 @@ body::after {
 .macro-edit input { width: 90px; }
 .compat-list h4 { margin: 6px 0 2px; font-size: 11px; letter-spacing: 0.08em; }
 .compat-list ul { margin: 0; padding-left: 12px; }
+.compat-studied { margin-left: 4px; padding: 0 4px; border: 1px solid currentColor; border-radius: 3px; font-size: 10px; font-weight: 700; letter-spacing: 0.06em; }
 .combo-streak { text-align: center; font-weight: 700; letter-spacing: 0.08em; padding: 2px 0; }
 #ap-macro-pref { width: 52px; }

@@ -3,6 +3,7 @@
 GET  /api/atlas/status                     built?, stats, rules hash
 GET  /api/atlas/partners?a=&move=&n=&combo=  best partners of A (per move; combo=1: combos only)
 GET  /api/atlas/pair?a=&b=                 one pair's summary + default plan (null: unknown)
+GET  /api/studied/sets                     studied famous sets in set order (FOLLOW SET)
 GET  /api/macros                           saved macros
 GET  /api/macros/{name}                    one macro (+ offline validation per step)
 POST /api/macros                           save {macro} (an existing name becomes <name>-v<k>)
@@ -86,6 +87,23 @@ def atlas_partners(a: str, move: Optional[str] = None, n: int = 10, combo: bool 
     if combo:
         rows = [r for r in rows if r.get("combo")][:max(1, min(100, n))]
     return {"a": a, "name": idx.names.get(a), "move": move, "partners": rows, "built": True}
+
+
+_SETS_MEMO: dict = {}
+
+
+@router.get("/api/studied/sets")
+def studied_sets():
+    """The studied famous sets in set order with each song's library id (FOLLOW SET).
+    Recomputed when the library names or a study file change."""
+    from app.music_brain import studied_combos as sc
+
+    files = [ATLAS_CACHE_DIR / "uploads" / "_names.json", ATLAS_CACHE_DIR / "track_aliases.json",
+             *sorted((ATLAS_CACHE_DIR / "sets").glob("*/study.json"))]
+    stamp = tuple((str(p), p.stat().st_mtime_ns) for p in files if p.exists())
+    if _SETS_MEMO.get("stamp") != stamp:
+        _SETS_MEMO.update(stamp=stamp, sets=sc.set_songs(ATLAS_CACHE_DIR))
+    return {"sets": _SETS_MEMO["sets"]}
 
 
 @router.get("/api/atlas/pair")
