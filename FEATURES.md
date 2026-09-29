@@ -121,3 +121,19 @@ not gaps to fill:
   `POST /api/library/scan` discovers supported audio files safely and makes them available to the browser.
 - **Render-loop optimization:** ✅ Overview nodes and readouts are cached/dirty-checked, and overview
   updates use compositor transforms. The AudioContext requests interactive latency.
+
+## 10. Virtual set sim and autopilot gates (2026-09-29)
+
+- **Virtual set sim (`app/sim/`):** ✅ Runs the console's real browser JS in node against the real API on a
+  virtual clock, scores a whole set with one deterministic number, record/replay fixtures, `suite --check`
+  gate against `baseline.json`. ⚠️ `baseline.json` was recorded with the stub LLM (real-LLM re-record
+  pending). It cannot judge sound quality, real vocal clash or LLM taste. See `app/sim/LEARNINGS.md`.
+- **Host port (`engine.js`):** ✅ `autopilot`, `dj-mind`, `stem-moves`, `riff-over-rap`, `ai-actions`,
+  `tempo-rule` run on an injected Host (browser host and sim host, `host_contract_check.js`). ⚠️ `app.js`,
+  `deck-controller.js`, `live-ear.js`, `mashup-layer.js` and the other UI scripts still read window/document.
+- **Key and tempo gates:** ✅ Tonal blends need Camelot >= 0.8 else Echo Out; key-locked stretch capped at 8%;
+  learned technique picks skip bass swap / stem intro on clashing pairs. ⚠️ Audible benefit not verified by
+  listening.
+- **Silence and energy gates:** ✅ Silent stem intro, empty voice strip and empty synth hold are refused;
+  energy `force` widens rises only; low-energy hybrid window is MEDIUM. ⚠️ The EQ-path `eqIntro` has no
+  loudness floor of its own (the sim still counts silent intros).

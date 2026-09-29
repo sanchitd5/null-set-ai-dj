@@ -150,10 +150,15 @@ Agents working on the codebase (`mixing_engine.py`, `structure_detector.py`, `ge
   * Relative Major/Minor ($\text{A} \leftrightarrow \text{B}$): Score 0.85
   * Energy Boost ($+2$ hours / whole tone): Score 0.8 (valid for high-energy drops)
   * Dissonant clash ($\ge 3$ hours): Disallow unless using an Echo Out, Breakdown, or Drum Bridge.
+  * Live console gate: a tonal blend (Long Blend, Bass Swap, Drop Swap, learned stem intro) needs Camelot $\ge 0.8$, else it becomes Echo Out (`autopilot.js:keySafeRecipe`, `techniques.py:learned_pick`). Key-agnostic recipes on a clashing pair score `BYPASS_KEY_SCORE = 0.4` in the matcher.
 
 ### D. Tempo Ramping & Open-Format Transitions
 * **Theory Note:** `DJ/08 - Open Format/Open-Format DJing Guide.md` & `DJ/05 - Transition Cookbook/Tempo Bridge.md`
-* **Code Implementation:** When BPM difference is $\le 6\%$, use 32 micro-step gradual tempo warping. When BPM difference is massive (e.g., 128 to 174 BPM), implement the **Echo Out** or **Breakdown Transition** logic instead of linear pitch stretching.
+* **Code Implementation:** When BPM difference is $\le 6\%$, use 32 micro-step gradual tempo warping. When BPM difference is massive (e.g., 128 to 174 BPM), implement the **Echo Out** or **Breakdown Transition** logic instead of linear pitch stretching. Live key-locked stem stretch is capped at 8% (`tempo-rule.js:KEYLOCK_RANGE_PCT`, `techniques.py:MAX_KEYLOCK_STRETCH`).
+
+### E. Live Console Silence and Energy Gates, and the Virtual Set Sim
+* **Code Implementation:** the energy last-round `force` widens rises only (`energy.py:next_ok`). A stem intro, voice-alone strip or synth hold on a stem with no energy in the window is refused (`stem-moves.js:pickIntro`, `breakdownVocalOk`, `keepsVibe`).
+* **Verify rule changes with the sim** (`app/sim/README.md`): `python3 -m app.sim.suite --check`, `python3 -m app.sim.virtual_set --replay NAME --out DIR`, `python3 -m app.sim.compare A/report.json B/report.json`. It cannot judge sound quality; `baseline.json` is stub-LLM era. Log results in `app/sim/LEARNINGS.md`.
 
 ---
 

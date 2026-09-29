@@ -108,6 +108,20 @@ so re-uploading identical bytes is idempotent) and all blobs live under the giti
 .venv\Scripts\python.exe -m pytest app/tests/ -q -m "not slow"
 ```
 
+**Virtual set sim** (`app/sim/`, docs in `app/sim/README.md`): runs the console's real browser JS in node
+against the real API on a virtual clock and scores a whole set with one number (lower is better). Use it
+to test any autopilot / transition rule change before trusting it. Learning log: `app/sim/LEARNINGS.md`.
+
+```bash
+python3 -m app.sim.virtual_set --seed 1 --tracks 10 --mode quick --out app/sim/out/run
+python3 -m app.sim.virtual_set --seed 1 --tracks 10 --mode quick --record NAME   # once, real network/LLM
+python3 -m app.sim.virtual_set --replay NAME --out DIR                            # deterministic, no network
+python3 -m app.sim.suite --check            # seeds 1-5, long+quick; exit 1 on regression vs baseline.json
+python3 -m app.sim.compare A/report.json B/report.json
+```
+
+It cannot judge sound quality or real vocal clash; `baseline.json` is stub-LLM era until re-recorded.
+
 ---
 
 ## 3. The Obsidian DJ Knowledge Base (`./DJ/`) as the DJ Wiki
@@ -156,7 +170,9 @@ When writing or modifying code in `mixing_engine.py`, `structure_detector.py`, o
    * Relative Major/Minor ($\text{A} \leftrightarrow \text{B}$): 0.85
    * $+2$ Energy Boost: 0.8
    * Clashing keys ($\ge 3$ hours): Disallowed unless using Echo Out or Breakdown transition logic.
-4. **BPM Gaps:** For BPM differences $\le 6\%$, use 32-micro-step pitch ramping. For massive gaps (e.g., 128 to 174 BPM), route through an **Echo Out** or **Breakdown Transition** rather than stretching audio.
+   * Live console gate: a tonal blend (Long Blend, Bass Swap, Drop Swap, learned stem intro) needs Camelot $\ge 0.8$, else it becomes Echo Out (`autopilot.js:keySafeRecipe`, `techniques.py:learned_pick`). Key-agnostic recipes on a clashing pair score `BYPASS_KEY_SCORE = 0.4` in the matcher, never neutral.
+4. **BPM Gaps:** For BPM differences $\le 6\%$, use 32-micro-step pitch ramping. For massive gaps (e.g., 128 to 174 BPM), route through an **Echo Out** or **Breakdown Transition** rather than stretching audio. Live key-locked stem stretch is capped at 8% (`tempo-rule.js:KEYLOCK_RANGE_PCT`, `techniques.py:MAX_KEYLOCK_STRETCH`).
+5. **Live console selection and silence gates:** the energy last-round `force` widens rises only, never falls (`energy.py:next_ok`, `autopilot.js:energyStepOk`). A stem intro, voice-alone strip or synth hold on a stem with no energy in the window is refused (`stem-moves.js:pickIntro`, `breakdownVocalOk`, `keepsVibe`); a refused move falls back, it is not booked. Evidence and open questions: `app/sim/LEARNINGS.md`.
 
 ---
 

@@ -385,3 +385,23 @@ Expanding the console from basic blends into advanced high-energy techniques:
 | **8. Mimic / Macro Learning Mode** | `performance.js` | Medium–High (Motion capture & quantizer) | Learns and saves custom human transition recipes |
 | **9. Web Audio Keylock (Phase Vocoder)** | Web Audio worklet / SoundTouchJS | High (Granular time-stretch) | Key-independent tempo changes and harmonic pitch shifting |
 
+---
+
+## 8. Ideas Surfaced by the Virtual Set Sim (2026-09-29)
+
+Source: `app/sim/LEARNINGS.md` section (d). Unbuilt; ranked by expected audible impact.
+
+1. **One Camelot table.** The console scores 0 where the KB scores 0.3-0.75, so blends are rewritten to
+   Echo Out for keys the KB does not call a clash (`key_false_rewrites` 2.2 per run, stub-era). Share the KB
+   tiers with the console.
+2. **Skip the plan LLM when both decks have stems.** The matcher/plan recipe is overwritten anyway
+   (past-session analysis, findings-2 #1); rank pairs by key and tempo gap and free 10-20 s of model time per song.
+3. **Cumulative energy-drop rule** over the last 3 songs, and a suggest prompt floor at the current level,
+   instead of "within 2 of the playing song".
+4. **Overlap share cap and recipe variety:** cap total overlap near 25% of on-air time and avoid two identical
+   recipes in a row (8 of 10 Long Blend in one session).
+5. **Same-artist cap:** reject a pick whose artist is in 2 of the last 3 songs (7 Fred again.. in a row).
+6. **End-of-file guard:** in master-watch, start the queued or next song when the on-air deck is within 3 s of
+   its buffer end.
+7. **Real-LLM sim baseline** so stall and empty-pick terms reflect selection quality, not the stub.
+
