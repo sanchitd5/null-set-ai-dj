@@ -77,6 +77,9 @@
 
   const ACTIONS = {
     async mix() {
+      // a macro selected in the MACRO panel: AUTO MIX plays its next step (loads B itself)
+      const mm = host.mod.macroMode;
+      if (mm && typeof mm.autoMix === "function" && (await mm.autoMix())) return;
       const c = ctx(true); if (c.err) return say("AUTO MIX", c.err, false);
       const n = c.n, sm = root.stemMoves;
       // tempo-lock next to host; key-locked tempo stems when the gap is big

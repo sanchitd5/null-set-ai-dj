@@ -74,6 +74,30 @@ const studied = { count: 1, sets: ["oRb_81stwy8"], djs: ["Anyma"], techniques: {
   assert.strictEqual(mm.followCandidates({ sets: [set], follow: "", aId: "0".repeat(16) }).set, null, "not in a studied set: no auto follow");
   const chosen = mm.followCandidates({ sets: [set], follow: "oRb_81stwy8", aId: "0".repeat(16), max: 2 });
   assert.deepStrictEqual(chosen.list.map((c) => c.position), [1, 2], "a chosen set starts from its first song");
+  // AUTO MIX with a macro selected: the step whose A is playing; else say why (owner)
+  {
+    const m = { name: "chain-x", steps: [{ n: 1, a: "a", b: "b" }, { n: 2, a: "b", b: "c" }] };
+    assert.deepStrictEqual(mm.autoMixPick(m, 0, "b"), { i: 1, step: m.steps[1] }, "playing song in macro -> its step");
+    assert.deepStrictEqual(mm.autoMixPick(m, 1, "a"), { i: 0, step: m.steps[0] }, "behind the cursor -> searched from the start");
+    assert.ok(/not in chain-x; press PLAY MACRO/.test(mm.autoMixPick(m, 0, "z").why), "not in macro -> clear message");
+    assert.ok(/last song/.test(mm.autoMixPick(m, 0, "c").why), "last song -> nothing to mix into");
+    assert.strictEqual(mm.autoMixPick(null, 0, "a"), null, "no macro -> AUTO MIX keeps today's behaviour");
+  }
+  // owner: Anyma "Atoma" (not in the set) -> the Anyma set's songs, not a pop mashup
+  const anyma = { set_id: "oRb_81stwy8", dj: "Anyma", songs: [
+    song(1, "Anyma - Eternity", id(1)), song(2, "Anyma - Syren", id(2)), song(3, "Argy - Aria", id(3)), song(4, "Afterlife - Intro", id(4))] };
+  const pop = { set_id: "popset", dj: "Pop DJ", songs: [song(1, "Dua Lipa - Levitate", id(7))] };
+  const art = mm.followCandidates({ sets: [pop, anyma], follow: "", aId: "0".repeat(16), aName: "Anyma - Atoma [Visualizer]", played: [], recent: ["Anyma - Atoma [Visualizer]"] });
+  assert.strictEqual(art.set.set_id, "oRb_81stwy8", "auto by artist");
+  assert.strictEqual(art.by, "artist");
+  assert.deepStrictEqual(art.list.map((c) => c.position), [3, 4], "artist spacing still enforced: the set's other artists");
+  assert.ok(art.skipped.some((s) => s.position === 1 && /artist spacing/.test(s.why)));
+  const popA = mm.followCandidates({ sets: [pop, anyma], follow: "", aId: id(7), aName: "Dua Lipa - Levitate", played: [], recent: [] });
+  assert.strictEqual(popA.set.set_id, "popset", "a pop set is unaffected");
+  assert.strictEqual(popA.by, "song");
+  assert.strictEqual(mm.followCandidates({ sets: [pop, anyma], follow: "", aId: "0".repeat(16), aName: "Nobody - Song" }).set, null, "no artist, no style: no follow");
+  const sty = mm.followCandidates({ sets: [Object.assign({ style: "Melodic Techno" }, anyma)], follow: "", aId: "0".repeat(16), aName: "Tale Of Us - Nova", aStyle: "melodic techno" });
+  assert.strictEqual(sty.by, "style", "style match when a set carries one");
 }
 
 // 2) macro preference: ~80 % of valid steps over many seeded draws; an invalid step is never taken
@@ -199,6 +223,34 @@ function mulberry(seed) { return () => { seed = (seed + 0x6D2B79F5) >>> 0; let t
     els2["ap-follow-set"].value = "none";
     const off = await rt2.firstCandidates(SEVEN, { played: [], recent: [] });
     assert.deepStrictEqual(off.map((c) => c.track_id), [STUD, LANE8, OTHER], "FOLLOW SET off: combos only (studied first)");
+  }
+  // MACRO panel: 8 songs = 7 transitions + a last row; the header counts both
+  {
+    const ids = Array.from({ length: 8 }, (_, i) => String(i).repeat(16));
+    const names = ["Jon Hopkins", "YOTTO", "S3", "S4", "S5", "S6", "ARTBAT", "Chemicals"];
+    const macro = { name: "chain-2-jon-hopkins---open", tracks: ids,
+      steps: ids.slice(0, 7).map((a, i) => ({ n: i + 1, a, b: ids[i + 1], a_name: names[i], b_name: names[i + 1], recipe: "Bass Swap" })) };
+    const rows = mm.macroRows(macro);
+    assert.strictEqual(rows.length, 8, "every song has a row");
+    assert.deepStrictEqual(rows[7], { kind: "last", n: 8, id: ids[7], name: "Chemicals" });
+    assert.strictEqual(rows[6].step.b_name, "Chemicals");
+    assert.deepStrictEqual(mm.macroRows(null), []);
+    assert.strictEqual(mm.macroListLabel({ name: macro.name, songs: 8, steps: 7 }), "chain-2-jon-hopkins---open · 8 songs · 7 transitions");
+    assert.strictEqual(mm.macroListLabel({ name: "x", songs: 2 }), "x · 2 songs · 1 transition");
+    // owner: "macros should have proper names": title shown, grouped by kind
+    assert.strictEqual(mm.macroListLabel({ name: "chain-1-x", title: "Jon Hopkins → Chemicals · 8 songs", songs: 8, steps: 7 }),
+      "Jon Hopkins → Chemicals · 8 songs · 7 transitions");
+    const groups = mm.macroGroups([
+      { name: "combo-b", title: "B", kind: "combo" }, { name: "chain-10-x", title: "C10" },
+      { name: "chain-2-x", title: "C2" }, { name: "studied-a-3", title: "S3", kind: "studied" },
+      { name: "studied-set-a", title: "Set A", kind: "studied" }, { name: "my-set", title: "Mine", created: 5 },
+      { name: "combo-a", title: "A", kind: "combo" }]);
+    assert.deepStrictEqual(groups.map((g) => g.label), ["STUDIED SETS", "CHAINS", "COMBOS", "YOUR MACROS"], "empty groups dropped");
+    assert.deepStrictEqual(groups[0].items.map((m) => m.name), ["studied-set-a", "studied-a-3"], "whole sets first");
+    assert.deepStrictEqual(groups[1].items.map((m) => m.name), ["chain-2-x", "chain-10-x"], "chains numeric");
+    assert.deepStrictEqual(groups[2].items.map((m) => m.title), ["A", "B"], "combos by title");
+    assert.strictEqual(mm.setToMacro("x", [{ a: SEVEN, b: LANE8 }], "My Set").title, "My Set");
+    assert.ok(!("title" in mm.setToMacro("x", [{ a: SEVEN, b: LANE8 }])));
   }
   console.log("macro mode OK");
 })().catch((e) => { console.error(e); process.exit(1); });

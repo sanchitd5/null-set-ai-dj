@@ -82,8 +82,22 @@
     const none = { set: null, pos: 0, list: [], skipped: [] };
     const sets = o.sets || [];
     if (o.follow === "none") return none;
-    const set = o.follow ? sets.find((s) => s.set_id === o.follow)
+    // auto: the set holding the playing song; else (owner: Anyma "Atoma" is not in the
+    // studied Anyma set) a set by the playing song's artist; else one whose style matches.
+    const art = o.aName ? artistOf(o.aName) : "";
+    const style = String(o.aStyle || "").toLowerCase().trim();
+    let by = o.follow ? "chosen" : "song";
+    let set = o.follow ? sets.find((s) => s.set_id === o.follow)
       : sets.find((s) => (s.songs || []).some((x) => x.track_id && x.track_id === o.aId));
+    if (!set && !o.follow && art) {
+      set = sets.find((s) => artistOf(s.dj || "") === art
+        || (s.songs || []).some((x) => x.status !== "id" && artistOf(x.title) === art));
+      by = "artist";
+    }
+    if (!set && !o.follow && style) {
+      set = sets.find((s) => String(s.style || "").toLowerCase().trim() === style);
+      by = "style";
+    }
     if (!set) return none;
     const W = o.window == null ? FOLLOW_WINDOW : o.window;
     const songs = (set.songs || []).filter((x) => x.status !== "id");
@@ -119,7 +133,7 @@
                   download: x.track_id ? null : { artist: parts.length > 1 ? parts[0] : "", title: parts.length > 1 ? parts.slice(1).join(" - ") : x.title,
                                                   search_query: `ytmsearch:${x.title}` } });
     }
-    return { set, pos: k, list: list.slice(0, o.max || 8), skipped };
+    return { set, pos: k, by: here ? "song" : by, list: list.slice(0, o.max || 8), skipped };
   }
 
   // Macros the tab keeps in memory (the first `n`): studied macros first, then the server order.
@@ -245,6 +259,17 @@
     for (let i = Math.max(0, cursor); i < steps.length; i++) if (steps[i].a === aId) return { i, step: steps[i] };
     return null;
   }
+  // AUTO MIX with a macro selected (owner): the step whose A is the playing song (from the cursor,
+  // then from the start). The playing song is never swapped out. -> {i, step} | {why} | null (no macro)
+  function autoMixPick(macro, cursor, aId) {
+    const steps = (macro && macro.steps) || [];
+    if (!steps.length) return null;
+    const hit = aId ? runNext(macro, cursor, aId) || runNext(macro, 0, aId) : null;
+    if (hit) return hit;
+    const name = macro.name || "the macro";
+    if (aId && steps[steps.length - 1].b === aId) return { why: `the playing song is the last song of ${name}: nothing left to mix into` };
+    return { why: `the playing song is not in ${name}; press PLAY MACRO to start it` };
+  }
   // PLAY MACRO: the next k songs of the macro (B of each step from the cursor), for pre-render
   function upcomingIds(macro, cursor, k = 2) {
     return ((macro && macro.steps) || []).slice(Math.max(0, cursor), Math.max(0, cursor) + k).map((s) => s.b);
@@ -262,11 +287,12 @@
 
   // The console's current set as a macro: the played transitions [{a, b, a_name, b_name,
   // recipe, a_time, b_time}] in order. Chained A->B->C, else throws.
-  function setToMacro(name, transitions) {
+  // title: what the dropdown shows (the owner types it); the server slugs name into the id
+  function setToMacro(name, transitions, title) {
     const steps = (transitions || []).filter((t) => t && t.a && t.b).map((t, i) => Object.assign({ n: i + 1 }, t));
     if (!steps.length) throw new Error("no transitions in this set yet");
     for (let i = 1; i < steps.length; i++) if (steps[i].a !== steps[i - 1].b) throw new Error(`step ${i + 1} does not start where step ${i} ended`);
-    return { name, source: "console", steps };
+    return Object.assign({ name, source: "console", steps }, title ? { title: String(title) } : {});
   }
 
   // AI ACTIONS run-now entries (owner add-on contract): refusal on unsafe state, else ok.
@@ -283,8 +309,50 @@
     return g.ok ? { ok: true, why: g.why || `step ${step.n}: ${g.recipe}`, recipe: g.recipe } : g;
   }
 
+  // MACRO panel rows: one per song (N songs = N-1 transitions + the last song, which plays out).
+  // The <ol> numbers them, so a row carries no number of its own.
+  function macroRows(macro) {
+    const steps = (macro && macro.steps) || [];
+    const rows = steps.map((s) => ({ kind: "step", n: s.n, step: s }));
+    const last = steps[steps.length - 1];
+    if (last) rows.push({ kind: "last", n: steps.length + 1, id: last.b, name: last.b_name || last.b });
+    return rows;
+  }
+  function macroListLabel(m) {
+    const songs = Number(m && m.songs) || 0, steps = Number.isFinite(Number(m && m.steps)) ? Number(m.steps) : Math.max(0, songs - 1);
+    const tr = `${steps} transition${steps === 1 ? "" : "s"}`;
+    // a title already names its song count where it matters (chains, studied sets)
+    if (m && m.title) return `${m.title} · ${tr}`;
+    return `${m && m.name} · ${songs} song${songs === 1 ? "" : "s"} · ${tr}`;
+  }
+  // MACRO dropdown (owner: "macros should have proper names"): titles grouped by kind, the slug
+  // stays the value (and the tooltip). Kind comes from GET /api/macros (macros.kind_of); older
+  // rows without one are sorted by slug prefix. -> [{kind, label, items}] (empty groups dropped)
+  const MACRO_GROUPS = [["studied", "STUDIED SETS"], ["chain", "CHAINS"], ["combo", "COMBOS"], ["yours", "YOUR MACROS"]];
+  function macroKind(m) {
+    if (m && m.kind) return m.kind;
+    const n = String((m && m.name) || ""), src = String((m && m.source) || "");
+    if (n.startsWith("studied-")) return "studied";
+    if (n.startsWith("chain-")) return "chain";
+    if (n.startsWith("combo-") || src.startsWith("atlas")) return "combo";
+    return "yours";
+  }
+  function macroGroups(list) {
+    const title = (m) => String(m.title || m.name || "");
+    const order = {
+      studied: (x, y) => (/^studied-set-/.test(y.name) - /^studied-set-/.test(x.name)) || title(x).localeCompare(title(y)),
+      chain: (x, y) => String(x.name).localeCompare(String(y.name), undefined, { numeric: true }),
+      combo: (x, y) => title(x).localeCompare(title(y)),
+      yours: (x, y) => (y.created || 0) - (x.created || 0),
+    };
+    return MACRO_GROUPS.map(([kind, label]) => ({
+      kind, label, items: (list || []).filter((m) => m && m.name && macroKind(m) === kind).sort(order[kind]),
+    })).filter((g) => g.items.length);
+  }
+
   const core = { MACRO_PREFERENCE, COMBO_MIN_WORKS, COMBO_LABEL, FOLLOW_WINDOW, artistOf, studiedLabel, followCandidates, macroOrder, comboCandidates, macroCandidate,
-                 macroPrefer, streakAfter, streakLabel, applyPlan, fireAt, stepGate, editStep, setToMacro, runNowCheck, forcedOf, stepForPair, runNext, upcomingIds,
+                 macroRows, macroListLabel, macroGroups,
+                 macroPrefer, streakAfter, streakLabel, applyPlan, fireAt, stepGate, editStep, setToMacro, runNowCheck, forcedOf, stepForPair, runNext, autoMixPick, upcomingIds,
                  createRuntime: create };   // node checks drive the runtime over a fake Host
   if (typeof module !== "undefined" && module.exports) module.exports = core;
 
@@ -386,9 +454,11 @@
       // 1b) FOLLOW SET: a studied set's songs around the playing one (auto: the set it belongs to)
       {
         const sel = ui.el("ap-follow-set");
-        const fc = followCandidates({ sets: await followSets(), follow: sel ? sel.value : "", aId, played: o.played, recent: o.recent });
+        const fc = followCandidates({ sets: await followSets(), follow: sel ? sel.value : "", aId, aName: o.aName, aStyle: o.aStyle, played: o.played, recent: o.recent });
         if (fc.set) {
           stats.followTried++;
+          const fl = `follow: set ${fc.set.set_id} by ${fc.by}${fc.by === "artist" ? ` (${artistOf(o.aName || "")})` : fc.by === "style" ? ` (${o.aStyle})` : ""}`;
+          console.info(fl); step("studied", { decision: "follow", why: fl });
           for (const c of fc.list) {
             if (c.track_id && out.some((x) => x.track_id === c.track_id)) continue;
             out.push(mk(c.track_id, c.name, { _follow: { set_id: fc.set.set_id, dj: fc.set.dj, position: c.position }, _download: c.download }));
@@ -460,11 +530,13 @@
       const el = ui.el("macro-steps");
       if (!el) return;
       if (!loaded) { el.innerHTML = `<li class="macro-empty">no macro loaded</li>`; return; }
-      el.innerHTML = loaded.steps.map((s, i) => `<li data-n="${s.n}" class="${i === cursor ? "macro-next" : ""}">` +
-        `<b>${s.n}.</b> ${esc(s.a_name || s.a)} → ${esc(s.b_name || s.b)} <span class="macro-rec">${esc(s.recipe)}</span>` +
+      el.innerHTML = macroRows(loaded).map((r, i) => r.kind === "last"
+        ? `<li data-n="${r.n}" class="macro-last${i === cursor ? " macro-next" : ""}">${esc(r.name)} <span class="macro-pts">(last song, plays out)</span></li>`
+        : ((s) => `<li data-n="${s.n}" class="${i === cursor ? "macro-next" : ""}">` +
+        `${esc(s.a_name || s.a)} → ${esc(s.b_name || s.b)} <span class="macro-rec">${esc(s.recipe)}</span>` +
         ` <span class="macro-pts">exit ${fmt(s.a_time)} / entry ${fmt(s.b_time)}</span>` +
         (s.merge ? ` <span class="macro-merge">hold ${esc(s.merge.hold_bars)} bars${s.merge.phases && s.merge.phases.handover ? `, handover ${esc(s.merge.phases.handover.bars)} bars` : ""}</span>` : "") +
-        `</li>`).join("");
+        `</li>`)(r.step)).join("");
     }
     const fmt = (t) => (Number.isFinite(t) ? `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, "0")}` : "?");
     async function refreshList() {
@@ -472,7 +544,9 @@
       const sel = ui.el("macro-select");
       try {
         const list = (await getJSON("/api/macros")).macros || [];
-        if (sel) sel.innerHTML = `<option value="">MACROS…</option>` + list.map((m) => `<option value="${esc(m.name)}">${esc(m.name)} · ${m.songs} songs</option>`).join("");
+        if (sel) sel.innerHTML = `<option value="">MACROS…</option>` + macroGroups(list).map((g) => `<optgroup label="${esc(g.label)}">`
+          + g.items.map((m) => `<option value="${esc(m.name)}" title="${esc(m.name)}">${esc(macroListLabel(m))}</option>`).join("")
+          + `</optgroup>`).join("");
         macros = [];
         for (const m of macroOrder(list, 20)) { try { macros.push((await getJSON(`/api/macros/${encodeURIComponent(m.name)}`)).macro); } catch (e) { /* skip */ } }
       } catch (e) { say(`macros: ${e.message}`, false); }
@@ -483,7 +557,7 @@
       loaded = d.macro; cursor = 0;
       const bad = (d.validation || []).filter((v) => !v.ok);
       renderMacro();
-      say(`macro ${loaded.name}: ${loaded.steps.length} steps${bad.length ? `; ${bad.length} need a fallback (${bad[0].issues[0]})` : ""}`, !bad.length);
+      say(`macro ${macroListLabel({ name: loaded.name, title: loaded.title, songs: (loaded.tracks || []).length, steps: loaded.steps.length })}${bad.length ? `; ${bad.length} need a fallback (${bad[0].issues[0]})` : ""}`, !bad.length);
     }
     function deckState() {
       const ap = host.mod.autopilotState, decks = host.decks || {}, st = host.state || {};
@@ -564,6 +638,35 @@
       }
       say(`PLAY MACRO: ${loaded.name}, step ${loaded.steps[cursor].n} of ${loaded.steps.length} next`);
     }
+    // AUTO MIX / Shift+M with a macro selected: load the step's B on the other deck (normal load
+    // path), wait (bounded) for its stems, then perform the stored move like PLAY STEP.
+    // -> false when no macro is selected, so AUTO MIX keeps its own behaviour.
+    const STEM_WAIT_S = 90;
+    async function waitStems(deck, s) {
+      for (let t = 0; t < STEM_WAIT_S; t++) {
+        const dk = (host.decks || {})[deck];
+        if (dk && (dk.stems || dk.stemsReady)) return true;
+        say(`AUTO MIX: loading ${s.b_name || s.b} for step ${s.n} (stems rendering, ${STEM_WAIT_S - t}s max)`);
+        await new Promise((r) => host.clock.setTimeout(r, 1000));
+      }
+      return false;
+    }
+    async function autoMix() {
+      if (!loaded) return false;
+      const c0 = deckState();
+      const p = autoMixPick(loaded, cursor, c0.playing ? c0.aId : null);
+      if (!p) return false;
+      if (p.why) { say(`AUTO MIX: ${p.why}`, false); return true; }
+      const s = p.step;
+      cursor = p.i; renderMacro();
+      if (c0.bId !== s.b) {
+        say(`AUTO MIX: loading ${s.b_name || s.b} for step ${s.n}`);
+        try { await ensureLoaded(c0.bDeck, s.b, s.b_name); } catch (e) { say(`AUTO MIX: ${e.message}`, false); return true; }
+      }
+      if (!(await waitStems(c0.bDeck, s))) console.info(`macro: AUTO MIX step ${s.n}: stems for ${s.b_name} not ready after ${STEM_WAIT_S}s`);
+      await playStep(s, "AUTO MIX");
+      return true;
+    }
     async function pairStep() {
       const c = deckState();
       if (!c.aId || !c.bId) return null;
@@ -575,9 +678,9 @@
       const nameEl = ui.el("macro-name");
       const name = (nameEl && nameEl.value.trim()) || `set-${new Date(host.clock.now()).toISOString().slice(0, 16).replace(/[:T]/g, "-")}`;
       try {
-        const m = setToMacro(name, played);
+        const m = setToMacro(name, played, nameEl && nameEl.value.trim());
         const d = await getJSON("/api/macros", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ macro: m }) });
-        say(`saved macro ${d.macro.name} (${d.macro.steps.length} transitions)`);
+        say(`saved macro ${d.macro.title || d.macro.name} as ${d.macro.name} (${d.macro.steps.length} transitions)`);
         refreshList();
       } catch (e) { say(`SAVE MACRO: ${e.message}`, false); }
     }
@@ -634,7 +737,7 @@
     }
 
     const ACTIONS = {
-      "macro-step": () => playStep(loaded && loaded.steps[cursor], "PLAY STEP"),
+      "macro-step": async () => (await autoMix()) || playStep(loaded && loaded.steps[cursor], "PLAY STEP"),
       "macro-transition": async () => { const s = await pairStep(); return s ? playStep(s, "PLAY THIS TRANSITION") : say("PLAY THIS TRANSITION: the atlas has no stored transition for the loaded pair", false); },
       "plan-picks": () => planFromPicks(),
       "macro-play": () => playMacro(),
@@ -671,7 +774,7 @@
     function upcoming() {
       return running && loaded ? upcomingIds(loaded, cursor, 2).map((id) => ({ track_id: id, bpm: null })) : [];
     }
-    return { core, firstCandidates, defaultPlan, landed, partners, planFor, loadMacro, playStep, playMacro, upcoming, saveSet, run, ACTIONS,
+    return { core, firstCandidates, defaultPlan, landed, partners, planFor, loadMacro, playStep, playMacro, autoMix, upcoming, saveSet, run, ACTIONS,
              get running() { return running; },
              get stats() { return Object.assign({ streak: streak.n }, stats); }, get streak() { return streak; }, get loaded() { return loaded; } };
   }

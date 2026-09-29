@@ -1060,7 +1060,11 @@ function createAutopilotEngine({ host, ai }) {
   function planHold(od, idk, aT, bFallback, sm, prefer = null) {
     const no = (gate, why) => ({ gate, why, tried: [] });
     if (!sm.core.holdPlan) return no("module", "no holdPlan");
-    if (!od.stemsReady || !idk.stems || !od.bpm || !idk.bpm) return no("stems", "stems not ready on both decks");
+    if (!od.stemsReady || !idk.stems || !od.bpm || !idk.bpm) {
+      // say which song is waiting (owner): the fallback reads "stems for B still rendering"
+      const who = !idk.stems ? "B (incoming)" : !od.stemsReady ? "A (playing)" : null;
+      return no("stems", who ? `stems for ${who} still rendering` : "no BPM on both decks");
+    }
     const ve = idk._vocalEntry, entry = prefer && Number.isFinite(prefer.entry) ? prefer.entry : ve && ve.entry != null ? ve.entry : bFallback;
     if (entry == null) return no("entry", "no entry line for B");
     const aEff = od.bpm * od._playbackRate(), gap = Math.abs(aEff / idk.bpm - 1);
@@ -2714,7 +2718,7 @@ function createAutopilotEngine({ host, ai }) {
     // pool below) decides only when none of them passes the gates.
     if (host.mod.macroMode && !leadDue()) {
       const st = host.state || {}, other = activeDeck === "a" ? st.trackB : st.trackA;
-      const first = await host.mod.macroMode.firstCandidates(currentId, { played: playedIds, recent: history, loadedId: other && other !== currentId ? other : null });
+      const first = await host.mod.macroMode.firstCandidates(currentId, { played: playedIds, recent: history, aName: history[history.length - 1] || "", aStyle: currentGenre || "", loadedId: other && other !== currentId ? other : null });
       for (let c of first) {
         if (!active || gen !== prepGen) return;
         if (c._download) {        // FOLLOW SET: a studied set's song the library lacks, via the normal suggest -> download path
