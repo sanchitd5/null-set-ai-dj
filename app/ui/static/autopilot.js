@@ -123,7 +123,7 @@ var autopilotCore = (function () {
   // Clashing keys (Camelot < 0.8, CLAUDE.md s4): a tonal blend layers two harmonic
   // records for 16-32 bars. Only Echo Out / Breakdown / Stem Bridge route around it;
   // a Long Blend or Bass Swap becomes an Echo Out. keyScore null (unknown key): unchanged.
-  const KEY_SAFE_MIN = 0.8;
+  const KEY_SAFE_MIN = 0.6;      // below the KB's worst legal move (-2 hours, 0.6): only 2 hours with the letter flipped (0.3) and clashes (0) are rewritten
   function keySafeRecipe(recipe, keyScore) {
     if (keyScore == null || keyScore >= KEY_SAFE_MIN) return recipe;
     return /long blend|bass swap|drop swap/i.test(String(recipe || "")) ? "Echo Out" : recipe;

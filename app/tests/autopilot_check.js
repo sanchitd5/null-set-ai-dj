@@ -109,14 +109,16 @@ console.log("autopilot core ok");
   for (const k of ["layer", "peak", "riff"]) assert.strictEqual(learnedRecipe(pick("Bass Swap", "bass_swap"), { ...base, recipe: "Long Blend", [k]: {} }), null);
   assert.strictEqual(learnedRecipe(pick("Bass Swap", "bass_swap"), { ...base, recipe: "Mashup → Transition" }), null);  // mashup outranks
   assert.strictEqual(learnedRecipe(null, base), null);
-  // clashing keys (camelot < 0.8): no learned tonal blend; unknown key unchanged
+  // clashing keys (camelot < 0.6, KEY_SAFE_MIN): no learned tonal blend; unknown key unchanged
   assert.strictEqual(learnedRecipe(pick("Long Blend"), { ...base, keyScore: 0 }), null);
   assert.strictEqual(learnedRecipe(pick("Bass Swap", "bass_swap"), { ...base, recipe: "Long Blend", keyScore: 0.3 }), null);
   assert.strictEqual(learnedRecipe(pick("Long Blend"), { ...base, keyScore: 0.9 }).recipe, "Long Blend");
   assert.strictEqual(learnedRecipe(pick("Long Blend"), { ...base, keyScore: null }).recipe, "Long Blend");
   const { keySafeRecipe } = require("../ui/static/autopilot.js");
   assert.strictEqual(keySafeRecipe("Long Blend", 0), "Echo Out");
-  assert.strictEqual(keySafeRecipe("Bass Swap", 0.6), "Echo Out");
+  assert.strictEqual(keySafeRecipe("Bass Swap", 0.6), "Bass Swap");      // -2 hours (0.6) and a diagonal (0.75) are KB-legal moves
+  assert.strictEqual(keySafeRecipe("Bass Swap", 0.75), "Bass Swap");
+  assert.strictEqual(keySafeRecipe("Bass Swap", 0.3), "Echo Out");      // 2 hours with the letter flipped
   assert.strictEqual(keySafeRecipe("Long Blend", 0.8), "Long Blend");
   assert.strictEqual(keySafeRecipe("Long Blend", null), "Long Blend");
   assert.strictEqual(keySafeRecipe("Stem Bridge", 0), "Stem Bridge");

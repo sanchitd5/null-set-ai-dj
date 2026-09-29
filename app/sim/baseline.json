@@ -3,20 +3,19 @@
   "breakdown": {
    "dead_air": 4.625,
    "degraded": 1.5,
-   "discarded_plan": 1.0,
+   "discarded_plan": 0.667,
    "empty_pick": 2.0,
-   "key_false_rewrite": 0.667,
    "key_hard_clash": 1.333,
    "key_weak": 0.333,
-   "plan_mismatch": 1.0,
+   "key_weak_blend": 0.333,
    "short_song": 0.667,
-   "silent_intro": 3.0,
+   "silent_intro": 2.0,
    "stall": 32.0,
    "tempo_stretch": 2.336
   },
   "features": {
    "executed": {
-    "auto_sampler": 4,
+    "auto_sampler": 3,
     "bass_swap": 0,
     "bridge_path": 5,
     "cookbook_recipes": 58,
@@ -32,7 +31,7 @@
     "library_fallback": 19,
     "live_ear": 97,
     "llm_gate": 117,
-    "long_blend": 2,
+    "long_blend": 3,
     "mashup_break": 0,
     "mashup_layer": 5,
     "mashup_transition": 0,
@@ -46,12 +45,12 @@
     "set_memory": 110,
     "set_mode_windows": 2,
     "silent_ear": 0,
-    "stem_blend": 0,
-    "stem_bridge": 1,
+    "stem_blend": 1,
+    "stem_bridge": 0,
     "stem_intro": 1,
     "stem_merge": 0,
     "strip_rebuild": 1,
-    "tempo_home": 5,
+    "tempo_home": 6,
     "tempo_stems": 0,
     "vibe_strip": 661,
     "vocal_handoff": 1
@@ -135,7 +134,7 @@
    "dead_air_seconds": 3.083,
    "dead_air_transitions": 0.667,
    "degraded_moves": 1.0,
-   "discarded_plans": 1.0,
+   "discarded_plans": 0.667,
    "download_failures": 0.0,
    "echo_out_share": 0.333,
    "empty_picks": 1.0,
@@ -147,25 +146,25 @@
    "key_clash_blends": 0.0,
    "key_clash_count": 1.0,
    "key_clash_rate": 0.333,
-   "key_false_rewrites": 0.333,
+   "key_false_rewrites": 0.0,
    "key_hard_clash_count": 0.333,
-   "key_weak_blends": 0.0,
+   "key_weak_blends": 0.333,
    "key_zero_count": 1.0,
    "llm_calls": 39.333,
    "llm_empty_replies": 0.333,
    "llm_invalid_replies": 0.0,
    "llm_latency_mean_s": 9.667,
-   "long_blend_share": 0.222,
+   "long_blend_share": 0.333,
    "max_artist_run": 0.667,
    "no_plan": 0.0,
-   "plan_exec_mismatch": 0.333,
+   "plan_exec_mismatch": 0.0,
    "repeat_songs": 0.0,
-   "replay_drift": 2.0,
+   "replay_drift": 2.333,
    "replay_misses": 0.0,
    "same_artist_repeats": 0.0,
    "search_rounds_extra": 1.333,
    "short_songs": 0.333,
-   "silent_intros": 1.0,
+   "silent_intros": 0.667,
    "song_max_s": 154.9,
    "song_mean_s": 124.433,
    "song_min_s": 77.167,
@@ -180,11 +179,10 @@
   },
   "recipes": {
    "Echo Out": 3,
-   "Long Blend": 2,
-   "Stem Bridge": 1
+   "Long Blend": 3
   },
   "runs": 3,
-  "score": 39.487
+  "score": 38.598
  },
  "fixture_sources": [
   "live"
@@ -421,7 +419,7 @@
     "dead_air_seconds": 6.25,
     "dead_air_transitions": 1,
     "degraded_moves": 2,
-    "discarded_plans": 2,
+    "discarded_plans": 1,
     "download_failures": 0,
     "echo_out_share": 0.333,
     "empty_picks": 0,
@@ -433,30 +431,29 @@
     "key_clash_blends": 0,
     "key_clash_count": 2,
     "key_clash_rate": 0.667,
-    "key_false_rewrites": 1,
+    "key_false_rewrites": 0,
     "key_hard_clash_count": 1,
-    "key_weak_blends": 0,
+    "key_weak_blends": 1,
     "key_zero_count": 2,
     "llm_calls": 18,
     "llm_empty_replies": 0,
     "llm_invalid_replies": 0,
     "llm_latency_mean_s": 9.73,
-    "long_blend_share": 0.333,
+    "long_blend_share": 0.667,
     "max_artist_run": 1,
     "no_plan": 0,
-    "plan_exec_mismatch": 1,
+    "plan_exec_mismatch": 0,
     "recipes": {
      "Echo Out": 1,
-     "Long Blend": 1,
-     "Stem Bridge": 1
+     "Long Blend": 2
     },
     "repeat_songs": 0,
-    "replay_drift": 0,
+    "replay_drift": 1,
     "replay_misses": 0,
     "same_artist_repeats": 0,
     "search_rounds_extra": 3,
     "short_songs": 0,
-    "silent_intros": 2,
+    "silent_intros": 1,
     "song_max_s": 247.3,
     "song_mean_s": 218.1,
     "song_min_s": 168.3,
@@ -469,7 +466,7 @@
     "transitions": 3,
     "unlocked_overlap_seconds": 0.0
    },
-   "score": 11.137,
+   "score": 8.47,
    "triggered": [
     "auto_sampler",
     "bridge_path",
@@ -506,17 +503,6 @@
      "transition": 1
     },
     {
-     "from": "BICEP - Glue",
-     "penalty": 10.86,
-     "reasons": [
-      "Long Blend -> Echo Out for keys the KB does not call a clash (1A->2B, KB 0.75)",
-      "silent intro stem (None)",
-      "planned Echo Out but executed Stem Bridge"
-     ],
-     "to": "Four Tet - Parallel 4",
-     "transition": 3
-    },
-    {
      "from": "Anyma - The Light [Visualizer]",
      "penalty": 10.43,
      "reasons": [
@@ -526,6 +512,15 @@
      ],
      "to": "BICEP - Glue",
      "transition": 2
+    },
+    {
+     "from": "BICEP - Glue",
+     "penalty": 2.86,
+     "reasons": [
+      "tonal Long Blend across weak keys 1A->2B (0.75)"
+     ],
+     "to": "Four Tet - Parallel 4",
+     "transition": 3
     }
    ]
   }

@@ -380,7 +380,7 @@ LEARNED_RECIPE = {
 }
 
 
-LEARNED_MIN_KEY = 0.8   # CLAUDE.md s4: below this the keys clash, only Echo Out / Breakdown are safe
+LEARNED_MIN_KEY = 0.6   # = autopilot.js KEY_SAFE_MIN: the KB's worst legal move is -2 hours (0.6); 0.3 and 0 are rewritten
 _KEY_SENSITIVE = {"learned:bass_swap", "learned:stem_intro"}   # both layer tonal stems / full mixes
 
 
