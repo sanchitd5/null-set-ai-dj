@@ -1239,6 +1239,36 @@
     render({ action: "learned_move", rule: "", source: "LEARNED", why: res.why });
     return true;
   }
+  // On demand (ai-actions.js buttons): one learned kind on deck `id`'s next 8-bar line, now. Only the
+  // learned rate gates are skipped (learned-moves demand); the dj-mind rule "never during a transition"
+  // holds. -> {kind, why, busyS} | {refused}
+  function learnedNow(id, kind) {
+    const lm = host.mod.learnedMoves, d = host.decks && host.decks[id];
+    if (!lm || !lm.demand) return { refused: "module: learned moves not loaded" };
+    if (!d || !d.playing || !d.analysis) return { refused: "deck: nothing is playing" };
+    const mine = deckId === id;
+    if (mine && inTransition) return { refused: "transition: a transition is running" };
+    const a = d.analysis, bar = barSecsOf(d), pos = d._currentPosition();
+    const rate = (d._playbackRate && d._playbackRate()) || 1;
+    const phrase = phraseAt(a.downbeat_times, pos, bar);
+    const [, lineT] = phraseBounds(a.downbeat_times, phrase, bar);
+    const plen = PHRASE_BARS * bar;
+    const st0 = state(d, pos);
+    const st = Object.assign({}, st0, { phraseSection: st0.nextPhraseSection,
+      nextPhraseSection: phraseLabel(a.sections, lineT + plen, lineT + 2 * plen)[0],
+      barsToExit: mine ? st0.barsToExit : null });
+    const res = lm.demand(d, kind, { pos, bar, phrase: phrase + 1, lineT, entryT: d._mindEntry || 0,
+      exitT: mine && plan ? plan.fireAt : (d.buffer ? d.buffer.duration : 0), st,
+      loop: mine ? { extend: (p) => learnedLoop(d, id, p, pos, rate) } : null });
+    if (res.kind && mine) {
+      busyUntil = nowS() + res.busyS;
+      const m = Math.floor(pos / 60), sc = Math.floor(pos % 60);
+      log.push({ action: "learned_move", why: res.why, tag: "ON DEMAND", peak: false, clock: `${m}:${String(sc).padStart(2, "0")}` });
+      if (log.length > 20) log.shift();
+      render({ action: "learned_move", rule: "", source: "ON DEMAND", why: res.why });
+    }
+    return res;
+  }
 
   function say(dec, pos) {
     const m = Math.floor(pos / 60), s = Math.floor(pos % 60);
@@ -1486,7 +1516,7 @@
   return { follow, stop, reset, setPlan, fireAt, onTransition, fxAllowed,
                     noteEnergy, nextEnergyNote, requestPlan, planPeak, setProfileEnergy,
                     planLayer, layering, get layerActive() { return !!layerRun; }, core,
-                    holdLoopInfo, holdLoopAct, overlayState,
+                    holdLoopInfo, holdLoopAct, overlayState, learnedNow,
                     get transitioning() { return inTransition; } };
   }
   if (root.Engine) root.Engine.mount("djMind", create);

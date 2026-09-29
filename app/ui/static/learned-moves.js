@@ -143,10 +143,13 @@
   // ------------------------------------------------------------------ shared gates
   // c: {pos, rate, bar, barsOnTrack, barsToExit (null: none planned), atBar, used [kinds], count, lastAtBar,
   //     mashupActive, relaxed, deferring, onlyLoop (loop_extend may run while deferring)}
-  function songGate(c, kind) {
+  // onDemand (a button press): the rate gates below the line (cap, once per song, cooldown, first bars) are
+  // skipped; the ones above it are safety and always refuse.
+  function songGate(c, kind, onDemand = false) {
     if (c.relaxed) return { gate: "relaxed", reason: "relaxed session: no learned moves" };
     if (c.mashupActive) return { gate: "vocal_layer", reason: "a vocal layer is running" };
     if (c.deferring && kind !== "loop_extend") return { gate: "b_deferred", reason: "B's stems are still loading" };
+    if (onDemand) return null;
     if ((c.count || 0) >= MAX_PER_SONG) return { gate: "cap", reason: `learned move cap ${MAX_PER_SONG} per song reached` };
     if ((c.used || []).includes(kind)) return { gate: "cap", reason: `${kind} already played on this song` };
     if (c.lastAtBar != null && c.atBar - c.lastAtBar < GAP_BARS) return { gate: "cooldown", reason: `${Math.round(c.atBar - c.lastAtBar)} bars since the last learned move (min ${GAP_BARS})` };
@@ -357,11 +360,12 @@
   }
   // Every allowed kind is planned; the best-fitting plan wins. -> {plan | null, refusals: [{kind, gate, reason}]}
   // (a refusal names the gate that failed, for the step log and the sim's per-gate counts)
-  function pick(c, store, flags = {}) {
+  // opts.only: plan that one kind (on demand, rate gates skipped: songGate onDemand)
+  function pick(c, store, flags = {}, opts = {}) {
     const refusals = [], plans = [];
     const maxSeen = Math.max(1, ...KINDS.map((k) => (store && store[k] && store[k].seen) || 0));
-    for (const kind of KINDS) {
-      const g = moveGate(store, kind, flags) || songGate(c, kind);
+    for (const kind of (opts.only ? [opts.only] : KINDS)) {
+      const g = moveGate(store, kind, flags) || songGate(c, kind, !!opts.only);
       if (g) { refusals.push({ kind, gate: g.gate, reason: g.reason }); continue; }
       let p;
       try { p = PLANNERS[kind](Object.assign({}, c, { params: (store[kind] && store[kind].params) || {} })); } catch (e) { p = no("error", String(e && e.message || e)); }
@@ -438,8 +442,22 @@
     // -> {kind, busyS, why} when a move was booked, else null (refusals are logged, once per kind and phrase).
     function tick(d, o) {
       if (!store) { if (host.clock.now() - loadedAt > 300000) load(); return null; }
+      const r = attempt(d, o, null);
+      return r && r.kind ? r : null;
+    }
+    // On demand (ai-actions.js through dj-mind learnedNow): one kind on the next line, same o as tick. Only the
+    // rate gates are skipped (songGate onDemand); toggles, store, safety and planner gates still refuse.
+    // -> {kind, busyS, why} | {refused: "<gate>: <reason>"}
+    function demand(d, kind, o) {
+      if (!KINDS.includes(kind)) return { refused: `unknown: no learned move ${kind}` };
+      if (!store) { load(); return { refused: "store: the learned moves are still loading" }; }
+      return attempt(d, o, kind);
+    }
+    function attempt(d, o, only) {
+      const no = (why) => (only ? { refused: why } : null);
       const dl = host.ui.flag("ap-learned-toggle", true);
-      if (!dl || !d || !d.playing) return null;
+      if (!dl) return no("toggle: learned moves are off (ap-learned-toggle)");
+      if (!d || !d.playing) return no("deck: nothing is playing");
       const f = flags();
       const st = o.st || {}, rate = (d._playbackRate && d._playbackRate()) || 1;
       const r = d._learned || (d._learned = { used: [], count: 0, lastAtBar: null, variant: 0 });
@@ -462,26 +480,25 @@
         const eb = sm.stemEnergyBars ? sm.stemEnergyBars(d, o.lineT, o.bar, PHRASE_BARS) : null;
         if (eb) c.barRms = eb.drums.map((_, i) => Math.sqrt(["drums", "bass", "vocals", "other"].reduce((s, n) => s + eb[n][i] ** 2, 0)));
       }
-      const res = pick(c, store, f);        // a stemless deck has no envelope: the vocal kinds refuse by name
+      const res = pick(c, store, f, only ? { only } : {});   // a stemless deck has no envelope: the vocal kinds refuse by name
       const gk = `${d.id}:${o.phrase}`;
       const refused = res.refusals.filter((x) => !(x.gate === "toggle" || x.gate === "store" || x.gate === "user_rule"));
-      if (refused.length && !tag.has(gk)) {
-        tag.set(gk, 1);
-        if (tag.size > 200) tag.clear();
+      if (refused.length && (only || !tag.has(gk))) {
+        if (!only) { tag.set(gk, 1); if (tag.size > 200) tag.clear(); }
         for (const x of refused) console.info(`learned move ${x.kind} skipped: ${x.gate}: ${x.reason}`);
       }
-      if (!res.plan) return null;
+      if (!res.plan) { const x = res.refusals[0]; return no(x ? `${x.gate}: ${x.reason}` : "plan: nothing fits here"); }
       const plan = res.plan;
       let run = { ok: true };
       if (plan.kind === "loop_extend") {
-        if (!o.loop || !o.loop.extend) return null;
+        if (!o.loop || !o.loop.extend) return no("loop: needs SET MIND following this deck (it owns the loop)");
         o.loop.extend(plan);
         run = { ok: true, at: audioCtx.currentTime + (plan.start - o.pos) / rate, until: audioCtx.currentTime + (plan.end + plan.beats * beat - o.pos) / rate };
       } else {
         cancel(d.id);
         run = runSlices(d, plan);
       }
-      if (!run.ok) { console.info(`learned move ${plan.kind} skipped: ${run.gate}: ${run.reason}`); return null; }
+      if (!run.ok) { console.info(`learned move ${plan.kind} skipped: ${run.gate}: ${run.reason}`); return no(`${run.gate}: ${run.reason}`); }
       r.used.push(plan.kind); r.count++; r.lastAtBar = atBar; r.variant++;
       const why = `${plan.why}${plan.fallbacks.length ? ` (constants: ${plan.fallbacks.join(", ")})` : ""}`;
       console.info(`learned move ${plan.kind}: ${why}`);
@@ -502,7 +519,7 @@
       if (d._slices && d._slices.vocals && d.releaseSlices) { d.releaseSlices("vocals"); if (d.stemMix) d.stemMix(null, 0, 0.02); }
     }
     load();
-    const api = { core, tick, cancel, stop, noteFiller, load, get store() { return store; } };
+    const api = { core, tick, demand, cancel, stop, noteFiller, load, get store() { return store; } };
     host.mod.learnedMoves = api;
     return api;
   }
