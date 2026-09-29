@@ -52,6 +52,21 @@ def test_suite_check_fails_on_a_lost_feature():
     assert suite.check(base, base) == []
 
 
+def test_baseline_refuses_a_panel_not_recorded_with_the_real_model(tmp_path, monkeypatch):
+    doc = {"aggregate": {"score": 1.0, "metrics": {}, "features": {"triggered": []}},
+           "runs": {"a": {"score": 1.0, "metrics": {}, "fixture_source": "library"}}}
+    monkeypatch.setattr(suite, "run_panel", lambda panel, out, jobs=4: doc)
+    monkeypatch.setattr(suite, "BASELINE", tmp_path / "baseline.json")
+    monkeypatch.setattr(suite, "markdown", lambda s, b: "")
+    (tmp_path / "out").mkdir()
+    args = ["--out", str(tmp_path / "out"), "--update-baseline"]
+    assert suite.main(args) == 5 and not (tmp_path / "baseline.json").exists()
+    assert suite.main(args + ["--allow-stub"]) == 0
+    assert json.loads((tmp_path / "baseline.json").read_text())["fixture_sources"] == ["library"]
+    doc["runs"]["a"]["fixture_source"] = "live"
+    assert suite.main(args) == 0
+
+
 def test_coverage_table_lists_never_triggered_groups():
     rows = features.coverage(_suite(["riff_over_rap", "stem_bridge"]))
     assert rows["riff x rap"]["never"] == []

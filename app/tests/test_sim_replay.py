@@ -42,16 +42,16 @@ def _world(tmp_path):
 
 def test_exact_prompt_wins(tmp_path):
     w = _world(tmp_path)
-    assert w._replayed("suggest", "s2", "suggest|Song A", "llm") == "A2"
+    assert w._replayed("suggest", "s2", "suggest|Song A", "llm")["reply"] == "A2"
     assert w.drift == [] and w.misses == []
 
 
 def test_reworded_prompt_gets_the_reply_recorded_for_its_subject(tmp_path):
     w = _world(tmp_path)
     # a rule change rewrote the prompt: the signature is new, the subject (song playing / tempo pair) is not
-    assert w._replayed("suggest", "new1", "suggest|Song A", "llm", "Song A") == "A1"
-    assert w._replayed("suggest", "new2", "suggest|Song A", "llm", "Song A") == "A2"
-    assert w._replayed("plan", "newp", "plan|124.0|8A|126.0|9A", "llm") == "P1"
+    assert w._replayed("suggest", "new1", "suggest|Song A", "llm", "Song A")["reply"] == "A1"
+    assert w._replayed("suggest", "new2", "suggest|Song A", "llm", "Song A")["reply"] == "A2"
+    assert w._replayed("plan", "newp", "plan|124.0|8A|126.0|9A", "llm")["reply"] == "P1"
     assert len(w.drift) == 3 and w.misses == []
 
 

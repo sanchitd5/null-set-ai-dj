@@ -10,6 +10,7 @@
     {"name": "lib-s4-long", "seed": 4, "tracks": 10, "mode": "long"},
     {"name": "lib-s4-quick", "seed": 4, "tracks": 10, "mode": "quick"},
     {"name": "lib-s5-long", "seed": 5, "tracks": 10, "mode": "long"},
-    {"name": "lib-s5-quick", "seed": 5, "tracks": 10, "mode": "quick"}
+    {"name": "lib-s5-quick", "seed": 5, "tracks": 10, "mode": "quick"},
+    {"name": "lib-s6-hybrid", "seed": 6, "tracks": 10, "mode": "hybrid"}
   ]
 }
