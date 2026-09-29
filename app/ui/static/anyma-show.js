@@ -14,8 +14,8 @@
 // Anyma drops (a long dip or build, then a hard jump on a phrase line, found
 // once per track) cut to the figure, which DANCES on the beat for 16-32 bars.
 // SHOW AUTO (#ap-show-auto): while the AI drives, the AI sizes the stage
-// itself (full on big moments, window in calm phrases), logged as
-// `show: full|window: <why>`. It never calls the browser Fullscreen API.
+// itself (full on big moments, embedded in calm phrases), logged as
+// `show: full|embedded: <why>`. It never calls the browser Fullscreen API.
 //
 // Layout: a pure `core` (music state, scene choice, trigger mapping, director,
 // adaptive quality; node-checked by app/tests/anyma_show_check.js) and a thin
@@ -312,7 +312,7 @@
   //   pulse (drums) weight (bass) eye (vocals) colour (other), all 0..1.
   function drives(ms, st, out) {
     const o = out || { pulse: 0, weight: 0, eye: 0, colour: 0, intensity: 0 };
-    if (!ms || !ms.ok) { o.pulse = o.weight = o.eye = o.colour = 0; o.intensity = 0.35; return o; }
+    if (!ms || !ms.ok) { o.pulse = o.weight = o.eye = o.colour = 0; o.intensity = 0.55; return o; }
     const beatEnv = Math.exp(-ms.beatPhase * 6);
     if (st && st.live) {
       o.pulse = clamp01(st.level.drums * (0.4 + 0.6 * beatEnv));
@@ -321,7 +321,7 @@
       o.pulse = clamp01(beatEnv * (0.3 + 0.7 * ms.energy));
       o.weight = ms.energy; o.eye = ms.vocal ? 0.8 : 0; o.colour = ms.energy * 0.5;
     }
-    o.intensity = clamp01(0.45 + 0.55 * ms.energy);
+    o.intensity = clamp01(0.6 + 0.4 * ms.energy);
     return o;
   }
 
@@ -564,37 +564,37 @@
   // ---- SHOW AUTO: the AI picks stage (full) or window itself ----
   // Pure director. Only acts while SHOW is on, SHOW AUTO is checked and the
   // autopilot drives. FULL on big moments (set start, supermove, peak move,
-  // merge -> hold, drop, Anyma drop), WINDOW in calm / low breakdown phrases.
+  // merge -> hold, drop, Anyma drop), EMBEDDED in calm / low breakdown phrases.
   // Switches land on 8-bar phrase lines (a moment in the line's first bar
   // counts as on the line, a later one waits for the next line), a mode holds
   // 16+ bars, one switch per 32 bars (a supermove may break that). User input
   // or Esc: window now, auto paused 2 minutes. AI stops driving: window now.
   const AUTO = { MIN_BARS: 16, GAP_BARS: 32, START_BARS: 32, FULL_BARS: 16, PAUSE_S: 120, LATCH_BARS: 8, LEAD_BARS: 8 };
   function autoNew() {
-    return { mode: "pip", at: -Infinity, lastSwitch: -Infinity, holdUntil: -Infinity, pausedUntil: -Infinity,
+    return { mode: "embed", at: -Infinity, lastSwitch: -Infinity, holdUntil: -Infinity, pausedUntil: -Infinity,
       driving: false, started: false, pending: null, pendingAt: -Infinity, lastPhrase: null, why: "", ahead: null };
   }
   function autoSwitch(a, mode, why, now, evidence) {
     a.mode = mode; a.at = now; a.lastSwitch = now; a.why = why;
     return { mode, why, evidence: evidence || "" };
   }
-  // inp: {on, driving, mode (actual "pip"|"full"), ms, moment {kind, evidence}|null,
+  // inp: {on, driving, mode (actual "embed"|"full"), ms, moment {kind, evidence}|null,
   //       user (deck / mixer input), esc, manual (the user picked the stage size: pause, keep it)}
   function autoStep(a, inp, now) {
     const i = inp || {};
-    if (!i.on) { a.lastPhrase = null; a.pending = null; if (i.mode === "pip" || i.mode === "full") a.mode = i.mode; return null; }
+    if (!i.on) { a.lastPhrase = null; a.pending = null; if (i.mode === "embed" || i.mode === "full") a.mode = i.mode; return null; }
     if (i.user || i.esc) {                       // a.mode is still the mode before this input
       a.pausedUntil = now + AUTO.PAUSE_S; a.pending = null;
       const was = a.mode;
-      a.mode = "pip";
-      return was === "full" ? autoSwitch(a, "pip", i.esc ? "esc, auto paused 2 min" : "user input, auto paused 2 min", now) : null;
+      a.mode = "embed";
+      return was === "full" ? autoSwitch(a, "embed", i.esc ? "esc, auto paused 2 min" : "user input, auto paused 2 min", now) : null;
     }
-    if (i.mode === "pip" || i.mode === "full") { if (i.mode !== a.mode) a.at = now; a.mode = i.mode; }
+    if (i.mode === "embed" || i.mode === "full") { if (i.mode !== a.mode) a.at = now; a.mode = i.mode; }
     if (i.manual) { a.pausedUntil = now + AUTO.PAUSE_S; a.pending = null; return null; }
     if (!i.driving) {
       const was = a.driving;
       a.driving = false; a.started = false; a.pending = null; a.lastPhrase = null;
-      return was && a.mode === "full" ? autoSwitch(a, "pip", "AI stopped driving", now) : null;
+      return was && a.mode === "full" ? autoSwitch(a, "embed", "AI stopped driving", now) : null;
     }
     if (!a.driving) { a.driving = true; a.started = false; }
     if (now < a.pausedUntil) { a.lastPhrase = null; return null; }
@@ -623,7 +623,7 @@
       else if (a.ahead.gone === null) a.ahead.gone = now;       // cancelled before its hit
       if (a.ahead && a.ahead.gone !== null && newLine && now >= a.ahead.gone + lead - eps) {
         const prev = a.ahead.prev; a.ahead = null; a.holdUntil = prev; a.pending = null;
-        return a.mode === "full" && now >= prev ? autoSwitch(a, "pip", "moment cancelled", now) : null;
+        return a.mode === "full" && now >= prev ? autoSwitch(a, "embed", "moment cancelled", now) : null;
       }
     }
     if (next && next.at - now < 2 * lead - eps) {
@@ -653,7 +653,7 @@
     }
     if (newLine && a.mode === "full" && now >= a.holdUntil && dwellOk && gapOk) {
       const calm = ms.cls === "calm" || (ms.cls === "breakdown" && ms.energy < 0.4);
-      if (calm) return autoSwitch(a, "pip", ms.cls === "calm" ? "calm section" : "low-energy breakdown", now);
+      if (calm) return autoSwitch(a, "embed", ms.cls === "calm" ? "calm section" : "low-energy breakdown", now);
     }
     return null;
   }
@@ -710,7 +710,7 @@
   // ---- DOM / WebGL glue --------------------------------------------------
   // Thin on purpose: reads deck state and console events through the Host
   // port, feeds the pure core, draws. Nothing is allocated per frame.
-  // SHOW (#ap-show-toggle, autopilot drawer) turns it on in a small window;
+  // SHOW (#ap-show-toggle, autopilot drawer) turns it on embedded behind the waveforms + decks;
   // STAGE (#show-stage, top bar) fills the page with it. Default off.
   const doc = root.document;
   const toggle = doc.getElementById("ap-show-toggle"), stageBtn = doc.getElementById("show-stage");
@@ -732,7 +732,7 @@
   if (mq && mq.addEventListener) mq.addEventListener("change", (e) => { reduced = e.matches; });
 
   // stage: an embedded background layer of the console, not a floating box.
-  // WINDOW: behind the waveforms + decks (#wave-stage .. .workspace), sized to that
+  // EMBEDDED: behind the waveforms + decks (#wave-stage .. .workspace), sized to that
   // band by a ResizeObserver. FULL: behind the whole console. OFF: hidden, no GL.
   // It sits at z-index -1 in the page, so every console control paints above it,
   // and NULL-BOT (fixed, z 880) and the VFX canvas (z 850) stay above too.
@@ -745,9 +745,9 @@
   stage.append(cv, led, dbg);
   const bandTop = doc.querySelector(".wave-stage"), bandEnd = doc.querySelector(".workspace");
   doc.body.insertBefore(stage, bandTop || doc.body.firstChild);
-  // WINDOW band = top of the waveform section to the bottom of the deck row
+  // EMBEDDED band = top of the waveform section to the bottom of the deck row
   function placeBand() {
-    if (mode !== "pip" || !bandTop) { stage.style.top = stage.style.height = ""; return; }
+    if (mode !== "embed" || !bandTop) { stage.style.top = stage.style.height = ""; return; }
     const y0 = bandTop.getBoundingClientRect().top + root.scrollY;
     const y1 = (bandEnd || bandTop).getBoundingClientRect().bottom + root.scrollY;
     stage.style.top = `${Math.round(y0)}px`; stage.style.height = `${Math.max(1, Math.round(y1 - y0))}px`;
@@ -775,11 +775,13 @@
   let fpsN = 0, fpsT = 0, fps = 0, workAvg = 0, dbgT = 0;
 
   // ---- console events -> director queue ----
+  const seen = [];   // last console events, for debug()
   const onEvt = (type) => (e) => {
     if (!active) return;
     const now = nowS(), an = audioNow();
     const ev = core.eventTrigger(type, e && e.detail, now, (at) => (Number.isFinite(an) ? now + (at - an) : now));
     const bm = core.bookedMoment(type, e && e.detail);
+    seen.push({ t: +now.toFixed(2), type, kind: (e && e.detail && (e.detail.kind || e.detail.name)) || "" }); if (seen.length > 8) seen.shift();
     if (bm) booked.set(bm.key, Object.assign(bm, { at: Number.isFinite(an) ? now + (bm.at - an) : now }));
     if (!ev) return;
     if (ev.type === "transition") lastCueT = now;
@@ -847,13 +849,13 @@
     if (!moment && dir.last === "supermove") moment = { kind: "supermove", evidence: "" };
     else if (!moment && dir.last === "drop") moment = { kind: "drop", evidence: ms.section || "" };
     dropMoment = evMoment = null;
-    autoIn.on = !!(autoBox && autoBox.checked) && active; autoIn.driving = !!(ap && ap.active === true);
+    autoIn.on = !!(autoBox && autoBox.checked) && active; autoIn.driving = !!(ap && ap.active === true) || !!(d && d.playing && ms.ok);
     autoIn.mode = mode; autoIn.moment = moment; autoIn.upcoming = upcomingNow(now, d, pos); autoIn.user = userHit; autoIn.esc = escHit; autoIn.manual = manualHit;
     const r = core.autoStep(auto, autoIn, now);
     userHit = escHit = manualHit = false;
     if (!r) return;
     if (r.mode !== mode) setMode(r.mode);
-    const line = `show: ${r.mode === "full" ? "full" : "window"}: ${r.why}`;
+    const line = `show: ${r.mode === "full" ? "full" : "embedded"}: ${r.why}`;
     if (typeof root.aiStep === "function") root.aiStep("show", { decision: line, why: r.evidence || r.why, phase: "show" });
   }
   // RMS of each decoded stem around the play position (read-only, strided)
@@ -1002,9 +1004,9 @@ void main() {
     gl.uniform1f(U.u_scatter, scatter);
     gl.uniform1f(U.u_dance, name === "figure" ? danceAmt : 0);
     const am = alpha * (0.4 + 0.6 * dv.intensity);
-    bindRec(g.pb); gl.uniform1f(U.u_line, 0); gl.uniform1f(U.u_alpha, 0.33 * am);
+    bindRec(g.pb); gl.uniform1f(U.u_line, 0); gl.uniform1f(U.u_alpha, 0.6 * am);
     gl.drawArrays(gl.POINTS, 0, Math.floor(g.pn * core.QUALITY[q.level].pts));
-    const la = 0.22 * am * (1 - scatter) * (1 - scatter);
+    const la = 0.42 * am * (1 - scatter) * (1 - scatter);
     if (g.ln && la > 0.005) { bindRec(g.lb); gl.uniform1f(U.u_line, 1); gl.uniform1f(U.u_alpha, la); gl.drawArrays(gl.LINES, 0, g.ln); }
   }
 
@@ -1083,9 +1085,9 @@ void main() {
     }
   }
 
-  // mode: "off" | "pip" (small window over the console) | "full" (stage)
+  // mode: "off" | "embed" (background of waveforms + decks) | "full" (console takeover). No floating window.
   function setMode(m) {
-    if (m !== "off" && m !== "pip" && m !== "full") return;
+    if (m !== "off" && m !== "embed" && m !== "full") return;
     if (m !== "off" && !gl && !initGL()) {
       m = "off";
       if (toggle) toggle.title = "SHOW needs WebGL, which this browser did not give";
@@ -1094,27 +1096,42 @@ void main() {
     mode = m; active = m !== "off";
     stage.hidden = !active;
     stage.classList.toggle("anyma-full", m === "full");
-    doc.body.classList.toggle("show-embed", m === "pip");
+    doc.body.classList.toggle("show-embed", m === "embed");
     doc.body.classList.toggle("show-full", m === "full");
     placeBand();
     if (toggle) toggle.checked = active;
-    if (stageBtn) { stageBtn.setAttribute("aria-pressed", String(m === "full")); stageBtn.classList.toggle("vfx-on", m === "full"); }
+    if (stageBtn) { stageBtn.setAttribute("aria-pressed", String(m === "full")); stageBtn.classList.toggle("vfx-on", m === "full"); stageBtn.textContent = m === "full" ? "IN CONSOLE" : "STAGE"; }
     if (active) { resize(); lastT = 0; fpsT = nowS(); wake(); return; }
     if (raf) root.cancelAnimationFrame(raf);
     raf = 0; dir.queue.length = 0;
   }
-  if (toggle) { toggle.checked = false; toggle.addEventListener("change", () => setMode(toggle.checked ? (mode === "full" ? "full" : "pip") : "off")); }
-  if (stageBtn) stageBtn.addEventListener("click", () => { manualHit = true; setMode(mode === "full" ? "pip" : "full"); });
+  if (toggle) { toggle.checked = false; toggle.addEventListener("change", () => setMode(toggle.checked ? (mode === "full" ? "full" : "embed") : "off")); }
+  if (stageBtn) stageBtn.addEventListener("click", () => { manualHit = true; setMode(mode === "full" ? "embed" : "full"); });
   // Esc leaves the stage for the window
-  root.addEventListener("keydown", (e) => { if (mode === "full" && e.key === "Escape") { escHit = true; setMode("pip"); } });
+  root.addEventListener("keydown", (e) => { if (mode === "full" && e.key === "Escape") { escHit = true; setMode("embed"); } });
   // any hand on the decks or the mixer: back to the window, SHOW AUTO pauses 2 minutes
   const onHand = (e) => {
     if (!e.isTrusted || !active || !e.target || typeof e.target.closest !== "function") return;
-    if (e.target.closest(".deck-panel, .mixer")) userHit = true;
+    if (mode === "full" && e.target.closest(".deck-panel, .mixer")) userHit = true;
   };
   for (const t of ["pointerdown", "input"]) doc.addEventListener(t, onHand, { capture: true, passive: true });
   doc.addEventListener("visibilitychange", () => {
     if (doc.hidden) { if (raf) root.cancelAnimationFrame(raf); raf = 0; lastT = 0; } else wake();
   });
-  root.anymaShow = { core, setMode, get mode() { return mode; }, stats() { dbg.hidden = !dbg.hidden; } };
+  root.anymaShow = { core, setMode, get mode() { return mode; }, stats() { dbg.hidden = !dbg.hidden; },
+    debug() {
+      const now = nowS(), ap = root.autopilotState, i = autoIn;
+      const next = upcoming.filter((m) => m.at > now).sort((x, y) => x.at - y.at)[0] || null;
+      const whyNot = mode === "full" ? "" : !active ? "SHOW off" : !(autoBox && autoBox.checked) ? "SHOW AUTO unchecked"
+        : !ms.ok ? "no on-air deck with analysis" : !i.driving ? "AI not driving and no deck playing"
+        : now < auto.pausedUntil ? `paused ${(auto.pausedUntil - now).toFixed(0)}s (user input / Esc)`
+        : next ? `waiting: ${next.kind} in ${(next.at - now).toFixed(1)}s (goes full 1 phrase ahead)`
+        : auto.pending ? `waiting for phrase line: ${auto.pending.kind}` : "no moment coming (min-bar / 32-bar rules)";
+      return { mode, active, autoOn: i.on, aiDriving: !!(ap && ap.active), driving: i.driving, onAir,
+        music: { ok: ms.ok, bar: ms.barIdx, phrase: ms.phraseIdx, cls: ms.cls, energy: +(ms.energy || 0).toFixed(2) },
+        director: { scene: dir.scene, last: dir.last, queue: dir.queue.length, dance: +dir.dance.toFixed(2) },
+        auto: { mode: auto.mode, started: auto.started, pending: auto.pending, why: auto.why, ahead: auto.ahead,
+          holdUntil: auto.holdUntil - now, pausedFor: Math.max(0, auto.pausedUntil - now) },
+        lastEvents: seen.slice(), next, whyNotFull: whyNot };
+    } };
 })(typeof window !== "undefined" ? window : globalThis);
