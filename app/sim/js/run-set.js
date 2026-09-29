@@ -43,6 +43,10 @@ async function main() {
   $("ap-seed-input").value = cfg.seedUrl;
   $("ap-occasion-input").value = cfg.occasion || "";
   for (const [id, on] of Object.entries(cfg.toggles || {})) { const el = $(id); if (el) el.checked = !!on; }
+  if (cfg.macro && globalThis.macroMode) {       // --macro NAME: MACRO MODE plays that macro (macro-mode.js)
+    // not awaited: the fetch resolves on the virtual clock, which runs below before START
+    globalThis.macroMode.loadMacro(cfg.macro).catch((e) => console.warn("macro:", e.message));
+  }
 
   if (cfg.watchdog) {           // debugging aid: real-time heartbeat of the virtual run
     require("timers").setInterval(() => {

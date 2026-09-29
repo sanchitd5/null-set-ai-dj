@@ -152,7 +152,36 @@ def build_run(js: dict, world, meta: dict) -> dict:
                      "misses": sorted(world.misses, key=lambda m: (m["what"], m["key"]))[:20]},
             "prerender": world.prerender_report(played),
             "songs": songs, "transitions": transitions, "preps": preps, "rejects": rejects, "counters": counters,
+            "atlas": atlas_facts(cons, transitions),
             "audible": {"set": js["audible"].get("set")}}
+
+
+_ATLAS_PLAN = re.compile(r"^atlas: plan (.+?) exit ")
+_COMBO_WORKS = re.compile(r"works (\d+)")
+_STREAK = re.compile(r"COMBO x(\d+)")
+
+
+def atlas_facts(cons: list, transitions: list) -> dict:
+    """Pair atlas / macro use, from macro-mode.js's own console lines (informational):
+    `combo: picked|skipped: ...`, `macro: preferred|skipped ...`, `atlas: plan <recipe> ...`,
+    `combo: COMBO x<n>: ...` (a combo landed)."""
+    txt = [(c["t"], c["text"]) for c in cons]
+    plans = [(t, m.group(1)) for t, x in txt for m in [_ATLAS_PLAN.search(x)] if m]
+    kept = 0
+    for tr in transitions:
+        before = [r for t, r in plans if t <= tr["fire_t"]]
+        if before and before[-1] == (tr.get("executed") or tr.get("recipe")):
+            kept += 1
+    picked = [x for _, x in txt if x.startswith("combo: picked")]
+    works = [int(m.group(1)) for x in picked for m in [_COMBO_WORKS.search(x)] if m]
+    streaks = [int(m.group(1)) for _, x in txt if x.startswith("combo: COMBO") for m in [_STREAK.search(x)] if m]
+    return {"plans": len(plans), "plans_kept": kept, "combo_picked": len(picked),
+            "combo_skipped": sum(1 for _, x in txt if x.startswith("combo: skipped")),
+            "combo_landed": len(streaks), "max_streak": max(streaks, default=0),
+            "combo_works_mean": round(sum(works) / len(works), 1) if works else 0.0,
+            "macro_preferred": sum(1 for _, x in txt if x.startswith("macro: preferred") or x.startswith("macro: MACRO MODE")),
+            "macro_explore": sum(1 for _, x in txt if x.startswith("macro: skipped (") and "explore" in x),
+            "macro_invalid": sum(1 for _, x in txt if x.startswith("macro: skipped (invalid"))}
 
 
 _PREPARE = re.compile(r"prepare ready: .*? at_booking=(\d) defer_s=(\d+) stems=(\d) tempo=(\d) gave_up=(\d) skip=(\d)")

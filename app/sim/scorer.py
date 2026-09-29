@@ -79,6 +79,8 @@ DIRECTION = {
     "wf_params_measured": +1, "wf_params_fallback": -1, "wf_measured_share": +1, "wf_hold_fit": +1, "wf_hold_fit_fixed": 0,
     "wf_dropout_fit": +1, "wf_dropout_fit_fixed": 0, "wfp_hold_fit": +1, "wfp_hold_fit_fixed": 0, "wfp_dropout_fit": +1,
     "wfp_dropout_fit_fixed": 0, "wfp_level_spread": 0, "wfp_measured": +1, "wfp_fallback": -1, "bass_overlap_seconds": -1, "vocal_clash_seconds": -1,
+    "atlas_used_share": 0, "atlas_plan_kept": 0, "atlas_plan_overridden": 0, "combo_share": 0, "combo_max_streak": 0,
+    "combo_works_mean": 0, "macro_preferred_share": 0,
     "llm_calls": 0, "llm_empty_replies": -1, "llm_invalid_replies": -1, "llm_latency_mean_s": 0, "http_errors": -1, "download_failures": -1, "score": -1,
     "recipe_variety": 0, "distinct_recipes": 0, "max_recipe_repeat_run": 0, "fx_budget_spent": 0, "fx_budget_refused": 0,
     "fx_density_per_30min": 0, "exits_checked": 0, "exits_in_breakdown": -1, "overlap_seconds": 0,
@@ -247,6 +249,17 @@ def score_run(run: dict, artists_of: Optional[Callable[[str], set]] = None, iden
     m["defer_seconds"] = round(sum(dfr), 1)
     m["deferred_transitions"] = len(dfr)
     m["defer_gave_up"] = sum(1 for t in trans if t.get("prep_gave_up"))
+    # PAIR ATLAS / MACROS, informational only (macro-mode.js lines): how often the atlas plan was the
+    # default and survived the live gates, combo share and streaks, macro preference share
+    at = run.get("atlas") or {}
+    m["atlas_used_share"] = round(at.get("plans", 0) / n_t, 3) if n_t else 0.0
+    m["atlas_plan_kept"] = at.get("plans_kept", 0)
+    m["atlas_plan_overridden"] = max(0, min(at.get("plans", 0), n_t) - at.get("plans_kept", 0))
+    m["combo_share"] = round(at.get("combo_landed", 0) / n_t, 3) if n_t else 0.0
+    m["combo_max_streak"] = at.get("max_streak", 0)
+    m["combo_works_mean"] = at.get("combo_works_mean", 0.0)
+    asked = at.get("macro_preferred", 0) + at.get("macro_explore", 0)
+    m["macro_preferred_share"] = round(at.get("macro_preferred", 0) / asked, 3) if asked else 0.0
     pre = run.get("prerender") or {}
     m["wasted_render_seconds"] = pre.get("wasted_render_seconds", 0.0)
     m["max_concurrent_heavy_jobs"] = pre.get("max_concurrent_heavy_jobs", 0)

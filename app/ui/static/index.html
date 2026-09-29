@@ -111,6 +111,7 @@
 
 <!-- VIBE strip: what the AI hears, plans and does (built by vibe-ui.js) -->
 <section class="vibe-bar" id="vibe-bar" aria-label="What the AI is doing"></section>
+<div class="combo-streak hud-label" id="combo-streak" hidden></div>
 
 <!-- ========================================================================= -->
 <!-- FX ENGINE TOP BAR — two units, one per deck (real Web Audio wiring)       -->
@@ -320,6 +321,9 @@
     <button class="hw-btn" data-ai-action="drums_host" data-group="ARTIST VOCAL" title="Drums host now (S9): this song strips to its drums, the other song's vocal rides them, its beat drops on the line (clashing keys only with the drums key waiver)">DRUMS HOST</button>
     <button class="hw-btn" data-ai-action="vocal_swap" data-group="ARTIST VOCAL" title="Line swap now (S7): the next sung line of this song muted, a line of the same length from the other deck's vocal in its place">LINE SWAP</button>
     <button class="hw-btn" data-ai-action="acapella_build" data-group="ARTIST VOCAL" title="Acapella build now (S8): a vocal fragment of this song looped up to the next phrase line (a build section)">ACAPELLA BUILD</button>
+    <button class="hw-btn" data-ai-action="macro-step" data-group="ATLAS" title="The loaded macro's next transition, at its stored point (same gates as the autopilot)">PLAY STEP</button>
+    <button class="hw-btn" data-ai-action="macro-transition" data-group="ATLAS" title="The atlas's stored transition for the loaded A/B pair">PLAY THIS TRANSITION</button>
+    <button class="hw-btn" data-ai-action="plan-picks" data-group="ATLAS" title="Order the ticked COMPATIBLE songs for the best flow, save as a macro and load it">PLAN FROM PICKS</button>
     <button class="hw-btn" id="ai-more-btn" type="button" title="Every other on-demand move: grouped, searchable">MORE ACTIONS ▾</button>
     <aside id="ai-more-drawer" hidden></aside>
   </div>
@@ -922,8 +926,41 @@
         <input type="checkbox" id="vfx-anyma-toggle" /> ANYMA LOOK
       </label>
       <input type="range" id="ap-drums-level" min="0" max="1" step="0.01" value="0.25" aria-label="Live drums level" />
+      <label class="hud-label" data-group="ATLAS" title="Pair atlas COMBOS first: songs the atlas knows work with the playing one (merge-hold, riff x rap, mashup, double drop, drop swap) are tried before asking the LLM; the other deck's song first when it forms a combo. Off: taste only">
+        <input type="checkbox" id="ap-atlas-combo" checked /> ATLAS COMBOS
+      </label>
+      <label class="hud-label" data-group="ATLAS" title="MACRO MODE: the autopilot plays the loaded macro's songs with its stored decisions (every safety gate still applies; an invalid step is logged and falls back)">
+        <input type="checkbox" id="ap-macro-mode" /> MACRO MODE
+      </label>
+      <label class="hud-label" data-group="ATLAS" title="MACRO_PREFERENCE: share of the time a known macro's next step is taken when the playing song is in a saved macro (the rest explores)">
+        MACRO PREF <input type="number" id="ap-macro-pref" min="0" max="1" step="0.05" value="0.8" aria-label="Macro preference" />
+      </label>
     </div>
   </div>
+
+  <!-- MACROS + COMPATIBLE (macro-mode.js): replayable sets from the pair atlas, played by the user step by step -->
+  <details class="macro-panel" id="macro-panel">
+    <summary class="hud-label" title="Saved macros (data/cache/macros): pick one, then PLAY STEP (Shift+M) fires its next transition at the stored point with the autopilot's gates">MACROS <span id="macro-status"></span></summary>
+    <div class="macro-body">
+      <select id="macro-select" aria-label="Macros"><option value="">MACROS…</option></select>
+      <input type="text" id="macro-name" placeholder="name for SAVE MACRO" autocomplete="off" />
+      <button class="hw-btn" id="macro-save" title="Save the transitions played this set as a macro">SAVE MACRO</button>
+      <button class="hw-btn" id="macro-next" title="Play the highlighted step (Shift+M)">PLAY STEP</button>
+      <button class="hw-btn" id="macro-skip" title="Skip the highlighted step">SKIP</button>
+      <button class="hw-btn" id="macro-repeat" title="Back one step (repeat it)">REPEAT</button>
+      <ol class="macro-steps" id="macro-steps"></ol>
+      <div class="macro-edit">
+        <input type="text" id="macro-edit-recipe" placeholder="recipe" />
+        <input type="number" id="macro-edit-a" placeholder="exit s" step="0.1" />
+        <input type="number" id="macro-edit-b" placeholder="entry s" step="0.1" />
+        <button class="hw-btn" id="macro-edit" title="Change the highlighted step and save as a new macro version">EDIT + SAVE</button>
+      </div>
+      <h3 class="hud-label">COMPATIBLE <button class="hw-btn" id="compat-refresh" title="Partners of the playing song, grouped by move">REFRESH</button>
+        <label class="hud-label"><input type="checkbox" id="macro-lock-order" /> keep order</label>
+        <button class="hw-btn" id="macro-picks" title="Order the ticked songs (and the playing one) for the best flow and save them as a macro">PLAN FROM PICKS</button></h3>
+      <div class="compat-list" id="compat-list"></div>
+    </div>
+  </details>
 
   <!-- LEARNING: progress of set studies (agent_bridge learn-set); hidden unless one runs or finished in the last 10 min -->
   <details class="lp-panel" id="learn-panel" open hidden>
@@ -1058,6 +1095,7 @@
 <script src="/learn-progress.js"></script>
 <script src="/step-log.js"></script>
 <script src="/autopilot.js"></script>
+<script src="/macro-mode.js"></script>
 <script src="/beat-grid-ai.js"></script>
 <script src="/vibe-ui.js"></script>
 <script src="/marquee.js"></script>
