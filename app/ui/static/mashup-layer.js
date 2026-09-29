@@ -13,9 +13,25 @@
 // Public API: window.mashup.
 
 (function () {
-  if (typeof audioCtx === "undefined") return;
+  const LEVEL = 0.9;          // used only when the server sent no measured gain (waveform_params.guest_level)
+  const HP_HZ = 120;          // the KB sub crossover: the floor of any measured corner
 
-  const LEVEL = 0.9;
+  // Gain and high-pass corner of the guest vocal for the chosen host entry: measured by the server from the
+  // two tracks' audio (level per host entry, corner from the host's own low end), the old constants otherwise.
+  function layerParams(plan, hostEntry) {
+    let level = LEVEL, hp = HP_HZ, measured = false;
+    const es = plan.host_entries, ls = plan.host_levels;
+    if (Array.isArray(es) && Array.isArray(ls) && es.length === ls.length && es.length) {
+      let bi = 0;
+      es.forEach((e, i) => { if (Math.abs(e - hostEntry) < Math.abs(es[bi] - hostEntry)) bi = i; });
+      if (ls[bi] > 0 && ls[bi] <= 1) { level = ls[bi]; measured = !(plan.param_sources && plan.param_sources.guest_level === "fallback"); }
+    }
+    if (plan.hp_hz >= HP_HZ && plan.hp_hz <= 400) hp = plan.hp_hz;
+    return { level, hp, measured };
+  }
+  if (typeof module !== "undefined" && module.exports) module.exports = { layerParams };
+
+  if (typeof audioCtx === "undefined") return;
   let current = null; // { src, env, deckId, endAt }
 
   function cancel() {
@@ -60,11 +76,12 @@
     src.playbackRate.value = rate;
     const hp = audioCtx.createBiquadFilter();
     hp.type = "highpass";
-    hp.frequency.value = 120;
+    const lp = layerParams(plan, hostEntry);
+    hp.frequency.value = lp.hp;
     const env = audioCtx.createGain();
     env.gain.setValueAtTime(0.0001, when);
-    env.gain.exponentialRampToValueAtTime(LEVEL, when + beat);
-    env.gain.setValueAtTime(LEVEL, when + Math.max(beat, clipSecs - bar));
+    env.gain.exponentialRampToValueAtTime(lp.level, when + beat);
+    env.gain.setValueAtTime(lp.level, when + Math.max(beat, clipSecs - bar));
     env.gain.exponentialRampToValueAtTime(0.0001, when + clipSecs);
     src.connect(hp).connect(env).connect(masterGain);
     src.start(when);

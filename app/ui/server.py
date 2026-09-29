@@ -1385,6 +1385,7 @@ def post_riff_plan(req: RiffRequest):
     from app.music_brain import keylock
     from app.music_brain import stem_service
     from app.music_brain import techniques as tq
+    from app.music_brain import waveform_params as wp
 
     if not keylock.available():
         return {"ok": False, "reasons": ["Rubber Band not installed (brew install rubberband)"]}
@@ -1417,6 +1418,10 @@ def post_riff_plan(req: RiffRequest):
     long_ok = cov >= keylock.MASHUP_LONG_VOCAL and b["duration"] >= win_hi + keylock.BLEND_BARS * plan["bar_s"] + 20
     plan["timeline"] = keylock.timeline(keylock.MASHUP_BARS_LONG if long_ok else keylock.MASHUP_BARS_SHORT)
     plan["mashup_vibe"] = {"b_rap_coverage": round(cov, 2), "long": long_ok}
+    # the rap moves (hold on, A's drop out) sit on B's own measured lines; the mashup length above already was
+    plan["timeline"], line_src = keylock.measured_lines(plan["timeline"], wp.profile(sb["vocals"]), plan["b_entry"], plan["bar_s"])
+    plan["param_sources"] = {"mashup_bars": "measured" if vr else "fallback", **line_src}
+    wp.note("riff_lines", plan["param_sources"], fit=plan["timeline"].get("fit"))
     key, state = keylock.ensure(stem_service.file_hash(_track_path(req.a_id)), _cached_stems4(req.a_id), plan)
     # B's levels where it drops (16 bars from the rap), for the balance
     lo, hi = plan["b_entry"], plan["b_entry"] + 16 * plan["bar_s"]
@@ -1441,7 +1446,7 @@ def post_riff_balance(key: str, b_levels: dict):
     """Gains for a rendered riff (A level-matched, B's rap and bass under the riff)."""
     from app.music_brain import keylock
 
-    m = keylock.meta(key)
+    m = keylock.backfill_voice_band(key)
     if not m or "a_mix_db" not in m:
         raise HTTPException(status_code=404, detail="riff not rendered")
     try:

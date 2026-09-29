@@ -22,6 +22,7 @@ import math
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
+from app.music_brain import waveform_params as wp
 from app.music_brain.analyzer import TrackAnalysis, vocal_presence_map
 from app.music_brain.recipe_matcher import camelot_distance_score
 
@@ -70,6 +71,28 @@ def _touches_edge_section(track: TrackAnalysis, start: float, end: float) -> boo
         s.label in ("intro", "outro") and s.start < end and s.end > start
         for s in track.sections
     )
+
+
+FALLBACK_LEVEL = 0.9   # the console's old fixed guest gain (mashup-layer.js LEVEL), used only when nothing was measured
+
+
+def _layer_mix(host: TrackAnalysis, guest: TrackAnalysis, guest_vocals_path: Callable[[], str], guest_start: float,
+               g_len: float, entries: List[float], h_len: float) -> Tuple[List[float], float, dict]:
+    """(gain per host entry, high-pass corner Hz, sources) measured from the guest's vocal stem and the host's
+    own audio: the guest voice band sits level with the host's voice band at each entry, and the vocal
+    leaves the low end to the host down to where the host's own low end stops (never under 120 Hz)."""
+    g = wp.profile(guest_vocals_path())
+    h = wp.profile(host.path) if getattr(host, "path", None) else None
+    g_db = wp.mean_db(g, "voice_db", guest_start, guest_start + g_len, active_only=True)
+    levels, srcs = [], set()
+    for e in entries:
+        lvl, s = wp.guest_level(g_db, wp.mean_db(h, "voice_db", e, e + h_len), FALLBACK_LEVEL)
+        levels.append(round(lvl, 3))
+        srcs.add(s)
+    hp, hp_src = wp.sub_corner_hz((h or {}).get("low_hz90"))
+    sources = {"guest_level": wp.FALLBACK if wp.FALLBACK in srcs or not srcs else wp.MEASURED, "hp_hz": hp_src}
+    wp.note("mashup_layer", sources)
+    return levels, round(hp, 1), sources
 
 
 def plan_mashup(
@@ -141,9 +164,14 @@ def plan_mashup(
     if not entries:
         return {"ok": False, "reasons": ["host has no instrumental phrase long enough"]}
 
+    levels, hp_hz, sources = _layer_mix(host, guest, guest_vocals_path, best_start, g_len, entries, h_len)
     return {
         "ok": True,
         "reasons": [],
+        "level": levels[0] if levels else FALLBACK_LEVEL,      # the guest vocal's gain, per host entry below
+        "host_levels": levels,
+        "hp_hz": hp_hz,                                       # high-pass corner of the guest vocal
+        "param_sources": sources,
         "bars": bars,
         "mute_host_vocals": mute_host,
         "rate": round(rate, 5),

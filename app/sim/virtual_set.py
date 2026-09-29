@@ -129,6 +129,12 @@ def run_set(a: argparse.Namespace) -> dict:
     meta = {"seed": seed, "mode": mode, "tracks_requested": tracks, "world": world.mode, "name": world.name, "occasion": occasion,
             "fixture_source": world.fx.get("source")}
     run = runlog.build_run(js, world, meta)
+    try:
+        from app.sim import wf_probe
+
+        run["meta"].setdefault("wf", {})["probe"] = wf_probe.probe(world)
+    except Exception as exc:                          # informational: never fail a run for it
+        run["meta"].setdefault("wf", {})["probe_error"] = f"{type(exc).__name__}: {exc}"[:200]
     run["features"] = features.feature_table(js, world, run)
     report = scorer.score_run(run)
     report["features"] = run["features"]
