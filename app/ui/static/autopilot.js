@@ -2157,6 +2157,8 @@ function createAutopilotEngine({ host, ai }) {
     apStatus(`Matching transition → ${nextName}…`);
     let candidate = await matchTracks(currentId, nextId);
     if (!candidate) return false;
+    // the pair atlas / macro step's plan is the default (macro-mode.js); every gate below re-validates it
+    if (host.mod.macroMode) candidate = host.mod.macroMode.defaultPlan(currentId, cand, candidate);
 
     // Measured vibe gate: reject candidates whose loudness / brightness /
     // onset density / energy sit too far from what is playing right now.
@@ -2631,6 +2633,21 @@ function createAutopilotEngine({ host, ai }) {
       if (!active || gen !== prepGen) return;
       leadStatus(`couldn't book ${leadTo.cand.name} yet — one more steering song`);
       allowTempoJump = false;
+    }
+
+    // 0a) Pre-knowledge first (macro-mode.js): a saved macro's next step (MACRO_PREFERENCE of the
+    // time), then the atlas COMBOS for this song (the other deck's song first). Taste (the LLM
+    // pool below) decides only when none of them passes the gates.
+    if (host.mod.macroMode && !leadDue()) {
+      const st = host.state || {}, other = activeDeck === "a" ? st.trackB : st.trackA;
+      const first = await host.mod.macroMode.firstCandidates(currentId, { played: playedIds, recent: history, loadedId: other && other !== currentId ? other : null });
+      for (const c of first) {
+        if (!active || gen !== prepGen) return;
+        if (c.track_id === currentId || playedIds.includes(c.track_id)) continue;
+        apStatus(`${c._macro ? `Macro ${c._macro.name || ""} step ${c._macro.step.n}` : `COMBO ${c._combo.label}`}: trying ${c.name}`);
+        if (await tryCandidate(currentId, c, gen)) return;
+      }
+      if (!active || gen !== prepGen) return;
     }
 
     // 0b) The look-ahead for THIS song is still in flight (asked when it was booked):
@@ -3133,6 +3150,7 @@ function createAutopilotEngine({ host, ai }) {
         sessionEvent("track", { event: "transition_end", now_playing: nextName, deck: incoming, set_songs: history.length });
         if (host.mod.liveEar && host.mod.liveEar.flush) host.mod.liveEar.flush("transition done");
         advanceLead();
+        if (host.mod.macroMode) host.mod.macroMode.landed(currentId, nextId, { recipe: bookedRecipe, bName: nextName, bTime: bTime });   // combo streak, set record (macro-mode.js)
         playedIds.push(nextId);
         unmuteBeatLayer();
         genreLog.push(currentGenre || "");

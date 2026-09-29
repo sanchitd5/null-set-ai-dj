@@ -1809,3 +1809,16 @@ body::after {
 /* AI TRANSITION BRAIN panel hidden from the UI (user request); .panel sets display so force it. */
 #ai-panel[hidden] { display: none !important; }
 .ai-hud.ai-hud-collapsed { min-width: 0; }
+
+/* MACROS + COMPATIBLE panel, combo streak (macro-mode.js) */
+.macro-panel { margin: 6px 0; }
+.macro-body { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 6px 0; }
+.macro-steps, .compat-list { flex-basis: 100%; margin: 0; padding-left: 18px; font-size: 12px; max-height: 220px; overflow: auto; }
+.macro-steps li.macro-next { font-weight: 700; }
+.macro-rec, .compat-rec { opacity: 0.8; margin-left: 4px; }
+.macro-pts, .macro-merge, .compat-works { opacity: 0.6; margin-left: 4px; font-variant-numeric: tabular-nums; }
+.macro-edit input { width: 90px; }
+.compat-list h4 { margin: 6px 0 2px; font-size: 11px; letter-spacing: 0.08em; }
+.compat-list ul { margin: 0; padding-left: 12px; }
+.combo-streak { text-align: center; font-weight: 700; letter-spacing: 0.08em; padding: 2px 0; }
+#ap-macro-pref { width: 52px; }
