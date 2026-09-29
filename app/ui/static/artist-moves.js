@@ -1,0 +1,418 @@
+// AI Music Brain - ARTIST MOVES, batch C of research/notes/artist-signature-techniques.md
+// (loops, teases). One pure planner per technique in `core` (node-tested), the runtime reaches the
+// world only through the Host port (engine.js). A plan that fails a gate arms nothing and says why
+// once per phrase; every constant fallback a plan used is listed in its `fallbacks` and logged.
+//
+//   slip_loop    S13 (Carl Cox, Beat Masher / Flux, SOURCED): the last 2 or 4 bars before a phrase
+//                line into a lift play their first half twice (loop of 4 or 8 beats) while the
+//                song keeps advancing under the loop; the release lands where the track would have
+//                been, which is the phrase line (deck-controller.js slipLoop / slipRelease).
+//   cue_tease    S14 (Cox cue-button builds, SECONDARY): 1 or 2 beat stabs of B's strongest drum
+//                hit on the backbeat of A's last bars before B enters. Drums only (a stab never
+//                doubles a vocal), high-passed at 150 Hz (A keeps the sub), inside the 8 % tempo cap.
+//   roll         S12 (Cox roll effect, SECONDARY): 1/2-beat repeats of A's drum stem at low wet
+//                over A's last 1/2 or 1 bar before B enters, ending on the phrase line (B's entry).
+//   perc_bridge  S11 (third-deck percussion bridge): gated on a third deck. The console has two,
+//                so the planner refuses and nothing runs; kept so the gate is explicit and logged.
+//   S15 (tempo swerve at a break) is skipped by the spec itself (covered by the prior note).
+(function (root) {
+  "use strict";
+
+  const lm = root.learnedMovesCore || (typeof require === "function" ? require("./learned-moves.js") : null);
+  const { envelope, snapBeat, median } = lm;
+
+  const KINDS = ["slip_loop", "cue_tease", "roll", "perc_bridge"];
+  const SPEC = { slip_loop: "S13", cue_tease: "S14", roll: "S12", perc_bridge: "S11" };
+  const LABEL = { slip_loop: "SLIP LOOP", cue_tease: "CUE TEASE", roll: "ROLL", perc_bridge: "PERC BRIDGE" };
+  const MIN_LEAD_S = 0.6;             // a move is booked at least this far ahead (learned-moves.js)
+  const SLIP_WINDOW_BEATS = [16, 8];  // window before the line; the loop is its first half (4 or 8 beats)
+  const SLIP_CAP_BEATS = 16;          // hard cap on the slip window (KB 16-beat hold)
+  const SLIP_PER_SONG = 2, SLIP_GAP_BARS = 32;
+  const SLIP_EXIT_GUARD_BARS = 4;     // the release lands at least this far before the planned exit
+  const MAX_VOCAL_SHARE = 0.25;       // a loop over a sung stretch cuts a word (spec risk)
+  const TEASE_BARS = 8;               // the tease lives in A's last 8 bars
+  const TEASE_MAX_STABS = 4;
+  const TEMPO_CAP_PCT = 8;            // tempo-rule.js KEYLOCK_RANGE_PCT
+  const HP_HZ = 150;                  // layered stabs / rolls stay above the 120 Hz sub owner line
+  const STAB_REL = 0.35;              // a stab sits about 9 dB under A's drums (UNVERIFIED by ear)
+  const STAB_GAIN_FALLBACK = 0.25;
+  const ROLL_WET = 0.25;              // low wet (UNVERIFIED by ear)
+  const ROLL_SLICE_BEATS = 0.5;
+  const MIN_RMS = 0.01;               // stem-moves.js floor
+
+  const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
+  const no = (gate, reason) => ({ ok: false, gate, reason });
+  const fin = Number.isFinite;
+
+  function vocalShare(regions, t0, t1) {
+    if (!(t1 > t0)) return 0;
+    let c = 0;
+    for (const r of regions || []) { const a = Math.max(t0, r[0]), b = Math.min(t1, r[1]); if (b > a) c += b - a; }
+    return Math.min(1, c / (t1 - t0));
+  }
+  // mean of the analysis energy curve over [t0, t1) (null when unmeasured)
+  function meanEnergy(curve, times, t0, t1) {
+    if (!Array.isArray(curve) || !Array.isArray(times)) return null;
+    let s = 0, n = 0;
+    for (let i = 0; i < Math.min(curve.length, times.length); i++) if (times[i] >= t0 && times[i] < t1 && fin(curve[i])) { s += curve[i]; n++; }
+    return n ? s / n : null;
+  }
+  // the analysed beat nearest t (grid fallback when no beat list): -> {t, err}
+  function nearestBeat(beats, t, t0, beatS) {
+    let best = null;
+    for (const b of beats || []) if (best == null || Math.abs(b - t) < Math.abs(best - t)) best = b;
+    if (best == null || Math.abs(best - t) > beatS / 2) return { t: snapBeat(t, t0, beatS), err: 0, grid: true };
+    return { t: best, err: Math.abs(best - t), grid: false };
+  }
+  // Where the song is under a slip loop: the shadow playhead. s = {pos, at, rate}
+  const shadowAt = (s, now) => s.pos + (now - s.at) * s.rate;
+
+  // ---- S13 slip loop ---------------------------------------------------------------------------
+  // c: {pos, lineT (next phrase line, song s), bpm, rate, beats[], exitT, inTransition, holdActive,
+  //     mashupActive, loopOn, reversed, busySlices, slipSupported, vocals (regions), energyNow,
+  //     energyNext, count, atBar, lastAtBar, quiet (the mind rides this phrase), relaxed, onDemand}
+  // onDemand (AI ACTIONS button) skips only the choice gates: per-song cap, spacing, build, quiet, relaxed.
+  function planSlipLoop(c) {
+    if (c.inTransition || c.holdActive) return no("transition", "a transition or merge hold owns the deck");
+    if (c.mashupActive) return no("vocal_layer", "a vocal layer is running");
+    if (!c.slipSupported) return no("no_slip", "the deck has no slip loop; nothing armed (loop_extend is the learned fallback)");
+    if (c.loopOn || c.reversed || c.busySlices) return no("deck_busy", "a loop, reverse or stem slice already runs");
+    if (!c.onDemand) {
+      if (c.relaxed) return no("relaxed", "relaxed session: no artist moves");
+      if (c.quiet === false) return no("phrase_busy", "the mind booked another move on this phrase");
+      if ((c.count || 0) >= SLIP_PER_SONG) return no("cap", `${SLIP_PER_SONG} slip loops this song`);
+      if (c.lastAtBar != null && c.atBar - c.lastAtBar < SLIP_GAP_BARS) return no("spacing", `last slip ${Math.round(c.atBar - c.lastAtBar)} bars ago (< ${SLIP_GAP_BARS})`);
+      if (!(c.energyNow != null && c.energyNext != null)) return no("unmeasured", "no energy curve: cannot tell a build from a fade");
+      if (!(c.energyNext > c.energyNow)) return no("no_build", `next phrase energy ${c.energyNext.toFixed(2)} <= ${c.energyNow.toFixed(2)}: a slip loop is a build`);
+    }
+    if (!Array.isArray(c.vocals)) return no("unmeasured", "no vocal regions: cannot rule out a loop inside a word");
+    const build = c.energyNow != null && c.energyNext != null ? ` (energy ${c.energyNow.toFixed(2)} -> ${c.energyNext.toFixed(2)})` : "";
+    const fallbacks = [];
+    const bpm = c.bpm > 0 ? c.bpm : (fallbacks.push("bpm=128"), 128);
+    const beatS = 60 / bpm, rate = c.rate > 0 ? c.rate : 1;
+    if (c.exitT != null && c.lineT > c.exitT - SLIP_EXIT_GUARD_BARS * 4 * beatS) return no("exit_guard", "the release would sit inside the exit guard");
+    for (const W of SLIP_WINDOW_BEATS) {
+      const nb = nearestBeat(c.beats, c.lineT - W * beatS, c.lineT, beatS);
+      if (nb.grid) fallbacks.push("beat grid from bpm");
+      const start = nb.t;
+      if (start < c.pos + MIN_LEAD_S * rate) continue;
+      const vs = vocalShare(c.vocals, start, c.lineT);
+      if (vs > MAX_VOCAL_SHARE) return no("vocal_seam", `${Math.round(vs * 100)}% of the window is sung: a loop would cut a word`);
+      return { ok: true, kind: "slip_loop", start, release: c.lineT, loop_beats: W / 2, window_beats: W,
+        cap_beats: SLIP_CAP_BEATS, extension_beats: 0, grid_err_s: nb.err, fallbacks,
+        why: `last ${W / 4} bars before the line: ${W / 8} bar${W > 8 ? "s" : ""} looped twice, the song runs on under it${build}` };
+    }
+    return no("late", "no 2 bar window left before the line");
+  }
+
+  // ---- S14 cue tease --------------------------------------------------------------------------
+  // c: {pos, exitT (A song s at B's entry), aBpm, aRate, aBeats[], bBpm, bEntry, bPlaying, bDrumEnv
+  //     ({t0, hop, v} beat bins of B's drum stem from bEntry), aDrumRms, inTransition, mashupActive}
+  function planCueTease(c) {
+    if (c.inTransition) return no("transition", "the transition is running");
+    if (c.relaxed && !c.onDemand) return no("relaxed", "relaxed session: no artist moves");
+    if (c.mashupActive) return no("vocal_layer", "a vocal layer is running");
+    if (c.exitT == null) return no("no_plan", "no planned entry for B");
+    if (c.bPlaying) return no("b_rolling", "B already plays: its entry point moves");
+    if (!c.bDrumEnv || !c.bDrumEnv.v || c.bDrumEnv.v.length < 2) return no("no_stems", "B's drum stem is not loaded");
+    const fallbacks = [];
+    const aBpm = c.aBpm > 0 ? c.aBpm : (fallbacks.push("aBpm=128"), 128);
+    const bBpm = c.bBpm > 0 ? c.bBpm : (fallbacks.push("bBpm=128"), 128);
+    const aRate = c.aRate > 0 ? c.aRate : 1, heard = aBpm * aRate;
+    const v = heard / bBpm;                         // B song seconds per real second, beat-locked to A
+    if (Math.abs(v - 1) * 100 > TEMPO_CAP_PCT) return no("tempo", `B stabs need a ${((v - 1) * 100).toFixed(1)}% stretch (cap ${TEMPO_CAP_PCT}%)`);
+    const env = c.bDrumEnv.v;
+    let k = 0;
+    for (let i = 1; i < env.length; i++) if (env[i] > env[k]) k = i;
+    if (!(env[k] >= MIN_RMS)) return no("no_stems", "B's drum stem is silent in its first bars");
+    const beats = k + 1 < env.length && env[k + 1] >= 0.6 * env[k] ? 2 : 1;   // a sustained hit gets 2 beats
+    const beatS = 60 / aBpm;                        // A song seconds per beat
+    const bars = Math.floor((c.exitT - c.pos - MIN_LEAD_S * aRate) / (4 * beatS));
+    const n = Math.min(TEASE_MAX_STABS, bars);
+    if (n < 1) return no("late", "less than a bar left before B enters");
+    const off = beats === 1 ? 3 : 1;                // backbeat: beat 4 (1 beat) or beats 2-3 (2 beats)
+    const stabs = [];
+    for (let j = n; j >= 1; j--) {
+      const bar0 = nearestBeat(c.aBeats, c.exitT - j * 4 * beatS, c.exitT, beatS);
+      if (bar0.grid && !fallbacks.includes("A beat grid from bpm")) fallbacks.push("A beat grid from bpm");
+      stabs.push({ a_t: bar0.t + off * beatS, b_from: c.bDrumEnv.t0 + k * c.bDrumEnv.hop, beats, grid_err_s: bar0.err });
+    }
+    let gain;
+    if (fin(c.aDrumRms) && c.aDrumRms > 0) gain = clamp(STAB_REL * c.aDrumRms / env[k], 0.05, 0.6);
+    else { gain = STAB_GAIN_FALLBACK; fallbacks.push(`gain=${STAB_GAIN_FALLBACK}`); }
+    return { ok: true, kind: "cue_tease", stabs, gain, hp_hz: HP_HZ, b_rate: v, stab_beats: beats,
+      cap_beats: TEASE_MAX_STABS * 2, fallbacks,
+      why: `${n} ${beats}-beat stab${n > 1 ? "s" : ""} of B's drum hit (beat ${k + 1} of its entry) on A's backbeat, high-passed ${HP_HZ} Hz` };
+  }
+
+  // ---- S12 roll under the blend ---------------------------------------------------------------
+  // c: {pos, exitT, bpm, rate, beats[], aDrumBars ([rms] of A's drum stem per beat over the last bar
+  //     before exitT), inTransition, mashupActive, fxOk}
+  function planRoll(c) {
+    if (c.inTransition) return no("transition", "the transition is running");
+    if (c.mashupActive) return no("vocal_layer", "a vocal layer is running");
+    if (!c.fxOk && !c.onDemand) return no("fx_budget", "the FX budget (dj-mind fxAllowed, relaxed session) says no roll here");
+    if (c.exitT == null) return no("no_plan", "no planned entry for B");
+    const bars = c.aDrumBars;
+    if (!Array.isArray(bars) || !bars.length) return no("no_stems", "A's drum stem is not live");
+    const lo = Math.min(...bars), hi = Math.max(...bars);
+    if (!(median(bars) >= MIN_RMS)) return no("drums_silent", "A's drums do not play in the last bar");
+    const fallbacks = [];
+    const bpm = c.bpm > 0 ? c.bpm : (fallbacks.push("bpm=128"), 128);
+    const beatS = 60 / bpm, rate = c.rate > 0 ? c.rate : 1;
+    const steady = lo >= hi / 3;                    // steady drums take the full bar, a fill only half
+    for (const W of steady ? [4, 2] : [2]) {
+      const nb = nearestBeat(c.beats, c.exitT - W * beatS, c.exitT, beatS);
+      if (nb.grid) fallbacks.push("beat grid from bpm");
+      if (nb.t < c.pos + MIN_LEAD_S * rate) continue;
+      const slice = ROLL_SLICE_BEATS * beatS, count = Math.round((c.exitT - nb.t) / slice);
+      const pieces = [];
+      for (let i = 0; i < count; i++) pieces.push({ a_t: nb.t + i * slice, from: nb.t, dur: slice });
+      return { ok: true, kind: "roll", start: nb.t, release: c.exitT, window_beats: W, slice_beats: ROLL_SLICE_BEATS,
+        pieces, wet: ROLL_WET, hp_hz: HP_HZ, cap_beats: 4, grid_err_s: nb.err, fallbacks,
+        why: `${W / 4} bar roll of A's drums (1/2 beat, wet ${ROLL_WET}) into B's entry, released on the line` };
+    }
+    return no("late", "the last bar before B is already under way");
+  }
+
+  // ---- S11 percussion bridge ------------------------------------------------------------------
+  // c: {deckCount, tempoGapPct, bLoading}
+  function planPercBridge(c) {
+    if (!(c.deckCount >= 3)) return no("no_third_deck", "the console has no third deck for a percussion loop");
+    if (!(Math.abs(c.tempoGapPct || 0) > 6) && !c.bLoading) return no("no_need", "no tempo gap > 6% and B is ready");
+    return { ok: true, kind: "perc_bridge", fallbacks: [], why: "third-deck drum loop bridges the gap" };
+  }
+
+  const PLANNERS = { slip_loop: planSlipLoop, cue_tease: planCueTease, roll: planRoll, perc_bridge: planPercBridge };
+
+  const core = { KINDS, SPEC, LABEL, MIN_LEAD_S, SLIP_WINDOW_BEATS, SLIP_CAP_BEATS, SLIP_PER_SONG, SLIP_GAP_BARS,
+    TEASE_BARS, TEASE_MAX_STABS, TEMPO_CAP_PCT, HP_HZ, ROLL_WET, PLANNERS,
+    vocalShare, meanEnergy, nearestBeat, shadowAt, planSlipLoop, planCueTease, planRoll, planPercBridge };
+  root.artistMovesCore = core;
+  if (typeof module !== "undefined" && module.exports) module.exports = core;
+
+  // ---- runtime (Host port only) ---------------------------------------------------------------
+  function create({ host }) {
+    const audioCtx = host.audio;
+    const { setTimeout, clearTimeout } = host.clock;
+    const timers = { a: [], b: [] };
+    const said = new Map();                         // "deck:kind:key" refusals already logged
+    const other = (id) => (id === "a" ? "b" : "a");
+    const on = (k) => host.ui.flag(`ap-artist-${k}`, true);
+    const later = (id, ms, fn) => timers[id].push(setTimeout(fn, Math.max(0, ms)));
+    const rateOf = (d) => (d._playbackRate && d._playbackRate()) || 1;
+    const relaxed = () => !!(host.session && host.session.relaxed);
+
+    function say(d, kind, why, extra = {}) {
+      host.bus.emit("ai-activity", Object.assign({ kind: "artist_move", deck: d.id, label: `artist_move: ${kind}`, move: kind, spec: SPEC[kind], why }, extra));
+    }
+    // a refusal is said once per phrase (key = the line / entry it was planned for)
+    function refuse(d, kind, key, p) {
+      const k = `${d.id}:${kind}:${key}`;
+      if (said.has(k)) return;
+      if (said.size > 300) said.clear();
+      said.set(k, 1);
+      console.info(`artist move ${kind} skipped: ${p.gate}: ${p.reason}`);
+      host.log.step("artist_move_refused", { deck: d.id, decision: kind, why: `${p.gate}: ${p.reason}` });
+    }
+    function logPlan(kind, p) {
+      console.info(`artist move ${kind}: ${p.why}${p.fallbacks.length ? ` (constants: ${p.fallbacks.join(", ")})` : ""}`);
+    }
+    // beat-hop RMS of one stem from song time t0 (the stem's own lag / ratio)
+    function stemEnv(d, name, t0, t1, hop) {
+      const st = d && d.stems, b = st && st[name];
+      if (!d.stemsReady || !b || !b.getChannelData) return null;
+      return envelope(b.getChannelData(0), b.sampleRate, Math.max(0, t0), t1, hop, st.lag || 0, st.ratio || 1);
+    }
+    const audioAt = (d, o, t) => audioCtx.currentTime + (t - o.pos) / rateOf(d);
+
+    // ---- execution of an ok plan (returns {busyS, why} for the caller) ----
+    function runSlip(d, p, o) {
+      const lead = (p.start - o.pos) / rateOf(d);
+      later(d.id, lead * 1000 - 5, () => {
+        if (!d.playing || !d.slipLoop(p.loop_beats, p.start)) { console.info("artist move slip_loop skipped: deck: slip loop refused at its start"); return; }
+        later(d.id, ((p.release - p.start) / rateOf(d)) * 1000, () => {
+          const shadow = d.slipPosition(), to = d.slipRelease();
+          if (to == null) return;
+          host.bus.emit("ai-activity", { kind: "artist_move_release", deck: d.id, move: "slip_loop", land_s: to, release_s: p.release,
+            shadow_err_s: +Math.abs(to - shadow).toFixed(4), line_err_s: +Math.abs(to - p.release).toFixed(4) });
+        });
+      });
+      say(d, "slip_loop", p.why, { t0: audioAt(d, o, p.start), t1: audioAt(d, o, p.release), beats: p.window_beats, cap_beats: p.cap_beats,
+        grid_err_s: +p.grid_err_s.toFixed(4), params: { loop_beats: p.loop_beats, window_beats: p.window_beats, start: p.start, release: p.release }, fallbacks: p.fallbacks });
+      return { busyS: (p.release - o.pos) / rateOf(d) + 0.1, why: p.why };
+    }
+    // pieces [{a_t (A song s), from (buffer s), dur (buffer s)}] -> audio clock, layered into deck d
+    function book(d, buf, pieces, rate, gain, o) {
+      return d.layerPieces(buf, pieces.map((x) => ({ from: x.from, dur: x.dur, at: audioAt(d, o, x.a_t) })), { rate, gain, hpHz: HP_HZ });
+    }
+    function runTease(d, b, p, o) {
+      const st = b.stems, k = st.ratio || 1, lag = st.lag || 0, bBeatS = 60 / (b.bpm || 128);
+      const pieces = p.stabs.map((s) => ({ a_t: s.a_t, from: (s.b_from + lag) * k, dur: s.beats * bBeatS * k }));
+      const res = book(d, st.drums, pieces, p.b_rate * k, p.gain, o);
+      if (!res) return null;
+      say(d, "cue_tease", p.why, { t0: audioAt(d, o, p.stabs[0].a_t), t1: res.until, beats: p.stabs.length * p.stab_beats,
+        cap_beats: p.cap_beats, grid_err_s: +Math.max(...p.stabs.map((s) => s.grid_err_s)).toFixed(4), hp_hz: p.hp_hz,
+        params: { stabs: p.stabs.length, stab_beats: p.stab_beats, gain: +p.gain.toFixed(3), b_rate: +p.b_rate.toFixed(4) }, fallbacks: p.fallbacks });
+      return { busyS: 0, why: p.why };
+    }
+    function runRoll(d, p, o) {
+      const st = d.stems, k = st.ratio || 1, lag = st.lag || 0;
+      const pieces = p.pieces.map((x) => ({ a_t: x.a_t, from: (x.from + lag) * k, dur: x.dur * k }));
+      const res = book(d, st.drums, pieces, rateOf(d) * k, p.wet, o);
+      if (!res) return null;
+      say(d, "roll", p.why, { t0: audioAt(d, o, p.start), t1: res.until, beats: p.window_beats, cap_beats: p.cap_beats,
+        grid_err_s: +p.grid_err_s.toFixed(4), hp_hz: p.hp_hz, params: { window_beats: p.window_beats, slice_beats: p.slice_beats, wet: p.wet }, fallbacks: p.fallbacks });
+      return { busyS: 0, why: p.why };
+    }
+
+    // ---- one attempt of one kind on deck d. o: {pos, bar, entryT, lineT, exitT, bEntry, quiet, holdActive,
+    //      mashupActive, fxOk, inTransition, onDemand} -> {plan, res} (res null when refused or not armed)
+    // per-song state on the deck (a new song = a new analysis object = fresh counters)
+    const songOf = (d) => (d._artist && d._artist.ana === d.analysis ? d._artist
+      : (d._artist = { ana: d.analysis, slips: 0, lastSlipBar: null, teaseFor: null, rollFor: null, slipLine: null, bridged: false }));
+    function attempt(kind, d, o) {
+      const a = d.analysis || {}, b = host.decks && host.decks[other(d.id)], r = songOf(d);
+      const base = { pos: o.pos, inTransition: !!o.inTransition, mashupActive: !!o.mashupActive, relaxed: relaxed(), onDemand: !!o.onDemand };
+      let p = null, res = null;
+      if (kind === "perc_bridge") {
+        p = planPercBridge({ deckCount: Object.keys(host.decks || {}).length });
+      } else if (kind === "slip_loop") {
+        const len = PHRASE_S(o);
+        p = planSlipLoop(Object.assign(base, { lineT: o.lineT, bpm: d.bpm, rate: rateOf(d), beats: a.beat_times, exitT: o.exitT,
+          holdActive: !!o.holdActive, loopOn: !!d.loopOn, reversed: !!d.reversed, quiet: o.quiet,
+          busySlices: Object.keys(d._slices || {}).length + Object.keys(d._holds || {}).length > 0,
+          slipSupported: typeof d.slipLoop === "function", vocals: a.vocal_active_regions,
+          energyNow: meanEnergy(a.energy_curve, a.energy_times, o.lineT - len, o.lineT),
+          energyNext: meanEnergy(a.energy_curve, a.energy_times, o.lineT, o.lineT + len),
+          count: r.slips, atBar: (o.pos - (o.entryT || 0)) / o.bar, lastAtBar: r.lastSlipBar }));
+        if (p.ok) { r.slips++; r.lastSlipBar = (o.pos - (o.entryT || 0)) / o.bar; logPlan(kind, p); res = runSlip(d, p, o); }
+      } else if (kind === "cue_tease") {
+        const hop = 60 / ((b && b.bpm) || 128);
+        const aEnv = stemEnv(d, "drums", o.exitT - o.bar, o.exitT, o.bar / 4);
+        p = planCueTease(Object.assign(base, { exitT: o.exitT, aBpm: d.bpm, aRate: rateOf(d), aBeats: a.downbeat_times,
+          bBpm: b && b.bpm, bPlaying: !!(b && b.playing),
+          bDrumEnv: b && fin(o.bEntry) ? stemEnv(b, "drums", o.bEntry, o.bEntry + 8 * hop, hop) : null,
+          aDrumRms: aEnv && aEnv.v.length ? median(aEnv.v) : null }));
+        if (p.ok) { logPlan(kind, p); res = runTease(d, b, p, o); }
+      } else if (kind === "roll") {
+        const env = o.exitT != null ? stemEnv(d, "drums", o.exitT - o.bar, o.exitT, o.bar / 4) : null;
+        p = planRoll(Object.assign(base, { exitT: o.exitT, bpm: d.bpm, rate: rateOf(d), beats: a.beat_times,
+          aDrumBars: env ? env.v : null, fxOk: !!o.fxOk }));
+        if (p.ok) { logPlan(kind, p); res = runRoll(d, p, o); }
+      }
+      if (p && p.ok && !res) p = no("deck", "the deck refused the booking (nothing armed)");
+      return { plan: p, res, r };
+    }
+    const PHRASE_S = (o) => 8 * o.bar;
+
+    // Called by dj-mind on its ticks between phrase lines (never during a transition / hold / layer).
+    // -> {busyS, why} when a slip loop was booked (the deck position is spoken for), else null.
+    function tick(d, o) {
+      if (!d || !d.playing) return null;
+      const r = songOf(d);
+      if (on("perc_bridge") && !r.bridged) {        // S11: the gate is the console itself, said once per song
+        r.bridged = true;
+        const x = attempt("perc_bridge", d, o);
+        if (!x.plan.ok) refuse(d, "perc_bridge", "song", x.plan);
+      }
+      // S14 / S12: A's last bars before B's planned entry
+      if (o.exitT != null && o.exitT > o.pos && (o.exitT - o.pos) / o.bar <= TEASE_BARS) {
+        if (on("cue_tease") && r.teaseFor !== o.exitT) {
+          r.teaseFor = o.exitT;                     // one plan per entry
+          const x = attempt("cue_tease", d, o);
+          if (!x.plan.ok) refuse(d, "cue_tease", o.exitT.toFixed(1), x.plan);
+        }
+        if (on("roll") && r.rollFor !== o.exitT && (o.exitT - o.pos) / o.bar <= 2) {
+          r.rollFor = o.exitT;
+          const x = attempt("roll", d, o);
+          if (!x.plan.ok) refuse(d, "roll", o.exitT.toFixed(1), x.plan);
+        }
+        return null;
+      }
+      // S13: planned once per phrase, when the line is at most 4.5 bars ahead (the 16-beat window is next)
+      if (!on("slip_loop") || r.slipLine === o.lineT || o.lineT - o.pos > 4.5 * o.bar) return null;
+      r.slipLine = o.lineT;
+      const x = attempt("slip_loop", d, o);
+      if (!x.plan.ok) { refuse(d, "slip_loop", o.lineT.toFixed(1), x.plan); return null; }
+      return x.res;
+    }
+
+    // ---- AI ACTIONS: run one move now on the audible deck (choice gates skipped, safety gates kept) ----
+    function hostDeck() {
+      let best = null, lv = -1;
+      for (const id of ["a", "b"]) {
+        const d = host.decks && host.decks[id];
+        if (!d || !d.playing) continue;
+        const g = (d.crossfaderGain ? d.crossfaderGain.gain.value : 1) * (d.volumeGain ? d.volumeGain.gain.value : 1);
+        if (g > lv) { lv = g; best = d; }
+      }
+      return best;
+    }
+    // ctx (optional): {deck, inTransition}; defaults read from the console
+    function runNow(kind, ctx = {}) {
+      let d = null;
+      const done = (ok, why) => {
+        host.ui.status(`${LABEL[kind] || kind}: ${ok ? "" : "refused, "}${why}`);
+        host.log.step("artist_move_now", { deck: d ? d.id : undefined, decision: kind, why: ok ? why : `refused: ${why}` });
+        return { ok, why };
+      };
+      if (!PLANNERS[kind]) return done(false, "unknown move");
+      d = ctx.deck || hostDeck();
+      if (!d) return done(false, "nothing is playing");
+      const mind = host.mod.djMind;
+      const bar = 240 / (d.bpm || 128), pos = d._currentPosition(), a = d.analysis || {};
+      const lines = a.phrase_boundaries_8bar || [];
+      const lead = kind === "slip_loop" ? 4 * bar + MIN_LEAD_S * rateOf(d) : bar + MIN_LEAD_S * rateOf(d);
+      let lineT = lines.find((t) => t - pos >= lead);
+      if (lineT == null) { lineT = pos; while (lineT - pos < lead) lineT += 8 * bar; }
+      const planned = mind && mind.fireAt ? mind.fireAt(null) : null;
+      const b = host.decks && host.decks[other(d.id)];
+      const exitT = kind === "slip_loop" ? planned : fin(planned) && planned > pos + lead && planned - pos <= TEASE_BARS * bar ? planned : lineT;
+      const inTransition = ctx.inTransition != null ? ctx.inTransition : !!(mind && typeof mind.busy === "function" && mind.busy());
+      const x = attempt(kind, d, { pos, bar, entryT: d._mindEntry || 0, lineT, exitT, onDemand: true, inTransition,
+        bEntry: b ? (b.playing ? null : b.startOffset || 0) : null, fxOk: true,
+        mashupActive: !!(host.mod.mashup && host.mod.mashup.active), holdActive: false });
+      return x.plan.ok ? done(true, x.res.why) : done(false, `${x.plan.gate}: ${x.plan.reason}`);
+    }
+
+    // cancel what is not booked yet; a running slip loop releases onto its shadow now. Booked stabs / rolls
+    // are left to finish: they end on B's entry by construction and cutting them would click.
+    function stop(d) {
+      if (!d) return;
+      (timers[d.id] || []).forEach(clearTimeout);
+      timers[d.id] = [];
+      if (d._slip && d.slipRelease) d.slipRelease();
+    }
+
+    // on-demand wiring: the AI ACTIONS register API when present, and `ai-action` events on djEvents
+    const ACTION_IDS = { "artist-slip": "slip_loop", "artist-tease": "cue_tease", "artist-roll": "roll", "artist-perc": "perc_bridge" };
+    let registered = false;
+    const register = () => {
+      const reg = host.mod.aiActions;
+      if (registered || !reg || typeof reg.register !== "function") return;
+      registered = true;
+      for (const [id, kind] of Object.entries(ACTION_IDS)) reg.register(id, () => runNow(kind));
+    };
+    register();
+    setTimeout(register, 0);                        // aiActions may mount after this module
+    // the event path and the buttons' own clicks, used only when nothing registered; one run per 500 ms per move
+    let lastRun = { kind: null, at: -1e9 };
+    const fromUi = (id) => {
+      const k = ACTION_IDS[id], t = host.clock.perfNow();
+      if (!k || registered || (lastRun.kind === k && t - lastRun.at < 500)) return;
+      lastRun = { kind: k, at: t };
+      runNow(k);
+    };
+    const ev = host.mod.djEvents;
+    if (ev && ev.addEventListener) ev.addEventListener("ai-action", (e) => fromUi(e && e.detail && e.detail.id));
+    for (const btn of host.ui.queryAll("[data-ai-action]") || []) {
+      if (ACTION_IDS[btn.dataset.aiAction]) btn.addEventListener("click", () => fromUi(btn.dataset.aiAction));
+    }
+
+    const api = { core, tick, stop, runNow, ACTION_IDS };
+    host.mod.artistMoves = api;
+    return api;
+  }
+  if (root.Engine) root.Engine.mount("artistMoves", create);
+})(typeof window !== "undefined" ? window : globalThis);

@@ -79,6 +79,7 @@ class Sampler {
       const add = (n) => { if (n && typeof n === "object" && n._id) map.set(n, id); };
       ["inputGain", "mixGain", "vocalBusGain", "crossfaderGain", "volumeGain"].forEach((k) => add(d[k]));
       Object.values(d.stemGain || {}).forEach(add); Object.values(d.stemLive || {}).forEach(add);
+      (d._layers || []).forEach((r) => add(r.hp));   // layerPieces (artist moves): source -> gain -> hp -> inputGain
     }
     return map;
   }

@@ -725,7 +725,7 @@
                   filter_build: "FILTER BUILD", echo_freeze: "ECHO FREEZE",
                   holdloop: "HOLD LOOP", peak_roll: "ROLL INTO DROP",
                   double_drop: "DOUBLE DROP", drop_swap: "DROP SWAP", fakeout: "FAKE-OUT",
-                  beat_boost: "BEAT BOOST", learned_move: "LEARNED MOVE" };
+                  beat_boost: "BEAT BOOST", learned_move: "LEARNED MOVE", artist_move: "ARTIST MOVE" };
 
   let deckId = null, timer = null, timers = [];
   let lastPhrase = null, trackIdx = 0, subdropTrackIdx = -9;
@@ -737,6 +737,7 @@
   let remixUsed = [], lastRemixPhrase = null, busyUntil = 0;
   let holdLoop = null;                          // {start, bars, passes} safety loop
   let inTransition = false;                     // onTransition() .. follow(): no moves
+  let phraseQuiet = false;                      // this phrase line decided a ride (an artist slip loop may run)
   let lastFillTransition = -9, transitions = 0;
   let lastLayerTransition = -9;                 // LAYER ledger (one every LAYER_EVERY)
   let layerRun = null;                          // {until (nowS), source, why} while a LAYER plays
@@ -769,6 +770,8 @@
     timers.forEach(clearTimeout); timers = [];
     const lm = host.mod.learnedMoves, d = deck();
     if (lm && d) lm.stop(d);                      // a booked learned slice window / stem mode goes with the moves
+    const am = host.mod.artistMoves;
+    if (am && d) am.stop(d);                      // booked artist stabs / a slip loop (released onto its shadow)
   }
 
   function render(dec) {
@@ -1240,6 +1243,25 @@
     return true;
   }
 
+  // Artist moves (artist-moves.js: slip loop, cue tease, roll): between phrase lines, after the line's own
+  // decision. A slip loop only in a phrase the mind rides (nothing else booked on the deck); it owns the
+  // deck until its release on the next line. Never during a transition / hold loop / layer (tick() returned).
+  function artistTick(d, pos, bar, phrase) {
+    const am = host.mod.artistMoves;
+    if (!am || !am.tick) return false;
+    const [, lineT] = phraseBounds(d.analysis && d.analysis.downbeat_times, phrase, bar);
+    const res = am.tick(d, { pos, bar, entryT: d._mindEntry || 0, lineT, quiet: phraseQuiet,
+      exitT: plan ? plan.fireAt : null, bEntry: plan && Number.isFinite(plan.bEntry) ? plan.bEntry : null,
+      holdActive: !!holdLoop, mashupActive: !!(host.mod.mashup && host.mod.mashup.active), fxOk: fxAllowed("roll") });
+    if (!res) return false;
+    busyUntil = nowS() + res.busyS;
+    const m = Math.floor(pos / 60), sc = Math.floor(pos % 60);
+    log.push({ action: "artist_move", why: res.why, tag: "ARTIST", peak: false, clock: `${m}:${String(sc).padStart(2, "0")}` });
+    if (log.length > 20) log.shift();
+    render({ action: "artist_move", rule: "", source: "ARTIST", why: res.why });
+    return true;
+  }
+
   function say(dec, pos) {
     const m = Math.floor(pos / 60), s = Math.floor(pos % 60);
     const tag = dec.source || (dec.action === "holdloop" ? "SAFETY" : dec.action !== "ride" ? "RULE" : "");
@@ -1283,9 +1305,10 @@
     // checked every tick, not once per phrase: the cut sits on a lyric line, not a phrase line
     if (lastPhrase !== null && mindOn() && hookDropTick(d, pos, bar)) return;
     const phrase = phraseAt(d.analysis && d.analysis.downbeat_times, pos, bar);
-    if (phrase === lastPhrase) return;
+    if (phrase === lastPhrase) { if (mindOn()) artistTick(d, pos, bar, phrase); return; }
     const first = lastPhrase === null;
     lastPhrase = phrase;
+    phraseQuiet = false;                          // set true below only when this line's decision is a ride
     if (first) { d._mindEntry = pos; }
     if (!first && mindOn() && stemBreakdownTick(d, pos, bar)) return;
     if (!first && mindOn() && stemRemixTick(d, pos, bar, phrase)) return;
@@ -1295,6 +1318,7 @@
     const dec = mindOn() ? decide(st)
       : { action: "ride", rule: "", why: "SET MIND off - playing the record" };
     apply(dec, st, d);
+    phraseQuiet = dec.action === "ride";
     if (dec.action !== "ride" && (dec.action !== "layer" || log.length === 0 || log[log.length - 1].action !== "layer")) {
       say(dec, pos);
     } else render(dec);
@@ -1487,7 +1511,8 @@
                     noteEnergy, nextEnergyNote, requestPlan, planPeak, setProfileEnergy,
                     planLayer, layering, get layerActive() { return !!layerRun; }, core,
                     holdLoopInfo, holdLoopAct, overlayState,
-                    get transitioning() { return inTransition; } };
+                    get transitioning() { return inTransition; },
+                    busy: () => inTransition || !!holdLoop || !!layerRun };   // artist-moves.js run-now safety gate
   }
   if (root.Engine) root.Engine.mount("djMind", create);
 })(typeof window !== "undefined" ? window : globalThis);
