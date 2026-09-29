@@ -20,7 +20,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
+import time
 import subprocess
 import threading
 from pathlib import Path
@@ -158,6 +160,21 @@ def balance(meta: dict, b_levels: dict) -> dict:
     }
 
 
+_touched: Dict[str, float] = {}
+
+
+def touch(key: str) -> None:
+    """Mark a set as just used (dir mtime = last use, for keylock_cache's LRU); at most once a minute per set."""
+    now = time.monotonic()
+    if now - _touched.get(key, -1e9) < 60.0:
+        return
+    _touched[key] = now
+    try:
+        os.utime(KEYLOCK_DIR / key)
+    except OSError:
+        pass
+
+
 def _key(audio_hash: str, plan: dict) -> str:
     raw = f"{audio_hash}|{plan['ratio']:.6f}|{plan['a_groove'][0]:.3f}|{plan.get('a_end', plan['a_solo'][1]):.3f}"
     return hashlib.sha256(raw.encode()).hexdigest()[:20]
@@ -225,7 +242,10 @@ def stem_path(key: str, name: str) -> Optional[Path]:
     if name not in STEMS or not key.replace("_", "").isalnum():
         return None
     p = KEYLOCK_DIR / key / f"{name}.wav"
-    return p if p.exists() else None
+    if not p.exists():
+        return None
+    touch(key)
+    return p
 
 
 def meta(key: str) -> Optional[dict]:
@@ -275,6 +295,7 @@ def ensure_tempo(audio_hash: str, stems: Dict[str, str], native_bpm: float, targ
     key, t = tempo_key(audio_hash, native_bpm, target_bpm)
     ratio = native_bpm / t
     if (KEYLOCK_DIR / key / "meta.json").exists():
+        touch(key)
         return {"key": key, "bpm": t, "ratio": ratio, "state": "done"}
     with _lock:
         if _jobs.get(key) == "running":
@@ -289,6 +310,10 @@ def ensure_tempo(audio_hash: str, stems: Dict[str, str], native_bpm: float, targ
             st = f"error: {type(exc).__name__}: {str(exc)[:160]}"
         with _lock:
             _jobs[key] = st
+        if st == "done":
+            from app.music_brain import keylock_cache
+
+            keylock_cache.run_async("render")
 
     threading.Thread(target=work, daemon=True).start()
     return {"key": key, "bpm": t, "ratio": ratio, "state": "running"}

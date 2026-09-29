@@ -239,6 +239,7 @@ class ServerIO:
         if not native or abs(bpm / native - 1) > keylock.MAX_TEMPO_STRETCH:
             return "error: tempo gap too large for a key-locked stretch"
         if (keylock.KEYLOCK_DIR / key / "meta.json").exists():
+            keylock.touch(key)                  # still wanted: looks fresh to the cache cap
             return "done" if self._host().tempo_gate(key) else "running"
         with keylock._lock:
             st = keylock._jobs.get(key)
