@@ -1147,6 +1147,12 @@ function createAutopilotEngine({ host, ai }) {
             try { run(); } finally { xOffsetMs = 0; }
           });
         }
+        // [S2] melodic long blend (fx-moves.js): B's mids under A's melody until it resolves, reverb swell on A's
+        // exit. Stem blend swap line = bars / 2 (stemBlendPlan). Refused (logged) unless 16+ bars, stems, key >= 0.8.
+        const fm = host.mod.fxMoves;
+        if (fm && bars >= 16 && kind !== "double" && fm.midBlend(out, inn, { t0: xT0, barS, total: bars, swapBar: bars / 2 })) {
+          fm.tailSwell(out, { t0: xT0, barS, total: bars });
+        }
         return bars * barU;
       }
       apStatus(`${recipe}: stem blend refused (loudness floor or stems, see console), EQ blend instead`);
@@ -1185,23 +1191,30 @@ function createAutopilotEngine({ host, ai }) {
         // one continuous 8-bar crossfader sweep (no 2-bar rush); the echo tail
         // carries A out while B takes over
         dipAllowed("echo", recipe);
-        setFx(out, "echo", 0.7);
+        // [S5] the last word of A's vocal into a stem echo as the vocal stem mutes (fx-moves.js); the deck-level
+        // echo stays the fallback when A has no vocal stem / no line to throw.
+        if (!(host.mod.fxMoves && host.mod.fxMoves.vocalThrow(out, inn, { t0: xT0, barS: bar / 1000, swapBar: 4 }))) setFx(out, "echo", 0.7);
         rampParam(xfEl, fromXf, toXf, 8 * bar);
         bassSwapAt(4);
         at(4, () => rampParam(highOut, null, HIGH_SWEEP, 4 * bar));
         total = 8;
         break;
 
-      case "filter": // sweep A's mids down over 4 bars; lows swap on the bar-4 line
+      case "filter": { // sweep A's mids down over 4 bars; lows swap on the bar-4 line
+        // [S6] direction from B's first bars (fx-moves.js sweepDir): B brighter -> A washes out low-pass (its
+        // highs go), B darker -> A thins out high-pass (its mids go on, its highs stay). Unmeasured: low-pass.
+        const dir = host.mod.fxMoves ? host.mod.fxMoves.sweepDir(out, inn, xT0) : "lowpass";
         rampParam(midOut, null, -10, 4 * bar);
         rampParam(xfEl, fromXf, 0, 4 * bar);
         bassSwapAt(4);
         at(4, () => {
           rampParam(xfEl, 0, toXf, 4 * bar);
-          rampParam(highOut, null, HIGH_SWEEP, 4 * bar);
+          if (dir === "highpass") rampParam(midOut, null, LOW_KILL, 4 * bar);
+          else rampParam(highOut, null, HIGH_SWEEP, 4 * bar);
         });
         total = 8;
         break;
+      }
 
       case "loop": // 2-bar loop roll on A holds the exit point steady
         setLoopLength(out, 8);
