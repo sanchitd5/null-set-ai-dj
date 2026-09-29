@@ -157,9 +157,11 @@ dead ends in (c); re-rank (d).
   0.111), refusals stems 3, tempo 4, key 1; 5 bookings deferred (146 s in total), 3 gave up; `ready_at_booking_share` 0.0.
   The two "tempo" gate refusals on transitions 7 and 8 were key clashes (holdPlan checks the tempo first).
 - Verdict: open. The fix for cause (3) landed after the single allowed sim run and is covered by node checks only (UNVERIFIED in the sim).
-- Cache growth (not implemented, a note): `data/cache/stems` 98.9 GB / 615 sets, `data/cache/keylock` 21.6 GB / 115 tempo sets, no
-  eviction anywhere. Each pre-rendered candidate adds about 160 MB of stems and about 190 MB per tempo set. Suggest an LRU by mtime on the
-  regenerable `keylock/t*` sets (about 30 s each to re-render) capped near 20 GB, and stems left alone (they cost a Demucs run).
+- Cache growth: `keylock/t*` tempo sets are now capped by `KEYLOCK_CACHE_MAX_GB` (default 20, negative disables), evicted
+  oldest-first by dir mtime (bumped on every serve, at most once a minute), never while rendering, in `protect`, or younger than
+  30 min; runs at server start and after each tempo render (`app/music_brain/keylock_cache.py`). Preview with
+  `python3 -m app.music_brain.keylock_cache --dry-run [--max-gb N]`, delete with `--apply`. `data/cache/stems` (98.9 GB / 615 sets)
+  stays uncapped: each set costs a Demucs run (~26 s). A separate policy is needed (e.g. by last use, sparing library songs); not implemented.
 
 No iterations logged yet: `app/sim/LOOP.md` was not present on main or in any worktree when this file was
 written. Add its kept and reverted iterations here when it merges.

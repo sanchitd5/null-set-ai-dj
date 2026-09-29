@@ -81,6 +81,13 @@ def _migrate_analyses() -> None:
     queue_upgrade(sorted(_tracks.values()))
 
 
+@app.on_event("startup")
+def _cap_keylock_cache() -> None:
+    from app.music_brain import keylock_cache
+
+    keylock_cache.run_async("startup")
+
+
 @app.get("/api/llm/status")
 def get_llm_status():
     from app.ui import model_runtime
