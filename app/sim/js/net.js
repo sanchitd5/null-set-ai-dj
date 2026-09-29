@@ -74,9 +74,10 @@ class Net {
     const headers = {};
     for (const [k, v] of Object.entries(opts.headers || {})) headers[k.toLowerCase()] = v;
     let body = opts.body;
+    let multipart = null;                 // a FormData body (the live ear's clip): encoded like the browser does
     if (body && typeof body !== "string" && !Buffer.isBuffer(body)) {
-      if (typeof body.arrayBuffer === "function") { /* Blob / FormData not needed by the autopilot */ }
-      body = String(body);
+      if (typeof FormData !== "undefined" && body instanceof FormData) multipart = new Request("http://sim.invalid/", { method: "POST", body });
+      else body = String(body);
     }
     const issuedAt = this.clock.now;
     headers["x-sim-time"] = issuedAt.toFixed(3);                 // the sim world's clock is the console's
@@ -89,9 +90,18 @@ class Net {
     let done;
     const result = new Promise((resolve, reject) => { done = { resolve, reject }; });
     // serialise: one real request at a time, in the order the page issued them
-    this._chain = this._chain.then(() => this._request(method, path, headers, body)).then((r) => {
+    const send = () => (multipart
+      ? multipart.arrayBuffer().then((ab) => {
+        headers["content-type"] = multipart.headers.get("content-type");
+        const buf = Buffer.from(ab);
+        headers["content-length"] = String(buf.length);
+        return this._request(method, path, headers, buf);
+      })
+      : this._request(method, path, headers, body));
+    this._chain = this._chain.then(send).then((r) => {
       this.inflight--;
-      const lat = latencyFor(path.split("?")[0]);
+      const modelLat = parseFloat(r.headers["x-sim-latency"]);      // set when a real / recorded model call ran in this request
+      const lat = Number.isFinite(modelLat) ? Math.max(0.05, modelLat) : latencyFor(path.split("?")[0]);
       this.log.push({ t: +issuedAt.toFixed(3), method, path: path.slice(0, 160), status: r.status, latency: lat, bytes: r.body.length });
       const respond = () => {
         if (signal && signal.aborted) return done.reject(abortError());

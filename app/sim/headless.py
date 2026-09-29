@@ -38,7 +38,12 @@ def serve(world):
                 world.set_time(float(t))
             except ValueError:
                 pass
-        return await call_next(request)
+        world.begin_request()
+        response = await call_next(request)
+        lat = world.end_request()
+        if lat is not None:                            # the model's own latency (recorded / measured), not a table figure
+            response.headers["x-sim-latency"] = f"{lat:.3f}"
+        return response
 
     cfg = uvicorn.Config(server.app, host="127.0.0.1", port=0, log_level="warning", lifespan="off", access_log=False)
     srv = uvicorn.Server(cfg)
