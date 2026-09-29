@@ -50,7 +50,7 @@ def _default_chat() -> Optional[Chat]:
     from app.ui import llm_gate
 
     return lambda system, user: ap.chat_raw(system, user, temperature=0.2, timeout=TIMEOUT_S,
-                                            max_tokens=1500, priority=llm_gate.LOOKAHEAD)
+                                            max_tokens=1500, priority=llm_gate.LOOKAHEAD, kind="set_ai")
 
 
 def find_model(urls: Optional[List[str]] = None, opener=None) -> Optional[tuple]:

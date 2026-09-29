@@ -1224,8 +1224,14 @@ function createAutopilotEngine({ host, ai }) {
   // follows IT and pre-download those, so the pool never runs dry and the
   // panel always shows what is coming.
   let toppingUp = false;
-  async function topUpPool(afterId) {
-    if (toppingUp || !active || ready.length >= 2) return;
+  let topUpPromise = null;   // the look-ahead in flight, so prepareTransition can wait for it
+  const TOPUP_WAIT_MS = 30000;
+  function topUpPool(afterId) {
+    if (toppingUp || !active || ready.length >= 2) return topUpPromise;
+    topUpPromise = topUpPoolRun(afterId);
+    return topUpPromise;
+  }
+  async function topUpPoolRun(afterId) {
     toppingUp = true;
     aiPicking = !ready.length;
     showQueue();
@@ -2170,6 +2176,18 @@ function createAutopilotEngine({ host, ai }) {
       if (!active || gen !== prepGen) return;
       leadStatus(`couldn't book ${leadTo.cand.name} yet — one more steering song`);
       allowTempoJump = false;
+    }
+
+    // 0b) The look-ahead for THIS song is still in flight (asked when it was booked):
+    // its picks are exactly what a fresh suggest would ask for, and the model runs one
+    // call at a time, so a second ask only queues behind it. Wait (bounded) instead.
+    if (toppingUp && topUpPromise && !ready.length) {
+      apStatus("Waiting for the look-ahead picks already in flight");
+      await new Promise((resolve) => {
+        const id = setTimeout(resolve, TOPUP_WAIT_MS);
+        topUpPromise.then(() => { clearTimeout(id); resolve(); }, () => { clearTimeout(id); resolve(); });
+      });
+      if (!active || gen !== prepGen) return;
     }
 
     // 1) Songs already pre-downloaded in an earlier round: no waiting.

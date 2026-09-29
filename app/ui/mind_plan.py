@@ -25,7 +25,7 @@ from typing import Any, Optional
 
 from app.music_brain.blend import drop_lines
 from app.ui import llm_gate
-from app.ui.autopilot_service import _extract_json, chat_raw
+from app.ui.autopilot_service import STRICT_RETRY, _extract_json, chat_raw, failure_reason, note_retry
 
 log = logging.getLogger("mind_plan")
 
@@ -615,17 +615,32 @@ def plan_pair(facts: dict, timeout: float = 60.0, llm=None) -> dict:
     model = plan_model()
     # PLAN priority: jumps any queued suggest / look-ahead call (llm_gate.py).
     call = llm or (lambda s, u: chat_raw(s, u, temperature=0.3, timeout=timeout, model=model,
-                                          max_tokens=PLAN_MAX_TOKENS, priority=llm_gate.PLAN))
+                                          max_tokens=PLAN_MAX_TOKENS, priority=llm_gate.PLAN, kind="plan"))
     t0 = time.monotonic()
-    raw_text = call(_SYSTEM, build_prompt(facts))
+    prompt = build_prompt(facts)
+    raw_text = call(_SYSTEM, prompt)
     latency = time.monotonic() - t0
+    retried = None
     try:
         raw = _extract_json(raw_text)
     except (ValueError, TypeError) as exc:
         log.info("mind plan: unparseable LLM output: %s", exc)
         raw = None
+        # ONE stricter retry, only while it still fits the plan's own wait (a plan that
+        # already took most of its budget is answered by the rules instead).
+        if latency <= timeout / 2:
+            retried = failure_reason(raw_text)
+            note_retry("plan", retried)
+            t1 = time.monotonic()
+            try:
+                raw = _extract_json(call(_SYSTEM, prompt + STRICT_RETRY))
+            except (ValueError, TypeError) as exc2:
+                log.info("mind plan: retry unparseable too: %s", exc2)
+                note_retry("plan", "gave_up", 2)
+            latency += time.monotonic() - t1
     plan = validate_plan(raw, facts)
     plan["latency_seconds"] = round(latency, 2)
     plan["parsed"] = raw is not None
+    plan["retried"] = retried
     plan["model"] = model
     return plan

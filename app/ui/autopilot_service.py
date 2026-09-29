@@ -155,6 +155,10 @@ OUTPUT FORMAT — return ONLY valid JSON, no markdown, no explanation:
 
 {_FEW_SHOT}"""
 
+# The OCCASION FIRST block is ~2.7k chars that only matter when an occasion is set.
+_OCC_START = _SYSTEM.index("OCCASION FIRST")
+_SYSTEM_PLAIN = _SYSTEM[:_OCC_START] + _SYSTEM[_SYSTEM.index("VIBE CONTINUITY (critical rule)"):]
+
 REMIX_REPLAY_GAP = 8   # songs between a song and a remix of it
 _VERSION_WORDS = re.compile(r"\b(remix|re-?edit|edit|rework|bootleg|vip|flip|refix|dub|mix)\b", re.IGNORECASE)
 
@@ -169,6 +173,7 @@ SUGGEST_TEMPERATURE = 0.75
 # it still finishes inside the budget. Bad-JSON retries always run: no JSON, no pick.
 SUGGEST_BUDGET_S = float(os.environ.get("SUGGEST_BUDGET_S", "15"))
 RETRY_COST_S = 7.0
+MAX_JSON_ATTEMPTS = 2   # first call + one stricter retry; never a loop
 # ask for n+2: ~1 in 2 local-model picks is invented or off-tempo. Kept at 2 in the
 # output diet: the server log still shows calls losing 3 of 5 picks as invented.
 EXTRA_CANDIDATES = 2
@@ -419,12 +424,7 @@ _USER_TEMPLATE = (
     "Around this song (never suggest any of these; nothing already played this set either): {history}\n"
     "Artists heard in the last few songs (pick someone else: never the same artist two songs in a row, "
     "and no artist more than twice in any 6 songs, favourites included): {recent_artists}\n"
-    "The listener's FAVOURITE artists (they come back to them set after set): {favourite_artists}. "
-    "Their songs are WELCOME when they fit the vibe and the artist has not played in the last 2 songs - "
-    "never avoid them for having been heard in earlier sets. Every suggestion must be by a DIFFERENT artist.\n"
-    "Played in the listener's EARLIER sets - they have heard these recently, so prefer fresh "
-    "songs over them (only reuse one if it is clearly the perfect fit; favourite artists' songs "
-    "are exempt): {earlier_sets}\n"
+    "{favourite_line}{earlier_line}"
     "At least ONE of your suggestions must be a less obvious pick (a deep cut, a newer release "
     "or a lesser-played gem) FROM THE SAME GENRE as the current song, not the genre's most famous anthem.\n"
     "genre_hop for each suggestion: 0 = same subgenre, 1 = neighbouring subgenre (e.g. melodic house -> "
@@ -436,6 +436,17 @@ _USER_TEMPLATE = (
     "Suggest {n} tracks. Prioritise: vibe continuity → harmonic compatibility → energy arc for {arc_phase} → diversity.\n"
     "Reply ONLY with the JSON object, compact (no line breaks or indentation), only the fields "
     "shown. Keep every reason under 8 words."
+)
+# Lines that say "none" cost prompt tokens on every call for nothing: omitted when empty.
+_FAVOURITE_LINE = (
+    "The listener's FAVOURITE artists (they come back to them set after set): {favourite_artists}. "
+    "Their songs are WELCOME when they fit the vibe and the artist has not played in the last 2 songs - "
+    "never avoid them for having been heard in earlier sets. Every suggestion must be by a DIFFERENT artist.\n"
+)
+_EARLIER_LINE = (
+    "Played in the listener's EARLIER sets - they have heard these recently, so prefer fresh "
+    "songs over them (only reuse one if it is clearly the perfect fit; favourite artists' songs "
+    "are exempt): {earlier_sets}\n"
 )
 _KNOWLEDGE_TEMPLATE = "\n\nDJ KNOWLEDGE (from the ./DJ wiki):\n{brief}"
 
@@ -713,10 +724,18 @@ SET_MODE_LINES = {
 }
 
 
+def _strip_think(text: str) -> str:
+    """Drop Qwen3 reasoning: closed <think> blocks, an unclosed one (cut off by max_tokens),
+    and a stray leading </think>."""
+    text = re.sub(r"<think>.*?</think>", "", text or "", flags=re.S)
+    text = re.sub(r"<think>.*\Z", "", text, flags=re.S)
+    return text.rsplit("</think>", 1)[-1].strip()
+
+
 def _extract_json(text: str) -> dict:
     """Robustly pull the first {...} block from LLM output."""
     # Qwen3 emits a (possibly empty) <think>...</think> block before the answer
-    text = re.sub(r"<think>.*?</think>", "", text, flags=re.S).strip()
+    text = _strip_think(text)
     text = re.sub(r"^```[a-z]*\n?", "", text)
     text = re.sub(r"\n?```$", "", text.strip())
     start = text.find("{")
@@ -790,6 +809,7 @@ def chat_raw(
     model: str | None = None,
     max_tokens: int | None = None,
     priority: int = llm_gate.SUGGEST,
+    kind: str | None = None,
 ) -> str:
     """One JSON-mode chat call to the local model; returns the raw text.
 
@@ -809,14 +829,20 @@ def chat_raw(
             t0 = time.monotonic()
             raw = engine.current().ai.chat(system, user, temperature, left, model, max_tokens)
     except Exception as exc:
-        session_log.log("llm", priority=llm_gate.NAMES.get(priority), max_tokens=max_tokens, ok=False,
+        session_log.log("llm", call=kind or llm_gate.NAMES.get(priority), priority=llm_gate.NAMES.get(priority),
+                        max_tokens=max_tokens, ok=False, quality="error",
                         waited=round(waited, 2) if waited is not None else None,
                         elapsed=round(time.monotonic() - t0, 2) if t0 else None,
                         prompt_chars=len(system) + len(user), error=f"{type(exc).__name__}: {exc}")
         raise
-    session_log.log("llm", priority=llm_gate.NAMES.get(priority), max_tokens=max_tokens, ok=True,
-                    waited=round(waited, 2), elapsed=round(time.monotonic() - t0, 2),
-                    prompt_chars=len(system) + len(user), reply_chars=len(raw or ""), cut_off=cut_off(raw))
+    elapsed = time.monotonic() - t0
+    quality = reply_quality(raw)
+    session_log.log("llm", call=kind or llm_gate.NAMES.get(priority), priority=llm_gate.NAMES.get(priority),
+                    max_tokens=max_tokens, ok=True,
+                    waited=round(waited, 2), elapsed=round(elapsed, 2),
+                    prompt_chars=len(system) + len(user), reply_chars=len(raw or ""),
+                    cut_off=quality == "cut_off", quality=quality,
+                    chars_per_s=round(len(raw or "") / elapsed, 1) if elapsed > 0 else None)
     return raw
 
 
@@ -842,9 +868,37 @@ def _learn_need(raw: str) -> None:
 
 def cut_off(raw: str) -> bool:
     """True when a reply opens a JSON object that never closes: the model hit max_tokens."""
-    text = re.sub(r"<think>.*?</think>", "", raw or "", flags=re.S)
+    text = _strip_think(raw)
     start = text.find("{")
     return start != -1 and _balanced_end(text, start) is None
+
+
+def reply_quality(raw: str) -> str:
+    """Cheap label for the session log: ok | empty | no_json | cut_off (parse-level, no schema)."""
+    text = _strip_think(raw)
+    if not text:
+        return "empty"
+    if "{" not in text:
+        return "no_json"
+    return "cut_off" if cut_off(raw) else "ok"
+
+
+def failure_reason(raw: str) -> str:
+    """Why a reply that failed to parse was unusable: empty | no_json | cut_off | bad_json."""
+    q = reply_quality(raw)
+    return "bad_json" if q == "ok" else q
+
+
+# Appended to the one bounded retry of an unusable reply (cut off / fenced prose / no JSON).
+STRICT_RETRY = ("\n\nYour last reply was not usable. Reply with ONLY one compact JSON object: "
+                "no prose, no code fences, no thinking; keep every text field under 8 words.")
+
+
+def note_retry(kind: str, reason: str, attempt: int = 1) -> None:
+    """Count a JSON retry with its reason in the session log (one event per retry)."""
+    from app.ui import session_log
+
+    session_log.log("llm_retry", call=kind, reason=reason, attempt=attempt)
 
 
 CONTEXT_PLAYED = int(os.environ.get("AUTOPILOT_CONTEXT_PLAYED", "3") or 3)
@@ -1039,8 +1093,8 @@ def suggest_next_tracks(
         set_mode_line=SET_MODE_LINES.get(set_mode, SET_MODE_LINES["hybrid"]),
         history=prompt_history(history_display or history, queue_display, avoid_display),
         recent_artists=_recent_artists(history_display or history),
-        earlier_sets=", ".join(earlier_sets or []) or "none",
-        favourite_artists=", ".join(favourite_artists or []) or "none",
+        favourite_line=_FAVOURITE_LINE.format(favourite_artists=", ".join(favourite_artists)) if favourite_artists else "",
+        earlier_line=_EARLIER_LINE.format(earlier_sets=", ".join(earlier_sets)) if earlier_sets else "",
         set_pos_pct=round(set_position * 100),
         arc_phase=RELAXED_ARC if relaxed else _set_arc_phase(set_position),
         n=n + EXTRA_CANDIDATES,  # spares: invented / off-tempo picks are dropped below
@@ -1056,7 +1110,7 @@ def suggest_next_tracks(
     if relaxed:
         user_msg += RELAXED_LINE
 
-    system_msg = _SYSTEM
+    system_msg = _SYSTEM if (occasion or "").strip() else _SYSTEM_PLAIN
     if lead_to and lead_steps:
         # LEAD TO: a focused prompt. With the full prompt the model saw the
         # DESTINATION line but its continuity rules / house few-shot won
@@ -1081,11 +1135,14 @@ def suggest_next_tracks(
     # Budget: what recent replies needed (a first call cut at 900 then redone at 1800
     # cost ~2x the model time, and starved the live ear that shares the model).
     mt = max(1100 if lead_to else 900, _suggest_need)
-    for attempt in range(3):  # two retries when the JSON is past repair (gemma-4 slips now and then)
+    kind = "lookahead" if lookahead else "suggest"
+    retry_note = ""
+    for attempt in range(MAX_JSON_ATTEMPTS):  # ONE bounded retry when the JSON is past repair
         # 0.75: song picks should vary between runs (0.5 replayed the same set from
         # the same seed); the transition PLAN stays at a low temperature.
-        raw = chat_raw(system_msg, user_msg, temperature=SUGGEST_TEMPERATURE if attempt == 0 else 0.4,
-                       max_tokens=mt, priority=prio)
+        raw = chat_raw(system_msg, user_msg + retry_note,
+                       temperature=SUGGEST_TEMPERATURE if attempt == 0 else 0.4,
+                       max_tokens=mt, priority=prio, kind=kind)
         try:
             data = _extract_json(raw)
             if _parroted(data, title):
@@ -1093,17 +1150,19 @@ def suggest_next_tracks(
             _learn_need(raw)
             break
         except ValueError as exc:  # JSONDecodeError is a ValueError
-            if attempt >= 2:
-                print(f"ERROR [suggest] no usable reply after 3 attempts: {exc}", flush=True)
+            reason = "parroted" if "few-shot" in str(exc) else failure_reason(raw)
+            if attempt >= MAX_JSON_ATTEMPTS - 1:
+                note_retry(kind, reason + "_gave_up", attempt + 1)
+                print(f"ERROR [suggest] no usable reply after {MAX_JSON_ATTEMPTS} attempts: {exc}", flush=True)
                 raise
-            # (the retry below also teaches the next call its budget)
+            note_retry(kind, reason, attempt + 1)
             # Cut off by max_tokens (Qwen3-Omni writes longer reasons): the same limit
             # would cut the retry at the same place, so give it room instead.
-            cut = cut_off(raw)
-            if cut:
+            if reason == "cut_off":
                 mt = min(MAX_SUGGEST_TOKENS, mt * 2)
-            print(f"[suggest] bad JSON (attempt {attempt + 1}/3), retrying"
-                  f"{f' with max_tokens={mt} (reply was cut off)' if cut else ''}: {exc}", flush=True)
+            retry_note = STRICT_RETRY
+            print(f"[suggest] bad JSON (attempt {attempt + 1}/{MAX_JSON_ATTEMPTS}), retrying"
+                  f"{f' with max_tokens={mt} (reply was cut off)' if reason == 'cut_off' else ''}: {exc}", flush=True)
     if lead_to:
         data["steering"] = "move"  # the user's destination: no continuity / key filters against it
     suggestions = _filter_suggestions(
@@ -1120,7 +1179,7 @@ def suggest_next_tracks(
         try:
             data2 = _extract_json(chat_raw(system_msg, user_msg + (
                 f"\n\nREJECTED - these clash with the playing song: {why}. Suggest songs that keep its "
-                "energy, mood, tempo feel and key family."), temperature=0.4, max_tokens=mt, priority=prio))
+                "energy, mood, tempo feel and key family."), temperature=0.4, max_tokens=mt, priority=prio, kind=kind))
             data2.setdefault("current_genre", data.get("current_genre"))
             data2.setdefault("current_era", data.get("current_era"))
             data2.setdefault("current_profile", data.get("current_profile"))
@@ -1145,7 +1204,7 @@ def suggest_next_tracks(
                      f"{cur_era}, or a crossover song one step away that still belongs to it.")
         try:
             data2 = _extract_json(chat_raw(system_msg, retry_msg, temperature=0.4,
-                                           max_tokens=mt, priority=prio))
+                                           max_tokens=mt, priority=prio, kind=kind))
             data2.setdefault("current_genre", data.get("current_genre"))
             data2.setdefault("current_era", data.get("current_era"))
             retry = _filter_suggestions(
@@ -1174,7 +1233,7 @@ def suggest_next_tracks(
                          "Keep the same mood, vocals and energy as the current song.")
             try:
                 data2 = _extract_json(chat_raw(system_msg, retry_msg, temperature=0.4,
-                                               max_tokens=mt, priority=prio))
+                                               max_tokens=mt, priority=prio, kind=kind))
                 data2.setdefault("current_genre", data.get("current_genre"))
                 data2.setdefault("current_era", data.get("current_era"))
                 retry = _filter_suggestions(
@@ -1202,7 +1261,7 @@ def suggest_next_tracks(
                      "Suggest real released songs you are sure of, credited to their real artist.")
         try:
             data2 = _extract_json(chat_raw(system_msg, retry_msg, temperature=0.4,
-                                           max_tokens=mt, priority=prio))
+                                           max_tokens=mt, priority=prio, kind=kind))
             data2.setdefault("current_genre", data.get("current_genre"))
             data2.setdefault("current_era", data.get("current_era"))
             retry = _filter_suggestions(
@@ -1243,7 +1302,7 @@ def suggest_next_tracks(
         try:
             data3 = _extract_json(chat_raw(system_msg, user_msg + (
                 f"\n\nREJECTED - played in earlier sets: {names}. Suggest different songs."),
-                temperature=0.6, max_tokens=mt, priority=prio))
+                temperature=0.6, max_tokens=mt, priority=prio, kind=kind))
             data3.setdefault("current_genre", data.get("current_genre"))
             data3.setdefault("current_era", data.get("current_era"))
             retry = _filter_suggestions(
