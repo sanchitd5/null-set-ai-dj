@@ -6,7 +6,8 @@
 Accepts a report.json (scorer.score_run) or a suite.json / baseline.json (suite.py, its
 `aggregate`). Prints one line per metric that changed: before, after, delta and a verdict
 (BETTER / WORSE by scorer.DIRECTION, `.` for informational metrics). Exit code 1 when the
-headline score got worse, so a script can gate on it.
+headline score got worse OR a feature that was triggered before is not any more (features.lost:
+the live features and the matcher's viable cookbook recipes), so a script can gate on it.
 """
 from __future__ import annotations
 
@@ -14,6 +15,7 @@ import json
 import sys
 from pathlib import Path
 
+from app.sim import features
 from app.sim.scorer import DIRECTION
 
 
@@ -61,11 +63,15 @@ def main(argv=None) -> int:
     if len(argv) < 2:
         print(__doc__)
         return 2
-    a, b = load_metrics(argv[0]), load_metrics(argv[1])
+    da, db = (json.loads(Path(p).read_text(encoding="utf-8")) for p in argv[:2])
+    a, b = metrics_of(da), metrics_of(db)
     rows = deltas(a, b)
     print(render(rows, only_changed="--all" not in argv))
     score = next((r for r in rows if r[0] == "score"), None)
-    return 1 if score and score[4] == "WORSE" else 0
+    gone = features.lost(da, db)
+    for name in gone:
+        print(f"FEATURE LOST: {name} was triggered before and is not any more")
+    return 1 if (score and score[4] == "WORSE") or gone else 0
 
 
 if __name__ == "__main__":

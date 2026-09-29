@@ -64,7 +64,67 @@ CATALOG = {
     "energy_note": ("set", "energy arc hints (dip / callback / reprise) sent with the suggestion"),
 }
 
-_REMIX_LABELS = {"SYNTH HOLD": "remix_synth_hold", "ACAPELLA": "remix_acapella", "HOLD ON": "remix_vocal_hold",
+# The live features the coverage gate guards, by the name a user would give them. Each maps to the
+# catalog entries that count as that feature being alive (any one triggered is enough for the group;
+# the gate itself is per catalog entry, see `lost`).
+REQUIRED = {
+    "mashup": ("mashup_transition", "mashup_layer"),
+    "riff x rap": ("riff_over_rap",),
+    "stem bridge": ("stem_bridge",),
+    "stem merge": ("stem_merge",),
+    "stem intro": ("stem_intro",),
+    "cookbook recipes": ("cookbook_recipes", "eq_blend", "echo_out", "long_blend", "bass_swap"),
+    "learned techniques": ("learned_technique",),
+    "remix moves": ("remix_synth_hold", "remix_acapella", "remix_vocal_hold", "remix_bass_out", "strip_rebuild"),
+    "drum breaks": ("remix_drum_break",),
+    "hook drops": ("hook_drop",),
+    "tempo stems": ("tempo_stems", "tempo_home"),
+    "live ear": ("live_ear", "silent_ear"),
+    "dj mind": ("dj_mind",),
+    "null-bot": ("null_bot_supermove",),
+    "sampler": ("auto_sampler",),
+    "set modes": ("set_mode_windows",),
+}
+
+
+def triggered_of(doc: dict) -> set:
+    """The catalog features a report / suite / baseline shows as triggered."""
+    d = doc.get("aggregate", doc)
+    f = d.get("features") or doc.get("features") or {}
+    return set(f.get("triggered") or [])
+
+
+def viable_of(doc: dict) -> set:
+    """The cookbook recipes the real matcher scored above 0 on a played pair."""
+    d = doc.get("aggregate", doc)
+    f = d.get("features") or doc.get("features") or {}
+    return set(f.get("viable_recipes") or (f.get("cookbook") or {}).get("viable") or [])
+
+
+def lost(before: dict, after: dict) -> list:
+    """Features triggered in `before` that `after` no longer triggers, and cookbook recipes the matcher
+    scored in `before` and no longer scores (report or suite / baseline docs). A feature that stopped
+    running is a silent regression the score cannot see: the gate fails on it."""
+    out = sorted(triggered_of(before) - triggered_of(after))
+    out += [f"recipe:{r}" for r in sorted(viable_of(before) - viable_of(after))]
+    return out
+
+
+def coverage(doc: dict) -> dict:
+    """{group: {"features": [...], "triggered": [...], "never": [...]}} for REQUIRED, from a report or suite."""
+    got = triggered_of(doc)
+    return {g: {"features": list(names), "triggered": sorted(n for n in names if n in got),
+                "never": sorted(n for n in names if n not in got)} for g, names in REQUIRED.items()}
+
+
+def coverage_markdown(doc: dict) -> str:
+    rows = ["| feature | triggered | never triggered |", "|---|---|---|"]
+    for g, c in coverage(doc).items():
+        rows.append(f"| {g} | {', '.join(c['triggered']) or '-'} | {', '.join(c['never']) or '-'} |")
+    return "\n".join(rows) + "\n"
+
+
+_REMIX_LABELS ={"SYNTH HOLD": "remix_synth_hold", "ACAPELLA": "remix_acapella", "HOLD ON": "remix_vocal_hold",
                  "DRUM BREAK": "remix_drum_break", "BASS OUT": "remix_bass_out"}
 _SIGNAL_RE = re.compile(r"[a-z]+")
 
