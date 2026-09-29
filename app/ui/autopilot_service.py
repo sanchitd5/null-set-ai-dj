@@ -655,6 +655,7 @@ def _parroted(data: dict, title: str) -> bool:
 from app.music_brain.genre import genre_families as _genre_families  # noqa: E402
 from app.music_brain.genre import family_jump as _family_jump  # noqa: E402
 from app.music_brain.genre import MAX_ERA_GAP, era_gap  # noqa: E402
+from app.music_brain import scene_profile as _scene_profile  # noqa: E402
 from app.music_brain.genre import genre_scenes as _genre_scenes  # noqa: E402
 
 # Scene continuity (owner: Anyma "Atoma" went to "EVIL x YOU (bjork X Melanie
@@ -678,7 +679,7 @@ def scene_of(genre) -> str:
 def _filter_suggestions(
     data: dict, history: list[str], occasion_set: bool = False, current_key: str | None = None,
     allow_genre_change: bool = False, current_artist: str = "", measured_energy: int | None = None,
-    energy_lo: int | None = None,
+    energy_lo: int | None = None, punjabi_profile: str = "off",
 ) -> list[dict]:
     """Drop sets/interviews, exact repeats, profile clashes and (unless steering)
     suggestions whose expected_key clashes with `current_key`. A pick that clashes
@@ -717,6 +718,10 @@ def _filter_suggestions(
     steering_any = occasion_set and steering_move
     cur_genre = data.get("current_genre")
     cur_era = data.get("current_era")
+    # Punjabi scene profile (scene_profile.py): while the playing song is Punjabi
+    # (auto) or always (on), punjabi / bhangra / desi are one scene, bollywood its
+    # neighbour, and the era gate widens. "off" leaves everything below unchanged.
+    sp_active = _scene_profile.selection_active(punjabi_profile, cur_genre)
     for s in data.get("suggestions", []) or []:
         if not isinstance(s, dict) or not s.get("title"):
             continue
@@ -736,6 +741,8 @@ def _filter_suggestions(
         hop = _num(s.get("genre_hop"))
         if _family_jump(cur_genre, s.get("genre")):
             hop = max(hop or 0.0, 2.0)
+        if sp_active and _scene_profile.in_scene_pair(cur_genre, s.get("genre")):
+            hop = 0.0  # one scene under the profile (note s7), not a genre jump
         scene = scene_of(cur_genre)
         if scene and mashup_title(s["title"]):
             hop = max(hop or 0.0, MASHUP_SCENE_HOP)
@@ -745,6 +752,8 @@ def _filter_suggestions(
         # bucket as genre jumps, so the closest one survives if nothing else does.
         egap = era_gap(cur_era, s.get("era"))
         era_jump = egap is not None and egap > MAX_ERA_GAP
+        if sp_active:
+            era_jump = _scene_profile.era_jump(cur_era, s.get("era"), True)
         print(f"[suggest] {label[:60]!r} genre={s.get('genre')!r} hop={hop} (cur={cur_genre!r})"
               f" era={s.get('era')!r} (cur={cur_era!r})", flush=True)
         if not (steering_any or allow_genre_change):
@@ -1157,6 +1166,7 @@ def suggest_next_tracks(
     measured_energy: int | None = None,
     energy_history: list[int] | None = None,
     energy_reset: bool = False,
+    punjabi_profile: str = "off",  # scene_profile mode: off | on | auto
 ) -> list[dict]:
     """
     Call local Ollama (gemma3:4b) to suggest next n tracks.
@@ -1284,7 +1294,7 @@ def suggest_next_tracks(
         data["steering"] = "move"  # the user's destination: no continuity / key filters against it
     suggestions = _filter_suggestions(
         data, history, occasion_set=bool((occasion or "").strip()) and not lead_to, current_key=camelot,
-        allow_genre_change=bool(lead_to), current_artist=artist, measured_energy=measured_energy, energy_lo=energy_lo,
+        allow_genre_change=bool(lead_to), current_artist=artist, measured_energy=measured_energy, energy_lo=energy_lo, punjabi_profile=punjabi_profile,
     )
     # Every pick clashed (energy / mood / tempo feel / key / scene): none is kept as a
     # last resort; ask once more with the rejects and their reasons named.
@@ -1303,7 +1313,7 @@ def suggest_next_tracks(
             retry = _filter_suggestions(
                 data2, history, occasion_set=bool((occasion or "").strip()) and not lead_to,
                 current_key=camelot, allow_genre_change=bool(lead_to), current_artist=artist,
-                measured_energy=measured_energy, energy_lo=energy_lo)
+                measured_energy=measured_energy, energy_lo=energy_lo, punjabi_profile=punjabi_profile)
             if retry:
                 data, suggestions = data2, retry
         except ValueError as exc:
@@ -1326,7 +1336,7 @@ def suggest_next_tracks(
             data2.setdefault("current_era", data.get("current_era"))
             retry = _filter_suggestions(
                 data2, history, occasion_set=bool((occasion or "").strip()) and not lead_to,
-                current_key=camelot, allow_genre_change=bool(lead_to), current_artist=artist, measured_energy=measured_energy, energy_lo=energy_lo)
+                current_key=camelot, allow_genre_change=bool(lead_to), current_artist=artist, measured_energy=measured_energy, energy_lo=energy_lo, punjabi_profile=punjabi_profile)
             if retry and not str(retry[0].get("rejected_reason", "")).startswith(("genre jump", "era jump")):
                 data, suggestions = data2, retry
         except ValueError as exc:
@@ -1355,7 +1365,7 @@ def suggest_next_tracks(
                 data2.setdefault("current_era", data.get("current_era"))
                 retry = _filter_suggestions(
                     data2, history, occasion_set=bool((occasion or "").strip()) and not lead_to,
-                    current_key=camelot, allow_genre_change=bool(lead_to), current_artist=artist, measured_energy=measured_energy, energy_lo=energy_lo)
+                    current_key=camelot, allow_genre_change=bool(lead_to), current_artist=artist, measured_energy=measured_energy, energy_lo=energy_lo, punjabi_profile=punjabi_profile)
                 retry = [x for x in retry if _tempo_locks(target, x.get("expected_bpm")) is not False]
                 if retry:
                     data, suggestions = data2, retry
@@ -1383,7 +1393,7 @@ def suggest_next_tracks(
             data2.setdefault("current_era", data.get("current_era"))
             retry = _filter_suggestions(
                 data2, history, occasion_set=bool((occasion or "").strip()) and not lead_to,
-                current_key=camelot, allow_genre_change=bool(lead_to), current_artist=artist, measured_energy=measured_energy, energy_lo=energy_lo)
+                current_key=camelot, allow_genre_change=bool(lead_to), current_artist=artist, measured_energy=measured_energy, energy_lo=energy_lo, punjabi_profile=punjabi_profile)
             if not moving:
                 retry = [x for x in retry if _tempo_locks(target, x.get("expected_bpm")) is not False]
             retry = [x for x in retry if _bare_title(x.get("title", "")) != seed]
@@ -1424,7 +1434,7 @@ def suggest_next_tracks(
             data3.setdefault("current_era", data.get("current_era"))
             retry = _filter_suggestions(
                 data3, history, occasion_set=bool((occasion or "").strip()) and not lead_to,
-                current_key=camelot, allow_genre_change=bool(lead_to), current_artist=artist, measured_energy=measured_energy, energy_lo=energy_lo)
+                current_key=camelot, allow_genre_change=bool(lead_to), current_artist=artist, measured_energy=measured_energy, energy_lo=energy_lo, punjabi_profile=punjabi_profile)
             retry = [x for x in retry if _bare_title(x.get("title", "")) != seed]
             real3, _ = _verify_picks(retry)
             fresh = [x for x in real3 if _bare_title(x.get("title", "")) not in heard]
@@ -1447,7 +1457,7 @@ def suggest_next_tracks(
             retry = _filter_suggestions(
                 data4, history, occasion_set=bool((occasion or "").strip()) and not lead_to,
                 current_key=camelot, allow_genre_change=bool(lead_to), current_artist=artist,
-                measured_energy=measured_energy, energy_lo=energy_lo)
+                measured_energy=measured_energy, energy_lo=energy_lo, punjabi_profile=punjabi_profile)
             retry = [x for x in retry if _bare_title(x.get("title", "")) != seed
                      and _bare_title(x.get("title", "")) not in heard]
             real4, _ = _verify_picks(retry)

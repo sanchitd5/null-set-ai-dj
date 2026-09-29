@@ -11,7 +11,11 @@ python3 -m app.sim.virtual_set --seed 1 --tracks 10 --library --record NAME     
 python3 -m app.sim.virtual_set --replay NAME --out DIR                           # zero network, deterministic
 python3 -m app.sim.suite [--jobs 3] [--check] [--update-baseline] [--build-panel]
 python3 -m app.sim.compare A/report.json B/report.json      # exit 1: score worse OR a feature lost
+python3 -m app.sim.virtual_set --replay NAME --punjabi on --out DIR               # PUNJABI scene profile setting
 ```
+
+`--punjabi auto` only fires on Punjabi-labelled songs. The panel's real-model fixtures label genre but
+hold no Punjabi songs, and the StubLLM labels no genre at all, so today only `--punjabi on` exercises it.
 
 Live mode fails clearly when the LLM or network is unreachable; the seeded stub LLM is the replay
 and test fallback only. Recording respects `yt_guard`, caps tracks/downloads (live only: the cap

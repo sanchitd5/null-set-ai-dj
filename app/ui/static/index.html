@@ -827,6 +827,7 @@
       <span class="chip">GEMMA3 · LOCAL</span>
     </div>
     <span class="hud-label" id="ap-status">Paste a seed URL and an occasion to start.</span>
+    <span class="hud-label" id="ap-punjabi-state"></span>
   </div>
 
   <div class="ap-controls">
@@ -873,6 +874,9 @@
       </label>
       <label class="hud-label" data-group="SET HABITS" title="Let the song finish: when the set holds its energy (last 3 songs within 1 level, at the recent peak, past the warm-up), a song plays to its outro instead of a short window. Not in QUICK mode, never two in a row, never a song with over 6 min left">
         <input type="checkbox" id="ap-finish-toggle" checked /> LET IT FINISH
+      </label>
+      <label class="hud-label" data-group="SCENE" title="Punjabi scene profile (research/notes/punjabi-original-sets.md, values GUESS): punjabi / bhangra / desi one scene with bollywood next door, era gate 4 decades, 45-90 s plays, a Quick Cut instead of an Echo Out, BPM folded x2 before the tempo gate. AUTO: both songs Punjabi -> full profile, one side -> cut handover only. ON: every transition. OFF: today's rules">
+        PUNJABI <select id="ap-punjabi-profile" aria-label="Punjabi scene profile"><option value="auto" selected>auto</option><option value="on">on</option><option value="off">off</option></select>
       </label>
       <label class="hud-label" title="Moves learned from studied DJ sets (the transition picks and the in-song moves below). Off: none of them play">
         <input type="checkbox" id="ap-learned-toggle" checked /> LEARNED
@@ -1076,6 +1080,7 @@
 <script src="/anyma-ui.js"></script>
 <script src="/anyma-show.js"></script>
 <script src="/tempo-rule.js"></script>
+<script src="/scene-profile.js"></script>
 <script src="/fx-budget.js"></script>
 <script src="/deck-controller.js"></script>
 <script src="/fx-rack.js"></script>

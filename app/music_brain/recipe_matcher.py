@@ -22,6 +22,7 @@ from typing import List, Optional, Tuple
 from app.music_brain.analyzer import TrackAnalysis
 from app.music_brain.config import BARS_PER_PHRASE, BEATS_PER_BAR
 from app.music_brain.genre import vibe_score
+from app.music_brain import scene_profile as _scene_profile
 from app.music_brain.knowledge_parser import KnowledgeParser, TransitionRecipe
 
 _CAMELOT_RE = re.compile(r"^(\d{1,2})([AB])$", re.IGNORECASE)
@@ -380,10 +381,19 @@ class RecipeMatcher:
         genre_b: Optional[str] = None,
         era_a: Optional[str] = None,
         era_b: Optional[str] = None,
+        profile: Optional[str] = None,
     ) -> TransitionCandidate:
+        """profile: the Punjabi scene profile level for this pair ("full" /
+        "handover", scene_profile.level) or None = today's scoring, unchanged."""
         camelot_score, camelot_reason = 1.0, "not evaluated (no key estimate)"
+        # Under the profile a cut has no overlap, so the key cannot clash: it
+        # skips the key gate and takes no BYPASS_KEY_SCORE (note s7, GUESS).
+        profile_cut = bool(profile) and _scene_profile.PUNJABI_PROFILE["cuts_skip_key_bypass"] \
+            and is_cut_recipe(recipe.name)
         key_blocked = False
-        if track_a.key and track_b.key:
+        if profile_cut:
+            camelot_reason = "not scored (a cut under the Punjabi scene profile)"
+        elif track_a.key and track_b.key:
             camelot_score, camelot_reason = camelot_distance_score(
                 track_a.key.camelot, track_b.key.camelot,
                 track_a.key.confidence, track_b.key.confidence,
@@ -395,7 +405,11 @@ class RecipeMatcher:
                     camelot_score = BYPASS_KEY_SCORE
                     camelot_reason += "; this recipe bypasses the key clash"
 
-        bpm_score, bpm_label = bpm_compatibility(track_a.bpm, track_b.bpm)
+        b_bpm = track_b.bpm
+        # full profile only: both songs Punjabi, 176 == 88 (note s7, GUESS); a one-side handover is a cut
+        if profile == _scene_profile.LEVEL_FULL and _scene_profile.PUNJABI_PROFILE["bpm_octave_fold"]:
+            b_bpm = _scene_profile.fold_bpm(track_a.bpm, track_b.bpm)
+        bpm_score, bpm_label = bpm_compatibility(track_a.bpm, b_bpm)
         already_compatible = bpm_score >= 0.9 and camelot_score >= 0.8
         if recipe.max_bpm_delta is None:
             # Bridge/cut/echo recipes are designed for large BPM/key gaps.
@@ -427,7 +441,8 @@ class RecipeMatcher:
         # Unrelated-genre jump (e.g. melodic house -> industrial metal): key/BPM/
         # phrase math can still line up, so this is a hard multiplier, not a nudge.
         # A multi-decade era gap trims it further (genre.ERA_JUMP_PENALTY).
-        raw *= vibe_score(genre_a, genre_b, era_a, era_b)
+        raw *= (_scene_profile.vibe_score(genre_a, genre_b, era_a, era_b, profile) if profile
+                else vibe_score(genre_a, genre_b, era_a, era_b))
 
         score = max(0.0, min(100.0, raw * 100.0))
         explanation = _explain(recipe, camelot_reason, bpm_label, a_time, b_time, penalty)
@@ -452,9 +467,12 @@ class RecipeMatcher:
         era_a: Optional[str] = None,
         era_b: Optional[str] = None,
         no_cuts: bool = False,
+        profile: Optional[str] = None,
     ) -> List[TransitionCandidate]:
         """Best candidates first. no_cuts drops cut recipes (Hard Cut, Quick Cut):
-        the autopilot never plays a hard cut, the user-picked cards still can."""
+        the autopilot never plays a hard cut, the user-picked cards still can.
+        profile (Punjabi scene profile level, or None): the scene's main move, the
+        Quick Cut, stays in even with no_cuts; Hard Cut is still dropped."""
         entry_points = find_entry_candidates(track_b) or (
             [track_b.phrase_boundaries_8bar[0]] if track_b.phrase_boundaries_8bar else [0.0]
         )
@@ -465,14 +483,15 @@ class RecipeMatcher:
         # the latest exit + earliest entry, what a DJ reaches for first.
         best_per_recipe: dict[str, TransitionCandidate] = {}
         for recipe in self.knowledge.get_all():
-            if no_cuts and is_cut_recipe(recipe.name):
+            if no_cuts and is_cut_recipe(recipe.name) and not (
+                    profile and recipe.name == _scene_profile.PUNJABI_PROFILE["fallback_recipe"]):
                 continue
             exits = recipe_exit_candidates(track_a, recipe.name)[-MAX_POINTS_PER_SIDE:]
             for a_time in reversed(exits):
                 for b_time in entry_points:
                     candidate = self._score_one(
                         recipe, track_a, a_time, track_b, b_time, genre_a, genre_b,
-                        era_a, era_b,
+                        era_a, era_b, profile,
                     )
                     existing = best_per_recipe.get(recipe.name)
                     if existing is None or candidate.score > existing.score:
