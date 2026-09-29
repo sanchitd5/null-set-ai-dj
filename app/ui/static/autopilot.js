@@ -146,6 +146,61 @@ var autopilotCore = (function () {
     if (!allowed[pick.recipe] || pick.recipe === o.recipe) return null;
     return { recipe: pick.recipe, why: `learned ${pick.kind.replace("_", " ")} (seen ${pick.seen}x, ${pick.source})` };
   }
+  // A FORCED plan (macro-mode.js: a macro step, a studied combo, a FOLLOW SET pick) is
+  // performed as stored: scheduleTransition books its recipe and points and never re-picks.
+  // The safety gates only refuse it; a refusal falls back to the closest allowed move.
+  // Exit: the stored point on A while it is still ahead (lead s), else the next phrase line
+  // on the stored point's grid. null: A ends first (the caller keeps its live timing).
+  // o: {aTime, nowPos, phraseS, trackEnd, lead}
+  function forcedExit(o) {
+    const lead = o.lead == null ? 4 : o.lead;
+    if (!Number.isFinite(o.aTime)) return null;
+    let t = o.aTime;
+    if (t < o.nowPos + lead && o.phraseS > 0) t += Math.ceil((o.nowPos + lead - t) / o.phraseS) * o.phraseS;
+    return Number.isFinite(o.trackEnd) && t >= o.trackEnd ? null : t;
+  }
+  // The stored recipe through the live gates. o: {want, beat (tempo-locked), stemsBoth,
+  // keyScore, mashupFits, mergeOk, mergeGate, vocalRule} -> {recipe, refused: null | "gate: why"}
+  function forcedRecipe(o) {
+    const want = String(o.want || "");
+    const keyOk = o.keyScore == null || o.keyScore >= KEY_SAFE_MIN;
+    const fb = o.beat && keyOk ? "Bass Swap" : "Echo Out";             // never a cut
+    const no = (gate, recipe = fb) => ({ recipe, refused: gate });
+    if (!want || /^(hard )?cut$/i.test(want)) return no("cut: never a hard cut");
+    if (/merge|mashup|stem|riff/i.test(want) && !o.stemsBoth) return no("stems: stems missing on a deck");
+    if (!/echo|bridge|filter/i.test(want) && !o.beat) return no("tempo: the pair is not beat-matchable", "Echo Out");
+    if (keySafeRecipe(want, o.keyScore) !== want) return no(`key: camelot ${o.keyScore}`, "Echo Out");
+    if (/stem merge/i.test(want) && !o.mergeOk) return no(`merge: ${o.mergeGate || "no clean hold"}`);
+    if (/mashup/i.test(want) && !o.mashupFits) return no("mashup: the pair does not fit a mashup");
+    if (/long blend|drop swap/i.test(want) && o.vocalRule) return no(`vocal: ${o.vocalRule.why || "two voices"}`, o.vocalRule.recipe || "Bass Swap");
+    return { recipe: want, refused: null };
+  }
+  // The whole forced booking (scheduleTransition's seam, node-checked). o: {forced, nowPos,
+  // phraseS, trackEnd, liveATime, liveBTime, beat, stemsBoth, keyScore, mashupFits, vocalRule,
+  // mergeOn, planMerge(aT, bT, prefer) -> plan | null, mergeGate() -> "gate: why" | null}
+  // -> {recipe, aT, bT, merge, refused, line}
+  function forcedBooking(o) {
+    const f = o.forced;
+    const fx = forcedExit({ aTime: f.a_time, nowPos: o.nowPos, phraseS: o.phraseS, trackEnd: o.trackEnd });
+    const aT = fx != null ? fx : o.liveATime;
+    const bT = Number.isFinite(f.b_time) ? f.b_time : o.liveBTime;
+    const fm = f.merge || {};
+    let merge = null;
+    if (/stem merge/i.test(f.recipe) && o.beat && o.mergeOn && o.stemsBoth && o.planMerge) {
+      merge = o.planMerge(aT, bT, { entry: bT, M: fm.M || null, label: (fm.pick && fm.pick.label) || null });
+    }
+    const fr = forcedRecipe({ want: f.recipe, beat: o.beat, stemsBoth: o.stemsBoth, keyScore: o.keyScore, mashupFits: o.mashupFits,
+      mergeOk: !!merge, mergeGate: !o.mergeOn ? "MERGE is off" : o.mergeGate ? o.mergeGate() : null, vocalRule: o.vocalRule });
+    const line = forcedLine(f, fr.recipe, aT, bT) + (merge && merge.phases ? `, hold ${merge.phases.hold.bars} bars` : "") +
+      (fr.refused ? ` [refused ${f.recipe}: ${fr.refused}]` : "");
+    return { recipe: fr.recipe, aT, bT, merge: fr.recipe === "Stem Merge" ? merge : null, refused: fr.refused, line };
+  }
+  // `macro: performing step <n>: <A> -> <B> <move> (exit <t>, entry <t>)`
+  function forcedLine(f, recipe, aT, bT) {
+    const m = (t) => (Number.isFinite(t) ? `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, "0")}` : "?");
+    const who = f.n != null ? `macro: performing step ${f.n}` : `${f.source || "studied"}: performing`;
+    return `${who}: ${f.a_name || f.a || "A"} -> ${f.b_name || f.b || "B"} ${recipe} (exit ${m(aT)}, entry ${m(bT)})`;
+  }
   // A's high-energy sections [[t0, t1]] (song s), same rule as preplan.high_spans:
   // energy >= its 85th percentile AND >= median + 0.3 x range, joined across gaps
   // under 2 bars, padded HIGH_LEAD_BARS before (at the high OR about to reach it:
@@ -592,7 +647,7 @@ var autopilotCore = (function () {
   const api = { prerenderTargets, readinessNeeds, aTempoAtEntry, deferBudgetS, deferDecision, orderByReadiness, DEFER_MAX_S, DEFER_MIN_LEAD_S, PREFER_READY_JUMP,
     emptyRetryMs, useLibraryFallback, rememberPairReject, pairRejected, awaitJob, keySafeRecipe, KEY_SAFE_MIN, energyStepOk, hybridWindowKey, highSpans, quantileLinear, median, exitPastHigh, learnedRecipe, vocalRecipe, stemBlendBars, stemBlendFader, phraseWaitS, introBars, FADER_PARK_BARS, homePlan, maskedGlideBars, maskedDropAt, HOME_DROP_PCT, LADDER_STEP_PCT,
     tempoLockableAt, recipeKind, decideRecipe, planSkipReason, WINDOWS, playWindowFor, exitBounds, exitPick, exitTiming, exitHighPush, audibleEnd, entryClamp, SILENT_FLOOR,
-    breakdownSpans, exitOutOfBreakdown, exitBreakdownPush, energyAtTarget, FINISH_MAX_S };
+    breakdownSpans, exitOutOfBreakdown, exitBreakdownPush, energyAtTarget, FINISH_MAX_S, forcedExit, forcedRecipe, forcedLine, forcedBooking };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   return api;
 })();
@@ -1001,11 +1056,12 @@ function createAutopilotEngine({ host, ai }) {
   // (whole 8-bar phrases, measured stems + voices) and checks tempo, key >= 0.8, room,
   // clean stems, one sub-bass owner and the level floor. -> {plan} | {gate, why, tried}.
   // bFallback: B's start when the vocal-entry fetch has not landed (measured stems decide).
-  function planHold(od, idk, aT, bFallback, sm) {
+  // prefer (a forced plan's stored merge): {entry, M, label}; B enters on the stored line
+  function planHold(od, idk, aT, bFallback, sm, prefer = null) {
     const no = (gate, why) => ({ gate, why, tried: [] });
     if (!sm.core.holdPlan) return no("module", "no holdPlan");
     if (!od.stemsReady || !idk.stems || !od.bpm || !idk.bpm) return no("stems", "stems not ready on both decks");
-    const ve = idk._vocalEntry, entry = ve && ve.entry != null ? ve.entry : bFallback;
+    const ve = idk._vocalEntry, entry = prefer && Number.isFinite(prefer.entry) ? prefer.entry : ve && ve.entry != null ? ve.entry : bFallback;
     if (entry == null) return no("entry", "no entry line for B");
     const aEff = od.bpm * od._playbackRate(), gap = Math.abs(aEff / idk.bpm - 1);
     if (gap > keyLockLim() || (gap > 0.02 && !(idk.tempoStems && Math.abs(idk.tempoStems.bpm / aEff - 1) < 0.01))) {
@@ -1022,6 +1078,7 @@ function createAutopilotEngine({ host, ai }) {
       gap, keyScore: cs && ka && kb ? cs(ka, kb) : null, roomBars, barS, aT, bT: entry, barA, barB, bRap: !!(ve && ve.rap), eA, eB,
       aVox: od.analysis && od.analysis.vocal_active_regions, bVox: idk.analysis && idk.analysis.vocal_active_regions,
       aud: (() => { const aA = sm.stemEnergyBars(od, aT, barA, n, "audible"), aB = sm.stemEnergyBars(idk, entry, barB, n, "audible"); return aA && aB ? { aA, aB } : null; })(),
+      preferM: prefer && prefer.M, preferLabel: prefer && prefer.label,
     });
     if (!hp.ok) return hp;
     return { plan: { entry, M: hp.M, rap: !!(ve && ve.rap), gap, ranked: hp.ranked, pick: hp.pick, aT, heard: false, hold: hp, phases: hp.phases, holdE: { eA, eB },
@@ -1031,10 +1088,10 @@ function createAutopilotEngine({ host, ai }) {
   // it (the reason is logged for the sim), the classic fixed-length merge below; then the
   // silent ear re-ranks the top 3 in the background (offline clips, nothing plays) before
   // the transition fires. Stored on B's deck as _mergePlan.
-  function planMerge(aId, bId, od, idk, aT, bFallback = null) {
+  function planMerge(aId, bId, od, idk, aT, bFallback = null, prefer = null) {
     const sm = host.mod.stemMoves;
     if (!sm || !sm.core.mergeRank) return null;
-    const hd = planHold(od, idk, aT, bFallback, sm);
+    const hd = planHold(od, idk, aT, bFallback, sm, prefer);
     let plan = hd.plan || null;
     if (!plan) {
       const mf = mergeFits(od, idk);
@@ -1729,7 +1786,10 @@ function createAutopilotEngine({ host, ai }) {
   function prerenderItems() {
     const d = host.decks && host.decks[activeDeck];
     const aEff = d && d.bpm > 0 ? aTempoOf(d).bpm : 0, aNative = (d && d.bpm) || 0;
-    return poolRanked().map((c) => ({ track_id: c.track_id,
+    // PLAY MACRO: the macro's next songs first (their stems early), then the pool
+    const mm = host.mod.macroMode, ahead = mm && mm.upcoming ? mm.upcoming() : [];
+    const seen = new Set(ahead.map((c) => c.track_id));
+    return ahead.concat(poolRanked().filter((c) => !seen.has(c.track_id))).map((c) => ({ track_id: c.track_id,
       bpms: autopilotCore.prerenderTargets({ aEff, aNative, bBpm: c.bpm, lim: keyLockLim() }) }));
   }
   function noteReady(row) {
@@ -2217,7 +2277,8 @@ function createAutopilotEngine({ host, ai }) {
     // the tempo lock are known (planSkipReason), so it is asked after the load below.
     const peakElP = ui.el("ap-peak-toggle"), peakOnP = !peakElP || peakElP.checked;
     const deferPlan = !!(host.decks && host.decks[activeDeck] && host.decks[activeDeck].stems) && !peakOnP;
-    let aiPlan = deferPlan ? null : requestMindPlan(currentId, nextId, candidate);
+    // a forced plan (macro step / studied combo / FOLLOW SET) is the plan: no LLM re-pick
+    let aiPlan = deferPlan || candidate.forced ? null : requestMindPlan(currentId, nextId, candidate);
 
     // Preload next track into staging deck
     apStatus(`Loading ${nextName} into deck ${stagingDeck().toUpperCase()}…`);
@@ -2275,7 +2336,10 @@ function createAutopilotEngine({ host, ai }) {
         });
         planFitState = { stemsBoth: stemsBothF, beat: !!fit.beat };
         candidate.plannedFit = fit; // scheduleTransition re-derives with the same fn + live state
-        if (!fit.smooth && !allowTempoJump) {
+        // a forced move keeps its song: the booking falls back to an Echo Out (never a cut)
+        if (!fit.smooth && !allowTempoJump && candidate.forced) {
+          console.info(`plan-fit: ${nextName} (${fit.why}): stored move kept, the booking falls back`);
+        } else if (!fit.smooth && !allowTempoJump) {
           console.warn("Autopilot plan-fit reject:", nextName, fit.why);
           host.log.step("candidate_reject", { track_id: nextId, phase: "selection", decision: "plan-fit reject", why: fit.why });
           apStatus(`Not after this song: ${nextName} (${fit.why}) — kept for later`);
@@ -2286,7 +2350,7 @@ function createAutopilotEngine({ host, ai }) {
       }
     }
     matchGain(activeDeck, stagingDeck(), candidate.vibe && candidate.vibe.gain_match_db);
-    if (deferPlan) {
+    if (deferPlan && !candidate.forced) {
       const skip = autopilotCore.planSkipReason({ stemsBoth: !!(planFitState && planFitState.stemsBoth),
         lockBeat: !!(planFitState && planFitState.beat), peakOn: peakOnP });
       if (skip) {
@@ -2309,7 +2373,7 @@ function createAutopilotEngine({ host, ai }) {
 
     // LAYER (set study item 4): hold both records, then unwind A. Tempo-locked
     // pairs only; the DJ mind's rules decide and keep the veto over the AI.
-    let layer = blend ? await requestLayer(currentId, nextId, candidate, plan, cand) : null;
+    let layer = blend && !candidate.forced ? await requestLayer(currentId, nextId, candidate, plan, cand) : null;
     if (!active || currentTrackId !== currentId) return false;
     if (layer && !(layer.start >= deckPosition(activeDeck) + 16)) layer = null; // start slipped past
 
@@ -2323,7 +2387,7 @@ function createAutopilotEngine({ host, ai }) {
     }
     // The silent ear pre-plans the transition (when B starts inside A, from which
     // of B's lines, how long both play, who owns each stem); the master plays it.
-    if (!layer) {
+    if (!layer && !candidate.forced) {
       apStatus(`Ear pre-planning the mix into ${nextName}…`);
       // the plan may take a while (renders + the ear): never hold the booking past
       // PREPLAN_WAIT_MS; the server keeps going and caches a heard plan for next time
@@ -2335,7 +2399,7 @@ function createAutopilotEngine({ host, ai }) {
     }
     const fireAt = scheduleTransition(currentId, nextId, nextName, candidate, blend, minExit, layer);
     scheduledFireAt = fireAt;
-    if (!layer) tryMashup(currentId, nextId, nextName, fireAt); // fire-and-forget; B itself enters under a LAYER
+    if (!layer && !candidate.forced) tryMashup(currentId, nextId, nextName, fireAt); // fire-and-forget; B itself enters under a LAYER
     scheduledNext = cand;
     pendingSugs = []; // leftovers show up as READY when their download lands
     showQueue();
@@ -2825,6 +2889,7 @@ function createAutopilotEngine({ host, ai }) {
     let bTime = candidate.b_time || 0;
     let vocalShort = false, vocalCut = "";
     let recipe = candidate.recipe || "Blend";
+    const forced = candidate.forced || null;   // a stored move: booked as stored below, never re-picked
     // Stems on both decks: the set plays as ONE song (user). Every transition is
     // a long stem blend: one owner per layer, one singer, kick + bass swapped on
     // a line. No vocal-driven shortening, no cuts or spinbacks (those were only
@@ -2901,7 +2966,7 @@ function createAutopilotEngine({ host, ai }) {
       blendExit: blend && blend.exit, candidateATime: candidate.a_time, minExit });
     // PEAK mode (dj-mind.js peakTransition): tempo-locked pairs only, land B's
     // drop on A's drop downbeat - Double Drop or Drop Swap. null -> blend.
-    const peakT = !layer && blend && blend.drop && host.mod.djMind && host.mod.djMind.planPeak
+    const peakT = !forced && !layer && blend && blend.drop && host.mod.djMind && host.mod.djMind.planPeak
       ? host.mod.djMind.planPeak({ drop: blend.drop, lo: Math.max(lo, nowPos + 15), hi,
                                  plannedExit: exitAt, entryPos, inDeck: stagingDeck() })
       : null;
@@ -2916,7 +2981,7 @@ function createAutopilotEngine({ host, ai }) {
     // the line it chose, the merge it heard. Only when the plan is still ahead.
     const pp = candidate.preplan;
     let preplanned = false;
-    if (pp && lockS.beat && !layer && !peakT && stemsBoth && odS && sdS && pp.a_in >= nowPos + 15) {
+    if (pp && !forced && lockS.beat && !layer && !peakT && stemsBoth && odS && sdS && pp.a_in >= nowPos + 15) {
       effectiveATime = pp.a_in;
       bTime = pp.b_start;
       recipe = "Stem Merge";
@@ -2952,7 +3017,28 @@ function createAutopilotEngine({ host, ai }) {
     }
     // Song merge beats the plain mashup (it is its generalization) when a combo fits;
     // never over LAYER / PEAK. The mashup stays the fallback if the merge is refused.
-    if (!preplanned && lockS.beat && !layer && !peakT && mergesOn() && stemsBoth && odS && sdS) {
+    if (forced) {
+      // FORCED plan (macro-mode.js): EXACTLY the stored move at the stored points. The gates
+      // above (tempo lock, keys, stems, vocal rule) and the merge's own hold gates only
+      // refuse it; a refusal is logged and books the closest allowed move (never a cut).
+      lastMergeGate = null;
+      const fb = autopilotCore.forcedBooking({ forced: Object.assign({ b_name: nextName }, forced), nowPos, phraseS, trackEnd,
+        liveATime: effectiveATime, liveBTime: bTime, beat: !!lockS.beat, stemsBoth: !!(stemsBoth && odS && sdS), keyScore: keyScoreS,
+        mashupFits: !!(stemsBoth && odS && sdS && mashupFits(odS, sdS)), mergeOn: mergesOn(),
+        vocalRule: vocalRule ? { why: vocalCut, recipe: "Bass Swap" } : null,
+        planMerge: (aT, bT, prefer) => planMerge(currentId, nextId, odS, sdS, aT, bT, prefer),
+        mergeGate: () => (lastMergeGate ? `${lastMergeGate.gate}: ${lastMergeGate.why}` : null) });
+      recipe = fb.recipe; effectiveATime = fb.aT; bTime = fb.bT;
+      if (fb.refused) {
+        console.warn(`${forced.n != null ? `macro: step ${forced.n}` : `${forced.source || "studied"}:`} refused: ${fb.refused} -> ${fb.recipe}`);
+        host.log.step("macro", { phase: "booking", decision: "refused", why: fb.refused, result: { want: forced.recipe, ran: fb.recipe, step: forced.n } });
+      }
+      const line = fb.line;
+      console.info(line);
+      host.log.step("macro", { phase: "booking", decision: "perform", why: line });
+      host.bus.emit("ai-activity", { kind: "macro", deck: activeDeck, label: `${forced.n != null ? `MACRO ${forced.n}` : "STUDIED"} · ${recipe}`, why: line });
+      playPlanTag = ` | ${w.label} ${fmtTime(effectiveATime - entryPos)} · ${forced.n != null ? `macro step ${forced.n}` : "stored move"}`;
+    } else if (!preplanned && lockS.beat && !layer && !peakT && mergesOn() && stemsBoth && odS && sdS) {
       const mp = planMerge(currentId, nextId, odS, sdS, effectiveATime, bTime);
       if (mp) {
         recipe = "Stem Merge";   // merge -> hold -> transition beats the matcher's / learned pick when its gates pass
@@ -2990,7 +3076,7 @@ function createAutopilotEngine({ host, ai }) {
     // Learned from studied sets (app/music_brain/set_learner.py): the move that DJ
     // made most on pairs like this one, when the console already allows it here.
     let learned = null;
-    if (!layer && !peakT && learnedOn()) {
+    if (!forced && !layer && !peakT && learnedOn()) {
       const facts = { layer, peak: peakT, blend, oneSong, stemsBoth, vocalRule, recipe, keyScore: keyScoreS,
                       mashupFits: !!(stemsBoth && odS && sdS && mashupFits(odS, sdS)) };
       fetch(`/api/learned/pick?a=${encodeURIComponent(currentId)}&b=${encodeURIComponent(nextId)}&keylock=${!!(sdS && sdS.useTempoStems)}`)
@@ -3014,7 +3100,7 @@ function createAutopilotEngine({ host, ai }) {
     // key-locked stems render in time, the fire line moves to A's groove start
     // and the whole 64-bar move replaces the recipe.
     let riff = null, riffEntry = null;
-    if (!layer && !peakT && riffOn() && host.mod.riffOverRap) {
+    if ((!forced || /riff/i.test(forced.recipe)) && !layer && !peakT && riffOn() && host.mod.riffOverRap) {
       const notBefore = deckPosition(activeDeck) + 25;
       host.mod.riffOverRap.prepare(currentId, nextId, notBefore).then((r) => {
         // why no riff: console for detail, the status line for a glance
@@ -3039,7 +3125,7 @@ function createAutopilotEngine({ host, ai }) {
 
     const tick = setInterval(() => {
       if (!active) { clearInterval(tick); return; }
-      if (host.mod.djMind) fireAt = host.mod.djMind.fireAt(fireAt);
+      if (host.mod.djMind && !forced) fireAt = host.mod.djMind.fireAt(fireAt);
       const pos = deckPosition(activeDeck);
       const left = fireAt - pos;
 
@@ -3671,6 +3757,34 @@ function createAutopilotEngine({ host, ai }) {
       ? `${mp.pick ? mp.pick.label + " · " : ""}${mp.M} bars${hp ? `, hold ${hp.hold.bars} bars` : ", fixed length"}`
       : `merge refused at fire time, ran ${ran}` };
   }
-  return { core: autopilotCore, mergeNow };
+  // PLAY STEP with the set not running (macro-mode.js): the stored move now, same gates as a
+  // booking. o: {out, inn, aId, bId, forced, aT (the stored exit, already on a line), t0}
+  function performNow(o) {
+    if (active) return { ok: false, why: "autopilot: the set is running, arm the step instead" };
+    const od = host.decks[o.out], idk = host.decks[o.inn], f = o.forced || {};
+    if (!od || !idk || !od.playing) return { ok: false, why: "deck: nothing is playing" };
+    if (idk.playing) return { ok: false, why: `deck: deck ${o.inn.toUpperCase()} is already playing` };
+    const aEff = od.bpm * od._playbackRate();
+    const lk = host.mod.tempoRule.beatLock({ aEff, bBpm: idk.bpm, tempoStemsBpm: idk.tempoStems && idk.tempoStems.bpm });
+    const cs = host.mod.djMind && host.mod.djMind.core && host.mod.djMind.core.camelotScore;
+    const ka = od.analysis && od.analysis.key && od.analysis.key.camelot, kb = idk.analysis && idk.analysis.key && idk.analysis.key.camelot;
+    const stemsBoth = !!(od.stemsReady && idk.stems);
+    lastMergeGate = null;
+    // o.aT is already the stored exit (or the next line after it): no phrase push here
+    const fb = autopilotCore.forcedBooking({ forced: Object.assign({}, f, { a_time: o.aT }), nowPos: -Infinity, phraseS: 0, trackEnd: Infinity,
+      liveATime: o.aT, liveBTime: 0, beat: !!lk.ok, stemsBoth, keyScore: cs && ka && kb ? cs(ka, kb) : null,
+      mashupFits: !!(stemsBoth && mashupFits(od, idk)), mergeOn: mergesOn(), vocalRule: null,
+      planMerge: (aT, bT, prefer) => planMerge(o.aId, o.bId, od, idk, aT, bT, prefer),
+      mergeGate: () => (lastMergeGate ? `${lastMergeGate.gate}: ${lastMergeGate.why}` : null) });
+    if (fb.refused) console.warn(`macro: step ${f.n} refused: ${fb.refused} -> ${fb.recipe}`);
+    if (lk.ok) setDeckPitch(o.inn, lk.pct, lk.range);
+    // a merge plays B itself from its plan's line; every other move needs B running from the stored entry
+    if (fb.recipe !== "Stem Merge") idk.play(autopilotCore.entryClamp(fb.bT || 0, autopilotCore.audibleEnd(idk.analysis, idk.buffer.duration)), false, o.t0);
+    const totalMs = executeTransition(fb.recipe, o.out, o.inn, 16, o.t0);
+    later(Math.max(0, (o.t0 - audioCtx.currentTime) * 1000) + totalMs + 300, () => { if (!active) od.stopNow(); });
+    const ran = executedMove || fb.recipe;
+    return { ok: true, ran, refused: fb.refused, line: ran === fb.recipe ? fb.line : `${fb.line} [ran ${ran} at fire time]` };
+  }
+  return { core: autopilotCore, mergeNow, performNow };
 }
 if (typeof Engine !== "undefined") Engine.mount("autopilot", createAutopilotEngine);
