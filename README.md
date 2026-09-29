@@ -120,6 +120,8 @@ python -m app.music_brain.agent_bridge learn-status
 
 It clips every tracklist boundary, separates stems, matches each song, detects the techniques (bass swaps, stem intros, acapella overs, vocal loops and re-cuts, loop extends), has the local model review them, and merges them into `data/cache/learned_techniques.json`. Then it imports the set's songs into your library and rebuilds the pair atlas incrementally, which writes the set's macros (`studied-<set_id>-<n>` per transition, `studied-set-<set_id>` for the whole set). The JSON result reports that step under `macros`. To redo it by hand: `python -m app.music_brain.pair_atlas import-set <set_id>` then `python -m app.music_brain.pair_atlas build`.
 
+Glossary of every named concept (atlas, macros, gates, recipes, sim): [ANNEX.md](ANNEX.md).
+
 ---
 
 ## ⚡ Quick start
