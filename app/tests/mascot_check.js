@@ -103,4 +103,39 @@ for (const [n, h, b] of [[1000, 6000, 468.75], [1000, 1200, 500], [0, 0, 400], [
   near((((h - n - d) % b) + b) % b, 0);
 }
 
+// ---- vis-moment: one signal, three tiers ------------------------------------
+const vm = (detail) => ({ type: "vis-moment", detail });
+assert.deepStrictEqual(m.momentFor(vm({ at: 10, name: "filter loop", tier: "super", deck: "b" })),
+  { name: "FILTER LOOP", at: 10, deck: "b", tier: "super" });
+assert.strictEqual(m.momentFor(vm({ at: 10, name: "mid send", tier: "accent" })).tier, "accent");
+assert.strictEqual(m.momentFor(vm({ at: 10, name: "x", tier: "bogus" })).tier, "super");   // unknown -> super
+assert.strictEqual(m.momentFor(vm({ at: NaN, name: "x" })), null);
+assert.strictEqual(m.momentFor(vm({ at: 10, name: "  " })), null);
+assert.strictEqual(m.momentFor(null), null);
+// dance: until defaults to DANCE_BARS bars, capped at DANCE_MAX_S
+const dn = m.momentFor(vm({ at: 10, name: "anyma drop", tier: "dance", bar: 1.875 }));
+near(dn.until, 10 + m.DANCE_BARS * 1.875);
+assert.strictEqual(m.momentFor(vm({ at: 10, name: "d", tier: "dance", until: 1e6 })).until, 10 + m.DANCE_MAX_S);
+// legacy signals read as super
+assert.strictEqual(m.momentFor({ type: "ai-supermove", detail: { at: 3, name: "LAYER", deck: "a" } }).tier, "super");
+assert.strictEqual(m.momentFor({ type: "ai-cue", detail: { at: 3, kind: "drop", why: "a plain drop" } }), null);
+
+// accent gate: AI + VFX, never inside a takeover, at most one per ACCENT_BARS bars
+const ag = { aiActive: true, vfxOn: true, last: -Infinity, hitS: 100, barS: 2, booked: [] };
+assert.strictEqual(m.accentGate(ag), "");
+assert.strictEqual(m.accentGate({ ...ag, aiActive: false }), "AI not driving");
+assert.strictEqual(m.accentGate({ ...ag, vfxOn: false }), "VFX off");
+assert.strictEqual(m.accentGate({ ...ag, booked: [101] }), "super");
+assert.strictEqual(m.accentGate({ ...ag, last: 97 }), "rate");                // 3 s < 2 bars of 2 s
+assert.strictEqual(m.accentGate({ ...ag, last: 95.9 }), "");
+
+// dock: full stage always bottom-left; window only while dancing, beside the stage
+assert.strictEqual(m.dockPlace({ mode: "off", vw: 1000, vh: 800, size: 380 }), null);
+const full = m.dockPlace({ mode: "full", vw: 1000, vh: 800, size: 380 });
+assert.ok(full && full.x < 0 && full.y > 0 && full.s > 0 && full.s < 1, JSON.stringify(full));
+const rect = { left: 12, top: 500, right: 432, bottom: 788, width: 420, height: 288 };
+assert.strictEqual(m.dockPlace({ mode: "pip", rect, vw: 1000, vh: 800, size: 380 }), null);
+const win = m.dockPlace({ mode: "pip", rect, vw: 1000, vh: 800, size: 380, dancing: true });
+assert.ok(win && win.x + 500 > rect.right, "window dock sits right of the stage");
+
 console.log("mascot ok");

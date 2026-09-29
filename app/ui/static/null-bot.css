@@ -133,3 +133,29 @@
     animation: nul-sm-fade-in 300ms ease-out both, nul-sm-fade-out 400ms ease-in var(--sm-out) forwards;
   }
 }
+
+/* DOCK: the small NULL in front of the SHOW. mascot.js sets --sm-dx / --sm-dy / --sm-ds (dockPlace):
+   full stage always, bottom-left; window stage beside it while it dances. Same layer (880) as the
+   takeover, so above the stage (870); in browser full screen mascot.js moves #nul-super into it. */
+.nul-super { --sm-dx: 0px; --sm-dy: 0px; --sm-ds: 0.2; --nul-react: 400ms; }
+.nul-super.nul-sm-dock { visibility: visible; }
+.nul-sm-dock:not(.nul-sm-on) .nul-sm-bot {
+  transform: translate(var(--sm-dx), var(--sm-dy)) scale(var(--sm-ds));
+  filter: drop-shadow(0 0 10px color-mix(in srgb, var(--sm-glow) 60%, transparent));
+}
+.nul-sm-dock:not(.nul-sm-on) .nul-sm-cap { opacity: 0; }
+@media (prefers-reduced-motion: no-preference) {
+  /* DANCE with the Anyma figure: the takeover's beat loops, phased onto the drop's grid */
+  .nul-sm-dance:not(.nul-sm-on) .nul-head { animation: nul-sm-nod var(--sm-beat) ease-out var(--sm-phase) infinite; }
+  .nul-sm-dance:not(.nul-sm-on) .nul-phones { animation: nul-sm-bounce var(--sm-beat) ease-out var(--sm-phase) infinite; }
+  .nul-sm-dance:not(.nul-sm-on) .nul-eye { animation: nul-sm-flash var(--sm-beat) steps(1, end) var(--sm-phase) infinite; }
+  .nul-sm-dance:not(.nul-sm-on) .nul-mouth { animation: nul-sm-mouth var(--sm-beat) ease-out var(--sm-phase) infinite; }
+  .nul-sm-dance:not(.nul-sm-on) .nul-sm-halo { opacity: 0.5; animation: nul-sm-throb var(--sm-beat) ease-out var(--sm-phase) infinite; }
+  /* ACCENT: one pop in place on the move's hit (the dock NULL and the top-bar NULL) */
+  .nul-sm-react:not(.nul-sm-on) .nul-sm-pop { animation: nul-react-pop var(--nul-react) cubic-bezier(0.2, 1.6, 0.4, 1) both; }
+  .nul-mascot.nul-react svg { animation: nul-react-pop var(--nul-react) cubic-bezier(0.2, 1.6, 0.4, 1) both; }
+}
+@keyframes nul-react-pop {
+  0%   { transform: scale(1.35) rotate(-6deg); }
+  100% { transform: scale(1) rotate(0); }
+}
