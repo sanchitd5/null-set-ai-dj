@@ -225,6 +225,7 @@ class MatchRequest(BaseModel):
     track_b_id: str
     top_n: int = 3
     no_cuts: bool = False   # the autopilot: never rank Hard Cut / Quick Cut ("hard cuts are a big no")
+    punjabi_profile: str = "off"  # scene_profile mode off | on | auto; absent -> today's matching
 
 
 class PreviewRequest(BaseModel):
@@ -809,7 +810,7 @@ def get_vocal_entry(track_id: str):
 
 @app.get("/api/library/lockable")
 def get_library_lockable(bpm: float, key: str = "", exclude: str = "", limit: int = 6, max_gap: float = 0.08,
-                         genre: str = "", era: str = ""):
+                         genre: str = "", era: str = "", punjabi_profile: str = "off"):
     """Library songs whose analysed tempo locks to `bpm` (half / double time
     count) within max_gap, best key match first. The autopilot's fallback
     before it would force a tempo jump.
@@ -829,6 +830,10 @@ def get_library_lockable(bpm: float, key: str = "", exclude: str = "", limit: in
     from app.ui.track_identity import clean_identity
 
     skip = set(filter(None, exclude.split(",")))
+    # Punjabi scene profile: one scene (punjabi / bhangra / desi, bollywood near) and
+    # a wider era gate while it is active; "off" (the default) is today's filter.
+    from app.music_brain import scene_profile as _sp
+    sp_active = _sp.selection_active(punjabi_profile, genre)
     genre = str(genre or "").strip()[:80]
     era = str(era or "").strip()[:40]
     out = []
@@ -840,12 +845,17 @@ def get_library_lockable(bpm: float, key: str = "", exclude: str = "", limit: in
             continue
         lib_key = _genre_key(clean_identity(name)[1])
         lib_genre = _suggested_genres.get(lib_key, "")
-        if genre and genre_near(genre, lib_genre) is not True:
+        if genre and (_sp.scene_near(genre, lib_genre, True) if sp_active
+                      else genre_near(genre, lib_genre)) is not True:
             continue
         lib_era = _suggested_eras.get(lib_key, "")
-        egap = era_gap(era, lib_era)
-        if egap is not None and egap > MAX_ERA_GAP:
-            continue
+        if sp_active:
+            if _sp.era_jump(era, lib_era, True):
+                continue
+        else:
+            egap = era_gap(era, lib_era)
+            if egap is not None and egap > MAX_ERA_GAP:
+                continue
         try:
             a = analyze_track(path)
         except Exception:
@@ -1534,8 +1544,12 @@ def post_match(req: MatchRequest):
             track = dataclasses.replace(track, vocal_active_regions=[tuple(r) for r in regions])
         tracks.append(track)
     track_a, track_b = tracks
+    vibe_kw = _pair_vibe(req.track_a_id, req.track_b_id)
+    # Punjabi scene profile level for this pair (scene_profile.level); "off" -> None
+    from app.music_brain import scene_profile as _sp
+    profile = _sp.level(req.punjabi_profile, vibe_kw.get("genre_a"), vibe_kw.get("genre_b"))
     candidates = _matcher.match(
-        track_a, track_b, top_n=req.top_n, no_cuts=req.no_cuts, **_pair_vibe(req.track_a_id, req.track_b_id),
+        track_a, track_b, top_n=req.top_n, no_cuts=req.no_cuts, profile=profile, **vibe_kw,
     )
     # Measured vibe continuity (loudness / brightness / onset density / energy).
     # Best-effort: a vibe failure must never break matching.
@@ -1929,6 +1943,9 @@ class AutopilotSuggestRequest(BaseModel):
     history: list[str] = []
     set_position: Optional[float] = None  # 0.0=start, 1.0=end; computed from history if omitted
     set_mode: str = "hybrid"  # long | quick | hybrid
+    # Punjabi scene profile (app/music_brain/scene_profile.py): off | on | auto.
+    # Absent -> "off" so older clients get today's behaviour.
+    punjabi_profile: str = "off"
     # Relaxed session (autopilot.js RELAXED_OCCASION): picks never lift the energy.
     relaxed: bool = False
     # "dip": the set has sat near its loudness peak for a while, so ask for a
@@ -2244,6 +2261,7 @@ def _autopilot_suggest_impl(req: AutopilotSuggestRequest):
             lead_step=max(0, min(req.lead_step, 12)),
             lead_steps=max(0, min(req.lead_steps, 12)),
             lead_bpm=req.lead_bpm,
+            punjabi_profile=req.punjabi_profile,
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"LLM suggest error: {exc}") from exc

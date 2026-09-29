@@ -1,0 +1,11 @@
+{
+ "about": "Punjabi scene profile off == before the profile. Hashes of app/tests/profile_off_vectors.{py,js} run on main at 92e327f (before the profile). Python: sha256(json.dumps(v, sort_keys=True)). JS: sha256 of key-sorted JSON.stringify.",
+ "python": {
+  "match": {"n": 144, "sha256": "dfbd10bca37de358ce411b43de734c639669fa34ede7ea5e5756a26f677261bb"},
+  "suggest": {"n": 4, "sha256": "3ea7600dc14188e1a69934b029b7ee02932a4f239265ade50337a276f8c7567b"}
+ },
+ "js": {
+  "decide": {"n": 6720, "sha256": "ce43088c94a1fdbe8c350609e829a041d4f45b8c32fd42813ea50e76d49b9914"},
+  "window": {"n": 216, "sha256": "f101459d2dd14af7cf69787face099024f3fd00a26f06b7ea47a257d2f6610c9"}
+ }
+}
