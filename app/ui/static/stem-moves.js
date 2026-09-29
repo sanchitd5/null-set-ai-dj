@@ -672,7 +672,114 @@
     const au = masterAudibility(Object.assign({ events: plan.events, fader, dir: 1, span, eOut: e.aOut, eIn: e.aIn, minRun }, extra));
     return au.ok ? lv : au;
   }
-  const core = { gates, keepsVibe, breakdownVocalOk, introAudible, introGate, INTRO_MAX_UNDER_DB, mergeCombos, mergeRank, mergeLabel, mergeTransitionPlan, mergeWithEar, keepOneStem, hookDropEvents, hookDropDue, HOOK_OTHER, BREAKDOWN, breakdownFits, handoffFits, vocalShare, stemBlendPlan, STEM_BLEND_KINDS, remixEvents, remixPick, stemBridgePlan, mashupTransitionPlan,
+  // ---- MERGE -> HOLD -> TRANSITION (user: "when transitioning it should try to do the
+  // merge of two tracks, hold, and then transition"; "best transition is when tracks
+  // merge and play"). The Stem Merge plan (mergeTransitionPlan) IS the three phases;
+  // what this adds is the HOLD length: whole 8-bar phrases picked from the two tracks'
+  // measured stems and voices instead of a fixed 16 / 32. Bars count from B's entry:
+  //   merge_start  0..2      B's stems layered in, fader to the centre (mergeFader)
+  //   hold         2..M      both records playing together, tempo locked, key >= 0.8
+  //   handover     M..M+8    kick + bass change hands on the line, A's tones fade, B full
+  const HOLD_PHRASE_BARS = 8, HOLD_MAX_PHRASES = 6, HANDOVER_BARS = 8, MERGE_START_BARS = 2;
+  const HOLD_ROOM_BARS = 2, HOLD_TEMPO_CAP = 0.08, HOLD_KEY_MIN = 0.8, SUB_OVERLAP_MAX_BARS = 0.3;
+  // vocal regions [[s, e]] in song seconds -> bars from t0 (barSong = song seconds per bar)
+  function regionsToBars(regions, t0, barSong) {
+    return (regions || []).map(([s, e]) => [(s - t0) / barSong, (e - t0) / barSong]);
+  }
+  // bars where both region lists sing inside [from, to] (each list non-overlapping)
+  function overlapBars(x, y, from, to) {
+    let sum = 0;
+    for (const [a0, a1] of x || []) {
+      const s = Math.max(a0, from), e = Math.min(a1, to);
+      if (e <= s) continue;
+      for (const [b0, b1] of y || []) sum += Math.max(0, Math.min(e, b1) - Math.max(s, b0));
+    }
+    return sum;
+  }
+  const meanArr = (e, a, b) => {
+    const m = {};
+    for (const n of STEMS) { const v = (e[n] || []).slice(a, b); m[n] = v.reduce((x, y) => x + y, 0) / (v.length || 1); }
+    return m;
+  };
+  // First phrase of a hold of k phrases in which a stem the combo needs stops playing
+  // (a break, a drop-out): {phrase, stem, deck} or null when all k phrases stay clean.
+  function holdUnclean(combo, eA, eB, k, floor = INTRO_MIN_RMS) {
+    for (let p = 0; p < k; p++) {
+      for (const n of STEMS) {
+        const src = combo[n] === "a" ? eA : eB;
+        const v = (src[n] || []).slice(p * HOLD_PHRASE_BARS, (p + 1) * HOLD_PHRASE_BARS);
+        if ((v.reduce((x, y) => x + y, 0) / (v.length || 1)) < floor) return { phrase: p, stem: n, deck: combo[n] };
+      }
+    }
+    return null;
+  }
+  // Sub-bass owners over all three phases of a merge plan: the bars in which BOTH decks
+  // play their bass at an audible level (stem gain x equal-power fader). One-sample
+  // swap edges (<= SUB_OVERLAP_MAX_BARS) are the line itself. -> {ok, overlapBars, none}
+  function subOwnerCheck(plan, M, step = 1 / 16) {
+    const fader = mergeFader(M);
+    let both = 0, none = 0;
+    for (let t = 0; t <= plan.total + 1e-9; t += step) {
+      const x = (faderAt(fader, 1, t) + 1) / 2;
+      const fo = Math.cos((x * Math.PI) / 2), fi = Math.sin((x * Math.PI) / 2);
+      const a = fo * gainsAt(plan.events, "out", t).bass, b = t >= 0 ? fi * gainsAt(plan.events, "in", t).bass : 0;
+      if (a >= AUDIBLE_GAIN && b >= AUDIBLE_GAIN) both += step;
+      if (a < AUDIBLE_GAIN && b < AUDIBLE_GAIN) none += step;
+    }
+    return { ok: both <= SUB_OVERLAP_MAX_BARS, overlapBars: Math.round(both * 100) / 100, none: Math.round(none * 100) / 100 };
+  }
+  // Plan the merged stretch. o: {gap (tempo gap fraction after half/double), keyScore (null
+  // unknown), roomBars (A's bars left from the merge start), eA, eB (per-bar stem RMS,
+  // stemEnergyBars, >= the longest hold + 9 bars), aVox, bVox (vocal regions, song s),
+  // aT, bT (song times at the merge start), barA, barB (song s per bar), bRap, barS
+  // (real s per bar, for the seconds), aud {aA, aB} (audible band, optional)}
+  // -> {ok, gate, reason} refused (gate: tempo | key | room | stems | no_combo | unclean |
+  //     sub_owner | level | vocal_clash), else {ok, M, holdBars, holdPhrases, pick, ranked,
+  //     phases, tried} with the three phases and their measured params.
+  function holdPlan(o) {
+    const no = (gate, reason, tried) => ({ ok: false, gate, reason, tried: tried || [] });
+    if (o.gap != null && o.gap > HOLD_TEMPO_CAP) return no("tempo", `tempo gap ${(o.gap * 100).toFixed(1)} % over the ${HOLD_TEMPO_CAP * 100} % cap`);
+    if (o.keyScore != null && o.keyScore < HOLD_KEY_MIN) return no("key", `camelot ${o.keyScore} < ${HOLD_KEY_MIN}`);
+    if (!o.eA || !o.eB) return no("stems", "stem energy unmeasured");
+    const kMax = Math.min(HOLD_MAX_PHRASES, Math.floor((o.roomBars - HANDOVER_BARS - HOLD_ROOM_BARS) / HOLD_PHRASE_BARS));
+    if (kMax < 1) return no("room", `${Math.round(o.roomBars)} bars left, need ${HOLD_PHRASE_BARS + HANDOVER_BARS + HOLD_ROOM_BARS}`);
+    const aBars = regionsToBars(o.aVox, o.aT, o.barA), bBars = regionsToBars(o.bVox, o.bT, o.barB);
+    const cands = [], tried = [];
+    for (let k = 1; k <= kMax; k++) {
+      const M = k * HOLD_PHRASE_BARS;
+      const ranked = mergeRank({ eA: meanArr(o.eA, 0, M), eB: meanArr(o.eB, 0, M), keyScore: o.keyScore, bRap: o.bRap });
+      if (!ranked.length) { tried.push({ M, gate: "no_combo" }); continue; }
+      const pick = ranked[0], bad = holdUnclean(pick.combo, o.eA, o.eB, k);
+      if (bad) { tried.push({ M, gate: "unclean", stem: bad.stem, phrase: bad.phrase }); continue; }
+      const plan = mergeTransitionPlan(M, pick.combo, false);
+      const sub = subOwnerCheck(plan, M);
+      if (!sub.ok) { tried.push({ M, gate: "sub_owner", overlap: sub.overlapBars }); continue; }
+      const lv = o.aud ? gates(plan, mergeFader(M), plan.total, { eOut: o.eA, eIn: o.eB, aOut: o.aud.aA, aIn: o.aud.aB }, o.minRun || 1)
+                       : levelCheck({ events: plan.events, fader: mergeFader(M), dir: 1, span: plan.total, eOut: o.eA, eIn: o.eB });
+      if (!lv.ok) { tried.push({ M, gate: "level", reason: lv.reason }); continue; }
+      // both voices singing through the handover is the clash the plan can only hide
+      const ov = overlapBars(aBars, bBars, M, M + HANDOVER_BARS) / HANDOVER_BARS;
+      if (ov > 0.5) { tried.push({ M, gate: "vocal_clash", overlap: Math.round(ov * 100) / 100 }); continue; }
+      // longer holds win up to 4 phrases (diminishing after), a handover in a vocal gap wins ties
+      const score = 10 * Math.min(k, 4) - 30 * ov + 0.1 * pick.score + (ov === 0 ? 5 : 0);
+      cands.push({ k, M, pick, ranked, ov, sub, score: Math.round(score * 10) / 10 });
+    }
+    if (!cands.length) {
+      const last = tried[tried.length - 1] || {};
+      return no(last.gate || "no_combo", `no clean hold: ${tried.map((t) => `${t.M} bars ${t.gate}${t.stem ? ` (${t.stem})` : ""}`).join("; ")}`, tried);
+    }
+    cands.sort((x, y) => y.score - x.score || y.M - x.M);
+    const b = cands[0], barS = o.barS || 0;
+    return {
+      ok: true, M: b.M, holdBars: b.M - MERGE_START_BARS, holdPhrases: b.k, pick: b.pick, ranked: b.ranked, tried,
+      phases: {
+        merge_start: { at_bar: 0, bars: MERGE_START_BARS, combo: b.pick.label },
+        hold: { from_bar: MERGE_START_BARS, to_bar: b.M, bars: b.M - MERGE_START_BARS, phrases: b.k, seconds: Math.round((b.M - MERGE_START_BARS) * barS * 10) / 10 },
+        handover: { at_bar: b.M, bars: HANDOVER_BARS, vocal_overlap: Math.round(b.ov * 100) / 100, sub_overlap_bars: b.sub.overlapBars },
+      },
+    };
+  }
+  const core = { holdPlan, subOwnerCheck, holdUnclean, overlapBars, regionsToBars, HOLD_PHRASE_BARS, HOLD_MAX_PHRASES, HANDOVER_BARS, MERGE_START_BARS, HOLD_TEMPO_CAP, HOLD_KEY_MIN, gates, keepsVibe, breakdownVocalOk, introAudible, introGate, INTRO_MAX_UNDER_DB, mergeCombos, mergeRank, mergeLabel, mergeTransitionPlan, mergeWithEar, keepOneStem, hookDropEvents, hookDropDue, HOOK_OTHER, BREAKDOWN, breakdownFits, handoffFits, vocalShare, stemBlendPlan, STEM_BLEND_KINDS, remixEvents, remixPick, stemBridgePlan, mashupTransitionPlan,
                  pickIntro, introBars, INTRO_LEVEL, levelCheck, gainsAt, faderAt, fitStemBlend, breakdownEvents,
                  masterAudibility, audibleRms, mergeFader, rawFader, deckFaderGains, mergeBooking, onTime, AUDIBLE_HZ, SILENCE_DB,
                  LEVEL_FLOOR_DB, AUDIBLE_GAIN, FADER_PARK_BARS, TYPICAL_SHARE, DIP_ALLOWED };
