@@ -276,6 +276,7 @@
       if (dance && !dancing) { dance = null; sup.classList.remove("nul-sm-dance"); }
       // idle (no dance, no full SHOW): nothing to place, and no layout read every 150 ms
       if (!dancing && mode !== "full") {
+        dock = null;
         if (dockKey !== "") { dockKey = ""; sup.classList.remove("nul-sm-dock"); }
         return;
       }
