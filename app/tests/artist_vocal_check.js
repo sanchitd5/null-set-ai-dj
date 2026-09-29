@@ -86,6 +86,20 @@ const onGrid = (t, t0 = LINE, step = BEAT) => Math.abs((t - t0) / step - Math.ro
   void e;
 }
 
+// ---- the variant chooser: two synthetic pairs pick different variants ---------------------------------------
+{
+  const fits = { drums: () => ({ ok: true, M: 16, why: "energetic drums" }), loop: () => ({ ok: true, M: 8, why: "4-bar loop x2" }) };
+  const clash = sm.mashupVariant(Object.assign({ keyOk: false, rap: false, M: 16 }, fits));
+  const noRoom = sm.mashupVariant(Object.assign({ keyOk: true, rap: false, M: 0 }, fits));
+  const full = sm.mashupVariant(Object.assign({ keyOk: true, rap: false, M: 16 }, fits));
+  assert.strictEqual(clash.name, "drums_host", "clashing keys + waiver: drums host");
+  assert.strictEqual(noRoom.name, "filter_loop", "no room in A: filter loop");
+  assert.strictEqual(full.name, "mashup", "keys agree + room: the full mashup");
+  assert.strictEqual(sm.mashupVariant(Object.assign({}, fits, { keyOk: false, rap: false, M: 16, drums: () => ({ ok: false, why: "drums_waiver: refused: x" }) })).name, null, "waiver refused: no mashup");
+  let called = false;
+  sm.mashupVariant({ keyOk: true, M: 16, drums: () => { called = true; }, loop: () => { called = true; } });
+  assert(!called, "the fits are measured only when their case applies");
+}
 // ---- S7: vocal line swap -------------------------------------------------------------------------------------
 function mkEnv(t0, t1, hop, segs) {
   const n = Math.round((t1 - t0) / hop), v = new Array(n).fill(0.0005);

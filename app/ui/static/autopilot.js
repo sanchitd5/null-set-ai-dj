@@ -939,6 +939,7 @@ function createAutopilotEngine({ host, ai }) {
   // (null at booking). Artist variants (stem-moves.js, batch B): a sung vocal over clashing keys may still ride
   // A's drums alone (S9 drums host, owner's drumsOnlyKeyWaiver); no room left in A for the full mashup: a
   // filtered loop of A's last vocal-free bars under B's vocal (S1 filter loop).
+  let lastVariantTag = "";   // the variant line is logged when it changes, not on every poll
   function mashupFits(od, idk, t0) {
     const ve = idk._vocalEntry;
     if (!od.stemsReady || !idk.stems || !ve || ve.entry == null || !od.bpm || !idk.bpm) return null;
@@ -953,14 +954,15 @@ function createAutopilotEngine({ host, ai }) {
     const aLeft = od.buffer ? (od.buffer.duration - od._currentPosition()) / od._playbackRate() : 0;
     const M = ve.vocal32 >= 0.7 && aLeft >= 44 * barS ? 32 : aLeft >= 26 * barS && ve.vocal16 >= 0.5 ? 16 : 0;
     const sm = host.mod.stemMoves, pA = Number.isFinite(t0) && od._positionAt ? od._positionAt(t0) : null;
-    if (!keyOk && !ve.rap) {                                           // a sung vocal over clashing chords: only over A's drums alone
-      const dh = M && sm && sm.drumsHostFits ? sm.drumsHostFits(od, idk, M, pA) : null;
-      return dh && dh.ok ? { entry: ve.entry, M, variant: dh, why: dh.why } : null;
-    }
-    if (!M) {
-      const fl = sm && sm.filterLoopFits ? sm.filterLoopFits(od, idk, ve, MASHUP_VOX, pA) : null;
-      return fl && fl.ok ? { entry: ve.entry, M: fl.M, variant: fl, why: fl.why } : null;
-    }
+    const choose = sm && sm.core && sm.core.mashupVariant;
+    const v = choose ? choose({ keyOk, rap: !!ve.rap, M,
+      drums: () => (sm.drumsHostFits ? sm.drumsHostFits(od, idk, M, pA) : null),
+      loop: () => (sm.filterLoopFits ? sm.filterLoopFits(od, idk, ve, MASHUP_VOX, pA) : null) })
+      : { name: keyOk || ve.rap ? (M ? "mashup" : null) : null, why: "no variant chooser" };
+    const tag = `variant: ${v.name || "none"} for ${od.id.toUpperCase()} -> ${idk.id.toUpperCase()}: ${v.why}`;
+    if (tag !== lastVariantTag) { lastVariantTag = tag; console.info(tag); }
+    if (!v.name) return null;
+    if (v.name !== "mashup") return { entry: ve.entry, M: v.fit.M, variant: v.fit, why: v.fit.why };
     return { entry: ve.entry, M, why: `${M}-bar mashup: B's ${ve.rap ? "rap" : "vocal"} over A's instrumental${gap > 0.02 ? `, B key-locked ${(gap * 100).toFixed(0)} %` : ""}, then B's beat on the line` };
   }
 

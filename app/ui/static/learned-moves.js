@@ -632,6 +632,7 @@
       r.used.push(plan.kind); r.count++; r.lastAtBar = c.atBar;
       const why = `${plan.why}${plan.fallbacks.length ? ` (constants: ${plan.fallbacks.join(", ")})` : ""}`;
       console.info(`artist move ${plan.kind}: ${why}`);
+      console.info(`variant: artist ${plan.kind} for ${d.id.toUpperCase()} -> ${other(d.id).toUpperCase()}: ${plan.kind === "vocal_swap" ? "a B line fits an A line within half a beat" : "a build section with a sung fragment"}`);
       host.log.step("artist_move", { deck: d.id, decision: `artist_move: ${plan.kind}`, why, result: { params: plan.params, fallbacks: plan.fallbacks, t0: run.at, t1: run.until } });
       say(d, `ARTIST MOVE · ${ARTIST_LABEL[plan.kind]}`, why, { move: plan.kind, artist: true, params: plan.params, fallbacks: plan.fallbacks, t0: run.at, t1: run.until,
         beats: plan.beats, cap_beats: plan.cap_beats, grid_err_s: +plan.grid_err_s.toFixed(4) });
@@ -713,6 +714,7 @@
       r.used.push(plan.kind); r.count++; r.lastAtBar = atBar; r.variant++;
       const why = `${plan.why}${plan.fallbacks.length ? ` (constants: ${plan.fallbacks.join(", ")})` : ""}`;
       console.info(`learned move ${plan.kind}: ${why}`);
+      console.info(`variant: learned ${plan.kind} for ${d.id.toUpperCase()} -> ${other(d.id).toUpperCase()}: no artist move fits this phrase, the learned sighting does`);
       say(d, `LEARNED MOVE · ${LABEL[plan.kind]}`, why, { move: plan.kind, params: plan.params, fallbacks: plan.fallbacks, t0: run.at, t1: run.until,
         beats: plan.beats, cap_beats: plan.cap_beats, grid_err_s: +plan.grid_err_s.toFixed(4), seen: store[plan.kind].seen });
       return { kind: plan.kind, why, busyS: Math.max(0, ((plan.end + (plan.kind === "loop_extend" ? plan.beats * beat : 0)) - o.pos) / rate) };

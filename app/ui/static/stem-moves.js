@@ -535,6 +535,22 @@
     }
     return { events: ev.sort((a, b) => a.bar - b.bar), total: M + 8, kind: "drums_host" };
   }
+  // Which mashup variant a pair gets, from its measured facts (owner: "two variants exist, used depending on
+  // song pair"). f: {keyOk, rap, M (full-mashup bars that fit A, 0: no room), drums: () => drumsHostFits result,
+  // loop: () => filterLoopFits result}; the fits are called only when their case applies.
+  // -> {name: "mashup" | "drums_host" | "filter_loop" | null, why, fit}
+  function mashupVariant(f) {
+    if (!f.keyOk && !f.rap) {
+      if (!f.M) return { name: null, why: "keys clash and no room for a drums-host mashup" };
+      const dh = f.drums();
+      return dh && dh.ok ? { name: "drums_host", why: `keys clash, drums waiver granted: ${dh.why}`, fit: dh }
+        : { name: null, why: `keys clash, drums waiver refused: ${(dh && dh.why) || "unmeasured"}` };
+    }
+    if (f.M) return { name: "mashup", why: `keys agree${f.rap ? " (or B raps)" : ""}, ${f.M} bars of room in A` };
+    const fl = f.loop();
+    return fl && fl.ok ? { name: "filter_loop", why: `no room for the full mashup in A: ${fl.why}`, fit: fl }
+      : { name: null, why: `no room for the full mashup, filter loop refused: ${(fl && (fl.reason || fl.why)) || "unmeasured"}` };
+  }
   // S1 plan. c: {pA (A's song time at bar 0, a bar line), barA (A song s per bar), rate (A's playback rate),
   //   bpmEff (A's heard BPM), before: A's per-stem RMS per bar over the 4 bars before pA ({drums, bass, vocals,
   //   other}: arrays, oldest first) | null, aLeftBars (A song bars after pA), centroidHz (A's mix over the loop,
@@ -923,7 +939,7 @@
                  pickIntro, introBars, INTRO_LEVEL, levelCheck, gainsAt, faderAt, fitStemBlend, breakdownEvents,
                  masterAudibility, audibleRms, mergeFader, rawFader, deckFaderGains, mergeBooking, onTime, AUDIBLE_HZ, SILENCE_DB,
                  LEVEL_FLOOR_DB, AUDIBLE_GAIN, FADER_PARK_BARS, TYPICAL_SHARE, DIP_ALLOWED,
-                 drumsBars, activeThr, drumsWaiver, drumsHostPlan, filterLoopPlan, ARTIST_SLICE_MAX_S };
+                 drumsBars, activeThr, drumsWaiver, drumsHostPlan, filterLoopPlan, mashupVariant, ARTIST_SLICE_MAX_S };
    if (typeof module !== "undefined" && module.exports) module.exports = core;
 
   // ---- runtime: reaches the world only through the Host port (engine.js) -------------------------------
