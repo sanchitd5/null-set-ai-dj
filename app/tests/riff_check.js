@@ -19,6 +19,17 @@ for (const m of [16, 32]) {
   // second half of the mashup: rap x1.5, still rap only
   const lift = events.find((e) => e.bar === 24 + m / 2);
   assert.ok(Math.abs(lift.bRamp.stems.vocals - 0.6) < 1e-9); assert.strictEqual(lift.bRamp.stems.drums, 0);
+  { // measured rap lines: the hold on loops the given bar for 4 bars, A drops out where the server said
+    const holds = Array.from({ length: m / 16 }, (_, k) => 24 + 16 * k + 9);
+    const t2 = schedule({ gains: { a_gain: 1, b_vocals: 0.4 }, timeline: { ...TL(m), holds, dropout: m >= 32 ? 24 + 27 : undefined } }).events;
+    const hs = t2.filter((e) => e.bHold);
+    hs.forEach((h, k) => { assert.strictEqual(h.bHold.fromBar, holds[k]); assert.strictEqual(h.bar, holds[k] + 1); assert.strictEqual(h.bHold.untilBar, holds[k] + 5); });
+    if (m >= 32) {
+      assert.ok(Object.values(t2.find((e) => e.bar === 51).aGain).every((v) => v === 0));
+      assert.ok(Object.values(t2.find((e) => e.bar === 52.75).aGain).every((v) => v === 1));
+      assert.ok(!t2.some((e) => e.bar === 24 + m - 2 && e.aGain));      // not at the old fixed spot
+    }
+  }
   { // the lift is the measured one when the plan carries it (server: rap_lift), x1.5 otherwise
     const measured = schedule({ gains: { a_gain: 1, b_vocals: 0.3, rap_lift: 2 }, timeline: TL(m) }).events.find((e) => e.bar === 24 + m / 2);
     assert.ok(Math.abs(measured.bRamp.stems.vocals - 0.6) < 1e-9);

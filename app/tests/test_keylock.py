@@ -133,6 +133,38 @@ def test_balance_without_a_voice_band_measurement_keeps_the_old_constants():
     assert g["rap_lift"] == pytest.approx(1.5, abs=0.05)
 
 
+def test_rap_moves_are_placed_on_each_raps_own_lines():
+    from app.music_brain import waveform_params as wp
+    import numpy as np
+
+    def rap(gaps, seed=0):
+        rng = np.random.RandomState(seed)
+        n = 11025 * 80
+        spec = np.fft.rfft(rng.standard_normal(n))
+        f = np.fft.rfftfreq(n, 1 / 11025)
+        spec[(f < 300) | (f > 3400)] = 0
+        y = np.fft.irfft(spec, n).astype(np.float32)
+        y *= 0.1 / np.sqrt(np.mean(y ** 2))
+        for a, b in gaps:
+            y[int(a * 11025):int(b * 11025)] = 0
+        return wp.measure(y, 11025)
+
+    tl = keylock.timeline(32)
+    bar = 2.0
+    a, srcs_a = keylock.measured_lines(tl, rap([(16.0, 20.0), (48.0, 50.0)]), 0.0, bar)   # breathes in bars 8-9 and 24
+    b, srcs_b = keylock.measured_lines(tl, rap([(20.0, 24.0), (52.0, 56.0)]), 0.0, bar)   # breathes in bars 10-11 and 26-27
+    assert srcs_a == srcs_b == {"hold_on_bar": "measured", "dropout_bar": "measured"}
+    rel = lambda t: [h - 24 for h in t["holds"]]                                          # noqa: E731  (bars from the mashup line)
+    assert rel(a)[0] in (10, 11) and rel(a)[1] in (25, 26, 27)         # never a bar with a breath in it
+    assert rel(b)[0] in (8, 9) and rel(b)[1] in (24, 25)
+    assert a["holds"] != b["holds"]
+    assert a["dropout"] - 24 >= 25                                     # A's rap breathes at bar 24: the 2-bar drop out is elsewhere
+    assert 24 <= b["dropout"] - 24 <= 30 and (b["dropout"] - 24) not in (25, 26, 27)
+    fixed, fsrc = keylock.measured_lines(tl, None, 0.0, bar)
+    assert fixed["holds"] == [24 + 11, 24 + 16 + 11] and fixed["dropout"] == tl["blend"] - 2
+    assert set(fsrc.values()) == {"fallback"}
+
+
 def test_balance_never_lifts_a_past_its_peak_headroom():
     g = keylock.balance({"a_mix_db": -22.0, "a_riff_db": -26.0, "a_peak_db": -5.0},
                         {"b_mix_db": -10.0, "b_vocals_db": -20.0, "b_bass_db": -19.0})

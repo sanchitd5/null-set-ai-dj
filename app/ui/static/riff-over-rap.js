@@ -28,6 +28,7 @@
     // the lift comes from this riff's measured spectrum (server: waveform_params.rap_offsets); x1.5 only when unmeasured
     const lift = gb.rap_lift > 1 ? gb.rap_lift : RAP_LIFT;
     const half = tl.swap - tl.blend, rest = tl.end - tl.swap;
+    const dropAt = Number.isFinite(tl.dropout) ? tl.dropout : tl.blend - 2;
     return {
       events: [
         { bar: 0, a: "groove", aGain: { drums: 1, bass: 1, vocals: 1, other: 1 },
@@ -43,13 +44,16 @@
         // "hold on" at the end of each 16 bars: the rap's last bar looped over 4
         ...Array.from({ length: Math.floor(tl.mashup_bars / 16) }, (_, k) => {
           const s0 = tl.mashup + 16 * k;
-          return { bar: s0 + 12, bHold: { stem: "vocals", fromBar: s0 + 11, bars: 1, untilBar: s0 + 16 },
-                   why: "HOLD ON: the rap's last bar looped for 4 bars over the riff" };
+          // the bar the server measured as full of rap and loudest (no breath to loop); else the segment's last bar
+          const src = tl.holds && Number.isFinite(tl.holds[k]) ? tl.holds[k] : s0 + 11;
+          return { bar: src + 1, bHold: { stem: "vocals", fromBar: src, bars: 1, untilBar: src + 5 },
+                   why: tl.holds && Number.isFinite(tl.holds[k]) ? "HOLD ON: the rap's fullest bar looped for 4 bars over the riff"
+                     : "HOLD ON: the rap's last bar looped for 4 bars over the riff" };
         }),
-        // a 32-bar mashup's last 2 bars: A drops out under the held rap, slams back on the line
+        // a 32-bar mashup's tail: A drops out under the rap for 2 bars (where the rap is most continuous), slams back
         ...(tl.mashup_bars >= 32 ? [
-          { bar: tl.blend - 2, aGain: { drums: 0, bass: 0, vocals: 0, other: 0 }, why: "A drops out: the rap alone for 2 bars" },
-          { bar: tl.blend - 0.25, aGain: { drums: 1, bass: 1, vocals: 1, other: 1 }, why: "A slams back on the line" },
+          { bar: dropAt, aGain: { drums: 0, bass: 0, vocals: 0, other: 0 }, why: "A drops out: the rap alone for 2 bars" },
+          { bar: dropAt + 1.75, aGain: { drums: 1, bass: 1, vocals: 1, other: 1 }, why: "A slams back on the line" },
         ] : []),
         { bar: tl.blend, aRamp: { drums: 0, bars: half }, aRampOther: { other: 0, bars: half + rest },
           bRamp: { stems: { drums: 1, bass: 0, vocals: 1, other: 0.6 }, bars: half },

@@ -50,6 +50,27 @@ def timeline(mashup_bars: int = MASHUP_BARS_SHORT) -> dict:
             "mashup_bars": mashup_bars}
 
 
+def measured_lines(tl: dict, rap_profile: Optional[dict], line_start_s: float, bar_s: float) -> Tuple[dict, Dict[str, str]]:
+    """The timeline with the rap moves placed from the rap's own vocal stem: `holds` (per 16-bar segment, the
+    bar the "hold on" loops) and `dropout` (32-bar mashups: where A drops out under the rap). Bars are counted
+    on the timeline; line_start_s is B's song time at the mashup line. Unmeasured keeps the fixed bars."""
+    out, src = dict(tl), {}
+    m0, n = tl["mashup"], tl["mashup_bars"]
+    holds, hold_src = [], wp.MEASURED
+    for k in range(n // 16):
+        rel, s = wp.pick_hold_bar(rap_profile, line_start_s, bar_s, 16 * k + 8, 16 * k + 11)
+        holds.append(m0 + rel if rel is not None else m0 + 16 * k + 11)
+        if rel is None:
+            hold_src = wp.FALLBACK
+    out["holds"] = holds
+    src["hold_on_bar"] = hold_src
+    if n >= 32:
+        rel, s = wp.pick_dropout_bar(rap_profile, line_start_s, bar_s, n - 8, n - 2)
+        out["dropout"] = m0 + rel if rel is not None else tl["blend"] - 2
+        src["dropout_bar"] = s
+    return out, src
+
+
 TIMELINE = timeline()
 # B enters AT its rap, on the drop (user: before VLF's 1:24 rap its backing adds nothing).
 # The set's bass-intro handover (66:48) is dropped: A owns the bass until the drop line.
