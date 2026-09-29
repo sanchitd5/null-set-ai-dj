@@ -316,6 +316,10 @@
     <button class="hw-btn ai-action" data-ai-action="vocal_throw" data-group="ARTIST FX" title="S5 now: throw the last word of the next vocal line into an echo, the voice back after the tail (needs stems)">VOX THROW</button>
     <button class="hw-btn ai-action" data-ai-action="sweep_dir" data-group="ARTIST FX" title="S6 now: a 4-bar filter sweep in the measured direction, back over one bar">SWEEP DIR</button>
     <button class="hw-btn ai-action" data-ai-action="supermove_replay" data-group="ARTIST FX" title="Replay this song's last NULL-BOT supermove: brake on the next phrase line, back to its downbeat (only after a supermove)">REWIND REPLAY</button>
+    <button class="hw-btn" data-ai-action="filter_loop" data-group="ARTIST VOCAL" title="Filter loop into the other deck now (S1): this song's last vocal-free bars loop under a filter sweep and echo, the other song's vocal rides it, its beat drops on the line">FILTER LOOP</button>
+    <button class="hw-btn" data-ai-action="drums_host" data-group="ARTIST VOCAL" title="Drums host now (S9): this song strips to its drums, the other song's vocal rides them, its beat drops on the line (clashing keys only with the drums key waiver)">DRUMS HOST</button>
+    <button class="hw-btn" data-ai-action="vocal_swap" data-group="ARTIST VOCAL" title="Line swap now (S7): the next sung line of this song muted, a line of the same length from the other deck's vocal in its place">LINE SWAP</button>
+    <button class="hw-btn" data-ai-action="acapella_build" data-group="ARTIST VOCAL" title="Acapella build now (S8): a vocal fragment of this song looped up to the next phrase line (a build section)">ACAPELLA BUILD</button>
     <button class="hw-btn" id="ai-more-btn" type="button" title="Every other on-demand move: grouped, searchable">MORE ACTIONS ▾</button>
     <aside id="ai-more-drawer" hidden></aside>
   </div>
@@ -889,6 +893,10 @@
       <label class="hud-label" data-group="ARTIST FX" title="S5 Serato stem FX, sourced (the Guetta link is a guess): the last word of A's vocal thrown into an echo as the vocal stem mutes"><input type="checkbox" id="ap-fx-vocal_throw" checked /> VOX THROW</label>
       <label class="hud-label" data-group="ARTIST FX" title="S6 melodic techno guide: the outgoing filter sweep goes low-pass or high-pass from B's first-bars brightness"><input type="checkbox" id="ap-fx-sweep_dir" checked /> SWEEP DIR</label>
       <label class="hud-label" data-group="ARTIST FX" title="Owner decision: after a big NULL-BOT supermove, brake on the phrase line and play the supermove again (once per song, rare). The only rewind the AI may play"><input type="checkbox" id="ap-fx-supermove_replay" checked /> REWIND REPLAY</label>
+      <label class="hud-label" data-group="ARTIST VOCAL" title="Artist move S1 (Guetta on Morillo, sourced): when the full mashup has no room, A's last vocal-free bars loop under a filter sweep and a short echo, the next song's vocal rides the loop, its beat drops on the line"><input type="checkbox" id="ap-artist-filter_loop" checked /> FILTER LOOP</label>
+      <label class="hud-label" data-group="ARTIST VOCAL" title="Artist move S9, option drumsOnlyKeyWaiver (Dom Dolla edits, sourced; Four Tet / Anyma mechanics are guesses): on clashing keys a sung vocal may still ride A's drums alone, when A's drums are measured energetic and nothing pitched from A plays under it"><input type="checkbox" id="ap-artist-drumsOnlyKeyWaiver" checked /> DRUMS KEY-FREE</label>
+      <label class="hud-label" data-group="ARTIST VOCAL" title="Artist move S7 (Angello, sourced): one sung line of this song muted and a line of the same length from the next song's vocal played in the hole, on the beat grid"><input type="checkbox" id="ap-artist-vocal_swap" checked /> LINE SWAP</label>
+      <label class="hud-label" data-group="ARTIST VOCAL" title="Artist move S8 (Andrea Oliva, Tiffany Calver, sourced): a 1/2 to 2 bar vocal fragment looped through a build section, released on the drop"><input type="checkbox" id="ap-artist-acapella_build" checked /> ACAPELLA BUILD</label>
       <label class="hud-label" title="Phrase-level DJ moves: pre-clear, sub drops, loops, beat jumps, rolls, filter builds, echo throws">
         <input type="checkbox" id="ap-mind-toggle" checked /> SET MIND
       </label>
