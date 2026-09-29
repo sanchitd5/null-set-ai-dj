@@ -1,55 +1,48 @@
 # Improvement loop log
 
-Method: run the suite, compare to `baseline.json`, change one rule per commit, keep it only if the
-mean score improves without regressing a hard metric (tempo over cap, key-clash blends, repeat
-songs, stalls) or losing a feature (`suite --check` / `app.sim.compare` exit 1), refresh
-`baseline.json` for kept changes only.
+Method: run the suite (replays of the recorded panel), compare to `baseline.json`, change one rule per
+commit, keep it only if the mean score improves without regressing a hard metric (tempo over cap,
+key-clash blends, repeat songs, stalls) or losing a feature (`suite --check` / `app.sim.compare` exit 1),
+refresh `baseline.json` for kept changes only.
 
-## Status: iterations NOT run (model server down)
+## Panel and baseline (label: omni-text)
 
-PART 0 of the task made the real model the source of the baseline. The app's model server was not
-reachable when this was written (`llm_probe.resolve()`: MLX :8081, Omni :8901, Ollama :11434 all
-refused), and the sim must not start it or fall back to the stub, so the panel could not be
-re-recorded and no iteration was run: a keep / revert decision on a stub-recorded panel would say
-nothing about the model the app ships with.
+Recorded with `SIM_LLM=omni`: `mlx-community/Qwen3-Omni-30B-A3B-Instruct-4bit` as the TEXT model (the
+MLX text server was down), real YouTube resolve / download, the console driven by graph data (analysis,
+energy, stem envelopes; no decoded audio, no Demucs). `real-s1-quick`, `real-s2-long`, `real-s3-quick`,
+4 songs each, 0 replay misses. `real-s4-long` and `real-s5-hybrid` are in `panel.json` "pending": the model
+servers (MLX, Omni, the app) all went down before they could be recorded. 3 runs is a small, noisy panel:
+one stalled run (`real-s2-long`, 16 stalls = 96 of its 102 points) dominates the mean.
 
-`baseline.json` is therefore PROVISIONAL (`fixture_sources: ["library"]`, written with
-`--allow-stub`): the seeded StubLLM panel, seeds 1-6, after the stub / cap artifacts were fixed
-(mean score 6.53, 0 stalls, 0 replay misses; the earlier 21.4 with seed-1 / seed-2 long stalling was
-a stub artifact, see below). It is only good for regression-checking sim code changes.
-
-To run the loop for real:
-
-```
-./start.sh --no-open                      # the model (the sim never starts it)
-python3 -m app.sim.suite --record-panel   # seeds 1-5 long + quick + 6 hybrid, real LLM + YouTube + Demucs
-python3 -m app.sim.suite --update-baseline
-```
-
-then one iteration per candidate below.
-
-## Candidates (from the last report), read but not applied
-
-| # | candidate | where | note |
-|---|---|---|---|
-| 1 | Camelot table alignment, console vs KB | `dj-mind.js` `camelotScore` (0 for a diagonal move and for 2 hours with the letter flipped; the KB's `camelot_distance_score` gives 0.75 and 0.3, and 0.6 for -2 hours where the console says 0.8), then `KEY_SAFE_MIN` (autopilot.js:126, 0.8), `MERGE_KEY_OK` (stem-moves.js:568) and `merge.KEY_OK` | with the KB table a diagonal (0.75) is below 0.8 and would still be rewritten to Echo Out: set the safe floor to 0.75 (KB legal, not a 3-hour clash) and re-test 0.6. `tests/dj_mind_check.js` pins the old table. CLAUDE.md section 4 stays law: 3+ hours is still 0. |
-| 2 | Stem Bridge refused -> Echo Out | `autopilot.js` `executeTransition`, after the bridge block: a refused `Stem Bridge` falls through to the 16-bar EQ blend across a tempo gap | set `kind = "echo"` and `recipe = "Echo Out"` when the bridge is refused, report `executedMove` accordingly |
-| 3 | cap how deep into a song B enters | entry-point choice (`match` `b_time`, `startOffset`) | needs a metric first: deepest B entry as a share of B's length |
-| 4 | worst unlocked overlap / stretch | stub panel: `lib-s5-long` 76.5 s unlocked overlap, `lib-s1-long` 32 s | the `worst` list of each report names the transitions |
+Baseline at the start: mean 39.487 (`real-s1-quick` 5.324, `real-s2-long` 102.0, `real-s3-quick` 11.137).
 
 ## Iterations
 
-| # | change | mean score before | after | hard metrics | kept / reverted |
+| # | change | mean before | after | hard metrics | verdict |
 |---|---|---|---|---|---|
-| - | none run | - | - | - | - |
+| 1 | a refused Stem Bridge falls back to Echo Out, not the 16-bar EQ blend (`autopilot.js` `executeTransition`) | 39.487 | 39.487 | unchanged | reverted: no effect on this panel (no refused Stem Bridge under that recipe; the refusals in it come from other paths) |
+| 2 | console Camelot table = the KB matcher's (diagonal 0.75, -2 h 0.6, 2 h letter flipped 0.3); `KEY_SAFE_MIN` and `LEARNED_MIN_KEY` 0.8 -> 0.6 (`dj-mind.js`, `autopilot.js`, `techniques.py`, tests, CLAUDE.md s4) | 39.487 | 38.598 | key_clash_blends 0 -> 0, tempo_over_cap 0, repeat_songs 0, stalls 5.33 -> 5.33; key_false_rewrites 0.33 -> 0; soft: key_weak_blends 0 -> 0.33 | kept (commit b91d27b, baseline refreshed). `real-s3-quick` 11.137 -> 8.47. Sound of a diagonal / -2 h blend is UNVERIFIED (KB matcher scores them 0.75 / 0.6) |
+| 3 | the vibe gate stops vetoing in the forced last round (the set's only stall, `real-s2-long`: 33 virtual minutes, 16 stalls, every pick refused by "darker tone" / "energy jump") | 38.598 | 12.135 | stalls 5.33 -> 0 | reverted: `suite --check` fails (hold_loop and live_ear lost: they only ran because of the stall) and 39 replay misses (the run left its recording, later LLM calls answered by the StubLLM) so the number is not measured on the model. Worth re-testing after re-recording `real-s2-long` with the change; the stall itself is real in the recording |
 
-## Sim fixes that changed the numbers (not loop iterations)
+## Findings from the real-model panel (not loop iterations)
+
+- The Omni text model ignores the prompt's "MEASURED ENERGY ... picks MUST be N-M": in `real-s2-long` it kept
+  proposing picks 3-4 levels above a calm seed and the rules refused all of them for 33 minutes. The
+  library fallback (`/api/library/lockable`, called 16 times) found nothing: the sim's server only knows
+  the songs of the run, the live app has the whole library registered (and gates it by genre / era). So
+  part of this stall is a sim fidelity gap, not only a rule gap.
+- Songs the library lacks are analysed only (no stems): stem moves refuse them (`needs 4 stems on both songs`).
+- Never triggered by the 3-run panel: bass_swap, energy_note, eq_blend, hook_drop, layer, learned_technique,
+  mashup_break, mashup_transition, remix_acapella, remix_bass_out, remix_drum_break, silent_ear, stem_merge,
+  tempo_stems. `set_memory` and `strip_rebuild` now trigger. The rest need more seeds (the model has to pick
+  library songs with stems) and stems for the downloaded ones.
+
+## Sim fixes that changed the numbers earlier (not loop iterations)
 
 | artifact | effect |
 |---|---|
-| The committed fixtures were empty (no recorded reply, no download): every replay ran on the stub with 16-135 misses | rebuilt; 0 misses |
-| The StubLLM remembered every song it had suggested, so after ~14 rejected rounds the catalog ran dry ("model returned 0 picks" x68) | seed-1 / seed-2 long stalled for good (28 stalls, empty picks 70-110); memory removed |
-| The 14-download cap (a YouTube guard) applied to replays | "download cap reached" failures re-rolled the picks; cap is live-only |
-| The stub's call ordinal counted per kind, so an unrelated extra call shifted its noise | counted per subject |
-| `net.js` posted FormData as the string "[object FormData]" | every live-ear call was a 422 (251 in seed 1); now multipart |
-| Seeds 8 and 9 (long) still stall on the stub (first song cannot find a beat-matchable, vibe-compatible pick): a stub with no taste, left out of the panel | |
+| The committed fixtures were empty: every replay ran on the stub with 16-135 misses | rebuilt |
+| The StubLLM remembered every song it suggested; the catalog ran dry and long sets stalled | memory removed |
+| The 14-download cap applied to replays and to library songs | live YouTube downloads only |
+| `net.js` posted FormData as "[object FormData]" | every live-ear call was a 422 |
+| The verify timeout was wall-clock, so a slow lookup was "unknown" live and "known" in replay | virtual (`EngineConfig.verify_timeout_s`) |

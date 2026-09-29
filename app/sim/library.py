@@ -131,9 +131,10 @@ class MainLibrary:
         return out
 
     def shared_files(self) -> dict:
-        """learned_techniques.json (frozen into fixtures/_shared so before / after runs see the same)."""
+        """learned_techniques.json and set_memory.json (frozen into fixtures/_shared so before / after runs see the same)."""
         out = {}
-        p = self.cache / "learned_techniques.json"
-        if p.exists():
-            out["learned_techniques.json"] = p.read_text(encoding="utf-8")
+        for fn in ("learned_techniques.json", "set_memory.json"):
+            p = self.cache / fn
+            if p.exists():
+                out[fn] = p.read_text(encoding="utf-8")
         return out

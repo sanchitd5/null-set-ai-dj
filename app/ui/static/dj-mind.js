@@ -241,14 +241,18 @@
   }
 
   // -- PEAK mode ------------------------------------------------------------
-  // Camelot compatibility, same table as CLAUDE.md section 4 / mixing plan.
+  // Camelot compatibility, the SAME table as the matcher (recipe_matcher.camelot_distance_score) and CLAUDE.md
+  // section 4: 1 same key, 0.9 one hour, 0.85 relative major/minor, 0.8 two hours up (energy boost), 0.75
+  // diagonal (one hour, letter changed), 0.6 two hours down (energy drop), 0.3 two hours with the letter
+  // changed, 0 for three hours or more (a clash). Direction matters: a is the song leaving, b the one arriving.
   function camelotScore(a, b) {
     const pa = /^(\d{1,2})([AB])$/i.exec(String(a || "").trim());
     const pb = /^(\d{1,2})([AB])$/i.exec(String(b || "").trim());
     if (!pa || !pb) return 0;
-    const d = Math.min((+pa[1] - +pb[1] + 12) % 12, (+pb[1] - +pa[1] + 12) % 12);
-    if (pa[2].toUpperCase() !== pb[2].toUpperCase()) return d === 0 ? 0.85 : 0;
-    return d === 0 ? 1 : d === 1 ? 0.9 : d === 2 ? 0.8 : 0;
+    const up = ((+pb[1] - +pa[1]) % 12 + 12) % 12;              // clockwise hours a -> b
+    const d = Math.min(up, 12 - up);
+    if (pa[2].toUpperCase() !== pb[2].toUpperCase()) return d === 0 ? 0.85 : d === 1 ? 0.75 : d === 2 ? 0.3 : 0;
+    return d === 0 ? 1 : d === 1 ? 0.9 : up === 2 ? 0.8 : up === 10 ? 0.6 : 0;
   }
   // Energy at the top quartile of the song's merged (8+ bar) sections.
   function energyQ3(longSecs) {

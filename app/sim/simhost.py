@@ -46,7 +46,7 @@ class SimHost(Host):
 
     @property
     def synthetic(self) -> bool:
-        return self.w.mode != "live"
+        return True                      # every mode: the console runs on graph data, not decoded audio
 
     # ---- YouTube ------------------------------------------------------------------
     def search_songs(self, query, limit=8):
@@ -60,6 +60,9 @@ class SimHost(Host):
 
     def download_to_dir(self, url, output_dir, progress=None):
         return self.w.download_to_dir(url, Path(output_dir), progress, super().download_to_dir)
+
+    def lrclib_search(self, artist, track):
+        return self.w.lrclib_search(artist, track, super().lrclib_search)
 
     # ---- stems and audio ---------------------------------------------------------------
     def queue_stems(self, track_id, urgent=True):

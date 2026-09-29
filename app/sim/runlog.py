@@ -145,7 +145,7 @@ def build_run(js: dict, world, meta: dict) -> dict:
     counters["candidates"] = len(rejects) + len(transitions)
     played = {(by_name.get(s["name"]) or {}).get("hash") for s in songs} - {None}
     return {"meta": {**meta, "tracks_played": len(songs), "stalled": js["ended"] != "songs", "ended": js["ended"],
-                     "llm": llm_summary(world.llm_calls),
+                     "llm": llm_summary(world.llm_calls), "llm_endpoint": world.fx.get("llm_endpoint"),
                      "replay_misses": len(world.misses), "replay_drift": len(world.drift),
                      # threads ask in any order: the list is sorted so a run's outputs are byte-stable
                      "misses": sorted(world.misses, key=lambda m: (m["what"], m["key"]))[:20]},

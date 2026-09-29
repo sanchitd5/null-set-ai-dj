@@ -13,7 +13,7 @@ const { VirtualClock } = require("./clock");
 const { Document, inert } = require("./dom");
 const { FakeAudioContext, FakeAudioBuffer, FakeAudioWorkletNode } = require("./webaudio");
 const { Net } = require("./net");
-const { parseWav } = require("./wav");
+const { decode } = require("./wav");
 
 class Listeners {
   constructor() { this.map = new Map(); }
@@ -172,7 +172,7 @@ async function createEnv(opts) {
   g.AudioContext = function (o) {
     const ctx = new FakeAudioContext(clock, audioOpts);
     ctx.decode = (ab) => {
-      const w = parseWav(ab);
+      const w = decode(ab);
       return new FakeAudioBuffer({ sampleRate: w.sampleRate, numberOfChannels: w.channels.length, length: w.channels[0].length, channels: w.channels, tag: w.tag });
     };
     env.audio = ctx;

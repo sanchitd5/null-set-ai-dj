@@ -195,7 +195,8 @@ assert.strictEqual(holdLoopAnchor([], [], 205, 224, 2), 192);
   // Camelot table (CLAUDE.md section 4)
   assert.strictEqual(camelotScore("8A", "8A"), 1); assert.strictEqual(camelotScore("12A", "1A"), 0.9);
   assert.strictEqual(camelotScore("8A", "8B"), 0.85); assert.strictEqual(camelotScore("8A", "10A"), 0.8);
-  assert.strictEqual(camelotScore("8A", "11A"), 0); assert.strictEqual(camelotScore("8A", "9B"), 0);
+  assert.strictEqual(camelotScore("8A", "11A"), 0); assert.strictEqual(camelotScore("8A", "9B"), 0.75);
+  assert.strictEqual(camelotScore("8A", "6A"), 0.6); assert.strictEqual(camelotScore("8A", "10B"), 0.3); assert.strictEqual(camelotScore("8A", "5B"), 0);
   assert.strictEqual(camelotScore(null, "8A"), 0);
   // eligibility
   assert.strictEqual(energyQ3([{ energy: 0.2 }, { energy: 0.4 }, { energy: 0.6 }, { energy: 0.9 }, { energy: 1 }]), 0.9);

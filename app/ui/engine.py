@@ -32,6 +32,7 @@ from typing import Optional
 class EngineConfig:
     """Knobs the composition root may set. None keeps the module's own default."""
     suggest_budget_s: Optional[float] = None      # wall-clock budget of one suggest call (corrective retries)
+    verify_timeout_s: Optional[float] = None      # wall-clock wait for one call's YouTube lookups (slower = unknown, kept)
 
 
 class AIBackend:
@@ -79,6 +80,11 @@ class Host:
         from app.ui import download_service
 
         return download_service.download_to_dir(url, output_dir, progress=progress)
+
+    def lrclib_search(self, artist, track):
+        from app.music_brain import lyrics
+
+        return lyrics._lrclib_search(artist, track)
 
     # ---- stems and audio ------------------------------------------------------------
     def queue_stems(self, track_id, urgent=True):
@@ -198,6 +204,10 @@ class Engine:
 
         with using(self):
             return svc.suggest_next_tracks(*args, **kw)
+
+    def verify_timeout_s(self, default: float) -> float:
+        b = self.config.verify_timeout_s
+        return default if b is None else b
 
     def suggest_budget_s(self, default: float) -> float:
         b = self.config.suggest_budget_s

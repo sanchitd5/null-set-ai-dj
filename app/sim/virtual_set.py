@@ -108,6 +108,9 @@ def run_set(a: argparse.Namespace) -> dict:
         # the app's own model, found read-only; down = stop here, before YouTube is touched. Never the stub.
         from app.sim import llm_probe
 
+        cookies = Path.home() / ".config" / "ai-dj" / "youtube-cookies.txt"      # start.sh's default: yt_guard uses it only after a refusal
+        if cookies.is_file():
+            os.environ.setdefault("YTDLP_COOKIES_FILE", str(cookies))
         ep = llm_probe.resolve()
         world.fx["llm_endpoint"] = ep.as_meta()
         world.fx["ear_server_up"] = llm_probe.ear_up()
@@ -130,8 +133,6 @@ def run_set(a: argparse.Namespace) -> dict:
     report = scorer.score_run(run)
     report["features"] = run["features"]
     if a.record:
-        if world_mode == "live":
-            world.export_live(pool)
         st = world.seed_track or {"hash": None, "name": run["songs"][0]["name"] if run["songs"] else ""}
         world.save_fixture(st, {"tracks": tracks, "mode": mode, "occasion": occasion})
     if a.out:

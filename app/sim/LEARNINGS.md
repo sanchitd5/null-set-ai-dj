@@ -6,6 +6,15 @@ UNVERIFIED. Numbers from `baseline.json` are **stub-era**: recorded with the see
 (`stubllm.py`), not a real model. A real-LLM re-record and `app/sim/LOOP.md` were not on main when
 this file was written (iterations from that loop are not logged here yet; see section (e)).
 
+**Baseline label (current): `omni-text`.** `baseline.json` now comes from replays of `real-*` fixtures
+recorded with `mlx-community/Qwen3-Omni-30B-A3B-Instruct-4bit` as the TEXT model (the single-Omni
+server on :8901; the MLX text server was down), real YouTube resolve/download, and the console driven
+by graph data (analysis, energy, stem envelopes), not decoded audio. Every fixture stamps the model in
+`llm_endpoint`; `baseline.json` carries `llm_labels` / `llm_models`. Panel: 3 runs x 4 songs (seeds
+1-3), so it is small and noisy: one stalled run dominates the mean. The stub-era numbers below and in
+sections (b)-(e) predate it. Songs the library has are served from cached analysis and stems; a
+suggested song it lacks is downloaded and analysed only, so it has NO stem lanes (stem moves refuse it).
+
 ## How to run the learning loop again
 
 ```

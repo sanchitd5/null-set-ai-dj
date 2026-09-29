@@ -262,7 +262,7 @@ def _verify_picks(picks: list[dict]) -> tuple[list[dict], list[dict]]:
             f.add_done_callback(lambda _f, k=k: _release(k))       # also runs when cancelled
             futs[k] = f
     if futs:
-        wait(list(futs.values()), timeout=VERIFY_TIMEOUT_S)
+        wait(list(futs.values()), timeout=engine.current().verify_timeout_s(VERIFY_TIMEOUT_S))
     for k, f in futs.items():
         f.cancel()                 # still queued: never starts. Running: finishes into the cache.
         if f.done() and not f.cancelled() and f.exception() is None:

@@ -1,7 +1,12 @@
-// Decoder for the synthetic audio files the sim world serves (app/sim/synth.py writes them):
-// RIFF/WAVE, PCM 16-bit, plus an optional "SIMT" chunk carrying JSON that says what the file
-// stands for ({hash, stem, bpm, ratio}). decodeAudioData in the fake AudioContext uses this.
+// Decoder for the audio files the sim's console loads.
+//  * synthetic files (replay / library, app/sim/synth.py): RIFF/WAVE, PCM 16-bit, plus an optional "SIMT" chunk
+//    carrying JSON that says what the file stands for ({hash, stem, bpm, ratio});
+//  * real files (a live / --record run: downloaded flac / mp3 / m4a, float or 24-bit stem WAVs): transcoded by
+//    ffmpeg (the same one yt-dlp needs) to 16-bit stereo WAV at 22.05 kHz, once per file content.
+// decodeAudioData in the fake AudioContext uses this.
 "use strict";
+const { spawnSync } = require("child_process");
+const crypto = require("crypto");
 
 function parseWav(ab) {
   const dv = new DataView(ab);
@@ -25,4 +30,23 @@ function parseWav(ab) {
   return { sampleRate: fmt.sr, channels, tag };
 }
 
-module.exports = { parseWav };
+const transcoded = new Map();     // sha1 of the file -> decoded result
+function transcode(ab) {
+  const buf = Buffer.from(ab);
+  const key = crypto.createHash("sha1").update(buf).digest("hex");
+  if (transcoded.has(key)) return transcoded.get(key);
+  const r = spawnSync("ffmpeg", ["-v", "error", "-i", "pipe:0", "-f", "wav", "-acodec", "pcm_s16le", "-ar", "22050", "-ac", "2", "pipe:1"],
+    { input: buf, maxBuffer: 1 << 30 });
+  if (r.status !== 0 || !r.stdout || r.stdout.length < 44) { const e = new Error("Unable to decode audio data"); e.name = "EncodingError"; throw e; }
+  const out = r.stdout;
+  const res = parseWav(out.buffer.slice(out.byteOffset, out.byteOffset + out.byteLength));
+  transcoded.set(key, res);
+  return res;
+}
+
+// synthetic files parse directly; anything else (real audio) goes through ffmpeg
+function decode(ab) {
+  try { return parseWav(ab); } catch (e) { return transcode(ab); }
+}
+
+module.exports = { parseWav, decode };

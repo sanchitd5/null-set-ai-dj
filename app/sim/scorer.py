@@ -267,6 +267,6 @@ def score_run(run: dict, artists_of: Optional[Callable[[str], set]] = None, iden
         "breakdown": dict(sorted(bd.items(), key=lambda kv: (-kv[1], kv[0]))),
         "metrics": m, "weights": WEIGHTS,
         "worst": [{"transition": r[1], "from": r[2], "to": r[3], "penalty": round(r[0], 2), "reasons": r[4]} for r in worst if r[0] > 0],
-        "meta": {k: run["meta"].get(k) for k in ("seed", "mode", "tracks_played", "world", "name", "stalled", "fixture_source", "llm")},
+        "meta": {k: run["meta"].get(k) for k in ("seed", "mode", "tracks_played", "world", "name", "stalled", "fixture_source", "llm", "llm_endpoint")},
         "songs": [{"name": s["name"], "level": s.get("level"), "seconds": s.get("seconds")} for s in songs],
     }

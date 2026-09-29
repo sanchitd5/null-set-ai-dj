@@ -1,0 +1,16 @@
+{
+  "note": "The offline StubLLM panel (library world): `python3 -m app.sim.suite --build-panel --panel app/sim/panel_stub.json`. Tests / a machine without the model only; not the baseline.",
+  "runs": [
+    {"name": "lib-s1-long", "seed": 1, "tracks": 10, "mode": "long"},
+    {"name": "lib-s1-quick", "seed": 1, "tracks": 10, "mode": "quick"},
+    {"name": "lib-s2-long", "seed": 2, "tracks": 10, "mode": "long"},
+    {"name": "lib-s2-quick", "seed": 2, "tracks": 10, "mode": "quick"},
+    {"name": "lib-s3-long", "seed": 3, "tracks": 10, "mode": "long"},
+    {"name": "lib-s3-quick", "seed": 3, "tracks": 10, "mode": "quick"},
+    {"name": "lib-s4-long", "seed": 4, "tracks": 10, "mode": "long"},
+    {"name": "lib-s4-quick", "seed": 4, "tracks": 10, "mode": "quick"},
+    {"name": "lib-s5-long", "seed": 5, "tracks": 10, "mode": "long"},
+    {"name": "lib-s5-quick", "seed": 5, "tracks": 10, "mode": "quick"},
+    {"name": "lib-s6-hybrid", "seed": 6, "tracks": 10, "mode": "hybrid"}
+  ]
+}
