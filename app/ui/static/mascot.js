@@ -120,7 +120,7 @@
     return "";
   }
   // Where NULL stands while the SHOW is up (translate from the viewport centre + scale of the big bot).
-  // o: {mode ("off" | "full" | any window mode), rect (the stage's box, window modes), vw, vh, size (bot px),
+  // o: {mode ("off" | "full" | "embed" / any window mode), rect (the stage's box, window modes), vw, vh, size (bot px),
   // dancing}. full: always, bottom-left corner in front of the stage. A window stage: only while dancing,
   // beside the stage (above it when there is no room on the right). -> {x, y, s} | null
   function dockPlace(o) {
@@ -131,7 +131,7 @@
       T = 0.2 * vmin; cx = 16 + T / 2; cy = o.vh - 16 - T / 2;
     } else {
       const r = o.rect;
-      if (!o.dancing || !r || !(r.width > 0)) return null;
+      if (!o.dancing || !r || !(r.width > 0) || !(r.height > 0)) return null;   // embedded band not laid out / no stage: top bar
       T = Math.max(48, Math.min(0.16 * vmin, r.height * 0.8));
       if (r.right + 8 + T <= o.vw) { cx = r.right + 8 + T / 2; cy = r.bottom - T / 2; }
       else { cx = r.left + T / 2; cy = r.top - 8 - T / 2; }

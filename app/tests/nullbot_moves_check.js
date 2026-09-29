@@ -45,7 +45,7 @@ function boot(o = {}) {
   const store = Object.assign({}, o.store || {});
   const et = new EventTarget();
   const ctx = {
-    document: { getElementById: (id) => els[id] || null, querySelector: (s) => (s === ".anyma-stage" ? stage : null),
+    document: { getElementById: (id) => els[id] || null, querySelector: (s) => (s === ".anyma-stage" && !o.noStage ? stage : null),
       addEventListener() {}, body, documentElement: new El("html"), fullscreenElement: null },
     localStorage: { getItem: (k) => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); } },
     performance: { now: () => clock },
@@ -136,8 +136,8 @@ for (const o of [{ ai: false }, { store: { "nul.vfx": "off" } }]) {
   assert.ok(B.sup.cls.has("nul-sm-dock"), "full SHOW: NULL stays visible, docked in front");
   show.mode = "off"; B.advance(200);
   assert.ok(!B.sup.cls.has("nul-sm-dock"));
-  show.mode = "window"; B.advance(200);
-  assert.ok(!B.sup.cls.has("nul-sm-dock"), "window SHOW, no dance: NULL stays in the top bar");
+  show.mode = "embed"; B.advance(200);
+  assert.ok(!B.sup.cls.has("nul-sm-dock"), "embedded SHOW, no dance: NULL stays in the top bar");
   const at = B.audioNow() + 1;
   B.emit("vis-moment", { at, name: "ANYMA DROP", tier: "dance", bar: 1.875, until: at + 30 });
   B.advance(1200);
@@ -148,6 +148,15 @@ for (const o of [{ ai: false }, { store: { "nul.vfx": "off" } }]) {
   B.advance(31000);
   assert.ok(!B.sup.cls.has("nul-sm-dance"), "the dance ends at `until`");
   assert.ok(Number.isFinite(ph) && ph <= 0);
+}
+// embedded stage not laid out (height 0) or no stage element at all: NULL still dances, from the top bar (no dock)
+for (const o of [{ noStage: true }, { flat: true }]) {
+  const B = boot(Object.assign({ show: { mode: "embed" } }, o));
+  if (o.flat) B.stage.rect = { left: 0, top: 0, right: 1000, bottom: 0, width: 1000, height: 0 };
+  const at = B.audioNow() + 1;
+  B.emit("vis-moment", { at, name: "ANYMA DROP", tier: "dance", bar: 1.875, until: at + 30 });
+  B.advance(1200);
+  assert.ok(B.sup.cls.has("nul-sm-dance") && !B.sup.cls.has("nul-sm-dock"), JSON.stringify(o));
 }
 // Anyma drops announced AHEAD from the SHOW's own detector, once per drop
 {
@@ -166,9 +175,25 @@ for (const o of [{ ai: false }, { store: { "nul.vfx": "off" } }]) {
 
 // ---- z-order: NULL-BOT above the SHOW stage and the VFX canvas --------------------------------------------------------
 {
-  const z = (css, sel) => Number((new RegExp(`\\${sel}\\s*\\{[^}]*z-index:\\s*(\\d+)`).exec(css) || [])[1]);
-  const nb = z(S("null-bot.css"), ".nul-super"), st = z(S("anyma-show.css"), ".anyma-stage"), vfx = z(S("style.css"), ".vfx");
-  assert.ok(nb > st && nb > vfx, `nul-super ${nb} > anyma-stage ${st}, vfx ${vfx}`);
+  // every top-level z-index a rule sets for `test(selector)`; rules nested inside the stage (".anyma-stage x")
+  // live in the stage's own stacking context, so only the stage's own and any other page-level Anyma layer count
+  const zs = (css, test) => {
+    const out = [];
+    for (const m of css.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{}]+)\{([^}]*)\}/g)) {
+      const z = /z-index:\s*(-?\d+)/.exec(m[2]);
+      if (!z) continue;
+      for (const sel of m[1].split(",").map((s) => s.trim())) if (test(sel)) out.push(Number(z[1]));
+    }
+    return out;
+  };
+  const top = (sel) => /anyma/.test(sel) && !/\.anyma-stage\s+\S/.test(sel);
+  const anyma = ["anyma-show.css", "style.css", "null-bot.css", "toggle-drawer.css"].flatMap((f) => zs(S(f), top));
+  const [nb] = zs(S("null-bot.css"), (s) => s === ".nul-super"), [vfx] = zs(S("style.css"), (s) => s === ".vfx");
+  const maxAnyma = anyma.length ? Math.max(...anyma) : -Infinity;           // no stage / behind the console: below
+  assert.ok(Number.isFinite(nb) && nb > maxAnyma && nb > vfx, `nul-super ${nb} > anyma layers ${anyma} and vfx ${vfx}`);
+  // the parser sees the real stage rule (today z-index -1, behind the console)
+  assert.ok(zs(".anyma-stage { position: absolute; z-index: -1; }", top)[0] === -1);
+  assert.deepStrictEqual(zs(".anyma-stage canvas { z-index: 5; }", top), [], "inside the stage: its own stacking context");
   assert.ok(/\.nul-super\.nul-sm-dock \{ visibility: visible; \}/.test(S("null-bot.css")));
   assert.ok(/fullscreenchange/.test(S("mascot.js")), "browser full screen: NULL moves into the full-screen element");
 }
