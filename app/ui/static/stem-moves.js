@@ -651,7 +651,15 @@
       return e ? { ...r, score: r.score + (e.score - 5.5) * 3, ear: e } : r;
     }).sort((x, y) => y.score - x.score);
   }
-  const core = { keepsVibe, breakdownVocalOk, introAudible, mergeCombos, mergeRank, mergeLabel, mergeTransitionPlan, mergeWithEar, keepOneStem, hookDropEvents, hookDropDue, HOOK_OTHER, BREAKDOWN, breakdownFits, handoffFits, vocalShare, stemBlendPlan, STEM_BLEND_KINDS, remixEvents, remixPick, stemBridgePlan, mashupTransitionPlan,
+  // Both gates on one plan: the full-band floor (levelCheck) and the audible band
+  // (masterAudibility, a silent run of 1 s fails). e: {eOut, eIn, aOut, aIn}.
+  function gates(plan, fader, span, e, minRun, extra = {}) {
+    const lv = levelCheck(Object.assign({ events: plan.events, fader, dir: 1, span, eOut: e.eOut, eIn: e.eIn }, extra));
+    if (!lv.ok) return lv;
+    const au = masterAudibility(Object.assign({ events: plan.events, fader, dir: 1, span, eOut: e.aOut, eIn: e.aIn, minRun }, extra));
+    return au.ok ? lv : au;
+  }
+  const core = { gates, keepsVibe, breakdownVocalOk, introAudible, mergeCombos, mergeRank, mergeLabel, mergeTransitionPlan, mergeWithEar, keepOneStem, hookDropEvents, hookDropDue, HOOK_OTHER, BREAKDOWN, breakdownFits, handoffFits, vocalShare, stemBlendPlan, STEM_BLEND_KINDS, remixEvents, remixPick, stemBridgePlan, mashupTransitionPlan,
                  pickIntro, introBars, INTRO_LEVEL, levelCheck, gainsAt, faderAt, fitStemBlend, breakdownEvents,
                  masterAudibility, audibleRms, mergeFader, rawFader, deckFaderGains, mergeBooking, onTime, AUDIBLE_HZ, SILENCE_DB,
                  LEVEL_FLOOR_DB, AUDIBLE_GAIN, FADER_PARK_BARS, TYPICAL_SHARE, DIP_ALLOWED };
@@ -1015,14 +1023,7 @@
 
   // Run it. t0 = A's phrase line (audio time); bEntry = B's vocal phrase start
   // (track time); B must already carry tempo stems at A's tempo when they differ.
-  // Both gates on one plan: the full-band floor (levelCheck) and the audible band
-  // (masterAudibility, a silent run of 1 s fails). e: {eOut, eIn, aOut, aIn}.
-  function gates(plan, fader, span, e, minRun, extra = {}) {
-    const lv = levelCheck(Object.assign({ events: plan.events, fader, dir: 1, span, eOut: e.eOut, eIn: e.eIn }, extra));
-    if (!lv.ok) return lv;
-    const au = masterAudibility(Object.assign({ events: plan.events, fader, dir: 1, span, eOut: e.aOut, eIn: e.aIn, minRun }, extra));
-    return au.ok ? lv : au;
-  }
+  // (gates: pure, defined above the core so node can drive it too)
   // Measured energies of both decks over a plan, full + audible band (all null
   // when either deck has no decoded stems: typical shares, not judged for silence).
   function planEnergies(out, pA, inn, bEntry, bars) {

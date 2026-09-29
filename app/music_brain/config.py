@@ -1,5 +1,6 @@
 """Central paths, cache directories, and model settings for the Music Brain package."""
 
+import os
 from pathlib import Path
 
 # Repository root (this file lives at <root>/app/music_brain/config.py)
@@ -12,7 +13,10 @@ MUSIC_THEORY_DIR = DJ_KB_DIR / "02 - Music Theory"
 CORE_TECHNIQUES_DIR = DJ_KB_DIR / "04 - Core Techniques"
 
 # Persistent local cache (gitignored)
-CACHE_DIR = ROOT_DIR / "data" / "cache"
+# AIDJ_CACHE_DIR points every cache (uploads, analysis, stems, sessions, yt_guard, ...) somewhere
+# else: the virtual set (app/sim) runs on a private cache and never touches data/cache.
+CACHE_DIR = Path(os.environ["AIDJ_CACHE_DIR"]).expanduser().resolve() if os.environ.get("AIDJ_CACHE_DIR") \
+    else ROOT_DIR / "data" / "cache"
 STEMS_CACHE_DIR = CACHE_DIR / "stems"
 ANALYSIS_CACHE_DIR = CACHE_DIR / "analysis"
 PREVIEWS_CACHE_DIR = CACHE_DIR / "previews"
