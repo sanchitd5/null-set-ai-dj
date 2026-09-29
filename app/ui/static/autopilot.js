@@ -2143,6 +2143,15 @@ function createAutopilotEngine({ host, ai }) {
       return false;
     }
     if (nextId === currentId || history.includes(nextName)) return false;
+    // ONE artist-spacing rule for every path that ends here (suggest pool, combo, macro,
+    // atlas, library fallback): "it's going back to playing Fred again". The last round
+    // may exceed the window cap, never the gap (artist-spacing.js, = autopilot_service.py).
+    const spacing = host.mod.artistSpacing && host.mod.artistSpacing.spacingBlock(nextName, history, forceJump);
+    if (spacing) {
+      apStatus(`Not after this song: ${nextName} (${spacing})`);
+      console.log(`[spacing] skipped ${nextName}: ${spacing}`);
+      return false;
+    }
     if (cand.duration && cand.duration < minSongSecs()) {
       apStatus(`Skipping ${nextName}: ${fmtTime(cand.duration)} is too short for a ${setMode().toUpperCase()} set`);
       return false;

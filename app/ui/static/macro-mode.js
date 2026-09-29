@@ -19,9 +19,13 @@
 
   const MACRO_PREFERENCE = 0.8;       // share of valid macro steps the autopilot takes (owner)
   const COMBO_MIN_WORKS = 65;         // = pair_atlas.COMBO_MIN_WORKS
-  const ARTIST_SPACING = 3;           // no artist twice within this many songs
   const COMBO_LABEL = { merge: "MERGE", riff: "RIFF x RAP", mashup: "MASHUP", double_drop: "DOUBLE DROP", drop_swap: "DROP SWAP" };
   const STEM_RECIPE = /merge|mashup|stem|riff/i;
+
+  // The ONE artist-spacing rule (artist-spacing.js = autopilot_service.py): a combo or macro
+  // step never plays an artist the rest of the autopilot would refuse.
+  const spacingRule = root.artistSpacing || (typeof require === "function" ? require("./artist-spacing.js") : null);
+  const spacingWhy = (name, recent) => (spacingRule ? spacingRule.spacingBlock(name, recent || []) : null);
 
   function artistOf(name) {
     let n = String(name || "").toLowerCase();
@@ -36,13 +40,13 @@
   // -> {list: [{track_id, name, combo, label, works, plan, loaded}], skipped: [{b, why}]}
   function comboCandidates(o) {
     const played = new Set(o.played || []), minWorks = o.minWorks == null ? COMBO_MIN_WORKS : o.minWorks;
-    const recentArt = new Set((o.recent || []).slice(-ARTIST_SPACING).map(artistOf).filter(Boolean));
     const list = [], skipped = [];
     for (const p of o.partners || []) {
       if (!p || !p.combo || p.b === o.aId) continue;
+      let sp = null;
       const why = played.has(p.b) ? "already played this set"
         : p.works < minWorks ? `works ${p.works} < ${minWorks}`
-        : recentArt.has(artistOf(p.b_name)) ? `artist spacing (${artistOf(p.b_name)})`
+        : (sp = spacingWhy(p.b_name, o.recent)) ? sp
         : (p.played_bad || 0) > (p.played_good || 0) ? `bad played evidence (-${p.played_bad})` : null;
       if (why) { skipped.push({ b: p.b, name: p.b_name, why }); continue; }
       list.push({ track_id: p.b, name: p.b_name, bpm: p.b_bpm, duration: p.b_duration, combo: p.combo, label: COMBO_LABEL[p.combo] || String(p.combo).toUpperCase(),
@@ -177,7 +181,7 @@
     return g.ok ? { ok: true, why: g.why || `step ${step.n}: ${g.recipe}`, recipe: g.recipe } : g;
   }
 
-  const core = { MACRO_PREFERENCE, COMBO_MIN_WORKS, ARTIST_SPACING, COMBO_LABEL, artistOf, comboCandidates, macroCandidate,
+  const core = { MACRO_PREFERENCE, COMBO_MIN_WORKS, COMBO_LABEL, artistOf, comboCandidates, macroCandidate,
                  macroPrefer, streakAfter, streakLabel, applyPlan, fireAt, stepGate, editStep, setToMacro, runNowCheck,
                  createRuntime: create };   // node checks drive the runtime over a fake Host
   if (typeof module !== "undefined" && module.exports) module.exports = core;
@@ -239,9 +243,8 @@
       const pool = (loaded ? [loaded] : []).concat(macros.filter((m) => !loaded || m.name !== loaded.name));
       // offline part of "still valid"; the autopilot's evaluateCandidate re-runs every live gate
       // (tempo, key, energy step, stems) on the step and falls through when one refuses it
-      const recentArt = (o.recent || []).slice(-ARTIST_SPACING).map(artistOf).filter(Boolean);
       const mc = macroCandidate({ macros: pool, aId, played: o.played,
-        valid: (s) => (recentArt.includes(artistOf(s.b_name)) ? { ok: false, gate: `artist spacing (${artistOf(s.b_name)})` } : { ok: true }) });
+        valid: (s) => { const why = spacingWhy(s.b_name, o.recent); return why ? { ok: false, gate: why } : { ok: true }; } });
       const macroMode = flag("ap-macro-mode", false) && loaded;
       const pick = macroMode && mc.found && mc.found.macro === loaded.name ? { take: true, line: `macro: MACRO MODE ${loaded.name} step ${mc.found.step.n}` }
         : macroPrefer(mc, () => host.random.next(), pref());
