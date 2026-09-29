@@ -58,6 +58,19 @@ def test_era_gate_widened_only_under_profile():
     assert not sp.era_jump(None, "2020s", True)
 
 
+def test_handover_has_no_era_gate_full_has_the_wider_one():
+    assert sp.vibe_score("punjabi", "bollywood", "1970s", "2020s", "handover") == 1.0
+    assert sp.vibe_score("punjabi", "bhangra", "1970s", "2020s", "full") == pytest.approx(genre.ERA_JUMP_PENALTY)
+    assert sp.vibe_score("punjabi", "bhangra", "1980s", "2020s", "full") == 1.0
+    assert genre.vibe_score("punjabi", "bhangra", "1980s", "2020s") == pytest.approx(genre.ERA_JUMP_PENALTY)
+
+
+def test_handover_does_not_fold_tempo(matcher):
+    a, b = vectors._track("8A", 88.0), vectors._track("8A", 176.0)
+    hand = {x.recipe.name: x for x in matcher.match(a, b, top_n=100, profile="handover")}
+    assert hand["Long Blend"].bpm_score < 1.0
+
+
 def test_bpm_octave_fold(matcher):
     assert sp.fold_bpm(88, 176) == 88
     assert sp.fold_bpm(88, 130) == 130

@@ -112,7 +112,8 @@ def fold_bpm(bpm_a: float, bpm_b: float) -> float:
     return min((bpm_b * m for m in (1.0, 2.0, 0.5)), key=lambda x: abs(bpm_a / x - 1))
 
 
-def vibe_score(genre_a=None, genre_b=None, era_a=None, era_b=None) -> float:
-    """genre.vibe_score with the profile's era gate (max_era_gap) in place of MAX_ERA_GAP."""
-    era = _genre.ERA_JUMP_PENALTY if era_jump(era_a, era_b, True) else 1.0
+def vibe_score(genre_a=None, genre_b=None, era_a=None, era_b=None, lvl: str = LEVEL_FULL) -> float:
+    """genre.vibe_score under the profile: "full" uses the profile's era gate (max_era_gap)
+    in place of MAX_ERA_GAP; "handover" (a language-block change) has no era gate at all."""
+    era = _genre.ERA_JUMP_PENALTY if lvl == LEVEL_FULL and era_jump(era_a, era_b, True) else 1.0
     return _genre.genre_score(genre_a, genre_b) * era

@@ -406,8 +406,9 @@ class RecipeMatcher:
                     camelot_reason += "; this recipe bypasses the key clash"
 
         b_bpm = track_b.bpm
-        if profile and _scene_profile.PUNJABI_PROFILE["bpm_octave_fold"]:
-            b_bpm = _scene_profile.fold_bpm(track_a.bpm, track_b.bpm)  # 176 == 88 (note s7, GUESS)
+        # full profile only: both songs Punjabi, 176 == 88 (note s7, GUESS); a one-side handover is a cut
+        if profile == _scene_profile.LEVEL_FULL and _scene_profile.PUNJABI_PROFILE["bpm_octave_fold"]:
+            b_bpm = _scene_profile.fold_bpm(track_a.bpm, track_b.bpm)
         bpm_score, bpm_label = bpm_compatibility(track_a.bpm, b_bpm)
         already_compatible = bpm_score >= 0.9 and camelot_score >= 0.8
         if recipe.max_bpm_delta is None:
@@ -440,7 +441,7 @@ class RecipeMatcher:
         # Unrelated-genre jump (e.g. melodic house -> industrial metal): key/BPM/
         # phrase math can still line up, so this is a hard multiplier, not a nudge.
         # A multi-decade era gap trims it further (genre.ERA_JUMP_PENALTY).
-        raw *= (_scene_profile.vibe_score(genre_a, genre_b, era_a, era_b) if profile
+        raw *= (_scene_profile.vibe_score(genre_a, genre_b, era_a, era_b, profile) if profile
                 else vibe_score(genre_a, genre_b, era_a, era_b))
 
         score = max(0.0, min(100.0, raw * 100.0))
