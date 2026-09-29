@@ -211,6 +211,51 @@ def learned_moves_report(js: dict, F: dict) -> dict:
             "vocal_clash_s": round(metrics["vocal_clash_s"], 2)}
 
 
+def set_level_report(js: dict, run: dict, by_name: dict) -> dict:
+    """Set-level habits (research/notes/artist-signature-techniques.md S16-S22), informational only:
+    recipe variety and the longest run of one recipe, FX budget answers (fx-budget.js console lines),
+    exits that started inside A's breakdown (A's song position at transition_start, the shared
+    preplan.breakdown_spans rule on A's analysis) and the overlap seconds of each transition."""
+    from app.music_brain import preplan
+
+    trans = run.get("transitions") or []
+    recipes = [str(t.get("recipe_executed") or "") for t in trans]
+    run_max, cur = 0, 0
+    for i, r in enumerate(recipes):
+        cur = cur + 1 if i and r == recipes[i - 1] else 1
+        run_max = max(run_max, cur)
+    spent, refused = Counter(), Counter()
+    for c in js.get("console") or []:
+        m = re.match(r"^fx budget: (spent|refused) (\w+):", c["text"])
+        if m:
+            (spent if m.group(1) == "spent" else refused)[m.group(2)] += 1
+    checked, inside = 0, []
+    for e in js.get("session_events") or []:
+        d = e.get("data") or {}
+        if e.get("kind") != "track" or d.get("event") != "transition_start" or d.get("a_pos") is None:
+            continue
+        a = (by_name.get(d.get("from")) or {}).get("analysis") or {}
+        if not a.get("bpm"):
+            continue
+        checked += 1
+        if preplan.in_breakdown(preplan.breakdown_spans(a, 240.0 / float(a["bpm"])), float(d["a_pos"])):
+            inside.append(round(float(d["a_pos"]), 1))
+    ov = sorted(float(t["seconds"]) for t in trans if t.get("seconds") is not None)
+    q = (lambda p: round(ov[min(len(ov) - 1, int(p * len(ov)))], 1)) if ov else (lambda p: 0.0)
+    fx_n = sum(spent.values())
+    dur_min = sum(float(s.get("seconds") or 0) for s in run.get("songs") or []) / 60.0
+    return {
+        "recipe_variety": round(len(set(recipes)) / len(recipes), 3) if recipes else 0.0,
+        "distinct_recipes": len(set(recipes)), "max_recipe_repeat_run": run_max,
+        "fx_budget_spent": fx_n, "fx_budget_refused": sum(refused.values()),
+        "fx_budget_by_kind": {"spent": dict(sorted(spent.items())), "refused": dict(sorted(refused.items()))},
+        "fx_density_per_30min": round(fx_n / dur_min * 30, 2) if dur_min > 0 else 0.0,
+        "exits_checked": checked, "exits_in_breakdown": len(inside), "exits_in_breakdown_at": inside,
+        "overlap_seconds": {"n": len(ov), "min": q(0), "p50": q(0.5), "p90": q(0.9), "max": q(1.0 - 1e-9),
+                            "mean": round(sum(ov) / len(ov), 1) if ov else 0.0},
+    }
+
+
 def _phrase_err(entry: Optional[dict], pos: Optional[float]) -> Optional[float]:
     """Distance (s) from a song position to the nearest 8-bar phrase line of that song."""
     if not entry or pos is None:
@@ -463,7 +508,7 @@ def feature_table(js: dict, world, run: dict) -> dict:
     never = sorted(k for k, v in table.items() if v["triggered"] == 0)
     return {"table": table, "never_triggered": never, "triggered": sorted(k for k in table if table[k]["triggered"]),
             "cookbook": {"viable": sorted(probe["viable"]), "top1": sorted(probe["top1"]), "total": probe["total"]},
-            "learned_moves": learned}
+            "learned_moves": learned, "set_level": set_level_report(js, run, by_name)}
 
 
 def recipe_probe(run: dict, by_name: dict) -> dict:
