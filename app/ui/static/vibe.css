@@ -226,6 +226,54 @@
 @keyframes vb-flash-1 { from { background: var(--ai-soft); } to { background: transparent; } }
 @keyframes vb-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
 
+/* ANYMA theme: html.anyma-look (visuals.js, from the ANYMA LOOK drawer toggle).
+   Presentation only: the strip's own palette variables are re-pointed at ice
+   white / cyan on black, weights go thin, the phase text reads like an LED
+   ticker. Sizes, fonts and gaps are unchanged, so nothing moves. Warnings and
+   key clashes keep their colours so they stay readable. */
+.anyma-look .vibe-bar {
+  --an-ice: #cfe9ff; --an-cyan: #3fd8ff; --an-red: #ff2238;
+  --ai: var(--an-cyan); --ai-soft: rgba(63, 216, 255, 0.35);
+  --a: var(--an-ice); --b: var(--an-cyan);
+  --a-dim: rgba(207, 233, 255, 0.32); --b-deep: rgba(63, 216, 255, 0.5);
+  --ok: var(--an-ice);
+  --on-surface: var(--an-ice); --on-surface-var: rgba(207, 233, 255, 0.68);
+  --outline: rgba(207, 233, 255, 0.45); --outline-var: rgba(207, 233, 255, 0.14);
+  --s-lowest: #000; --s-low: #000; --s-high: rgba(207, 233, 255, 0.08);
+  border-bottom-color: rgba(63, 216, 255, 0.28);
+}
+.anyma-look .vb-num, .anyma-look .vb-state, .anyma-look .vb-cd, .anyma-look .vb-k { font-weight: 400; }
+/* LED ticker: MERGE / HOLD / HANDOVER, move names, COMBO, the state and feed labels */
+.anyma-look .vb-why, .anyma-look .vb-recipe, .anyma-look .vb-state, .anyma-look .vb-cd, .anyma-look .vb-ev > b {
+  color: var(--an-cyan);
+  text-shadow: 0 0 4px rgba(63, 216, 255, 0.65);
+  -webkit-mask-image: repeating-linear-gradient(90deg, #000 0 2px, rgba(0, 0, 0, 0.55) 2px 3px);
+  mask-image: repeating-linear-gradient(90deg, #000 0 2px, rgba(0, 0, 0, 0.55) 2px 3px);
+}
+.anyma-look .vb-ev.vb-warn > b { color: var(--warn); text-shadow: none; }
+.anyma-look .vb-dot { box-sizing: border-box; }
+.anyma-look .vb-orb .vb-dot { background: transparent; border: 1px solid var(--an-cyan); box-shadow: 0 0 6px rgba(63, 216, 255, 0.6); }
+.anyma-look .vb-orb[data-state="thinking"] .vb-dot { border-top-color: transparent; }
+.anyma-look .vb-beats i.on { box-shadow: 0 0 4px var(--an-cyan); }
+/* the phrase-progress bar: 1 px, absolutely placed, fills over 8 bars, snaps on the line */
+.vb-pbar { display: none; }
+.anyma-look .vb-phrase { position: relative; }
+.anyma-look .vb-pbar {
+  display: block;
+  position: absolute; left: 6px; right: 6px; bottom: 2px;
+  height: 1px;
+  background: var(--an-cyan);
+  box-shadow: 0 0 4px var(--an-cyan);
+  transform-origin: left;
+  transform: scaleX(var(--vb-pp, 0));
+  transition: transform 120ms linear;
+  pointer-events: none;
+}
+.anyma-look .vb-pbar.vb-snap { transition: none; }
+/* drop / supermove: a one-frame border pulse, not a flash */
+.anyma-look .vibe-bar.vb-hit { box-shadow: inset 0 0 0 1px var(--an-cyan), 0 0 8px rgba(63, 216, 255, 0.55); }
+.anyma-look .vibe-bar.vb-hit-red { box-shadow: inset 0 0 0 1px var(--an-red), 0 0 8px rgba(255, 34, 56, 0.45); }
+
 @media (max-width: 900px) {
   .vb-orb, .vb-next, .vb-feed { flex-basis: 100%; max-width: none; }
 }

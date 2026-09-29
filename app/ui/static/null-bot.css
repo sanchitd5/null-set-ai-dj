@@ -16,6 +16,9 @@
   --sm-beat: 480ms; --sm-phase: 0ms;
 }
 .nul-super * { pointer-events: none; }
+/* ANYMA LOOK (html.anyma-look): the takeover glows cyan instead of the deck colour.
+   CSS only; !important beats the inline --sm-glow mascot.js sets per takeover. */
+.anyma-look .nul-super { --sm-glow: #3fd8ff !important; }
 .nul-super.nul-sm-on { visibility: visible; }
 
 .nul-sm-scrim {

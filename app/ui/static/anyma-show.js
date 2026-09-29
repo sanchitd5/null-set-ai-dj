@@ -11,6 +11,11 @@
 // on phrase boundaries (held >= 16 bars), drops and supermoves are hard cuts
 // with a capped flash and 2 bars of fast camera cuts, track transitions are a
 // long particle dissolve, learned/artist moves are small accents.
+// Anyma drops (a long dip or build, then a hard jump on a phrase line, found
+// once per track) cut to the figure, which DANCES on the beat for 16-32 bars.
+// SHOW AUTO (#ap-show-auto): while the AI drives, the AI sizes the stage
+// itself (full on big moments, window in calm phrases), logged as
+// `show: full|window: <why>`. It never calls the browser Fullscreen API.
 //
 // Layout: a pure `core` (music state, scene choice, trigger mapping, director,
 // adaptive quality; node-checked by app/tests/anyma_show_check.js) and a thin
@@ -33,6 +38,7 @@
   const ASSEMBLE_S = 0.7;            // incoming scene assembles from particles after a cut
   const SHOTS = 4;                   // camera presets per scene
   const QUEUE_MAX = 16;
+  const DANCE_MIN_BARS = 16, DANCE_MAX_BARS = 32;   // an Anyma drop's dance: 16 bars, up to 32
 
   // Where each music class wants to be, best first. Vocal (not on a drop): face first.
   const PREF = {
@@ -183,6 +189,7 @@
     return { scene: "monolith", shot: 0, shotT: 0, prev: null, prevShot: 0, prevShotT: 0, mix: 1, mixDur: 1,
       assemble: 0, sceneAt: -Infinity, lastCut: -Infinity, lastDrop: -Infinity, lastFlash: -Infinity,
       burstUntil: -Infinity, burstBeat: 0, flash: 0, accent: 0, red: 0, glitch: 0,
+      dance: 0, danceFrom: -Infinity, danceUntil: -Infinity,
       lastBar: null, lastPhrase: null, lastBeat: null, lastCls: "", queue: [], last: "", cuts: 0,
       rng: (seed >>> 0) || 1 };
   }
@@ -226,19 +233,29 @@
     d.assemble = Math.max(0, d.assemble - k / ASSEMBLE_S);
     d.shotT += k; d.prevShotT += k;
     if (d.prev) { d.mix += k / (d.mixDur || 1); if (d.mix >= 1) { d.mix = 1; d.prev = null; } }
+    const danceWant = now < d.danceUntil ? 1 : 0;
+    d.dance += (danceWant - d.dance) * (1 - Math.exp(-k * (danceWant ? 8 : 1.5)));
+    if (d.dance < 1e-3) d.dance = 0;
     // due events (booked on the audio clock, fired on time)
     for (let i = 0; i < d.queue.length; i++) {
       const e = d.queue[i];
       if (e.at > now + 1e-6) continue;
       d.queue.splice(i--, 1);
       if (now - e.at > 2) continue;              // stale (tab was hidden): drop it
-      if (e.type === "supermove") { if (bigMoment(d, ms, now, reduced, true)) { d.lastDrop = now; d.last = "supermove"; } }
+      if (e.type === "anyma") {
+        // Anyma drop: hard cut to the figure, which dances 16-32 bars (no camera burst, so the dance reads)
+        const bar = 4 * (ms && ms.ok ? ms.beat : 0.47);
+        if (!cut(d, now, "figure", true, reduced)) setScene(d, "figure", now, 0);
+        d.lastDrop = now; d.danceFrom = now; d.danceUntil = now + DANCE_MAX_BARS * bar; d.burstUntil = -Infinity;
+        d.last = "anyma";
+      } else if (e.type === "supermove") { if (bigMoment(d, ms, now, reduced, true)) { d.lastDrop = now; d.last = "supermove"; } }
       else if (e.type === "drop") {
         if (now - d.lastDrop >= DROP_DEDUP_S && bigMoment(d, ms, now, reduced, false)) { d.lastDrop = now; d.last = "drop"; }
       } else if (e.type === "transition") {
         const bar = 4 * (ms && ms.ok ? ms.beat : 0.47);
         const s = pickScene(ms && ms.ok ? ms.cls : "groove", ms && ms.vocal, d.scene, true);
         setScene(d, s, now, Math.min(16, Math.max(4, XFADE_BARS * bar)));
+        d.danceUntil = Math.min(d.danceUntil, now);             // a new track ends the dance
         d.last = "dissolve";
       } else if (e.type === "accent") { d.accent = 1; if (!reduced) d.glitch = Math.max(d.glitch, 0.5); d.last = d.last || "accent"; }
     }
@@ -250,7 +267,10 @@
       return d;
     }
     const bar = 4 * ms.beat;
-    if (ms.cls === "drop" && d.lastCls !== "drop" && now - d.lastDrop >= DROP_DEDUP_S) {
+    if (now < d.danceUntil && ms.phraseIdx !== d.lastPhrase && now - d.danceFrom >= DANCE_MIN_BARS * bar - 0.05
+        && (ms.cls === "calm" || ms.cls === "breakdown")) d.danceUntil = now;        // calm phrase after 16 bars: stop
+    if (now < d.danceUntil) { /* the figure keeps the floor: no scene change while it dances */ }
+    else if (ms.cls === "drop" && d.lastCls !== "drop" && now - d.lastDrop >= DROP_DEDUP_S) {
       if (bigMoment(d, ms, now, reduced, false)) { d.lastDrop = now; d.last = "drop"; }
     } else if (ms.phraseIdx !== d.lastPhrase && now - d.sceneAt >= HOLD_BARS * bar - 0.05 && !d.prev) {
       const s = pickScene(ms.cls, ms.vocal, d.scene, false);
@@ -410,6 +430,11 @@
     for (let y = 1.56; y <= 1.95; y += 0.04) { const r = 0.19 * Math.sqrt(Math.max(0, 1 - ((y - 1.75) / 0.21) ** 2)); ring(fig, 0, y, 0, r, r * 1.1, 32, 0, 40); }
     for (const sx of [-1, 1]) for (let y = -1.9; y <= -0.02; y += 0.08) { const r = 0.07 + 0.07 * (y + 1.9) / 1.88; ring(fig, sx * 0.16, y, 0, r, r, 28, 0, 40); }
     for (const k of [2, 3]) for (let t = 0.05; t <= 1.3; t += 0.075) { const r = 0.085 - 0.035 * t / 1.3; ring(fig, 0, -t, 0, r, r, 24, k, 36); }
+    // eyes on the figure's face (kind 1: lit by the vocal while it dances)
+    for (const sx of [-1, 1]) for (let i = 0; i < 70; i++) {
+      const a = R() * TAU, r = 0.03 * Math.sqrt(R());
+      P(fig, sx * 0.075 + Math.cos(a) * r, 1.78 + Math.sin(a) * r * 0.6, 0.2 + 0.005 * R(), 1);
+    }
 
     // corridor: square frames rushing at the camera, dust on the walls
     const cor = mk(), CW = 2.4, CH = 1.6;
@@ -455,10 +480,160 @@
     return cur;
   }
 
+  // ---- Anyma drop: a long tension (breakdown dip or build) then a hard jump ----
+  // Owner: "go FULL on Anyma-style drops, e.g. Anyma & Rebuke 'Syren', where a
+  // giant humanoid dances on the drop". Found once per track from the analysis:
+  // on an 8-bar phrase line, the 16 bars before hold a real dip (energy low for
+  // 8+ bars), the 2 bars before are still low, and the 4 bars after jump high.
+  // A flat track, a gradual rise or a build that is already loud do not fire.
+  // Genre / artist hints (melodic techno, Afterlife names) relax the thresholds.
+  const ANYMA_NAMES = ["anyma", "afterlife", "tale of us", "argy", "cassian", "rebuke", "adam sellouk", "melodic techno"];
+  const DROP_T = { plain: { post: 0.72, jump: 0.38, dip: 0.5, low: 8 }, hint: { post: 0.6, jump: 0.28, dip: 0.38, low: 6 } };
+  // Pure: text (title, artist, genre, tags) -> the matched hint name or "".
+  function anymaHint(text) {
+    if (typeof text !== "string" || !text) return "";
+    const t = text.normalize ? text.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase() : text.toLowerCase();
+    for (const n of ANYMA_NAMES) if (t.includes(n)) return n;
+    return "";
+  }
+  // Pure: [{at, post, tail, dip, low, jump, hint, section}] for one prepped track.
+  function anymaDrops(pt, hint) {
+    if (!pt || !pt.an || !(pt.eSpan > 0)) return [];
+    // a near-flat curve (noise only) normalises to 0..1 too: no drop in it
+    if (pt.eSpan < 0.2 * Math.max(Math.abs(pt.eLo), Math.abs(pt.eLo + pt.eSpan))) return [];
+    const an = pt.an, pb = an.phrase_boundaries_8bar;
+    if (!Array.isArray(pb) || !pb.length) return [];
+    const bar = 240 / (fin(an.bpm) && an.bpm > 0 ? an.bpm : 128), th = hint ? DROP_T.hint : DROP_T.plain;
+    const out = [];
+    for (const p of pb) {
+      if (!fin(p) || p < 16 * bar - 1e-6) continue;
+      let post = 0; for (let k = 0; k < 4; k++) post += energyAt(pt, p + (k + 0.5) * bar); post /= 4;
+      const tail = (energyAt(pt, p - 0.5 * bar) + energyAt(pt, p - 1.5 * bar)) / 2;
+      let lo = 1, low = 0;
+      for (let k = 0; k < 16; k++) { const e = energyAt(pt, p - (k + 0.5) * bar); if (e < lo) lo = e; if (e < post - 0.3) low++; }
+      const jump = post - tail, dip = post - lo;
+      if (post < th.post || jump < th.jump || dip < th.dip || low < th.low) continue;
+      if (out.length && p - out[out.length - 1].at < 16 * bar) continue;       // one per 16 bars
+      const si = lastLE(pt.secStarts, p), sec = si >= 0 ? pt.secs[si] : null;
+      const r2 = (x) => Math.round(x * 100) / 100;
+      out.push({ at: p, post: r2(post), tail: r2(tail), dip: r2(dip), low, jump: r2(jump), hint: hint || "",
+        section: sec && typeof sec.label === "string" ? sec.label : "" });
+    }
+    return out;
+  }
+  // Pure: the drop crossed moving prev -> pos (null on a seek / backwards / none).
+  function dropCrossed(drops, prev, pos) {
+    if (!Array.isArray(drops) || !fin(prev) || !fin(pos) || pos < prev || pos - prev > 1.5) return null;
+    for (const d of drops) if (d.at > prev && d.at <= pos) return d;
+    return null;
+  }
+  // Pure: text for the step log.
+  function dropEvidence(d) {
+    if (!d) return "";
+    return `jump ${d.jump} (tail ${d.tail} -> ${d.post}), dip ${d.dip} over ${d.low}/16 bars low`
+      + `${d.section ? `, section ${d.section}` : ""}${d.hint ? `, hint ${d.hint}` : ", energy shape only"}`;
+  }
+
+  // ---- DANCE: the figure's beat-locked moves (all 0..1 or -1..1) ----
+  //   sway  body side to side, an extreme on every beat (alternating)
+  //   hit   arms punch on the kick (every beat), decaying
+  //   nod   head nod on the backbeat (beats 2 and 4)
+  //   pose  a bigger pose on each bar downbeat; poseIdx picks which (4 poses)
+  //   amp   energy-scaled amplitude; weight (bass) sinks the body; eye (vocal)
+  function danceNew() { return { sway: 0, hit: 0, nod: 0, pose: 0, poseIdx: 0, amp: 0, weight: 0, eye: 0 }; }
+  function dancePose(ms, dv, reduced, out) {
+    const o = out || danceNew();
+    if (!ms || !ms.ok) { o.sway = o.hit = o.nod = o.pose = o.amp = o.weight = o.eye = 0; return o; }
+    const bp = clamp01(ms.beatPhase), barP = clamp01(ms.barPhase);
+    const inBar = Math.min(3, Math.floor(barP * 4 + 1e-6));
+    o.sway = Math.cos(Math.PI * ((ms.beatIdx | 0) + bp));
+    o.hit = Math.exp(-bp * 8);
+    o.nod = inBar & 1 ? Math.exp(-bp * 6) : 0;
+    o.pose = Math.exp(-barP * 10);
+    o.poseIdx = (((ms.barIdx | 0) % 4) + 4) % 4;
+    o.amp = (0.35 + 0.65 * clamp01(ms.energy)) * (reduced ? 0.3 : 1);
+    o.weight = dv ? clamp01(dv.weight) : 0;
+    o.eye = dv ? clamp01(dv.eye) : 0;
+    return o;
+  }
+  // arm angles per pose [left, right] (radians added to the base arm swing)
+  const POSES = [[0.9, 0.9], [1.6, -0.2], [-0.2, 1.6], [2.2, 2.2]];
+
+  // ---- SHOW AUTO: the AI picks stage (full) or window itself ----
+  // Pure director. Only acts while SHOW is on, SHOW AUTO is checked and the
+  // autopilot drives. FULL on big moments (set start, supermove, peak move,
+  // merge -> hold, drop, Anyma drop), WINDOW in calm / low breakdown phrases.
+  // Switches land on 8-bar phrase lines (a moment in the line's first bar
+  // counts as on the line, a later one waits for the next line), a mode holds
+  // 16+ bars, one switch per 32 bars (a supermove may break that). User input
+  // or Esc: window now, auto paused 2 minutes. AI stops driving: window now.
+  const AUTO = { MIN_BARS: 16, GAP_BARS: 32, START_BARS: 32, FULL_BARS: 16, PAUSE_S: 120, LATCH_BARS: 8 };
+  function autoNew() {
+    return { mode: "pip", at: -Infinity, lastSwitch: -Infinity, holdUntil: -Infinity, pausedUntil: -Infinity,
+      driving: false, started: false, pending: null, pendingAt: -Infinity, lastPhrase: null, why: "" };
+  }
+  function autoSwitch(a, mode, why, now, evidence) {
+    a.mode = mode; a.at = now; a.lastSwitch = now; a.why = why;
+    return { mode, why, evidence: evidence || "" };
+  }
+  // inp: {on, driving, mode (actual "pip"|"full"), ms, moment {kind, evidence}|null,
+  //       user (deck / mixer input), esc, manual (the user picked the stage size: pause, keep it)}
+  function autoStep(a, inp, now) {
+    const i = inp || {};
+    if (!i.on) { a.lastPhrase = null; a.pending = null; if (i.mode === "pip" || i.mode === "full") a.mode = i.mode; return null; }
+    if (i.user || i.esc) {                       // a.mode is still the mode before this input
+      a.pausedUntil = now + AUTO.PAUSE_S; a.pending = null;
+      const was = a.mode;
+      a.mode = "pip";
+      return was === "full" ? autoSwitch(a, "pip", i.esc ? "esc, auto paused 2 min" : "user input, auto paused 2 min", now) : null;
+    }
+    if (i.mode === "pip" || i.mode === "full") { if (i.mode !== a.mode) a.at = now; a.mode = i.mode; }
+    if (i.manual) { a.pausedUntil = now + AUTO.PAUSE_S; a.pending = null; return null; }
+    if (!i.driving) {
+      const was = a.driving;
+      a.driving = false; a.started = false; a.pending = null; a.lastPhrase = null;
+      return was && a.mode === "full" ? autoSwitch(a, "pip", "AI stopped driving", now) : null;
+    }
+    if (!a.driving) { a.driving = true; a.started = false; }
+    if (now < a.pausedUntil) { a.lastPhrase = null; return null; }
+    const ms = i.ms;
+    if (!ms || !ms.ok) return null;
+    const bar = 4 * ms.beat, eps = 0.05;
+    if (!a.started) { a.started = true; a.pending = { kind: "set start", evidence: "" }; a.pendingAt = Infinity; }
+    if (i.moment && i.moment.kind) { a.pending = i.moment; a.pendingAt = now; }
+    if (a.pending && a.pendingAt !== Infinity && now - a.pendingAt > AUTO.LATCH_BARS * bar) a.pending = null;
+    const newLine = a.lastPhrase !== null && ms.phraseIdx !== a.lastPhrase;
+    const first = a.lastPhrase === null;
+    a.lastPhrase = ms.phraseIdx;
+    const inFirstBar = ms.phrasePhase * 8 < 1;
+    const dwellOk = now - a.at >= AUTO.MIN_BARS * bar - eps;
+    const gapOk = now - a.lastSwitch >= AUTO.GAP_BARS * bar - eps;
+    if (a.pending && (newLine || ((first || i.moment) && inFirstBar))) {
+      const p = a.pending, holdBars = p.kind === "set start" ? AUTO.START_BARS : AUTO.FULL_BARS;
+      if (a.mode === "full") {
+        a.holdUntil = Math.max(a.holdUntil, now + holdBars * bar - eps); a.pending = null;
+        // already on the stage: an Anyma drop is still worth a log line (kept: no switch)
+        return p.kind === "anyma drop" ? { mode: "full", why: "anyma drop (already full)", evidence: p.evidence || "", kept: true } : null;
+      }
+      if (dwellOk && (gapOk || p.kind === "supermove")) {
+        a.pending = null; a.holdUntil = now + holdBars * bar - eps;
+        return autoSwitch(a, "full", p.kind, now, p.evidence);
+      }
+      return null;
+    }
+    if (newLine && a.mode === "full" && now >= a.holdUntil && dwellOk && gapOk) {
+      const calm = ms.cls === "calm" || (ms.cls === "breakdown" && ms.energy < 0.4);
+      if (calm) return autoSwitch(a, "pip", ms.cls === "calm" ? "calm section" : "low-energy breakdown", now);
+    }
+    return null;
+  }
+
   const core = { SCENES, PREF, HOLD_BARS, BURST_BARS, BURST_EVERY_BEATS, FLASH_GAP_S, DROP_DEDUP_S, QUALITY,
     WORK_BUDGET_MS, DOWN_FRAMES, UP_FRAMES, REC, lastLE, sectionClass, prepTrack, musicState, musicStateNew,
     pickScene, eventTrigger, createDirector, queueEvent, stepDirector, follow, stemsNew, stemsStep, drives,
-    qualityNew, qualityStep, cameraPose, buildScenes, onAirDeck };
+    qualityNew, qualityStep, cameraPose, buildScenes, onAirDeck, energyAt,
+    ANYMA_NAMES, DROP_T, anymaHint, anymaDrops, dropCrossed, dropEvidence, danceNew, dancePose, POSES,
+    DANCE_MIN_BARS, DANCE_MAX_BARS, AUTO, autoNew, autoStep };
   if (typeof module !== "undefined" && module.exports) module.exports = core;
   if (typeof document === "undefined" || typeof root.addEventListener !== "function") return;
 
@@ -511,7 +686,14 @@
   const dv = { pulse: 0, weight: 0, eye: 0, colour: 0, intensity: 0 };
   const raw = { drums: 0, bass: 0, vocals: 0, other: 0 };
   const STEMS = ["drums", "bass", "vocals", "other"];
-  const tracks = { a: { an: null, pt: null }, b: { an: null, pt: null } };
+  const tracks = { a: { an: null, pt: null, drops: [], prev: NaN }, b: { an: null, pt: null, drops: [], prev: NaN } };
+  const dance = core.danceNew();
+  let danceAmt = 0;
+  // SHOW AUTO (#ap-show-auto, VISUALS group, default on): the AI picks stage / window
+  const autoBox = doc.getElementById("ap-show-auto");
+  const auto = core.autoNew();
+  let userHit = false, escHit = false, manualHit = false, evMoment = null, dropMoment = null, mergePh = null;
+  const autoIn = { on: false, driving: false, mode: "off", ms, moment: null, user: false, esc: false, manual: false };
   const pose = new Float64Array(6), mvp = new Float32Array(16), proj = new Float32Array(16), view = new Float32Array(16);
   let mode = "off", active = false, gl = null, prog = null, U = null, A = null, geo = null, raf = 0, lastT = 0;
   let onAir = null, lastCueT = -Infinity, arm = 0, travel = 0, psize = 2, W = 1, H = 1;
@@ -524,6 +706,7 @@
     const ev = core.eventTrigger(type, e && e.detail, now, (at) => (Number.isFinite(an) ? now + (at - an) : now));
     if (!ev) return;
     if (ev.type === "transition") lastCueT = now;
+    if (type === "ai-cue" && e && e.detail && e.detail.kind === "peak") evMoment = { kind: "peak move", evidence: e.detail.why || "" };
     core.queueEvent(dir, ev);
   };
   const h0 = hostOf();
@@ -543,8 +726,43 @@
   }
   function trackOf(id, d) {
     const tr = tracks[id];
-    if (tr.an !== d.analysis) { tr.an = d.analysis; tr.pt = d.analysis ? core.prepTrack(d.analysis) : null; }
+    if (tr.an !== d.analysis) {
+      tr.an = d.analysis; tr.pt = d.analysis ? core.prepTrack(d.analysis) : null; tr.prev = NaN;
+      tr.drops = tr.pt ? core.anymaDrops(tr.pt, core.anymaHint(hintText(id, d))) : [];
+    }
     return tr.pt;
+  }
+  // title / genre / tags the library knows, for the Anyma-drop hint (read once per track)
+  function hintText(id, d) {
+    const an = d.analysis || {}, el = doc.getElementById(`title-${id}`);
+    const tags = Array.isArray(an.tags) ? an.tags.join(" ") : "";
+    return [el ? el.textContent : "", an.genre, an.artist, an.title, tags, d.trackName].filter((x) => typeof x === "string").join(" ");
+  }
+  // merge -> hold on the booked Stem Merge (the vibe strip's phase math)
+  function mergeHold() {
+    const ap = root.autopilotState, vc = root.vibeUi && root.vibeUi.core, ds = decksNow();
+    const out = ap && ap.active ? ds[ap.activeDeck] : null, inn = out ? (out === ds.a ? ds.b : ds.a) : null;
+    const plan = inn && ap.next && /stem merge/i.test(ap.next.recipe || "") ? inn._mergePlan : null;
+    if (!plan || !vc || typeof out._currentPosition !== "function") { mergePh = null; return null; }
+    const ph = vc.mergePhase(plan, (out._currentPosition() - plan.aT) / (240 / (out.bpm || 128)));
+    const hit = mergePh === "merge" && ph === "hold";
+    mergePh = ph;
+    return hit ? { kind: "merge -> hold", evidence: (plan.pick && plan.pick.label) || "" } : null;
+  }
+  function stepAuto(now) {
+    const ap = root.autopilotState;
+    let moment = dropMoment || evMoment || mergeHold();
+    if (!moment && dir.last === "supermove") moment = { kind: "supermove", evidence: "" };
+    else if (!moment && dir.last === "drop") moment = { kind: "drop", evidence: ms.section || "" };
+    dropMoment = evMoment = null;
+    autoIn.on = !!(autoBox && autoBox.checked) && active; autoIn.driving = !!(ap && ap.active === true);
+    autoIn.mode = mode; autoIn.moment = moment; autoIn.user = userHit; autoIn.esc = escHit; autoIn.manual = manualHit;
+    const r = core.autoStep(auto, autoIn, now);
+    userHit = escHit = manualHit = false;
+    if (!r) return;
+    if (r.mode !== mode) setMode(r.mode);
+    const line = `show: ${r.mode === "full" ? "full" : "window"}: ${r.why}`;
+    if (typeof root.aiStep === "function") root.aiStep("show", { decision: line, why: r.evidence || r.why, phase: "show" });
   }
   // RMS of each decoded stem around the play position (read-only, strided)
   function readStems(d, pos) {
@@ -568,14 +786,22 @@
 attribute vec3 a_p; attribute vec2 a_kr;
 uniform mat4 u_mvp;
 uniform float u_t, u_scatter, u_pulse, u_weight, u_eye, u_arm, u_travel, u_scan, u_glitch, u_psize, u_colour;
+uniform float u_dance, u_sway, u_nod, u_hit, u_armL, u_armR, u_sink;
 varying float v_b; varying float v_c;
 float h(float n) { return fract(sin(n) * 43758.5453); }
 void main() {
   vec3 p = a_p; float k = a_kr.x, r = a_kr.y;
   float b = 0.55 + 0.45 * h(r * 91.7), c = 0.0;
   if (k > 1.5 && k < 3.5) {
-    float s = k < 2.5 ? 1.0 : -1.0, a = s * u_arm, ca = cos(a), sa = sin(a);
+    float s = k < 2.5 ? 1.0 : -1.0, a = s * (u_arm + u_dance * (k < 2.5 ? u_armL : u_armR)), ca = cos(a), sa = sin(a);
     p = vec3(ca * p.x - sa * p.y, sa * p.x + ca * p.y, p.z) + vec3(s * 0.43, 1.28, 0.0);
+  }
+  if (u_dance > 0.001 && k < 3.5) {
+    // DANCE (figure only): bend with the sway, sink on the kick and the bass, nod the head
+    float hy = clamp((p.y + 1.9) / 3.85, 0.0, 1.0);
+    p.x += u_dance * u_sway * 0.3 * hy * hy;
+    p.y -= u_dance * (0.07 * u_hit + 0.12 * u_sink) * hy;
+    if (p.y > 1.5 && k < 1.5) { float nd = u_dance * u_nod * 0.4 * (p.y - 1.5); p.z += nd; p.y -= nd * 0.35; }
   }
   if (k < 3.5 || k > 6.5) { p *= 1.0 + 0.035 * u_weight + 0.012 * sin(u_t * 0.5); b *= 0.55 + 0.6 * u_pulse; }
   if (k > 0.5 && k < 1.5) { b = 0.25 + 1.8 * u_eye; c = 1.0; }
@@ -603,7 +829,8 @@ void main() {
   gl_FragColor = vec4(col * v_b * a * u_alpha * (1.0 + u_flash), 1.0);
 }`;
   const UNIFORMS = ["u_mvp", "u_t", "u_scatter", "u_pulse", "u_weight", "u_eye", "u_arm", "u_travel", "u_scan",
-    "u_glitch", "u_psize", "u_colour", "u_line", "u_alpha", "u_red", "u_flash"];
+    "u_glitch", "u_psize", "u_colour", "u_line", "u_alpha", "u_red", "u_flash",
+    "u_dance", "u_sway", "u_nod", "u_hit", "u_armL", "u_armR", "u_sink"];
 
   function initGL() {
     const g = cv.getContext("webgl", { alpha: false, antialias: false, depth: false, stencil: false, powerPreference: "high-performance" });
@@ -677,6 +904,7 @@ void main() {
     camera(name, shot, shotT);
     gl.uniformMatrix4fv(U.u_mvp, false, mvp);
     gl.uniform1f(U.u_scatter, scatter);
+    gl.uniform1f(U.u_dance, name === "figure" ? danceAmt : 0);
     const am = alpha * (0.4 + 0.6 * dv.intensity);
     bindRec(g.pb); gl.uniform1f(U.u_line, 0); gl.uniform1f(U.u_alpha, 0.33 * am);
     gl.drawArrays(gl.POINTS, 0, Math.floor(g.pn * core.QUALITY[q.level].pts));
@@ -698,7 +926,15 @@ void main() {
     const d = pickDeck(), pt = d ? trackOf(onAir, d) : null;
     const pos = d && typeof d._currentPosition === "function" ? d._currentPosition() : NaN;
     core.musicState(pt, pos, d && d.bpm, ms);
+    // Anyma drop crossed on the on-air deck: the figure dances, SHOW AUTO may go full
+    const tr = d ? tracks[onAir] : null;
+    if (tr) {
+      const dr = ms.ok ? core.dropCrossed(tr.drops, tr.prev, pos) : null;
+      tr.prev = ms.ok ? pos : NaN;
+      if (dr) { core.queueEvent(dir, { type: "anyma", at: now }); dropMoment = { kind: "anyma drop", evidence: core.dropEvidence(dr) }; }
+    }
     core.stepDirector(dir, ms, now, dt, reduced);
+    stepAuto(now);
     core.stemsStep(st, d && ms.ok && readStems(d, pos) ? raw : null, dt);
     core.drives(ms, st, dv);
 
@@ -717,6 +953,13 @@ void main() {
     gl.uniform1f(U.u_travel, travel); gl.uniform1f(U.u_scan, scan); gl.uniform1f(U.u_glitch, dir.glitch);
     gl.uniform1f(U.u_psize, psize); gl.uniform1f(U.u_red, dir.red);
     gl.uniform1f(U.u_flash, (reduced ? 0 : dir.flash * 0.6) + dir.accent * 0.25);
+    // DANCE: beat-locked pose of the figure (only drawn into the figure scene)
+    core.dancePose(ms, dv, reduced, dance);
+    danceAmt = dir.dance * dance.amp;
+    const P = core.POSES[dance.poseIdx];
+    gl.uniform1f(U.u_sway, dance.sway); gl.uniform1f(U.u_nod, dance.nod); gl.uniform1f(U.u_hit, dance.hit);
+    gl.uniform1f(U.u_armL, P[0] * dance.pose + 0.6 * dance.hit); gl.uniform1f(U.u_armR, P[1] * dance.pose + 0.6 * dance.hit);
+    gl.uniform1f(U.u_sink, dance.weight);
     if (dir.prev) drawScene(dir.prev, dir.prevShot, dir.prevShotT, dir.mix, 1 - dir.mix);
     drawScene(dir.scene, dir.shot, dir.shotT, dir.prev ? 1 - dir.mix : dir.assemble * 0.8, dir.prev ? dir.mix : 1);
 
@@ -729,7 +972,9 @@ void main() {
       dbg.textContent = `${fps.toFixed(0)} fps  work ${workAvg.toFixed(2)} ms  quality ${q.level} (${W}x${H})\n`
         + `scene ${dir.scene}/${dir.shot}${dir.prev ? ` <- ${dir.prev} ${(dir.mix * 100).toFixed(0)}%` : ""}  last ${dir.last || "-"}\n`
         + `deck ${onAir || "-"}  ${ms.ok ? `${ms.cls} bar ${ms.barIdx} phrase ${ms.phraseIdx} e ${ms.energy.toFixed(2)}${ms.vocal ? " vocal" : ""}` : "idle"}\n`
-        + `stems ${st.live ? "live" : "grid"}  pulse ${dv.pulse.toFixed(2)} weight ${dv.weight.toFixed(2)} eye ${dv.eye.toFixed(2)}`;
+        + `stems ${st.live ? "live" : "grid"}  pulse ${dv.pulse.toFixed(2)} weight ${dv.weight.toFixed(2)} eye ${dv.eye.toFixed(2)}\n`
+        + `auto ${autoBox && autoBox.checked ? `${auto.mode} (${auto.why || "-"})${now < auto.pausedUntil ? " paused" : ""}` : "off"}`
+        + `  dance ${dir.dance.toFixed(2)}  drops ${onAir ? tracks[onAir].drops.length : 0}`;
     }
   }
 
@@ -753,9 +998,17 @@ void main() {
     raf = 0; dir.queue.length = 0;
   }
   if (toggle) { toggle.checked = false; toggle.addEventListener("change", () => setMode(toggle.checked ? (mode === "full" ? "full" : "pip") : "off")); }
-  if (stageBtn) stageBtn.addEventListener("click", () => setMode(mode === "full" ? "pip" : "full"));
+  if (stageBtn) stageBtn.addEventListener("click", () => { manualHit = true; setMode(mode === "full" ? "pip" : "full"); });
+  // the stage bar's own buttons are the user's choice too: SHOW AUTO pauses 2 minutes
+  bar.addEventListener("click", () => { manualHit = true; }, true);
   // Esc leaves the stage for the window (the browser's own full screen eats the first Esc)
-  root.addEventListener("keydown", (e) => { if (mode === "full" && e.key === "Escape") setMode("pip"); });
+  root.addEventListener("keydown", (e) => { if (mode === "full" && e.key === "Escape") { escHit = true; setMode("pip"); } });
+  // any hand on the decks or the mixer: back to the window, SHOW AUTO pauses 2 minutes
+  const onHand = (e) => {
+    if (!e.isTrusted || !active || !e.target || typeof e.target.closest !== "function") return;
+    if (e.target.closest(".deck-panel, .mixer")) userHit = true;
+  };
+  for (const t of ["pointerdown", "input"]) doc.addEventListener(t, onHand, { capture: true, passive: true });
   doc.addEventListener("visibilitychange", () => {
     if (doc.hidden) { if (raf) root.cancelAnimationFrame(raf); raf = 0; lastT = 0; } else wake();
   });

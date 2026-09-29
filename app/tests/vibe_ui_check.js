@@ -126,4 +126,40 @@ assert.strictEqual(v.feedPrune(feed, 7000 + v.FEED_TTL_MS + 1).length, 0);
 const w = v.feedPush([], { kind: "glitch-dropout", label: "GLITCH", warn: true }, 0);
 assert.strictEqual(v.feedPrune(w, v.FEED_TTL_MS + 1).length, 1);        // warnings stay longer
 
+// -- ANYMA theme: the phrase-progress bar fills over 8 bars and snaps on the line
+{
+  const downs = [], phr = [];
+  for (let t = 0; t < 64; t += 2) downs.push(t);          // 120 BPM: bar 2 s, phrase 16 s
+  for (let t = 0; t < 64; t += 16) phr.push(t);
+  assert.strictEqual(v.phraseProgress(downs, phr, 0), 0);
+  assert.strictEqual(v.phraseProgress(downs, phr, 8), 0.5);
+  assert.ok(Math.abs(v.phraseProgress(downs, phr, 15.99) - 0.999375) < 1e-9);
+  assert.strictEqual(v.phraseProgress(downs, phr, 16), 0, "on the line: snaps to 0");
+  assert.strictEqual(v.phraseProgress(downs, phr, 15.9995), 0, "within 1 ms of the line counts as the line");
+  assert.strictEqual(v.phraseProgress(downs, phr, 56), 0.5, "past the last line: 8 bars of the local bar");
+  assert.strictEqual(v.phraseProgress(downs, phr, 200), 1);
+  assert.strictEqual(v.phraseProgress(downs, [4, 20], 2), null, "before the first line");
+  assert.strictEqual(v.phraseProgress(downs, [], 2), null);
+  assert.strictEqual(v.phraseProgress(downs, phr, NaN), null);
+  // snapping: only a step backwards (a new phrase, seek, loop) jumps without the fill animation
+  assert.strictEqual(v.progressSnaps(0.99, 0), true);
+  assert.strictEqual(v.progressSnaps(0.2, 0.26), false);
+  assert.strictEqual(v.progressSnaps(NaN, 0), false);
+  // samples across two phrases rise monotonically, then snap exactly once
+  let prev = NaN, snaps = 0;
+  for (let t = 0; t < 32; t += 0.1) { const f = v.phraseProgress(downs, phr, t); if (v.progressSnaps(prev, f)) snaps++; prev = f; }
+  assert.strictEqual(snaps, 1);
+}
+// -- the theme is presentation only: fixed-size bar, no layout properties animated
+{
+  const fs = require("fs"), path = require("path");
+  const css = fs.readFileSync(path.join(__dirname, "../ui/static/vibe.css"), "utf8");
+  const theme = css.slice(css.indexOf("/* ANYMA theme"), css.indexOf("@media (max-width: 900px)"));
+  assert.ok(theme.length > 200, "vibe.css has the ANYMA theme");
+  assert.ok(!/font-size|padding|margin|min-height|letter-spacing|\bwidth:/.test(theme), "the theme never changes sizes");
+  assert.ok(/\.vb-pbar \{ display: none; \}/.test(theme) && /position: absolute/.test(theme), "the bar is hidden in classic, absolute in ANYMA");
+  assert.ok(/vb-snap \{ transition: none; \}/.test(theme));
+  assert.ok(!/#fff\b|#ffffff|:\s*white\b/i.test(theme), "never pure white");
+}
+
 console.log("vibe ui ok");

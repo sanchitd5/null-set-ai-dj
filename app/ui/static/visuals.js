@@ -31,6 +31,9 @@
 // the bass band is a flat glow whose brightness changes slowly.
 // Toggle: the VFX button in the top bar, remembered in localStorage. Off means
 // nothing is drawn at all, the bass band included.
+// Style: ANYMA LOOK (#vfx-anyma-toggle, VISUALS drawer) swaps the classic deck
+// colours for the SHOW look (see the ANYMA section), same gates, same loop.
+// While the SHOW stage is up (window or full) this layer yields and draws nothing.
 (function (root) {
   "use strict";
 
@@ -75,8 +78,9 @@
   // Pure: which layers draw this frame. o = {enabled, hidden, playing,
   // bassAlive, autopilot}. The bass band needs no AI; every other effect does.
   // The bass band keeps drawing while it fades out after the music stops.
+  // o.show = window.anymaShow.mode: while the SHOW stage is up this layer yields.
   function vfxLayers(o) {
-    const on = !!o && o.enabled === true && o.hidden !== true;
+    const on = !!o && o.enabled === true && o.hidden !== true && !showYields(o.show);
     return { bass: on && (o.playing === true || o.bassAlive === true), ai: on && aiDriving(o.autopilot) };
   }
   // Pure: the photosensitivity cap. last = time of the last flash (s).
@@ -227,11 +231,46 @@
     const k = (t - attack) / (dur - attack);
     return (1 - k) * (1 - k);
   }
+  // ---- ANYMA look (a VFX style; default stays "classic") -------------------
+  // Black space, ice-white / cyan thin lines and a particle field, a rare red
+  // on supermoves. All timing comes from the SHOW core (anyma-show.js): the
+  // same trigger mapping, director (cuts on phrase lines, capped flash, long
+  // dissolve on transitions) and music state; this file only draws it in 2D.
+  // The choice is the drawer toggle #vfx-anyma-toggle (drawer localStorage).
+  const STYLE_ID = "vfx-anyma-toggle", STORE_KEY = "djAiToggles.v1";
+  const ANYMA_COL = { ice: "#cfe9ff", cyan: "#3fd8ff", red: "#ff2238" };   // never pure white
+  // Pure: the saved drawer blob -> "anyma" | "classic" (bad blob = classic).
+  function styleFromStore(raw) {
+    if (!raw) return "classic";
+    try { const o = JSON.parse(raw); return o && typeof o === "object" && o[STYLE_ID] === true ? "anyma" : "classic"; }
+    catch (e) { return "classic"; }
+  }
+  // Pure: the SHOW stage (window or full) is up -> this layer draws nothing.
+  function showYields(mode) { return mode === "pip" || mode === "full"; }
+  // Pure: alpha of the tinted flash overlay from the director's flash level.
+  // Capped at 0.5, tinted cyan (never white), none under reduced motion.
+  function anymaFlash(level, reduced) {
+    if (reduced || !Number.isFinite(level) || level <= 0) return 0;
+    return Math.min(0.5, level * 0.5);
+  }
+  // Pure: SHOW scene -> the 2D motif that stands for it on the VFX layer.
+  const MOTIF = { head: "eyes", figure: "rings", corridor: "frames", monolith: "scan" };
+  function anymaMotif(scene) { return MOTIF[scene] || "scan"; }
+  // The SHOW core, shared (never forked): node require, or the page's copy.
+  function anymaCore() {
+    if (root.anymaShow && root.anymaShow.core) return root.anymaShow.core;
+    if (typeof module !== "undefined" && module.exports && typeof require === "function") {
+      try { return require("./anyma-show.js"); } catch (e) { return null; }
+    }
+    return null;
+  }
+
   if (typeof module !== "undefined" && module.exports) {
     module.exports = { effectFor, env, FLASH_GAP_S, aiDriving, energyPeaks, nextPeakIdx, stepPeaks,
                        peakAllowed, DROP_PEAK_GAP_S, SEEK_JUMP_S, vfxLayers, flashAllowed, safeBeat,
                        MIN_PULSE_GAP_S, bassState, bassFollow, bassAlive, deckBass, bassMix, mixHex,
-                       afterPulse, DROP_BURST_S, DROP_AFTER_BEATS };
+                       afterPulse, DROP_BURST_S, DROP_AFTER_BEATS,
+                       STYLE_ID, STORE_KEY, ANYMA_COL, styleFromStore, showYields, anymaFlash, anymaMotif, anymaCore };
   }
   if (typeof document === "undefined") return;
 
@@ -245,8 +284,9 @@
 
   const btn = document.getElementById("vfx-toggle");
   const KEY = "nul.vfx";
-  let enabled = true;
+  let enabled = true, style = "classic";
   try { enabled = localStorage.getItem(KEY) !== "off"; } catch (_) { /* private mode */ }
+  try { style = styleFromStore(localStorage.getItem(STORE_KEY)); } catch (_) { /* private mode */ }
   const mq = root.matchMedia ? root.matchMedia("(prefers-reduced-motion: reduce)") : null;
   let reduced = !!(mq && mq.matches);
   if (mq && mq.addEventListener) mq.addEventListener("change", (e) => { reduced = e.matches; });
@@ -295,7 +335,7 @@
   const aiOn = () => aiDriving(root.autopilotState);
   const dropTimes = [];                           // performance-clock seconds, booked + fired
   function spawn(fx) {
-    if (!enabled || !fx || document.hidden || !aiOn()) return;
+    if (!enabled || !fx || document.hidden || !aiOn() || style === "anyma") return;   // ANYMA: its director draws cues
     fx.t0 = nowS();
     if (fx.type === "drop") {
       fx.flash = !fx.still && flashAllowed(fx.t0, lastFlash);
@@ -326,11 +366,14 @@
   root.addEventListener("ai-cue", (e) => {
     if (!enabled || !aiOn()) return;
     const d = e.detail || {};
+    anymaEvent("ai-cue", d);
     schedule(effectFor(d, reduced), d.at);
   });
+  root.addEventListener("ai-supermove", (e) => anymaEvent("ai-supermove", e.detail || {}));
   let holding = false;
   root.addEventListener("ai-activity", (e) => {
     const d = e.detail || {};
+    anymaEvent("ai-activity", d);
     if (d.kind === "decision") { holding = d.action === "holdloop"; if (holding) wake(); }
     else if (d.kind === "stem-move") spawn(effectFor({ kind: "stem-move", deck: d.deck }, reduced));
   });
@@ -546,8 +589,126 @@
   const DRAW = { drop: drawDrop, sweep: drawSweep, scan: drawScan, peak: drawPeak,
                  edge: (fx, t, c) => edgeGlow(c, 0.35 * env(t, fx.dur)) };
 
+  // ---- ANYMA look: the SHOW core's director, drawn as thin lines + particles --
+  // Everything below is allocated once; a frame only writes numbers.
+  const PN = 180;                                   // particles at full quality
+  const AN = { dir: null, ms: null, dv: null, q: null, pts: null, onAir: null, travel: 0, sceneAt: -1,
+               tracks: { a: { an: null, pt: null }, b: { an: null, pt: null } } };
+  function anymaInit(A) {
+    if (AN.dir) return true;
+    if (!A) return false;
+    AN.dir = A.createDirector(0x9e37); AN.ms = A.musicStateNew(); AN.q = A.qualityNew();
+    AN.dv = { pulse: 0, weight: 0, eye: 0, colour: 0, intensity: 0 };
+    AN.pts = new Float32Array(PN * 4);
+    seedPts();
+    return true;
+  }
+  function seedPts() {
+    const p = AN.pts;
+    for (let i = 0; i < PN; i++) {
+      p[i * 4] = Math.random(); p[i * 4 + 1] = Math.random();
+      const a = Math.random() * Math.PI * 2, s = 0.004 + Math.random() * 0.012;
+      p[i * 4 + 2] = Math.cos(a) * s; p[i * 4 + 3] = Math.sin(a) * s;
+    }
+  }
+  // console event -> the SHOW core's trigger mapping -> this layer's director
+  function anymaEvent(type, detail) {
+    if (style !== "anyma" || !enabled || !aiOn()) return;
+    const A = anymaCore();
+    if (!anymaInit(A)) return;
+    const now = nowS(), an = typeof audioCtx !== "undefined" ? audioCtx.currentTime : NaN;
+    const ev = A.eventTrigger(type, detail, now, (at) => (Number.isFinite(an) ? now + (at - an) : now));
+    if (ev) { A.queueEvent(AN.dir, ev); wake(); }
+  }
+  const gainVal = (n) => (n && n.gain && Number.isFinite(n.gain.value) ? n.gain.value : 1);
+  const airGain = (d) => (d && d.playing ? gainVal(d.crossfaderGain) * gainVal(d.volumeGain) : 0);
+  function motif(scene, a, dir, ms, dv) {
+    if (a <= 0.003) return;
+    const beatA = 0.55 + 0.6 * dv.pulse, m = anymaMotif(scene);
+    cx.lineWidth = 1;
+    if (m === "frames") {                            // corridor: frames rushing out from the centre
+      for (let i = 0; i < 5; i++) {
+        const s = ((i + AN.travel) % 5) / 5, w = W * (0.12 + 0.88 * s), h = H * (0.12 + 0.88 * s);
+        cx.globalAlpha = Math.min(1, a * beatA * 0.24 * s);
+        cx.strokeRect(W / 2 - w / 2, H / 2 - h / 2, w, h);
+      }
+    } else if (m === "scan") {                       // monolith: side rails, a scan line once per bar
+      cx.globalAlpha = Math.min(1, a * 0.2 * beatA);
+      cx.fillRect(Math.round(W * 0.035), 0, 1, H); cx.fillRect(Math.round(W * 0.965), 0, 1, H);
+      const y = Math.round(H * (1 - (ms.ok ? ms.barPhase : 0.5)));
+      cx.globalAlpha = Math.min(1, a * (0.1 + 0.28 * dv.pulse));
+      cx.fillRect(0, y, W, 1);
+    } else if (m === "rings") {                      // figure: rings of light, scaled by the bass
+      const sway = dir.dance > 0 && ms.ok ? Math.cos(Math.PI * (ms.beatIdx + ms.beatPhase)) * dir.dance * W * 0.02 : 0;
+      cx.globalAlpha = Math.min(1, a * 0.2 * beatA);
+      cx.beginPath();
+      for (let i = 0; i < 3; i++) {
+        const r = H * (0.16 + 0.09 * i) * (1 + 0.14 * dv.weight), x = W / 2 + sway * (i + 1) / 3;
+        cx.moveTo(x + r * 1.7, H * 0.56); cx.ellipse(x, H * 0.56, r * 1.7, r * 0.32, 0, 0, Math.PI * 2);
+      }
+      cx.stroke();
+    } else drawEyes(a, dv.eye);                      // head: the face / eye motif
+  }
+  function drawEyes(a, eye) {
+    const k = Math.min(1, a * (0.12 + 0.75 * eye));
+    if (k <= 0.003) return;
+    cx.globalAlpha = k;
+    cx.beginPath();
+    for (let s = -1; s <= 1; s += 2) {
+      const x = W / 2 + s * W * 0.055, y = H * 0.18;
+      cx.moveTo(x + W * 0.03, y); cx.ellipse(x, y, W * 0.03, H * 0.012, 0, 0, Math.PI * 2);
+    }
+    cx.stroke();
+    cx.globalAlpha = Math.min(1, a * eye);
+    for (let s = -1; s <= 1; s += 2) cx.fillRect(W / 2 + s * W * 0.055 - 1, H * 0.18 - 1, 3, 3);
+  }
+  function anymaFrame(now, dt) {
+    const A = anymaCore();
+    if (!anymaInit(A)) return;
+    const t0 = performance.now(), ds = root.decks || {}, dir = AN.dir, ms = AN.ms, dv = AN.dv;
+    const was = AN.onAir;
+    AN.onAir = A.onAirDeck(AN.onAir, airGain(ds.a), airGain(ds.b));
+    if (was && AN.onAir && was !== AN.onAir) A.queueEvent(dir, { type: "transition", at: now });   // hand-over: long dissolve
+    const d = AN.onAir ? ds[AN.onAir] : null, tr = d ? AN.tracks[AN.onAir] : null;
+    if (tr && tr.an !== d.analysis) { tr.an = d.analysis; tr.pt = d.analysis ? A.prepTrack(d.analysis) : null; }
+    const pos = d && typeof d._currentPosition === "function" ? d._currentPosition() : NaN;
+    A.musicState(tr ? tr.pt : null, pos, d && d.bpm, ms);
+    A.stepDirector(dir, ms, now, dt, reduced);
+    A.drives(ms, null, dv);
+    // a hard cut re-seeds the field; a dissolve keeps it drifting
+    if (dir.sceneAt !== AN.sceneAt) { AN.sceneAt = dir.sceneAt; if (!dir.prev && !reduced) seedPts(); }
+    const drift = reduced ? 0 : dt * (0.4 + (ms.ok ? ms.energy : 0));
+    AN.travel = (AN.travel + dt * (reduced ? 0.04 : 0.12 + 0.5 * (ms.ok ? ms.energy : 0))) % 5;
+
+    const fl = anymaFlash(dir.flash, reduced);
+    if (fl > 0.003) { cx.globalAlpha = fl * 0.6; cx.fillStyle = ANYMA_COL.cyan; cx.fillRect(0, 0, W, H); }
+    const line = dir.red > 0.3 ? ANYMA_COL.red : ANYMA_COL.ice;
+    cx.strokeStyle = line; cx.fillStyle = line;
+    if (dir.prev) motif(dir.prev, 1 - dir.mix, dir, ms, dv);
+    motif(dir.scene, dir.prev ? dir.mix : 1 - 0.8 * dir.assemble, dir, ms, dv);
+    if (dir.scene !== "head" && dv.eye > 0.05) drawEyes(0.7, dv.eye);   // a vocal lights the eyes anywhere
+
+    const p = AN.pts, n = Math.floor(PN * A.QUALITY[AN.q.level].pts), sz = 1 + 1.5 * dv.weight;
+    cx.fillStyle = ANYMA_COL.cyan;
+    cx.globalAlpha = Math.min(1, 0.16 + 0.34 * dv.pulse);
+    for (let i = 0; i < n; i++) {
+      let x = p[i * 4] + p[i * 4 + 2] * drift, y = p[i * 4 + 1] + p[i * 4 + 3] * drift;
+      x -= Math.floor(x); y -= Math.floor(y);
+      p[i * 4] = x; p[i * 4 + 1] = y;
+      cx.fillRect(x * W, y * H, sz, sz);
+    }
+    if (bass.hit > 0.01 && !reduced) {               // kick: a thin frame, not a colour wash
+      cx.globalAlpha = Math.min(1, 0.35 * bass.hit); cx.strokeStyle = ANYMA_COL.cyan;
+      cx.strokeRect(0.5, 0.5, W - 1, H - 1);
+    }
+    cx.globalAlpha = 1;
+    fullDirty = true;
+    A.qualityStep(AN.q, performance.now() - t0, dt * 1000, 1000 / 60);
+  }
+
   // ---- loop: runs only while something is on screen ------------------------
   let raf = 0, lastT = 0;
+  const lay = { enabled: false, hidden: false, playing: false, bassAlive: false, autopilot: null, show: "off" };
   function wake() {
     if (raf || !enabled || document.hidden) return;
     lastT = nowS();
@@ -563,10 +724,21 @@
     tap();
     const playing = anyPlaying();
     bassFollow(bass, readLow(), dt, now, reduced);
-    const L = vfxLayers({ enabled, hidden: document.hidden, playing, bassAlive: bassAlive(bass),
-                          autopilot: root.autopilotState });
-    if (L.ai) checkPeaks();
+    lay.enabled = enabled; lay.hidden = document.hidden; lay.playing = playing; lay.bassAlive = bassAlive(bass);
+    lay.autopilot = root.autopilotState; lay.show = root.anymaShow ? root.anymaShow.mode : "off";
+    const L = vfxLayers(lay);
     clear();
+    if (showYields(lay.show)) return;               // the SHOW stage is up: one heavy layer at a time
+    if (style === "anyma") {
+      if (L.bass) {
+        drawBass(ANYMA_COL.cyan, now);
+        if (bandTop < H) { cx.globalAlpha = Math.min(1, 0.25 + 0.5 * bass.level); cx.fillStyle = ANYMA_COL.ice; cx.fillRect(0, bandTop + 1, W, 1); cx.globalAlpha = 1; }
+      }
+      if (L.ai) anymaFrame(now, dt);
+      if (playing || bassAlive(bass)) wake();
+      return;
+    }
+    if (L.ai) checkPeaks();
     const bc = L.bass ? bassColor() : null;
     if (L.bass) drawBass(bc, now);
     if (L.ai) {
@@ -596,7 +768,22 @@
   // a deck starting (hand or AI) or a hold loop wakes the sleeping loop
   setInterval(() => { if (!raf && (anyPlaying() || (holding && aiOn()))) wake(); }, 1000);
 
+  // VFX style: the drawer toggle, restored early from the drawer's own store so
+  // the first frame already has the right look (the drawer re-applies it later)
+  function setStyle(s) {
+    style = s === "anyma" ? "anyma" : "classic";
+    document.documentElement.classList.toggle("anyma-look", style === "anyma");
+    effects.length = 0; fullDirty = true; clear(); wake();
+  }
+  const styleBox = document.getElementById(STYLE_ID);
+  if (styleBox) {
+    styleBox.checked = style === "anyma";
+    styleBox.addEventListener("change", () => setStyle(styleBox.checked ? "anyma" : "classic"));
+  }
+
   resize();
   setEnabled(enabled);
-  root.nulVisuals = { setEnabled, get enabled() { return enabled; }, spawn: (kind, deck) => spawn(effectFor({ kind, deck }, reduced)) };
+  setStyle(style);
+  root.nulVisuals = { setEnabled, get enabled() { return enabled; }, setStyle, get style() { return style; },
+                      spawn: (kind, deck) => spawn(effectFor({ kind, deck }, reduced)) };
 })(typeof window !== "undefined" ? window : globalThis);

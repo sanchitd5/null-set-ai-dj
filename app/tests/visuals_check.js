@@ -228,4 +228,74 @@ assert.strictEqual(safeBeat(-1), 60 / 128);
   assert.strictEqual(mixHex("bad", "worse", 0.5), "#00e5ff");
   assert.strictEqual(mixHex("#000000", "#ffffff", 7), "#ffffff");              // clamped
 }
+
+// ---- ANYMA look (a VFX style) -------------------------------------------------
+{
+  const V = require("../ui/static/visuals.js"), A = require("../ui/static/anyma-show.js");
+  const TD = require("../ui/static/toggle-drawer.js");
+  // style selection + persistence: the drawer's own store and key, default classic
+  assert.strictEqual(V.STORE_KEY, TD.STORE_KEY, "the style lives in the drawer's localStorage blob");
+  assert.strictEqual(V.styleFromStore(null), "classic");
+  assert.strictEqual(V.styleFromStore("{bad json"), "classic");
+  assert.strictEqual(V.styleFromStore(JSON.stringify({ "ap-show-toggle": true })), "classic");
+  assert.strictEqual(V.styleFromStore(JSON.stringify(TD.withSaved({}, V.STYLE_ID, true))), "anyma");
+  assert.strictEqual(V.styleFromStore(JSON.stringify(TD.withSaved({ [V.STYLE_ID]: true }, V.STYLE_ID, false))), "classic");
+  assert.strictEqual(V.styleFromStore(JSON.stringify({ [V.STYLE_ID]: "yes" })), "classic", "booleans only");
+  // the toggle sits in the VISUALS drawer group, off by default; SHOW AUTO on by default
+  const fs = require("fs"), path = require("path");
+  const html = fs.readFileSync(path.join(__dirname, "../ui/static/index.html"), "utf8");
+  const lab = (id) => { const m = new RegExp(`<label[^>]*>\\s*<input[^>]*id="${id}"[^>]*>`).exec(html); return m ? m[0] : ""; };
+  assert.ok(/data-group="VISUALS"/.test(lab(V.STYLE_ID)) && !/checked/.test(lab(V.STYLE_ID)), "ANYMA LOOK: VISUALS, off by default");
+  assert.ok(/data-group="VISUALS"/.test(lab("ap-show-auto")) && /checked/.test(lab("ap-show-auto")), "SHOW AUTO: VISUALS, on by default");
+  assert.strictEqual(TD.classify(V.STYLE_ID, "VISUALS").group, "VISUALS");
+  // trigger mapping reuse: the SHOW core itself, not a fork
+  const core = V.anymaCore();
+  assert.strictEqual(core.eventTrigger, A.eventTrigger);
+  assert.strictEqual(core.stepDirector, A.stepDirector);
+  assert.strictEqual(core.musicState, A.musicState);
+  const src = fs.readFileSync(path.join(__dirname, "../ui/static/visuals.js"), "utf8");
+  assert.ok(!/function (stepDirector|eventTrigger|musicState|pickScene)\b/.test(src), "no forked director in visuals.js");
+  assert.ok(/A\.eventTrigger\(/.test(src) && /A\.stepDirector\(/.test(src));
+  assert.strictEqual(V.anymaMotif("head"), "eyes");
+  assert.strictEqual(V.anymaMotif("figure"), "rings");
+  assert.strictEqual(V.anymaMotif("corridor"), "frames");
+  assert.strictEqual(V.anymaMotif("monolith"), "scan");
+  assert.strictEqual(V.anymaMotif("nope"), "scan");
+  // flash cap: two drops 0.5 s apart through the shared director -> one flash; reduced motion -> none
+  const ms = A.musicStateNew();
+  const flashes = (reduced) => {
+    const d = A.createDirector(1);
+    let n = 0, prev = 0;
+    for (let t = 0; t < 3; t += 1 / 60) {
+      if (Math.abs(t - 1) < 1 / 120 || Math.abs(t - 1.5) < 1 / 120) A.queueEvent(d, { type: "supermove", at: t });
+      A.stepDirector(d, ms, t, 1 / 60, reduced);
+      const a = V.anymaFlash(d.flash, reduced);
+      assert.ok(a <= 0.5, "tinted overlay capped at 0.5");
+      if (a > prev + 0.2) n++;
+      prev = a;
+    }
+    return n;
+  };
+  assert.strictEqual(flashes(false), 1, "<= 1 flash per second");
+  assert.strictEqual(flashes(true), 0, "reduced motion: no flash");
+  assert.strictEqual(V.anymaFlash(1, false), 0.5);
+  assert.strictEqual(V.anymaFlash(NaN, false), 0);
+  for (const c of Object.values(V.ANYMA_COL)) assert.ok(!/^#f{6}$/i.test(c), "never pure white");
+  // VFX yields to SHOW: window or stage up -> nothing drawn, bass band included
+  const on = { enabled: true, hidden: false, playing: true, bassAlive: true, autopilot: { active: true } };
+  assert.deepStrictEqual(V.vfxLayers({ ...on, show: "off" }), { bass: true, ai: true });
+  assert.deepStrictEqual(V.vfxLayers({ ...on, show: "pip" }), { bass: false, ai: false });
+  assert.deepStrictEqual(V.vfxLayers({ ...on, show: "full" }), { bass: false, ai: false });
+  assert.deepStrictEqual(V.vfxLayers({ ...on, show: undefined }), { bass: true, ai: true });
+  assert.strictEqual(V.showYields("pip"), true); assert.strictEqual(V.showYields("off"), false);
+  // the gates hold in ANYMA too: the look only draws inside the ai layer
+  assert.ok(/if \(L\.ai\) anymaFrame\(/.test(src));
+  // one loop: visuals.js has exactly one requestAnimationFrame call site for its frame
+  assert.strictEqual((src.match(/requestAnimationFrame\(frame\)/g) || []).length, 1);
+  // NULL-BOT: the ANYMA tint is CSS only (mascot.js untouched by the look)
+  const nb = fs.readFileSync(path.join(__dirname, "../ui/static/null-bot.css"), "utf8");
+  assert.ok(/\.anyma-look \.nul-super \{ --sm-glow: #3fd8ff !important; \}/.test(nb));
+  const mascot = fs.readFileSync(path.join(__dirname, "../ui/static/mascot.js"), "utf8");
+  assert.ok(!/anyma/i.test(mascot));
+}
 console.log("visuals ok");
