@@ -304,19 +304,26 @@ def _reuse_existing(url: str) -> Optional[List[dict]]:
     return [{"track_id": tid, "filename": _tracks[tid].name, "display_name": _track_names.get(tid) or wanted}]
 
 
-def _register_downloaded(paths: List[Path]) -> List[dict]:
-    """Move downloaded audio into UPLOAD_DIR under its content-hash id."""
+def _register_downloaded(paths: List[Path], names: Optional[List[str]] = None, move: bool = True,
+                         queue: bool = True) -> List[dict]:
+    """Move downloaded audio into UPLOAD_DIR under its content-hash id. names: display names
+    (default the file stems); move=False copies (pair_atlas import-set keeps the study's file);
+    queue=False leaves the separation to the console (import-set: stems cached by content)."""
     results = []
-    for path in paths:
-        original_name = path.stem
+    for i, path in enumerate(paths):
+        original_name = names[i] if names and i < len(names) and names[i] else path.stem
         data = path.read_bytes()
         track_id = hashlib.sha256(data).hexdigest()[:16]
         dest = UPLOAD_DIR / f"{track_id}{path.suffix}"
         if not dest.exists():
-            shutil.move(str(path), dest)
+            if move:
+                shutil.move(str(path), dest)
+            else:
+                shutil.copy2(str(path), dest)
         _tracks[track_id] = dest
         _remember_track_name(track_id, original_name)
-        _queue_stems(track_id)            # separate now, before a deck needs it
+        if queue:
+            _queue_stems(track_id)        # separate now, before a deck needs it
         results.append({"track_id": track_id, "filename": dest.name, "display_name": original_name})
     return results
 
