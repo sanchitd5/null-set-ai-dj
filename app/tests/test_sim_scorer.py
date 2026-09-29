@@ -146,3 +146,37 @@ def test_suite_aggregate_and_check():
     reasons = suite.check(worse, base)
     assert any("mean score" in r for r in reasons) and any("key_clash_blends" in r for r in reasons)
     assert base["aggregate"]["recipes"] == {"Long Blend": 4}
+
+
+def test_merge_hold_metrics_are_informational():
+    """merged_play_share / hold seconds / refusal histogram report, but never move the score."""
+    plain = _score(_run([_t(1), _t(2), _t(3), _t(4)]))
+    held = _run([_t(1, merge_outcome="hold", hold_s=30.0, hold_bars=14), _t(2, merge_outcome="hold", hold_s=14.0, hold_bars=6),
+                 _t(3, merge_outcome="refused", merge_gate="key"), _t(4, merge_outcome="classic", merge_gate="unclean")])
+    r = _score(held)
+    m = r["metrics"]
+    assert r["score"] == plain["score"]
+    assert m["merged_play_share"] == 0.5 and m["classic_merge_share"] == 0.25
+    assert m["hold_seconds_mean"] == 22.0 and m["hold_seconds_max"] == 30.0
+    assert m["merge_refusals"] == {"key": 1, "unclean": 1}
+    assert _score(_run([_t(1)]))["metrics"]["merged_play_share"] == 0.0
+
+
+def test_merge_facts_read_the_step_log():
+    from app.sim import runlog
+
+    def st(kind, t, **kw):
+        return {"kind": kind, "t": 1_790_000_000.0 + t, "decision": kw.pop("decision", None), "result": kw}
+
+    steps = [st("merge_gate", 5, decision="refused", gate="key"),
+             st("hold", 61, decision="hold", phrases=2, bars=14, seconds=28.0)]
+    held = runlog._merge_facts(steps, 0.0, 60.0, 90.0, "Stem Merge")
+    assert held["merge_outcome"] == "hold" and held["hold_s"] == 28.0 and held["hold_bars"] == 14 and held["merge_gate"] == ""
+    refused = runlog._merge_facts(steps[:1], 0.0, 60.0, 90.0, "Echo Out")
+    assert refused["merge_outcome"] == "refused" and refused["merge_gate"] == "key"
+    classic = runlog._merge_facts([st("merge_gate", 5, decision="classic merge", gate="unclean")], 0.0, 60.0, 90.0, "Stem Merge")
+    assert classic["merge_outcome"] == "classic" and classic["merge_gate"] == "unclean"
+    assert runlog._merge_facts([], 0.0, 60.0, 90.0, "Long Blend")["merge_outcome"] == "n/a"
+    # another transition's hold step (outside the window) is not this one's
+    other = runlog._merge_facts([st("hold", 200, phrases=2, bars=14, seconds=28.0)], 0.0, 60.0, 90.0, "Long Blend")
+    assert other["merge_outcome"] == "n/a"

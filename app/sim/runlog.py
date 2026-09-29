@@ -100,7 +100,9 @@ def build_run(js: dict, world, meta: dict) -> dict:
         pct = (w.get("rate_max_pct") or {}).get(inp, 0.0)
         mind = [st for st in steps if st.get("kind") == "mind_plan" and prev_end - 0.001 <= st["t"] - 1_790_000_000.0 <= s["t"] + 0.5]
         parsed = any(((st.get("result") or {}).get("parsed") is True) for st in mind)
+        merge = _merge_facts(steps, prev_end, s["t"], ends[i]["t"] if i < len(ends) else float("inf"), executed)
         transitions.append({
+            **merge,
             "i": i + 1, "from": d["from"], "to": d["to"], "from_id": d["from"], "to_id": d["to"],
             "from_bpm": round(a["bpm"], 2), "to_bpm": round(b["bpm"], 2), "from_key": a["key"], "to_key": b["key"],
             "key_score": key_console, "key_kb": key_kb,
@@ -146,6 +148,35 @@ def build_run(js: dict, world, meta: dict) -> dict:
                      "misses": sorted(world.misses, key=lambda m: (m["what"], m["key"]))[:20]},
             "songs": songs, "transitions": transitions, "preps": preps, "rejects": rejects, "counters": counters,
             "audible": {"set": js["audible"].get("set")}}
+
+
+def _merge_facts(steps: list, booked_from: float, fire: float, end: float, executed: Optional[str]) -> dict:
+    """MERGE -> HOLD -> TRANSITION evidence for one transition (informational, never scored).
+
+    `merge_gate` steps (autopilot.js planMerge: the gate that refused the hold plan, or the classic
+    merge that ran instead) are logged from booking until the transition ends; `hold` (with
+    merge_start / handover) is logged when the merge fires. outcome: hold = a measured hold ran,
+    classic = the fixed 16 / 32 bar merge ran, refused = a gate stopped every merge, n/a = the
+    transition never tried one (LAYER / PEAK / pre-planned / not booked as a merge)."""
+    def at(st):
+        return st["t"] - 1_790_000_000.0
+
+    gates = [st for st in steps if st.get("kind") == "merge_gate" and booked_from - 0.001 <= at(st) <= end + 0.5]
+    hold = next((st for st in steps if st.get("kind") == "hold" and "phrases" in (st.get("result") or {})
+                 and fire - 1.0 <= at(st) <= end + 0.5), None)
+    last = gates[-1] if gates else None
+    gate = ((last.get("result") or {}).get("gate") or "") if last else ""
+    if hold is not None:
+        outcome = "hold"
+    elif executed == "Stem Merge" and last is not None and last.get("decision") == "classic merge":
+        outcome = "classic"
+    elif last is not None:
+        outcome = "refused"
+    else:
+        outcome = "n/a"
+    res = (hold or {}).get("result") or {}
+    return {"merge_outcome": outcome, "merge_gate": gate if outcome != "hold" else "",
+            "hold_s": float(res.get("seconds") or 0.0), "hold_bars": int(res.get("bars") or 0)}
 
 
 def llm_summary(calls: list) -> dict:
