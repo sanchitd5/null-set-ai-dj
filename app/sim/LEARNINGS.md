@@ -139,5 +139,27 @@ dead ends in (c); re-rank (d).
 - Unverified: <anything not proven by a number>
 ```
 
+### 2026-09-29 pre-render earlier (branch worktree-agent-a1a0e0237349d3f19, base 8a42765)
+- Evidence (25 real transitions with names in both logs, `data/cache/sessions` + cache mtimes; NOT measured: download time, per-render
+  Rubber Band time): booking follows the deck load by a median 6 s (p90 26 s); the fire is a median 206 s (p90 395 s) after the load;
+  stems were on the deck at the load for 16 of 25 songs, the other 9 landed 3-159 s later (median about 56 s), all 25 before the
+  fire; tempo sets (12 of 25 songs needed one) landed a median 241 s (p90 486 s) after the load, only 7 of 12 before the fire.
+  Separation: median gap between consecutive finished separations 26 s (p10 7, p90 81). LLM: suggest 8.7 s, look-ahead 13.0 s,
+  plan 5.0 s (medians). Root causes: (1) the merge is decided AT the booking, seconds after the load, minutes before the fire, so B's
+  stems were "not loaded"; (2) `evaluateCandidate` waited only 20 s for the stems before asking for the tempo set, so with stems landing
+  40-160 s after the load the tempo set was never asked for ("B has no key-locked tempo stems yet"); (3) the tempo sets were asked for
+  A's tempo at that instant, and A was still easing home (a moving target).
+- Change: `app/ui/prerender.py` (ranked candidates, stems then tempo sets, one heavy job at a time, cancel on drop),
+  `autopilot.js` (`syncPrerender`, `orderByReadiness`, `awaitBReady`, `aTempoAtEntry`), `deck-controller.js` stem poll 10 s -> 3 s.
+- Panel: `lib-s1-long` replay (StubLLM), one run, sim world with modelled separation (26 s) and tempo render (30 s) latency.
+- Before (the merge-hold agent, same stub replays, instant server-side stems): every merge refused, 4 of 8 "B stems not loaded",
+  4 of 8 "B has no key-locked tempo stems yet". After (first version, before the A-home-tempo fix): 1 of 9 merged (`merged_play_share`
+  0.111), refusals stems 3, tempo 4, key 1; 5 bookings deferred (146 s in total), 3 gave up; `ready_at_booking_share` 0.0.
+  The two "tempo" gate refusals on transitions 7 and 8 were key clashes (holdPlan checks the tempo first).
+- Verdict: open. The fix for cause (3) landed after the single allowed sim run and is covered by node checks only (UNVERIFIED in the sim).
+- Cache growth (not implemented, a note): `data/cache/stems` 98.9 GB / 615 sets, `data/cache/keylock` 21.6 GB / 115 tempo sets, no
+  eviction anywhere. Each pre-rendered candidate adds about 160 MB of stems and about 190 MB per tempo set. Suggest an LRU by mtime on the
+  regenerable `keylock/t*` sets (about 30 s each to re-render) capped near 20 GB, and stems left alone (they cost a Demucs run).
+
 No iterations logged yet: `app/sim/LOOP.md` was not present on main or in any worktree when this file was
 written. Add its kept and reverted iterations here when it merges.
