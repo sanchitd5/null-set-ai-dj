@@ -261,4 +261,69 @@ function play(from, to, opts = {}) {
   assert.strictEqual(f.upFrames, C.UP_FRAMES * 2);
 }
 
+// ---- camera: every scene / shot is finite, drift stays bounded over a long hold
+{
+  const o = new Float64Array(6);
+  for (const s of [...C.SCENES, "nope"]) for (let shot = -1; shot < 6; shot++) for (const t of [0, 5, 60, 600, NaN]) {
+    C.cameraPose(s, shot, t, false, o);
+    assert.ok(o.every(Number.isFinite), `${s} ${shot} ${t}`);
+    const d = Math.hypot(o[0] - o[3], o[1] - o[4], o[2] - o[5]);
+    assert.ok(d > 1 && d < 16, `${s} dist ${d}`);
+  }
+  const a = C.cameraPose("head", 0, 0, false, new Float64Array(6)), b = C.cameraPose("head", 0, 600, false, new Float64Array(6));
+  assert.ok(Math.hypot(a[0] - b[0], a[2] - b[2]) < 3, "head camera wanders");
+  // the corridor camera stays in the tunnel mouth (frames are 2.4 x 1.6)
+  for (let shot = 0; shot < 4; shot++) for (const t of [0, 30, 300]) {
+    const c = C.cameraPose("corridor", shot, t, false, o);
+    assert.ok(Math.abs(c[0]) < 2.4 && Math.abs(c[1]) < 1.6, `corridor eye ${c[0]} ${c[1]}`);
+  }
+}
+
+// ---- geometry: four scenes, finite, known kinds, sane budgets
+{
+  const g = C.buildScenes(0x5eed), g2 = C.buildScenes(0x5eed);
+  assert.deepStrictEqual(Object.keys(g).sort(), [...C.SCENES].sort());
+  for (const s of C.SCENES) {
+    const { points, pointCount, lines, lineCount } = g[s];
+    assert.ok(pointCount > 3000 && pointCount < 20000, `${s} points ${pointCount}`);
+    assert.strictEqual(points.length, pointCount * C.REC);
+    assert.strictEqual(lineCount % 2, 0);
+    assert.ok(lineCount < 20000, `${s} line verts ${lineCount}`);
+    for (const arr of [points, lines]) for (let i = 0; i < arr.length; i++) assert.ok(Number.isFinite(arr[i]));
+    for (let i = 3; i < points.length; i += C.REC) assert.ok([0, 1, 2, 3, 4, 5, 6, 7].includes(points[i]));
+    // a segment keeps one rand (a dissolve moves it whole)
+    for (let i = 0; i < lines.length; i += 2 * C.REC) assert.strictEqual(lines[i + 4], lines[i + C.REC + 4]);
+    assert.deepStrictEqual(points, g2[s].points);                       // deterministic
+  }
+  // shuffled: the first quarter of the head already has eyes in it
+  let eyes = 0; const hp = g.head.points;
+  for (let i = 0; i < g.head.pointCount / 4; i++) if (hp[i * C.REC + 3] === 1) eyes++;
+  assert.ok(eyes > 60, `eyes in the first quarter ${eyes}`);
+  // the figure has both arms
+  const kinds = new Set(); for (let i = 3; i < g.figure.points.length; i += C.REC) kinds.add(g.figure.points[i]);
+  assert.ok(kinds.has(2) && kinds.has(3));
+}
+
+// ---- on-air deck: the louder one, with hysteresis
+{
+  assert.strictEqual(C.onAirDeck(null, 0, 0), null);
+  assert.strictEqual(C.onAirDeck(null, 1, 0), "a");
+  assert.strictEqual(C.onAirDeck(null, 0.3, 0.8), "b");
+  assert.strictEqual(C.onAirDeck("a", 0.6, 0.7), "a");                 // small lead: no flip
+  assert.strictEqual(C.onAirDeck("a", 0.4, 0.9), "b");
+  assert.strictEqual(C.onAirDeck("b", 1, 0.01), "a");                 // on-air deck went silent
+  assert.strictEqual(C.onAirDeck("a", NaN, 0.5), "b");
+  assert.strictEqual(C.onAirDeck("x", 0.5, 0.2), "a");
+}
+
+// ---- the sim never loads the show (paint only), and the console does
+{
+  const fs = require("fs"), path = require("path");
+  const runSet = fs.readFileSync(path.join(__dirname, "../sim/js/run-set.js"), "utf8");
+  assert.ok(/skip = cfg\.skip \|\| \[[^\]]*"anyma-show\.js"/.test(runSet), "sim skips anyma-show.js");
+  const html = fs.readFileSync(path.join(__dirname, "../ui/static/index.html"), "utf8");
+  assert.ok(html.includes('src="/anyma-show.js"') && html.includes('id="ap-show-toggle"') && html.includes('id="show-stage"'));
+  assert.ok(!/id="ap-show-toggle"[^>]*checked/.test(html), "SHOW is off by default");
+}
+
 console.log("anyma show ok");
