@@ -176,6 +176,7 @@ assert.strictEqual(fx.sweepDirection(null, 1000).fallbacks.length, 1, "unmeasure
   assert(brake && brake[2] <= fx.REWIND_MAX_S + 1e-9 && near(brake[1] + brake[2], line, 0.05), "a capped brake that ends on the line");
   assert(play && near(play[1], 64, 1e-6) && near(play[2], line, 1e-6), "the deck restarts at the supermove's downbeat exactly on the line");
   assert(events.some((e) => e.t === "ai-activity" && e.d.kind === "artist_move" && e.d.move === "supermove_replay"), "logged as artist_move: supermove_replay");
+  assert(events.some((e) => e.t === "vis-moment" && e.d.name === "REWIND" && e.d.tier === "super" && near(e.d.at, line, 1e-6)), "NULL-BOT: REWIND super on the line");
 
   // same song, another supermove: once per song
   calls.length = 0;
