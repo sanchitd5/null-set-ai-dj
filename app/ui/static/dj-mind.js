@@ -1436,6 +1436,9 @@
     if (kind !== "fill") return true;
     if (plan && (plan.style === "instant" || plan.style === "peak")) return false;
     if (transitions - lastFillTransition < 2) return false;
+    // S21 FX budget (fx-budget.js): the fill is a wet move riding this transition; a refusal plays nothing
+    const fb = host.mod.fxBudget;
+    if (fb && !fb.spend("wet", 1, { phraseS: 8 * barSecsOf(deck()), song: trackIdx, transition: transitions }).ok) return false;
     lastFillTransition = transitions;
     return true;
   }
