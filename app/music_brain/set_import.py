@@ -86,18 +86,23 @@ def plan(cache_dir: Path, set_id: str) -> List[dict]:
     """One row per tracklist entry, set order: {position, title, path, action, id, why}.
     action: import | cut (an unreleased ID, cut out of the set recording at its slot) |
     reuse (the library holds it) | skip."""
+    cache_dir = Path(cache_dir)
+    study = json.loads((cache_dir / "sets" / set_id / "study.json").read_text(encoding="utf-8"))
+    return plan_tracks(cache_dir, set_id, study.get("tracks") or [], _set_audio(cache_dir, set_id, study))
+
+
+def plan_tracks(cache_dir: Path, set_id: str, tracks: List[dict], set_audio: Optional[Path] = None) -> List[dict]:
+    """plan() over tracklist rows [{title, start, path, likely_wrong_song?, heard_share?}]
+    (a study's tracks, or a bare tracklist's found songs). No set_audio: IDs are skipped."""
     from app.music_brain import studied_combos as sc
     from app.ui import dedup_songs as ds
 
     cache_dir = Path(cache_dir)
-    study = json.loads((cache_dir / "sets" / set_id / "study.json").read_text(encoding="utf-8"))
     names = sc.library_names(cache_dir)
     uploads = {p.stem for p in (cache_dir / "uploads").glob("*") if not p.name.startswith("_")} \
         if (cache_dir / "uploads").is_dir() else set()
     res = sc.Resolver({k: v for k, v in names.items() if k in uploads}, ds.load_aliases(cache_dir))
     rows, seen = [], {}
-    tracks = study.get("tracks") or []
-    set_audio = _set_audio(cache_dir, set_id, study)
     rev = {n: tid for tid, n in names.items() if tid in uploads}
     for i, t in enumerate(tracks):
         title = str(t.get("title") or "")
@@ -226,3 +231,149 @@ def summary(rows: List[dict]) -> dict:
             "reused": sum(1 for r in rows if r["action"] == "reuse"),
             "skipped": [{"position": r["position"], "title": r["title"], "why": r["why"]} for r in rows if r["action"] == "skip"],
             "errors": [{"position": r["position"], "title": r["title"], "error": r["error"]} for r in rows if r.get("error")]}
+
+
+def learn_macros(set_id: str, cache_dir: Optional[Path] = None, log: Callable[[str], None] = lambda m: None,
+                 build: Optional[Callable[..., dict]] = None) -> dict:
+    """learn-set's last step: import-set then an incremental pair_atlas build (default, not --full:
+    unchanged pairs are kept, only the new tracks' pairs are scored) that writes the macros.
+    -> {"imported", "skipped", "written": this set's macro names, "error": None | str}; never raises.
+    Serialized by an flock on CACHE_DIR/pair_atlas.lock, so two studies finishing together
+    build one after the other (the second sees both sets) instead of dropping each other's macros."""
+    from app.music_brain.config import CACHE_DIR
+
+    cache_dir = Path(cache_dir or CACHE_DIR)
+    out = {"imported": 0, "skipped": 0, "written": [], "error": None}
+    try:
+        rows = apply(plan(cache_dir, set_id))
+        s = summary(rows)
+        out["imported"], out["skipped"] = s["imported"] + s["cut"], len(s["skipped"])
+        if s["errors"]:
+            out["error"] = f"import: {len(s['errors'])} failed ({s['errors'][0]['error']})"[:200]
+        if build is None:
+            from app.music_brain.pair_atlas import build
+        with _atlas_lock(cache_dir):
+            doc = build(cache_dir, seed_macros_to=cache_dir, log=log)
+        sid = re.escape(set_id)
+        mine = re.compile(rf"studied-{sid}-\d+|studied-set-{sid}")
+        out["written"] = [m["name"] for m in doc.get("seeded", []) if mine.fullmatch(m["name"])]
+    except Exception as exc:  # noqa: BLE001 -- the learn result stands whatever happens here
+        out["error"] = f"{type(exc).__name__}: {exc}"[:200]
+    return out
+
+
+_BARE_ID = re.compile(r"(?i)\s*id(\s*-\s*id)?\??\s*")
+
+
+def tracklist_slots(text: str) -> tuple:
+    """Tracklist text -> (slots [{start, title, layers[]}] in set order, bare-ID row count).
+    A layered 'A x B' row is one slot: the first song plays it, the rest are noted as layers."""
+    from app.music_brain.set_learner import _TS, parse_tracklist
+
+    slots: List[dict] = []
+    for e in parse_tracklist(text):
+        if slots and slots[-1]["start"] == e.start:
+            slots[-1]["layers"].append(e.title)
+        else:
+            slots.append({"start": e.start, "title": e.title, "layers": []})
+    ids = sum(1 for line in (text or "").splitlines()
+              if (m := _TS.match(line)) and _BARE_ID.fullmatch(m.group(2)))
+    return slots, ids
+
+
+def learn_tracklist_macro(source: str, tracklist: Optional[str] = None, download: bool = True,
+                          cache_dir: Optional[Path] = None, log: Callable[[str], None] = lambda m: None,
+                          build: Optional[Callable[..., dict]] = None, find: Optional[Callable] = None,
+                          info: Optional[Callable[[str], tuple]] = None) -> dict:
+    """learn-set --macros-only: a macro `set-<set_id>` straight from the tracklist, no set audio,
+    no Demucs on the mix. Each song: library first, else downloaded (find_or_fetch_song), then
+    registered through plan_tracks/apply like import-set, an incremental atlas build under the
+    atlas lock, and macros.from_picks in tracklist order (locked).
+    -> {set_id, macro, songs_found, songs_skipped[], macros{imported, skipped, written, error}}.
+    ValueError when there is no usable tracklist (fewer than 2 songs)."""
+    from app.music_brain import macros as mc
+    from app.music_brain import set_learner as sl
+    from app.music_brain.config import CACHE_DIR
+
+    cache_dir = Path(cache_dir or CACHE_DIR)
+    set_id, title, desc = (info or sl.set_info)(source)
+    text = tracklist or ""
+    if text and len(text) < 4096 and Path(text).expanduser().is_file():
+        text = Path(text).expanduser().read_text(encoding="utf-8")
+    slots, bare_ids = tracklist_slots(text or desc)
+    if len(slots) < 2:
+        raise ValueError("--macros-only needs a tracklist with at least 2 timestamped songs "
+                         "(--tracklist, or the video description)")
+    find = find or sl.find_or_fetch_song
+    songs_dir = sl.SETS_DIR / set_id / "songs"
+    tracks = []
+    for s in slots:
+        p = None if _ID_TITLE.search(s["title"]) else find(s["title"], songs_dir, download=download, exclude_ids=(set_id,))
+        log(f"song {s['title']}: {p or 'NOT FOUND'}")
+        tracks.append({"start": s["start"], "title": s["title"], "path": str(p) if p else None})
+    rows = plan_tracks(cache_dir, set_id, tracks)
+    skipped = [{"position": r["position"], "title": r["title"], "why": r["why"]} for r in rows if r["action"] == "skip"]
+    out = {"imported": 0, "skipped": len(skipped), "written": [], "error": None}
+    res = {"set_id": set_id, "macro": None, "songs_found": 0, "songs_skipped": skipped, "macros": out}
+    name = f"set-{set_id}"
+    try:
+        rows = apply(rows)
+        s = summary(rows)
+        out["imported"] = s["imported"] + s["cut"]
+        for e in s["errors"]:
+            skipped.append({"position": e["position"], "title": e["title"], "why": f"import failed: {e['error']}"})
+        if build is None:
+            from app.music_brain.pair_atlas import build
+        with _atlas_lock(cache_dir):
+            atlas = build(cache_dir, seed_macros_to=cache_dir, log=log)
+        ids, seen = [], set()
+        for r in rows:
+            if r["action"] not in ("import", "reuse", "cut") or r.get("error"):
+                continue
+            if r["id"] not in atlas.get("tracks", {}):
+                skipped.append({"position": r["position"], "title": r["title"], "why": "not in the atlas (no analysis)"})
+            elif r["id"] in seen:
+                skipped.append({"position": r["position"], "title": r["title"], "why": "listed earlier (reprise)"})
+            else:
+                seen.add(r["id"])
+                ids.append(r["id"])
+        if len(ids) > mc.MAX_STEPS + 1:
+            skipped += [{"position": None, "title": f"{len(ids) - mc.MAX_STEPS - 1} songs", "why": "over the macro limit"}]
+            ids = ids[:mc.MAX_STEPS + 1]
+        skipped.sort(key=lambda x: (x["position"] is None, x["position"] or 0))
+        out["skipped"] = len(skipped)
+        res["songs_found"] = len(ids)
+        m = mc.from_picks(ids, atlas, locked=True, name=name)
+        layers = [f"#{i} {s['title']} layered with {', '.join(s['layers'])}" for i, s in enumerate(slots, 1) if s["layers"]]
+        notes = [f"#{x['position'] or '-'} {x['title']}: {x['why']}" for x in skipped]
+        if bare_ids:
+            notes.append(f"{bare_ids} ID rows (no song named)")
+        m.update(source="tracklist", title=f"{mc.set_label(title)} (tracklist, {len(ids)} songs)",
+                 note=(f"tracklist of {title}; skipped: " + "; ".join(notes) if notes else f"tracklist of {title}")
+                 + ("; " + "; ".join(layers) if layers else ""))
+        mc.write_seed(m, cache_dir, owner="tracklist")
+        res["macro"] = name
+        out["written"] = [name]
+    except Exception as exc:  # noqa: BLE001 -- reported in macros.error, the rows above still stand
+        out["error"] = f"{type(exc).__name__}: {exc}"[:200]
+    return res
+
+
+class _atlas_lock:
+    """Exclusive flock on CACHE_DIR/pair_atlas.lock (no-op where fcntl is missing, e.g. Windows)."""
+
+    def __init__(self, cache_dir: Path):
+        self.path = Path(cache_dir) / "pair_atlas.lock"
+
+    def __enter__(self):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.fh = open(self.path, "a")
+        try:
+            import fcntl
+            fcntl.flock(self.fh, fcntl.LOCK_EX)
+        except ImportError:
+            pass
+        return self
+
+    def __exit__(self, *exc):
+        self.fh.close()          # closing releases the lock

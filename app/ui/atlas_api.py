@@ -26,7 +26,14 @@ router = APIRouter()
 ATLAS_CACHE_DIR: Path = CACHE_DIR      # tests point this at tmp_path
 
 
+def _seed() -> None:
+    """Tracked knowledge/ into the cache when either changed (a few stats otherwise)."""
+    from app.music_brain import knowledge
+    knowledge.auto_seed(ATLAS_CACHE_DIR)
+
+
 def _index() -> Optional[pa.Index]:
+    _seed()
     return pa.cached_index(ATLAS_CACHE_DIR)
 
 
@@ -126,6 +133,7 @@ class PicksBody(BaseModel):
 
 @router.get("/api/macros")
 def get_macros():
+    _seed()
     return {"macros": mc.list_macros(ATLAS_CACHE_DIR)}
 
 
