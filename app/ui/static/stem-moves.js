@@ -978,6 +978,7 @@
   function cancel(deckId) {
     (timers[deckId] || []).forEach(clearTimeout);
     timers[deckId] = [];
+    if (host.bus) host.bus.emit("ai-cancel", { deck: deckId });           // SHOW AUTO drops the booked moments
   }
   // Schedule gain moves; setTimeout only books them ~200 ms early, the ramps
   // themselves land on the audio clock. A move whose time has passed (booked

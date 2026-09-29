@@ -1,13 +1,23 @@
-/* SHOW mode stage (anyma-show.js). Window by default, .anyma-full fills the
-   page. z 870: above the VFX canvas (850), under NULL-BOT (880). */
+/* SHOW mode stage (anyma-show.js): a background layer baked into the console,
+   never a floating box. z-index -1 in the page: every console control paints
+   above it, the VFX canvas (850) and NULL-BOT (880) stay above too.
+   WINDOW (body.show-embed): the band behind the waveforms + decks; JS sets top
+   and height from the layout. FULL (body.show-full): behind the whole console. */
 .anyma-stage {
-  position: fixed; left: 12px; bottom: 12px; z-index: 870;
-  width: min(420px, 45vw); aspect-ratio: 16 / 9;
-  background: #000; overflow: hidden;
-  border: 1px solid rgba(160, 210, 255, 0.25);
-  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.7);
+  position: absolute; left: 0; right: 0; top: 0; height: 0; z-index: -1;
+  background: #000; overflow: hidden; pointer-events: none;
 }
-.anyma-stage.anyma-full { inset: 0; width: auto; aspect-ratio: auto; border: 0; box-shadow: none; }
+.anyma-stage.anyma-full { position: fixed; inset: 0; height: auto; }
+/* WINDOW: dim the show behind the UI (not the UI): translucent panels keep the
+   waveforms, beat grid, cue markers and controls legible on top */
+body.show-embed .wave-stage, body.show-embed .wave-viewport, body.show-embed .wave-lane,
+body.show-embed .deck-panel, body.show-embed .mixer { background: rgba(4, 6, 10, 0.62); }
+body.show-embed .workspace { background: transparent; }
+/* FULL: the show owns the background; the console floats over it, translucent,
+   every control still visible and clickable (Esc or WINDOW gets back) */
+body.show-full .topbar, body.show-full .vibe-bar, body.show-full .fx-bar, body.show-full .wave-stage,
+body.show-full .wave-viewport, body.show-full .wave-lane, body.show-full .panel,
+body.show-full .deck-panel, body.show-full .mixer { background: rgba(4, 6, 10, 0.5); }
 .anyma-stage[hidden] { display: none; }
 .anyma-stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 /* LED wall: fine row lines + a dark vignette, static (no per-frame cost) */
@@ -17,21 +27,9 @@
     radial-gradient(ellipse at 50% 50%, transparent 55%, rgba(0, 0, 0, 0.65) 100%),
     repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.18) 0 1px, transparent 1px 3px);
 }
-.anyma-bar {
-  position: absolute; right: 8px; top: 8px; display: flex; gap: 6px;
-  opacity: 0.25; transition: opacity 0.2s;
-}
-.anyma-bar:hover, .anyma-bar:focus-within { opacity: 1; }
-.anyma-bar button {
-  font: 600 10px "JetBrains Mono", monospace; letter-spacing: 0.08em;
-  color: #cfe8ff; background: rgba(0, 0, 0, 0.6);
-  border: 1px solid rgba(160, 210, 255, 0.35); padding: 3px 8px; cursor: pointer;
-}
-.anyma-bar button:focus-visible { outline: 1px solid #7fe3ff; }
 .anyma-debug {
   position: absolute; left: 8px; top: 8px; margin: 0; pointer-events: none;
   font: 10px/1.4 "JetBrains Mono", monospace; color: #9fe6ff; white-space: pre;
   background: rgba(0, 0, 0, 0.55); padding: 5px 7px;
 }
 .anyma-debug[hidden] { display: none; }
-@media (prefers-reduced-motion: reduce) { .anyma-bar { transition: none; } }

@@ -768,6 +768,7 @@
   }
   function cancelMoves() {
     timers.forEach(clearTimeout); timers = [];
+    if (host.bus) host.bus.emit("ai-cancel", { deck: deckId || "" });   // SHOW AUTO drops the booked moments
     const lm = host.mod.learnedMoves, d = deck();
     if (lm && d) lm.stop(d);                      // a booked learned slice window / stem mode goes with the moves
     const am = host.mod.artistMoves;

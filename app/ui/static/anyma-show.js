@@ -170,6 +170,8 @@
     const d = detail || {};
     const conv = (at) => { const v = fin(at) && typeof toNow === "function" ? toNow(at) : now; return fin(v) ? v : now; };
     if (type === "ai-supermove") return { type: "supermove", at: conv(d.at) };
+    if (type === "vis-moment") return d.tier === "super" ? { type: "supermove", at: conv(d.at) }
+      : d.tier === "accent" ? { type: "accent", at: conv(d.at) } : null;
     if (type === "ai-cue") {
       if (d.kind === "drop") return { type: "drop", at: conv(d.at) };
       if (d.kind === "transition") return { type: "transition", at: conv(d.at) };
@@ -567,10 +569,10 @@
   // counts as on the line, a later one waits for the next line), a mode holds
   // 16+ bars, one switch per 32 bars (a supermove may break that). User input
   // or Esc: window now, auto paused 2 minutes. AI stops driving: window now.
-  const AUTO = { MIN_BARS: 16, GAP_BARS: 32, START_BARS: 32, FULL_BARS: 16, PAUSE_S: 120, LATCH_BARS: 8 };
+  const AUTO = { MIN_BARS: 16, GAP_BARS: 32, START_BARS: 32, FULL_BARS: 16, PAUSE_S: 120, LATCH_BARS: 8, LEAD_BARS: 8 };
   function autoNew() {
     return { mode: "pip", at: -Infinity, lastSwitch: -Infinity, holdUntil: -Infinity, pausedUntil: -Infinity,
-      driving: false, started: false, pending: null, pendingAt: -Infinity, lastPhrase: null, why: "" };
+      driving: false, started: false, pending: null, pendingAt: -Infinity, lastPhrase: null, why: "", ahead: null };
   }
   function autoSwitch(a, mode, why, now, evidence) {
     a.mode = mode; a.at = now; a.lastSwitch = now; a.why = why;
@@ -608,6 +610,34 @@
     const inFirstBar = ms.phrasePhase * 8 < 1;
     const dwellOk = now - a.at >= AUTO.MIN_BARS * bar - eps;
     const gapOk = now - a.lastSwitch >= AUTO.GAP_BARS * bar - eps;
+    // Upcoming visual moments (booked cues, predicted drops): FULL on the phrase
+    // line one phrase BEFORE the hit, so the build plays on the stage. A booked
+    // moment may skip the 16/32-bar rules, only to go FULL early for it.
+    const lead = AUTO.LEAD_BARS * bar, up = Array.isArray(i.upcoming) ? i.upcoming : [];
+    let next = null;
+    for (const m of up) if (m && fin(m.at) && m.at > now + eps && (!next || m.at < next.at)) next = m;
+    if (a.ahead) {
+      const m = up.find((x) => x && x.key === a.ahead.key && fin(x.at));
+      if (m) { a.ahead.at = m.at; a.ahead.gone = null; a.holdUntil = Math.max(a.holdUntil, m.at + AUTO.FULL_BARS * bar - eps); }
+      else if (a.ahead.gone === null && now >= a.ahead.at) a.ahead = null; // it happened: normal hold rules
+      else if (a.ahead.gone === null) a.ahead.gone = now;       // cancelled before its hit
+      if (a.ahead && a.ahead.gone !== null && newLine && now >= a.ahead.gone + lead - eps) {
+        const prev = a.ahead.prev; a.ahead = null; a.holdUntil = prev; a.pending = null;
+        return a.mode === "full" && now >= prev ? autoSwitch(a, "pip", "moment cancelled", now) : null;
+      }
+    }
+    if (next && next.at - now < 2 * lead - eps) {
+      const hold = next.at + AUTO.FULL_BARS * bar - eps;
+      if (a.mode === "full") {
+        if (!a.ahead && hold > a.holdUntil) { a.ahead = { key: next.key, at: next.at, gone: null, prev: a.holdUntil }; a.holdUntil = hold; }
+      }
+      else if (newLine) {
+        const n = Math.round((next.at - now) / bar);
+        const where = fin(ms.barIdx) ? `bar ${ms.barIdx + n}` : `+${(next.at - now).toFixed(1)}s`;
+        a.pending = null; a.holdUntil = hold; a.ahead = { key: next.key, at: next.at, gone: null, prev: -Infinity };
+        return autoSwitch(a, "full", `ahead of ${next.kind} at ${where} (lead ${n} bars)`, now, next.evidence);
+      }
+    }
     if (a.pending && (newLine || ((first || i.moment) && inFirstBar))) {
       const p = a.pending, holdBars = p.kind === "set start" ? AUTO.START_BARS : AUTO.FULL_BARS;
       if (a.mode === "full") {
@@ -628,12 +658,52 @@
     return null;
   }
 
+  // Pure: a booked console event -> upcoming visual moment {key, kind, at (audio
+  // time), deck} or null. Same key = the same move rescheduled. A plain crossfade
+  // is not a moment; a transition only counts when its move is a drop move.
+  const CUE_NAMES = [[/merge/i, "MERGE drop"], [/mashup/i, "MASHUP drop"], [/hook drop|slams back/i, "HOOK DROP"],
+    [/strip & rebuild/i, "STRIP & REBUILD"], [/double drop/i, "DOUBLE DROP"], [/drop swap/i, "DROP SWAP"],
+    [/rap arrives|riff over rap/i, "RIFF OVER RAP"]];
+  function bookedMoment(type, detail) {
+    const d = detail || {}, deck = typeof d.deck === "string" ? d.deck : "";
+    const why = String(d.why || d.label || "");
+    if ((type === "ai-supermove" || (type === "vis-moment" && d.tier === "super")) && fin(d.at)) {
+      const name = String(d.name || "supermove").trim().toUpperCase().slice(0, 24);
+      return { key: `sm:${deck}:${name}`, kind: name, at: d.at, deck };
+    }
+    if (type === "ai-cue" && fin(d.at)) {
+      const hit = CUE_NAMES.find(([re]) => re.test(why));
+      if (d.kind === "transition" && !(hit && /DOUBLE DROP|DROP SWAP|MERGE|MASHUP/.test(hit[1]))) return null;
+      if (d.kind !== "drop" && d.kind !== "line" && d.kind !== "peak" && d.kind !== "transition") return null;
+      return { key: `cue:${deck}:${d.kind}`, kind: hit ? hit[1] : `${d.kind} cue`, at: d.at, deck };
+    }
+    if (type === "ai-activity" && (d.kind === "artist_move" || d.kind === "learned_move") && fin(d.t0)) {
+      return { key: `mv:${deck}:${d.move || why}`, kind: why.slice(0, 32) || d.kind, at: d.t0, deck };
+    }
+    return null;
+  }
+  // Pure: the playing song's own visual moments, song time: predicted Anyma
+  // drops plus section edges into a drop with a big energy jump (one per 4 bars).
+  function songMoments(pt, drops) {
+    if (!pt || !pt.an) return [];
+    const bar = 240 / (fin(pt.an.bpm) && pt.an.bpm > 0 ? pt.an.bpm : 128), out = [];
+    for (const d of drops || []) if (d && fin(d.at)) out.push({ key: `song:${d.at}`, kind: "anyma drop", t: d.at, evidence: dropEvidence(d) });
+    pt.secStarts.forEach((t, k) => {
+      const sec = pt.secs[k], lab = sec && typeof sec.label === "string" ? sec.label : "";
+      if (sectionClass(lab, 0.5, 0) !== "drop" || t < 2 * bar) return;
+      const jump = energyAt(pt, t + 0.5 * bar) - energyAt(pt, t - 1.5 * bar);
+      if (jump < DROP_T.plain.jump || out.some((m) => Math.abs(m.t - t) < 4 * bar)) return;
+      out.push({ key: `song:${t}`, kind: "drop", t, evidence: `${lab} jump ${Math.round(jump * 100) / 100}` });
+    });
+    return out.sort((x, y) => x.t - y.t);
+  }
+
   const core = { SCENES, PREF, HOLD_BARS, BURST_BARS, BURST_EVERY_BEATS, FLASH_GAP_S, DROP_DEDUP_S, QUALITY,
     WORK_BUDGET_MS, DOWN_FRAMES, UP_FRAMES, REC, lastLE, sectionClass, prepTrack, musicState, musicStateNew,
     pickScene, eventTrigger, createDirector, queueEvent, stepDirector, follow, stemsNew, stemsStep, drives,
     qualityNew, qualityStep, cameraPose, buildScenes, onAirDeck, energyAt,
     ANYMA_NAMES, DROP_T, anymaHint, anymaDrops, dropCrossed, dropEvidence, danceNew, dancePose, POSES,
-    DANCE_MIN_BARS, DANCE_MAX_BARS, AUTO, autoNew, autoStep };
+    DANCE_MIN_BARS, DANCE_MAX_BARS, AUTO, autoNew, autoStep, bookedMoment, songMoments };
   if (typeof module !== "undefined" && module.exports) module.exports = core;
   if (typeof document === "undefined" || typeof root.addEventListener !== "function") return;
 
@@ -661,24 +731,27 @@
   let reduced = !!(mq && mq.matches);
   if (mq && mq.addEventListener) mq.addEventListener("change", (e) => { reduced = e.matches; });
 
-  // stage: canvas + LED-wall overlay + a small control bar + debug readout
+  // stage: an embedded background layer of the console, not a floating box.
+  // WINDOW: behind the waveforms + decks (#wave-stage .. .workspace), sized to that
+  // band by a ResizeObserver. FULL: behind the whole console. OFF: hidden, no GL.
+  // It sits at z-index -1 in the page, so every console control paints above it,
+  // and NULL-BOT (fixed, z 880) and the VFX canvas (z 850) stay above too.
   const stage = doc.createElement("div");
   stage.className = "anyma-stage"; stage.hidden = true;
-  stage.setAttribute("role", "region"); stage.setAttribute("aria-label", "SHOW stage visuals");
-  const cv = doc.createElement("canvas"); cv.setAttribute("aria-hidden", "true");
+  stage.setAttribute("aria-hidden", "true");
+  const cv = doc.createElement("canvas");
   const led = doc.createElement("div"); led.className = "anyma-led";
-  const bar = doc.createElement("div"); bar.className = "anyma-bar";
-  const mkBtn = (label, title, fn) => { const b = doc.createElement("button"); b.type = "button"; b.textContent = label; b.title = title; b.addEventListener("click", fn); bar.appendChild(b); return b; };
   const dbg = doc.createElement("pre"); dbg.className = "anyma-debug"; dbg.hidden = true;
-  mkBtn("STATS", "Frame time, quality level and the director's state", () => { dbg.hidden = !dbg.hidden; });
-  const sizeBtn = mkBtn("STAGE", "Stage (fill the page) or window", () => setMode(mode === "full" ? "pip" : "full"));
-  mkBtn("FULLSCREEN", "Browser full screen", () => {
-    if (doc.fullscreenElement) { if (doc.exitFullscreen) doc.exitFullscreen().catch(() => {}); }
-    else { setMode("full"); if (stage.requestFullscreen) stage.requestFullscreen().catch(() => {}); }
-  });
-  mkBtn("OFF", "Turn SHOW off", () => setMode("off"));
-  stage.append(cv, led, bar, dbg);
-  doc.body.appendChild(stage);
+  stage.append(cv, led, dbg);
+  const bandTop = doc.querySelector(".wave-stage"), bandEnd = doc.querySelector(".workspace");
+  doc.body.insertBefore(stage, bandTop || doc.body.firstChild);
+  // WINDOW band = top of the waveform section to the bottom of the deck row
+  function placeBand() {
+    if (mode !== "pip" || !bandTop) { stage.style.top = stage.style.height = ""; return; }
+    const y0 = bandTop.getBoundingClientRect().top + root.scrollY;
+    const y1 = (bandEnd || bandTop).getBoundingClientRect().bottom + root.scrollY;
+    stage.style.top = `${Math.round(y0)}px`; stage.style.height = `${Math.max(1, Math.round(y1 - y0))}px`;
+  }
 
   // ---- state (all allocated once) ----
   const dir = core.createDirector((Date.now() & 0xffff) | 1);
@@ -693,6 +766,8 @@
   const autoBox = doc.getElementById("ap-show-auto");
   const auto = core.autoNew();
   let userHit = false, escHit = false, manualHit = false, evMoment = null, dropMoment = null, mergePh = null;
+  const booked = new Map(), upcoming = [];   // key -> {key, kind, at (director clock), deck}
+  let danceOn = false;
   const autoIn = { on: false, driving: false, mode: "off", ms, moment: null, user: false, esc: false, manual: false };
   const pose = new Float64Array(6), mvp = new Float32Array(16), proj = new Float32Array(16), view = new Float32Array(16);
   let mode = "off", active = false, gl = null, prog = null, U = null, A = null, geo = null, raf = 0, lastT = 0;
@@ -704,15 +779,22 @@
     if (!active) return;
     const now = nowS(), an = audioNow();
     const ev = core.eventTrigger(type, e && e.detail, now, (at) => (Number.isFinite(an) ? now + (at - an) : now));
+    const bm = core.bookedMoment(type, e && e.detail);
+    if (bm) booked.set(bm.key, Object.assign(bm, { at: Number.isFinite(an) ? now + (bm.at - an) : now }));
     if (!ev) return;
     if (ev.type === "transition") lastCueT = now;
     if (type === "ai-cue" && e && e.detail && e.detail.kind === "peak") evMoment = { kind: "peak move", evidence: e.detail.why || "" };
     core.queueEvent(dir, ev);
   };
   const h0 = hostOf();
-  for (const t of ["ai-cue", "ai-supermove", "ai-activity"]) {
-    if (h0 && h0.bus) h0.bus.on(t, onEvt(t)); else root.addEventListener(t, onEvt(t));
-  }
+  const listen = (t, fn) => { if (h0 && h0.bus) h0.bus.on(t, fn); else root.addEventListener(t, fn); };
+  for (const t of ["ai-cue", "ai-supermove", "ai-activity", "vis-moment"]) listen(t, onEvt(t));
+  // a cancelled move (dj-mind / stem-moves "ai-cancel" {deck}) drops its booked moments;
+  // a rescheduled one simply re-books under the same key
+  listen("ai-cancel", (e) => {
+    const deck = e && e.detail && typeof e.detail.deck === "string" ? e.detail.deck : "";
+    for (const [k, m] of booked) if (!deck || m.deck === deck) booked.delete(k);
+  });
 
   // ---- deck reading ----
   const gainOf = (n) => (n && n.gain && Number.isFinite(n.gain.value) ? n.gain.value : 1);
@@ -729,6 +811,7 @@
     if (tr.an !== d.analysis) {
       tr.an = d.analysis; tr.pt = d.analysis ? core.prepTrack(d.analysis) : null; tr.prev = NaN;
       tr.drops = tr.pt ? core.anymaDrops(tr.pt, core.anymaHint(hintText(id, d))) : [];
+      tr.moments = core.songMoments(tr.pt, tr.drops);
     }
     return tr.pt;
   }
@@ -749,14 +832,23 @@
     mergePh = ph;
     return hit ? { kind: "merge -> hold", evidence: (plan.pick && plan.pick.label) || "" } : null;
   }
-  function stepAuto(now) {
+  function upcomingNow(now, d, pos) {
+    upcoming.length = 0;
+    for (const [k, m] of booked) if (m.at < now - 2) booked.delete(k); else upcoming.push(m);
+    const tr = d ? tracks[onAir] : null, rate = (d && typeof d._playbackRate === "function" && d._playbackRate()) || 1;
+    if (tr && tr.moments && Number.isFinite(pos)) {
+      for (const m of tr.moments) if (m.t > pos) upcoming.push({ key: m.key, kind: m.kind, at: now + (m.t - pos) / rate, evidence: m.evidence });
+    }
+    return upcoming;
+  }
+  function stepAuto(now, d, pos) {
     const ap = root.autopilotState;
     let moment = dropMoment || evMoment || mergeHold();
     if (!moment && dir.last === "supermove") moment = { kind: "supermove", evidence: "" };
     else if (!moment && dir.last === "drop") moment = { kind: "drop", evidence: ms.section || "" };
     dropMoment = evMoment = null;
     autoIn.on = !!(autoBox && autoBox.checked) && active; autoIn.driving = !!(ap && ap.active === true);
-    autoIn.mode = mode; autoIn.moment = moment; autoIn.user = userHit; autoIn.esc = escHit; autoIn.manual = manualHit;
+    autoIn.mode = mode; autoIn.moment = moment; autoIn.upcoming = upcomingNow(now, d, pos); autoIn.user = userHit; autoIn.esc = escHit; autoIn.manual = manualHit;
     const r = core.autoStep(auto, autoIn, now);
     userHit = escHit = manualHit = false;
     if (!r) return;
@@ -871,8 +963,12 @@ void main() {
     cv.width = W; cv.height = H;
     psize = 9 * H / 900;                                    // px at 1 unit from the camera
   }
-  root.addEventListener("resize", () => { if (active) resize(); });
-  doc.addEventListener("fullscreenchange", () => { if (active) resize(); });
+  root.addEventListener("resize", () => { if (active) { placeBand(); resize(); } });
+  // the band follows the console layout (waveform zoom, panels opening), not a timer
+  if (typeof root.ResizeObserver === "function") {
+    const ro = new root.ResizeObserver(() => { if (active) { placeBand(); resize(); } });
+    for (const el of [bandTop, bandEnd, doc.body]) if (el) ro.observe(el);
+  }
 
   // column-major perspective * lookAt, written into mvp
   function camera(scene, shot, shotT) {
@@ -934,7 +1030,16 @@ void main() {
       if (dr) { core.queueEvent(dir, { type: "anyma", at: now }); dropMoment = { kind: "anyma drop", evidence: core.dropEvidence(dr) }; }
     }
     core.stepDirector(dir, ms, now, dt, reduced);
-    stepAuto(now);
+    stepAuto(now, d, pos);
+    // the Anyma-drop dance, for NULL-BOT to dance in sync: "show-dance" {active, at0, beatS}
+    const dOn = now < dir.danceUntil;
+    if (dOn !== danceOn) {
+      danceOn = dOn;
+      const an = audioNow(), h = hostOf();
+      const detail = { active: dOn, at0: Number.isFinite(an) ? an - (now - dir.danceFrom) : NaN, beatS: ms.ok ? ms.beat : NaN };
+      if (h && h.bus) h.bus.emit("show-dance", detail);
+      else if (typeof root.dispatchEvent === "function" && typeof CustomEvent === "function") root.dispatchEvent(new CustomEvent("show-dance", { detail }));
+    }
     core.stemsStep(st, d && ms.ok && readStems(d, pos) ? raw : null, dt);
     core.drives(ms, st, dv);
 
@@ -989,19 +1094,18 @@ void main() {
     mode = m; active = m !== "off";
     stage.hidden = !active;
     stage.classList.toggle("anyma-full", m === "full");
-    sizeBtn.textContent = m === "full" ? "WINDOW" : "STAGE";
+    doc.body.classList.toggle("show-embed", m === "pip");
+    doc.body.classList.toggle("show-full", m === "full");
+    placeBand();
     if (toggle) toggle.checked = active;
     if (stageBtn) { stageBtn.setAttribute("aria-pressed", String(m === "full")); stageBtn.classList.toggle("vfx-on", m === "full"); }
-    if (m !== "full" && doc.fullscreenElement === stage && doc.exitFullscreen) doc.exitFullscreen().catch(() => {});
     if (active) { resize(); lastT = 0; fpsT = nowS(); wake(); return; }
     if (raf) root.cancelAnimationFrame(raf);
     raf = 0; dir.queue.length = 0;
   }
   if (toggle) { toggle.checked = false; toggle.addEventListener("change", () => setMode(toggle.checked ? (mode === "full" ? "full" : "pip") : "off")); }
   if (stageBtn) stageBtn.addEventListener("click", () => { manualHit = true; setMode(mode === "full" ? "pip" : "full"); });
-  // the stage bar's own buttons are the user's choice too: SHOW AUTO pauses 2 minutes
-  bar.addEventListener("click", () => { manualHit = true; }, true);
-  // Esc leaves the stage for the window (the browser's own full screen eats the first Esc)
+  // Esc leaves the stage for the window
   root.addEventListener("keydown", (e) => { if (mode === "full" && e.key === "Escape") { escHit = true; setMode("pip"); } });
   // any hand on the decks or the mixer: back to the window, SHOW AUTO pauses 2 minutes
   const onHand = (e) => {
@@ -1012,5 +1116,5 @@ void main() {
   doc.addEventListener("visibilitychange", () => {
     if (doc.hidden) { if (raf) root.cancelAnimationFrame(raf); raf = 0; lastT = 0; } else wake();
   });
-  root.anymaShow = { core, setMode, get mode() { return mode; } };
+  root.anymaShow = { core, setMode, get mode() { return mode; }, stats() { dbg.hidden = !dbg.hidden; } };
 })(typeof window !== "undefined" ? window : globalThis);

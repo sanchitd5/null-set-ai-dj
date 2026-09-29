@@ -494,6 +494,48 @@ const trackOf = (len, fn, extra) => C.prepTrack(Object.assign(grid120(len), { en
   assert.deepStrictEqual(s10.map((x) => [x.t, x.mode, x.why]), [[0, "full", "set start"], [40, "pip", "AI stopped driving"]]);
   assert.deepStrictEqual(sim(0, 300, (t) => ({ on: false, moment: { kind: "supermove" } })), []);
   assert.deepStrictEqual(sim(0, 300, (t) => ({ driving: false, moment: { kind: "drop" } })), []);
+
+  // ---- anticipation: FULL on the phrase line BEFORE a booked / predicted moment
+  const quiet = (t) => ({ ms: M(t, t >= 32 ? "calm" : "groove", 0.2) });
+  const upc = (list) => (t) => Object.assign(quiet(t), { upcoming: list(t) });
+  // a booked supermove 20 bars ahead (hit at 200, booked at 160): full at 176, one
+  // phrase before the hit's phrase, held 16 bars past the hit, window on the next calm line
+  const sm = C.bookedMoment("ai-supermove", { at: 200, name: "layer", deck: "b" });
+  assert.deepStrictEqual(sm, { key: "sm:b:LAYER", kind: "LAYER", at: 200, deck: "b" });
+  const a1 = sim(0, 300, upc((t) => (t >= 160 && t < 202 ? [sm] : [])));
+  assert.deepStrictEqual(a1.map((x) => [x.t, x.mode]), [[0, "full"], [64, "pip"], [176, "full"], [240, "pip"]]);
+  assert.strictEqual(a1[2].why, "ahead of LAYER at +24.0s (lead 12 bars)");
+  assert.ok(a1[2].phase * 8 < 1, "the anticipation switch is on a phrase line");
+  // the hit moved later (rescheduled, same key): the hold follows it
+  const a1b = sim(0, 300, upc((t) => (t >= 160 && t < 226 ? [Object.assign({}, sm, { at: t < 170 ? 200 : 224 })] : [])));
+  assert.deepStrictEqual(a1b.map((x) => [x.t, x.mode]), [[0, "full"], [64, "pip"], [208, "full"], [272, "pip"]]);
+  // a cancelled cue: no stuck FULL, back to window after one phrase
+  const a2 = sim(0, 300, upc((t) => (t >= 160 && t < 180 ? [sm] : [])));
+  assert.deepStrictEqual(a2.map((x) => [x.t, x.mode, x.why]).slice(2),
+    [[176, "full", "ahead of LAYER at +24.0s (lead 12 bars)"], [208, "pip", "moment cancelled"]]);
+  // a plain crossfade is not a moment; a drop-move transition is
+  assert.strictEqual(C.bookedMoment("ai-cue", { at: 200, kind: "transition", why: "long blend", deck: "a" }), null);
+  assert.strictEqual(C.bookedMoment("ai-cue", { at: 200, kind: "transition", why: "Double Drop: both drops", deck: "a" }).kind, "DOUBLE DROP");
+  assert.strictEqual(C.bookedMoment("ai-cue", { at: 200, kind: "drop", why: "after the merge", deck: "a" }).kind, "MERGE drop");
+  assert.strictEqual(C.bookedMoment("vis-moment", { at: 200, tier: "accent", name: "x" }), null);
+  assert.strictEqual(C.bookedMoment("vis-moment", { at: 200, tier: "super", name: "hook drop", deck: "a" }).key, "sm:a:HOOK DROP");
+  assert.deepStrictEqual(C.eventTrigger("vis-moment", { at: 3, tier: "accent" }, 1, (x) => x), { type: "accent", at: 3 });
+  const a3 = sim(0, 300, upc((t) => []));
+  assert.deepStrictEqual(a3.map((x) => [x.t, x.mode]), [[0, "full"], [64, "pip"]], "a plain crossfade stays window");
+  // an Anyma drop predicted from a synthetic build -> drop curve: full a phrase early
+  const brk = trackOf(320, (t) => (t < 64 ? 0.6 : t < 128 ? 0.15 : t < 192 ? 1 : 0.6));
+  const sms = C.songMoments(brk, C.anymaDrops(brk, ""));
+  assert.deepStrictEqual(sms.map((m) => [m.t, m.kind]), [[128, "anyma drop"]]);
+  const a4 = sim(0, 300, upc((t) => sms.filter((m) => m.t > t).map((m) => ({ key: m.key, kind: m.kind, at: m.t, evidence: m.evidence }))));
+  assert.deepStrictEqual(a4.map((x) => [x.t, x.mode]), [[0, "full"], [64, "pip"], [112, "full"], [176, "pip"]]);
+  assert.ok(/^ahead of anyma drop at \+16\.0s \(lead 8 bars\)$/.test(a4[2].why) && /jump/.test(a4[2].ev), a4[2].why);
+  // a section edge into a drop with a big jump is a song moment too (no Anyma dip needed)
+  const sec = trackOf(320, (t) => (t < 96 ? 0.4 : 0.95), { sections: [{ label: "verse", start: 0, end: 96 }, { label: "drop", start: 96, end: 320 }] });
+  assert.ok(C.songMoments(sec, []).some((m) => m.t === 96 && m.kind === "drop"));
+  assert.deepStrictEqual(C.songMoments(trackOf(320, () => 0.6, { sections: [{ label: "drop", start: 96, end: 320 }] }), []), []);
+  // the 16-bar minimum still holds with nothing upcoming (s5 above) and a far moment does nothing
+  const a5 = sim(0, 300, upc((t) => (t >= 150 ? [Object.assign({}, sm, { at: 290 })] : [])));
+  assert.ok(!a5.some((x) => x.t >= 150 && x.t < 256 && x.mode === "full"), JSON.stringify(a5));
 }
 
 // ---- the sim never loads the show (paint only), and the console does
@@ -506,4 +548,16 @@ const trackOf = (len, fn, extra) => C.prepTrack(Object.assign(grid120(len), { en
   assert.ok(!/id="ap-show-toggle"[^>]*checked/.test(html), "SHOW is off by default");
 }
 
+// ---- layout contract: the stage is baked into the console, no overlay window
+{
+  const fs = require("fs"), path = require("path");
+  const js = fs.readFileSync(path.join(__dirname, "../ui/static/anyma-show.js"), "utf8");
+  const css = fs.readFileSync(path.join(__dirname, "../ui/static/anyma-show.css"), "utf8");
+  assert.ok(!/requestFullscreen|anyma-bar/.test(js), "no browser fullscreen, no floating control bar");
+  assert.ok(/doc\.body\.insertBefore\(stage, bandTop/.test(js), "stage is inserted in the console flow before .wave-stage");
+  const base = css.match(/\.anyma-stage \{([^}]*)\}/)[1];
+  assert.ok(/position: absolute/.test(base) && /z-index: -1/.test(base) && /pointer-events: none/.test(base), "a background layer");
+  assert.ok(!/\.anyma-bar|z-index: 87\d/.test(css), "no overlay z-index");
+  assert.ok(/body\.show-embed/.test(css) && /body\.show-full/.test(css), "WINDOW / FULL are console layout states");
+}
 console.log("anyma show ok");
