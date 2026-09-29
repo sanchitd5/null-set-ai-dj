@@ -84,6 +84,31 @@
     }
     return m;
   }
+  // The next Anyma drop (anyma-show.js core.anymaDrops, song time) within lookS of song position pos, not yet
+  // announced (done: Set of drop times). -> drop | null
+  function nextAnymaDrop(drops, pos, lookS, done) {
+    if (!Array.isArray(drops) || !Number.isFinite(pos)) return null;
+    for (const d of drops) if (d && d.at > pos && d.at - pos <= lookS && !(done && done.has(d.at))) return d;
+    return null;
+  }
+  // A legacy supermove signal ("ai-supermove", a CUE_MOVES "ai-cue") as the vis-moment it re-announces. -> detail | null
+  function legacyMoment(evt) {
+    if (!evt || evt.type === "vis-moment") return null;
+    const sm = supermoveFor(evt);
+    if (!sm) return null;
+    const vm = { at: sm.at, name: sm.name, tier: "super", deck: sm.deck, source: "cue" };
+    if (evt.detail.bar > 0) vm.bar = evt.detail.bar;
+    return vm;
+  }
+  // A vis-moment on the hit of a takeover already booked from a legacy cue (the MERGE cue, then HOLD->DROP
+  // from its planner) renames that takeover instead of being de-duped away. pending: [{hitS, sm}]. -> bool
+  const SAME_HIT_S = 0.25;
+  function renameSameHit(pending, hitS, name) {
+    const p = (pending || []).find((x) => Math.abs(x.hitS - hitS) < SAME_HIT_S);
+    if (!p || !name) return false;
+    p.sm.name = name;
+    return true;
+  }
   // May an accent at hitS react? g: {aiActive, vfxOn, last (hit s of the last accent), hitS, barS, booked
   // (super hit times)}. -> "" or the reason not. Never on top of a takeover (half its de-dup window).
   function accentGate(g) {
@@ -162,7 +187,7 @@
   }
   const core = { mood, LABEL, supermoveFor, isSupermove, vfxOn, supermoveGate, hitPerfMs, beatSeconds,
                  takeoverPlan, beatPhaseMs, SUPERMOVE_WINDOW_S, CUE_MOVES,
-                 TIERS, ACCENT_BARS, DANCE_BARS, DANCE_MAX_S, momentFor, accentGate, dockPlace };
+                 TIERS, ACCENT_BARS, DANCE_BARS, DANCE_MAX_S, momentFor, accentGate, dockPlace, renameSameHit, SAME_HIT_S, legacyMoment, nextAnymaDrop };
   root.nullBot = { core };          // anyma-show.js may reuse momentFor: one reading of the signal
   if (typeof module !== "undefined" && module.exports) module.exports = core;
   if (typeof document === "undefined") return;
@@ -267,6 +292,30 @@
     }
     root.setInterval(syncDock, 150);
 
+    // Anyma drops, AHEAD: while the SHOW is up, find the on-air deck's next Anyma drop with the SHOW's own
+    // detector and announce it (vis-moment tier "dance") a few seconds early, once per drop. NULL dances on it;
+    // the SHOW may take the same signal. No SHOW code needed: anymaShow.core is pure.
+    const drops = { a: { an: null, list: [], done: new Set() }, b: { an: null, list: [], done: new Set() } };
+    function watchDrops() {
+      const C = root.anymaShow && root.anymaShow.core;
+      if (!C || !C.prepTrack || !C.anymaDrops || showMode() === "off" || !root.decks || typeof audioCtx === "undefined") return;
+      const gain = (d) => (d && d.playing ? ((d.crossfaderGain && d.crossfaderGain.gain.value) || 0) * ((d.volumeGain && d.volumeGain.gain.value) || 1) : 0);
+      const id = gain(root.decks.a) >= gain(root.decks.b) ? "a" : "b", d = root.decks[id], w = drops[id];
+      if (!d || !d.playing || !d.analysis || typeof d._currentPosition !== "function") return;
+      if (w.an !== d.analysis) {
+        const an = d.analysis, hint = [an.genre, an.artist, an.title, d.trackName].filter((x) => typeof x === "string").join(" ");
+        w.an = an; w.done.clear();
+        try { const pt = C.prepTrack(an); w.list = pt ? C.anymaDrops(pt, C.anymaHint ? C.anymaHint(hint) : "") : []; } catch (_) { w.list = []; }
+      }
+      const pos = d._currentPosition(), rate = (typeof d._playbackRate === "function" && d._playbackRate()) || 1;
+      const dr = nextAnymaDrop(w.list, pos, 4 * rate, w.done);
+      if (!dr) return;
+      w.done.add(dr.at);
+      const bar = 240 / (d.bpm || 128) / rate, at = audioCtx.currentTime + (dr.at - pos) / rate;
+      root.dispatchEvent(new CustomEvent("vis-moment", { detail: { at, name: "ANYMA DROP", tier: "dance", deck: id, bar, until: at + DANCE_BARS * bar, source: "anyma" } }));
+    }
+    root.setInterval(watchDrops, 500);
+
     function show(sm) {
       // re-check at the start: the AI or the VFX may have been switched off since booking
       if (!aiActive() || !vfx()) return;
@@ -297,14 +346,18 @@
       el.classList.add("nul-away");
       endTimer = setTimeout(() => { sup.classList.remove("nul-sm-on"); el.classList.remove("nul-away"); }, p.end - now);
     }
-    function bookSuper(sm) {
+    const pending = [];              // {hitS, sm} of booked takeovers: a named moment on the same hit renames it
+    function bookSuper(sm, named) {
       const now = performance.now(), hitS = hitNow(sm.at) / 1000;
       while (booked.length && booked[0] < now / 1000 - SUPERMOVE_WINDOW_S) booked.shift();
+      while (pending.length && pending[0].hitS < now / 1000 - SUPERMOVE_WINDOW_S) pending.shift();
+      if (named && renameSameHit(pending, hitS, sm.name)) return;
       if (supermoveGate({ aiActive: aiActive(), vfxOn: vfx(), booked, hitS })) return;
       const p = takeoverPlan(hitS * 1000, now, beatFor(sm));
       if (!p) return;
       booked.push(hitS);
       booked.sort((x, y) => x - y);
+      pending.push({ hitS, sm });
       setTimeout(() => show(sm), Math.max(0, p.start - now));
     }
     // ACCENT: a quick pop / nod where NULL stands (top bar, and the dock when the SHOW is up), on the hit.
@@ -354,9 +407,15 @@
       if (!sm || typeof audioCtx === "undefined") return;
       if (sm.tier === "accent") bookAccent(sm);
       else if (sm.tier === "dance") bookDance(sm);
-      else bookSuper(sm);
+      else bookSuper(sm, !(evt.detail && evt.detail.source === "cue"));
     }
-    for (const t of ["ai-cue", "ai-supermove", "vis-moment"]) root.addEventListener(t, (e) => book({ type: t, detail: e.detail }));
+    // One source of truth: a legacy supermove signal is re-announced as a vis-moment (source "cue"), so the
+    // SHOW and NULL book the same {at, name}; NULL itself books only from vis-moment.
+    for (const t of ["ai-cue", "ai-supermove"]) root.addEventListener(t, (e) => {
+      const vm = legacyMoment({ type: t, detail: e.detail });
+      if (vm) root.dispatchEvent(new CustomEvent("vis-moment", { detail: vm }));
+    });
+    root.addEventListener("vis-moment", (e) => book({ type: "vis-moment", detail: e.detail }));
   }
 
 

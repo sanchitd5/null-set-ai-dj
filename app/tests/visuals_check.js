@@ -296,6 +296,6 @@ assert.strictEqual(safeBeat(-1), 60 / 128);
   const nb = fs.readFileSync(path.join(__dirname, "../ui/static/null-bot.css"), "utf8");
   assert.ok(/\.anyma-look \.nul-super \{ --sm-glow: #3fd8ff !important; \}/.test(nb));
   const mascot = fs.readFileSync(path.join(__dirname, "../ui/static/mascot.js"), "utf8");
-  assert.ok(!/anyma/i.test(mascot));
+  assert.ok(!/anyma-look|djAiToggles/i.test(mascot));   // the LOOK is CSS only (mascot.js reads the SHOW, never the look)
 }
 console.log("visuals ok");
