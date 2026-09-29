@@ -838,6 +838,15 @@
       <label class="hud-label" title="Remix on the go with stems: in some 16-bar sections the AI holds the vocal's last bar (hold on), drops to the acapella, a drum break, bass out or a synth hold, and brings everything back on the line. Max 3 per song, 32 bars apart">
         <input type="checkbox" id="ap-remix-toggle" checked /> STEM REMIX
       </label>
+      <label class="hud-label" title="Moves learned from studied DJ sets (the transition picks and the in-song moves below). Off: none of them play">
+        <input type="checkbox" id="ap-learned-toggle" checked /> LEARNED
+      </label>
+      <span class="hud-label ap-learned-kinds" title="In-song learned moves, one by one: a vocal line looped on the beat, the vocal re-cut in a new order, short vocal chops on the 1/8 grid, a break extended by looping (max 32 beats)">
+        <label><input type="checkbox" id="ap-learned-vocal_loop" checked /> VOX LOOP</label>
+        <label><input type="checkbox" id="ap-learned-vocal_resequence" checked /> RE-CUT</label>
+        <label><input type="checkbox" id="ap-learned-vocal_chop" checked /> CHOPS</label>
+        <label><input type="checkbox" id="ap-learned-loop_extend" checked /> EXTEND</label>
+      </span>
       <label class="hud-label" title="Phrase-level DJ moves: pre-clear, sub drops, loops, beat jumps, rolls, filter builds, echo throws">
         <input type="checkbox" id="ap-mind-toggle" checked /> SET MIND
       </label>
@@ -968,6 +977,7 @@
 <script src="/mashup-layer.js"></script>
 <script src="/browser.js"></script>
 <script src="/stem-moves.js"></script>
+<script src="/learned-moves.js"></script>
 <script src="/riff-over-rap.js"></script>
 <script src="/auto-sampler.js"></script>
 <script src="/ai-actions.js"></script>

@@ -48,6 +48,7 @@ window.masterOut = masterOut;
 // outgoing vocal can keep singing over the incoming beat. High-passed at
 // 120 Hz: one bass owner, always ([[EQ & Frequency Management]]).
 const STEM_NAMES = ["drums", "bass", "vocals", "other"];
+const SLICE_MAX_S = 40;       // hard cap of one stemSlices window (audio seconds)
 const vocalBus = audioCtx.createBiquadFilter();
 vocalBus.type = "highpass";
 vocalBus.frequency.value = 120;
@@ -180,6 +181,7 @@ class Deck {
       this.stemLive[n] = live;
     }
     this._holds = {};           // name -> {src, until}
+    this._slices = {};          // name -> {srcs, until} (stemSlices)
     this.vocalBusGain = audioCtx.createGain();
     this.vocalBusGain.gain.value = 0;
     this.vocalBusGain.connect(vocalBus);
@@ -250,6 +252,7 @@ class Deck {
     this._hookDropDone = false;
     this.hookDrops = null;
     this._remix = null;
+    this._learned = null;
     this.trimEnd = this.buffer.duration;
     this.cuePoint = 0;
     this.reverseBuffer = null; // rebuilt lazily for the new track
@@ -768,6 +771,70 @@ class Deck {
     this._stemSrc["hold_" + name] = s;           // rate changes / brakes reach it too
     s.onended = () => { if (this._holds[name] && this._holds[name].src === s) { delete this._holds[name]; delete this._stemSrc["hold_" + name]; } g.disconnect(); };
     return true;
+  }
+
+  // Stem slices: pieces of ONE stem played back to back on the audio clock while the other stems play
+  // on. slices: [{from, dur, off, gain}] in SONG seconds ({from, dur}: what to play; off: where in the
+  // window it sits, default right after the previous piece; gain: 0..1.2, default 1). The window starts
+  // at audio time `at`; the live stem is muted across it and comes back on the last edge. Every piece
+  // has ~6 ms edges (no clicks). Needs stem mode. Hard cap SLICE_MAX_S: a longer window is refused,
+  // nothing is armed. -> {ok, until} or false.
+  stemSlices(name, slices, at, xf = 0.008) {
+    const st = this.stems;
+    if (!st || !st[name] || !this.stemsReady || !Array.isArray(slices) || !slices.length || this._holds[name] || this._slices[name]) return false;
+    const now = audioCtx.currentTime, rate = this._playbackRate(), k = st.ratio || 1;
+    if (!(at >= now - 0.005) || !(rate > 0)) return false;
+    let cur = 0, span = 0;
+    const plan = [];
+    for (const s of slices) {
+      if (!(s.dur > 0) || !(s.from >= 0)) return false;
+      const off = Number.isFinite(s.off) ? s.off : cur;
+      plan.push({ from: s.from, dur: s.dur, off, gain: Math.max(0, Math.min(1.2, s.gain == null ? 1 : s.gain)) });
+      cur = off + s.dur;
+      span = Math.max(span, cur);
+    }
+    if (span / rate > SLICE_MAX_S) return false;
+    const until = at + span / rate;
+    const srcs = [];
+    plan.forEach((p, i) => {
+      const t0 = at + p.off / rate, t1 = t0 + p.dur / rate, e = Math.min(xf, (t1 - t0) / 3);
+      const s = audioCtx.createBufferSource();
+      s.buffer = st[name];
+      s._rateMul = k;
+      s.playbackRate.value = rate * k;
+      if (this._rateRamp) this._scheduleRate(s.playbackRate, k, audioCtx.currentTime);
+      const g = audioCtx.createGain();
+      g.gain.setValueAtTime(0, t0);
+      g.gain.linearRampToValueAtTime(p.gain, t0 + e);
+      g.gain.setValueAtTime(p.gain, t1 - e);
+      g.gain.linearRampToValueAtTime(0, t1);
+      s.connect(g); g.connect(this.stemGain[name]);
+      s.start(t0, Math.max(0, Math.min((p.from + st.lag) * k, st[name].duration - 0.01)));
+      s.stop(t1 + 0.02);
+      const key = `slice_${name}_${i}`;
+      this._stemSrc[key] = s;
+      s.onended = () => { if (this._stemSrc[key] === s) delete this._stemSrc[key]; g.disconnect(); };
+      srcs.push(s);
+    });
+    const live = this.stemLive[name].gain;
+    live.cancelScheduledValues(at);
+    live.setValueAtTime(1, at); live.linearRampToValueAtTime(0, at + xf);
+    live.setValueAtTime(0, until - xf); live.linearRampToValueAtTime(1, until);
+    const rec = { srcs, until };
+    this._slices[name] = rec;
+    setTimeout(() => { if (this._slices[name] === rec) delete this._slices[name]; }, Math.max(0, (until - now) * 1000) + 60);
+    return { ok: true, until };
+  }
+
+  // Stop a running / booked slice window: pieces stop, the live stem is back within 30 ms.
+  releaseSlices(name, at = 0) {
+    const h = this._slices[name];
+    if (!h) return;
+    const t = Math.max(audioCtx.currentTime, at || 0);
+    for (const s of h.srcs) { try { s.stop(t + 0.03); } catch (e) { /* already stopped */ } }
+    const live = this.stemLive[name].gain;
+    live.cancelScheduledValues(t); live.setValueAtTime(live.value, t); live.linearRampToValueAtTime(1, t + 0.03);
+    delete this._slices[name];
   }
 
   releaseHold(name, at = 0) {

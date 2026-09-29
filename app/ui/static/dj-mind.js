@@ -725,7 +725,7 @@
                   filter_build: "FILTER BUILD", echo_freeze: "ECHO FREEZE",
                   holdloop: "HOLD LOOP", peak_roll: "ROLL INTO DROP",
                   double_drop: "DOUBLE DROP", drop_swap: "DROP SWAP", fakeout: "FAKE-OUT",
-                  beat_boost: "BEAT BOOST" };
+                  beat_boost: "BEAT BOOST", learned_move: "LEARNED MOVE" };
 
   let deckId = null, timer = null, timers = [];
   let lastPhrase = null, trackIdx = 0, subdropTrackIdx = -9;
@@ -765,7 +765,11 @@
     const from = parseFloat(el.value) || 0, steps = 16;
     for (let i = 1; i <= steps; i++) later((ms * i) / steps, () => setKnob(el, from + (to - from) * (i / steps)));
   }
-  function cancelMoves() { timers.forEach(clearTimeout); timers = []; }
+  function cancelMoves() {
+    timers.forEach(clearTimeout); timers = [];
+    const lm = host.mod.learnedMoves, d = deck();
+    if (lm && d) lm.stop(d);                      // a booked learned slice window / stem mode goes with the moves
+  }
 
   function render(dec) {
     const nowEl = ui.el("ap-mind-now");
@@ -1069,6 +1073,7 @@
       loopAt(d, id, span.start, span.bars * 4);
       holdLoop.looping = true;
       holdLoop.since = nowS();
+      if (host.mod.learnedMoves) host.mod.learnedMoves.noteFiller(d, span);   // logged as the learned loop_extend when that kind is on
       // The span crosses a sung line: loop the instrumental (live stems), so it
       // plays like an extended break instead of a chopped singer.
       if (span.vocalClean === false && host.mod.stemMoves && host.mod.stemMoves.instrumental(d, true)) {
@@ -1210,6 +1215,31 @@
     return true;
   }
 
+  // Learned moves (learned-moves.js: vocal loop / re-cut / chops, loop extend): once per 8-bar line, when the
+  // module finds one that passes its gates. Never here during a transition (tick() returned above).
+  function learnedLoop(d, id, p, pos, rate) {
+    const beat = barSecsOf(d) / 4, L = p.loop.beats, s = p.loop.start;
+    const ms = (sec) => Math.max(0, (sec * 1000) / rate);
+    later(ms(s - pos), () => { if (deckId === id) loopAt(d, id, s, L); });
+    later(ms(s - pos) + ms(L * beat * (1 + p.loop.passes)) - 30, () => { if (deckId === id) loopRelease(d, id, p.loop.release - 0.03 * rate); });
+  }
+  function learnedMoveTick(d, pos, bar, phrase) {
+    const lm = host.mod.learnedMoves;
+    if (!lm || !lm.tick) return false;
+    const [lineT] = phraseBounds(d.analysis && d.analysis.downbeat_times, phrase, bar);
+    if (Math.abs(pos - lineT) > bar / 2) return false;                  // only right on the line
+    const id = deckId, rate = (d._playbackRate && d._playbackRate()) || 1;
+    const res = lm.tick(d, { pos, bar, phrase, lineT, entryT: d._mindEntry || 0, exitT: plan ? plan.fireAt : (d.buffer ? d.buffer.duration : 0),
+      st: state(d, pos), loop: { extend: (p) => learnedLoop(d, id, p, pos, rate) } });
+    if (!res) return false;
+    busyUntil = nowS() + res.busyS;
+    const m = Math.floor(pos / 60), sc = Math.floor(pos % 60);
+    log.push({ action: "learned_move", why: res.why, tag: "LEARNED", peak: false, clock: `${m}:${String(sc).padStart(2, "0")}` });
+    if (log.length > 20) log.shift();
+    render({ action: "learned_move", rule: "", source: "LEARNED", why: res.why });
+    return true;
+  }
+
   function say(dec, pos) {
     const m = Math.floor(pos / 60), s = Math.floor(pos % 60);
     const tag = dec.source || (dec.action === "holdloop" ? "SAFETY" : dec.action !== "ride" ? "RULE" : "");
@@ -1259,6 +1289,7 @@
     if (first) { d._mindEntry = pos; }
     if (!first && mindOn() && stemBreakdownTick(d, pos, bar)) return;
     if (!first && mindOn() && stemRemixTick(d, pos, bar, phrase)) return;
+    if (!first && mindOn() && learnedMoveTick(d, pos, bar, phrase)) return;
     const st = state(d, pos);
     if (!aiOn()) st.aiMove = null;
     const dec = mindOn() ? decide(st)
