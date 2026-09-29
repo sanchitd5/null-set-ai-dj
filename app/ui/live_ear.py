@@ -39,7 +39,9 @@ Env:
 from __future__ import annotations
 
 import base64
+import collections
 import os
+import statistics
 import threading
 import time
 from typing import Optional
@@ -60,6 +62,22 @@ SEAM_SHIFT_MS = 20.0       # kicks after the wrap land this far off the grid bef
 GRID_ERR_MS = 35.0         # loop length vs analysed downbeats; those are ~23 ms frame-quantised
 SEAM_CLICK_RATIO = 4.0     # level jump at the wrap vs the loop's median jump
 FATIGUE_S = 60.0           # a hold loop older than this starts to bore the floor
+
+# Latencies (s) of recent successful model calls: the wait adapts to what the model
+# really takes (median 1.6 s, yet a hang cost the full 10 s and then the rules answered).
+# Only the wait changes; the rules fallback and every decision stay as they were.
+_lat: "collections.deque[float]" = collections.deque(maxlen=20)
+ADAPT_MIN_SAMPLES = 5
+ADAPT_FACTOR = 4.0
+ADAPT_FLOOR_S = 4.0
+
+
+def adaptive_timeout(base: float) -> float:
+    """The per-call wait: FACTOR x the median of recent good calls, between FLOOR and `base`."""
+    if len(_lat) < ADAPT_MIN_SAMPLES:
+        return base
+    return max(min(base, ADAPT_FLOOR_S), min(base, ADAPT_FACTOR * statistics.median(_lat)))
+
 
 _busy = threading.Lock()   # one live call at a time; a second is refused, not queued
 
@@ -202,7 +220,9 @@ def _user_text(m: dict) -> str:
     lines = [f"{k}: {m[k]}" for k in keys if m.get(k) is not None]
     return ("WATCHDOG\n" + "\n".join(lines) +
             f"\nFLAGS: {', '.join(flags(m)) or 'none'}" +
-            f"\nALLOWED: {', '.join(allowed(m))}")
+            f"\nALLOWED: {', '.join(allowed(m))}" +
+            ("\nYour last reply was not usable. Reply with ONLY the JSON object, one short "
+             "sentence for reason, no prose, no code fences." if m.get("_strict") else ""))
 
 
 def _ask_omni(c: dict, wav: bytes, m: dict) -> str:
@@ -239,7 +259,7 @@ def _ask_omni(c: dict, wav: bytes, m: dict) -> str:
 def decide(wav: Optional[bytes], m: dict) -> dict:
     """Omni decision when possible, rule decision otherwise. Never raises for
     model trouble: the reason lands in `fallback`."""
-    from app.ui.autopilot_service import _extract_json
+    from app.ui.autopilot_service import _extract_json, failure_reason, note_retry
 
     c = config()
     if wav is None or not c["configured"]:
@@ -258,24 +278,51 @@ def decide(wav: Optional[bytes], m: dict) -> dict:
     (llm_gate.gate.note_live if shared else llm_gate.gate.note_ear)()
     t0 = time.monotonic()
     waited = None
+    cc = dict(c, timeout=adaptive_timeout(c.get("timeout", 10.0)))
+    quality, retried = None, None
+
+    def hear() -> dict:
+        """Ask once; on an unusable reply ask ONE more time (stricter), if the wait allows."""
+        nonlocal quality, retried
+        text = engine.current().ai.ear(cc, wav, m)
+        try:
+            quality = "ok"
+            return _extract_json(text)
+        except ValueError:
+            quality = failure_reason(text)
+            if time.monotonic() - t0 > cc["timeout"] / 2:
+                raise
+            retried = quality
+            note_retry("ear", quality)
+            text = engine.current().ai.ear(cc, wav, dict(m, _strict=True))
+            try:
+                return _extract_json(text)
+            except ValueError:
+                note_retry("ear", failure_reason(text) + "_gave_up", 2)
+                raise
+
     try:
         if shared:
             with llm_gate.gate.slot(llm_gate.LIVE, wait_timeout=llm_gate.LIVE_WAIT_S) as waited:
-                text = engine.current().ai.ear(c, wav, m)
+                raw = hear()
         else:
-            text = engine.current().ai.ear(c, wav, m)
-        res = validate(_extract_json(text), m)
+            raw = hear()
+        res = validate(raw, m)
         res["model"] = c["model"]
+        _lat.append(time.monotonic() - t0 - (waited or 0.0))
     except Exception as exc:  # network, auth, bad JSON: rules answer instead
         res = rule_decision(m)
         res["fallback"] = f"Qwen-Omni error: {type(exc).__name__}: {str(exc)[:160]}"
-        print(f"WARNING [ear] {res['fallback']} (rules answered)", flush=True)
+        quality = quality if quality not in (None, "ok") else type(exc).__name__
+        print(f"WARNING [ear] {res['fallback']} (rules answered after {time.monotonic() - t0:.1f}s, "
+              f"wait was {cc['timeout']:.1f}s)", flush=True)
     finally:
         _busy.release()
     res["latency_seconds"] = round(time.monotonic() - t0, 2)
     session_log.log("ear", latency=res["latency_seconds"], source="rules" if res.get("fallback") else "model", action=res.get("action"),
                     error=res.get("fallback"), precheck=bool(m.get("precheck")),
-                    waited=round(waited, 2) if waited is not None else None)
+                    waited=round(waited, 2) if waited is not None else None,
+                    timeout=round(cc["timeout"], 2), quality=quality, retried=retried)
     return res
 
 

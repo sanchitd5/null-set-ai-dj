@@ -4,8 +4,13 @@
 
 Each line: {"t": epoch s, "at": "HH:MM:SS", "kind": ..., ...fields}. Kinds:
   track       the browser: a deck loaded a song, a transition started / ended
-  llm         a text-model call: priority, max_tokens, waited, elapsed, ok, cut_off
-  ear         a live-ear call: latency, source (model/rules), action, error
+  llm         a text-model call: call (suggest/lookahead/plan/set_ai), priority, max_tokens,
+              waited, elapsed, ok, prompt_chars, reply_chars, chars_per_s, cut_off,
+              quality (ok/empty/no_json/cut_off/error)
+  llm_retry   one bounded JSON retry: call (suggest/lookahead/plan/ear), reason
+              (cut_off/no_json/empty/bad_json/parroted, "*_gave_up" when the retry failed too)
+  ear         a live-ear call: latency, source (model/rules), action, error, timeout
+              (the adaptive wait used), quality, retried
   ear_merge   the silent ear rating a song merge
   gate_skip   a look-ahead refused because the model was busy / the ear had it
 
