@@ -821,6 +821,12 @@ function createAutopilotEngine({ host, ai }) {
     for (const n of ["drums", "bass", "vocals", "other"]) m[n] = e[n].reduce((a, b) => a + b, 0) / (e[n].length || 1);
     return m;
   }
+  // The gate that stopped the hold plan (or every merge): one console line the sim parses
+  // ("merge gate: <gate>: <why>[; classic merge]") and one step for the live step log.
+  function mergeGateLog(deck, gate, why, classic, tried) {
+    console.info("merge gate:", `${gate}: ${why}${classic ? "; classic merge" : ""}`);
+    host.log.step("merge_gate", { deck, decision: classic ? "classic merge" : "refused", why: `${gate}: ${why}`, result: { gate, tried: tried || [] } });
+  }
   // MERGE -> HOLD -> TRANSITION (user: "best transition is when tracks merge and play"):
   // the preferred plan whenever the gates pass. stem-moves core.holdPlan picks the hold
   // (whole 8-bar phrases, measured stems + voices) and checks tempo, key >= 0.8, room,
@@ -834,7 +840,8 @@ function createAutopilotEngine({ host, ai }) {
     if (entry == null) return no("entry", "no entry line for B");
     const aEff = od.bpm * od._playbackRate(), gap = Math.abs(aEff / idk.bpm - 1);
     if (gap > keyLockLim() || (gap > 0.02 && !(idk.tempoStems && Math.abs(idk.tempoStems.bpm / aEff - 1) < 0.01))) {
-      return no("tempo", `gap ${(gap * 100).toFixed(1)} % not lockable within ${(keyLockLim() * 100).toFixed(0)} %`);
+      return no("tempo", gap > keyLockLim() ? `gap ${(gap * 100).toFixed(1)} % over the ${(keyLockLim() * 100).toFixed(0)} % cap`
+        : `gap ${(gap * 100).toFixed(1)} % needs key-locked tempo stems at A's tempo, B has none`);
     }
     const barA = 240 / od.bpm, barB = 240 / idk.bpm, barS = 240 / aEff;
     const roomBars = od.buffer ? (od.buffer.duration - aT) / barA : 0;
@@ -862,14 +869,13 @@ function createAutopilotEngine({ host, ai }) {
     let plan = hd.plan || null;
     if (!plan) {
       const mf = mergeFits(od, idk);
-      console.info("merge gate:", `${hd.gate}: ${hd.why}${mf ? "; classic merge" : ""}`);
-      host.log.step("merge_gate", { deck: activeDeck, decision: mf ? "classic merge" : "refused", why: `${hd.gate}: ${hd.why}`, result: { gate: hd.gate, tried: hd.tried || [] } });
+      mergeGateLog(activeDeck, hd.gate, hd.why, !!mf, hd.tried);
       if (!mf) return null;
       const cs = host.mod.djMind && host.mod.djMind.core && host.mod.djMind.core.camelotScore;
       const ka = od.analysis && od.analysis.key && od.analysis.key.camelot, kb = idk.analysis && idk.analysis.key && idk.analysis.key.camelot;
       const ranked = sm.core.mergeRank({ eA: stemMeans(od, aT, mf.M), eB: stemMeans(idk, mf.entry, mf.M),
         keyScore: cs && ka && kb ? cs(ka, kb) : null, bRap: mf.rap });
-      if (!ranked.length) { host.log.step("merge_gate", { deck: activeDeck, decision: "refused", why: "no_combo: no stem combination plays", result: { gate: "no_combo", tried: [] } }); return null; }
+      if (!ranked.length) { mergeGateLog(activeDeck, "no_combo", "no stem combination plays", false); return null; }
       plan = { ...mf, ranked, pick: ranked[0], aT, heard: false };
     }
     const mf = plan;
@@ -969,7 +975,7 @@ function createAutopilotEngine({ host, ai }) {
         if (!(secs > 0) && mp.hold && mp.baseM && mp.baseM !== mp.M) {
           // the measured hold failed the level gate at fire time: the classic fixed-length merge, never a worse move
           M = mp.baseM; phases = null;
-          host.log.step("merge_gate", { deck: out, decision: "classic merge", why: `level: hold of ${mp.M} bars refused at fire time`, result: { gate: "level", tried: [] } });
+          mergeGateLog(out, "level", `hold of ${mp.M} bars refused at fire time`, true);
           secs = smM.mergeTransition(out, inn, xT0, mp.entry, M, mp.pick, undefined, undefined);
         }
         if (secs > 0) {
@@ -977,6 +983,7 @@ function createAutopilotEngine({ host, ai }) {
           executedMove = "Stem Merge";
           if (phases) {
             const barS = 240 / (odM.bpm || 128) / odM._playbackRate();
+            console.info("merge phases:", JSON.stringify({ merge_start: phases.merge_start, hold: phases.hold, handover: phases.handover }));
             host.log.step("merge_start", { deck: out, decision: "merge_start", why: phases.merge_start.combo, result: { ...phases.merge_start, seconds: Math.round(phases.merge_start.bars * barS * 10) / 10 } });
             host.log.step("hold", { deck: out, decision: "hold", why: `${phases.hold.phrases} phrases together`, result: phases.hold });
             host.log.step("handover", { deck: out, decision: "handover", why: "sub-bass and kick change hands on the line", result: phases.handover });
@@ -2564,7 +2571,7 @@ function createAutopilotEngine({ host, ai }) {
     } else if (!preplanned && !layer && !peakT) {
       // merge was not even tried: the gate that stopped it (counted by the sim)
       const gate = !mergesOn() ? "off" : !stemsBoth ? "stems" : !lockS.beat ? "tempo" : "no_deck";
-      host.log.step("merge_gate", { deck: activeDeck, decision: "refused", why: `${gate}: not attempted`, result: { gate, tried: [] } });
+      mergeGateLog(activeDeck, gate, "not attempted", false);
     }
 
     bookedRecipe = recipe;

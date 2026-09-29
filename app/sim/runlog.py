@@ -13,6 +13,7 @@ takes and the feature table (features.py) reports. It reads evidence; it decides
 """
 from __future__ import annotations
 
+import json
 import re
 from typing import Optional
 
@@ -100,7 +101,7 @@ def build_run(js: dict, world, meta: dict) -> dict:
         pct = (w.get("rate_max_pct") or {}).get(inp, 0.0)
         mind = [st for st in steps if st.get("kind") == "mind_plan" and prev_end - 0.001 <= st["t"] - 1_790_000_000.0 <= s["t"] + 0.5]
         parsed = any(((st.get("result") or {}).get("parsed") is True) for st in mind)
-        merge = _merge_facts(steps, prev_end, s["t"], ends[i]["t"] if i < len(ends) else float("inf"), executed)
+        merge = _merge_facts(lines, executed)
         transitions.append({
             **merge,
             "i": i + 1, "from": d["from"], "to": d["to"], "from_id": d["from"], "to_id": d["to"],
@@ -150,33 +151,32 @@ def build_run(js: dict, world, meta: dict) -> dict:
             "audible": {"set": js["audible"].get("set")}}
 
 
-def _merge_facts(steps: list, booked_from: float, fire: float, end: float, executed: Optional[str]) -> dict:
+_MERGE_GATE = re.compile(r"merge gate: (\w+): (.*?)(; classic merge)?$")
+_MERGE_PHASES = re.compile(r"merge phases: (\{.*\})")
+
+
+def _merge_facts(lines: list, executed: Optional[str]) -> dict:
     """MERGE -> HOLD -> TRANSITION evidence for one transition (informational, never scored).
 
-    `merge_gate` steps (autopilot.js planMerge: the gate that refused the hold plan, or the classic
-    merge that ran instead) are logged from booking until the transition ends; `hold` (with
-    merge_start / handover) is logged when the merge fires. outcome: hold = a measured hold ran,
-    classic = the fixed 16 / 32 bar merge ran, refused = a gate stopped every merge, n/a = the
-    transition never tried one (LAYER / PEAK / pre-planned / not booked as a merge)."""
-    def at(st):
-        return st["t"] - 1_790_000_000.0
-
-    gates = [st for st in steps if st.get("kind") == "merge_gate" and booked_from - 0.001 <= at(st) <= end + 0.5]
-    hold = next((st for st in steps if st.get("kind") == "hold" and "phrases" in (st.get("result") or {})
-                 and fire - 1.0 <= at(st) <= end + 0.5), None)
+    Read from the console's own lines (the sim has no browser step log): `merge gate: <gate>: <why>`
+    (autopilot.js mergeGateLog: the gate that refused the hold plan, `; classic merge` when the fixed
+    16 / 32 bar merge ran instead) from booking on, and `merge phases: {json}` when a measured
+    merge -> hold -> handover fires. outcome: hold = a measured hold ran, classic = the fixed merge
+    ran, refused = a gate stopped every merge, n/a = the transition never tried one."""
+    gates = [m for m in (_MERGE_GATE.search(x) for x in lines) if m]
+    phases = next((json.loads(m.group(1)) for m in (_MERGE_PHASES.search(x) for x in lines) if m), None)
     last = gates[-1] if gates else None
-    gate = ((last.get("result") or {}).get("gate") or "") if last else ""
-    if hold is not None:
+    if phases:
         outcome = "hold"
-    elif executed == "Stem Merge" and last is not None and last.get("decision") == "classic merge":
+    elif executed == "Stem Merge" and last is not None and last.group(3):
         outcome = "classic"
     elif last is not None:
         outcome = "refused"
     else:
         outcome = "n/a"
-    res = (hold or {}).get("result") or {}
-    return {"merge_outcome": outcome, "merge_gate": gate if outcome != "hold" else "",
-            "hold_s": float(res.get("seconds") or 0.0), "hold_bars": int(res.get("bars") or 0)}
+    hold = (phases or {}).get("hold") or {}
+    return {"merge_outcome": outcome, "merge_gate": last.group(1) if last and outcome != "hold" else "",
+            "hold_s": float(hold.get("seconds") or 0.0), "hold_bars": int(hold.get("bars") or 0)}
 
 
 def llm_summary(calls: list) -> dict:
