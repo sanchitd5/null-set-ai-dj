@@ -316,6 +316,179 @@ function play(from, to, opts = {}) {
   assert.strictEqual(C.onAirDeck("x", 0.5, 0.2), "a");
 }
 
+// ---- Anyma drop detector: a long dip / build then a hard jump on a phrase line
+const grid120 = (len) => {
+  const b = [], d = [], p = [], t = [];
+  for (let x = 0; x < len; x += 0.5) b.push(x);
+  for (let x = 0; x < len; x += 2) d.push(x);
+  for (let x = 0; x < len; x += 16) p.push(x);
+  for (let x = 0; x < len; x++) t.push(x);
+  return { bpm: 120, beat_times: b, downbeat_times: d, phrase_boundaries_8bar: p, energy_times: t };
+};
+const trackOf = (len, fn, extra) => C.prepTrack(Object.assign(grid120(len), { energy_curve: grid120(len).energy_times.map(fn) }, extra || {}));
+{
+  // breakdown 64-128 (32 bars low) -> drop at 128
+  const brk = trackOf(320, (t) => (t < 64 ? 0.6 : t < 128 ? 0.15 : t < 192 ? 1 : 0.6));
+  const dr = C.anymaDrops(brk, "");
+  assert.strictEqual(dr.length, 1, JSON.stringify(dr));
+  assert.strictEqual(dr[0].at, 128);
+  assert.ok(dr[0].jump > 0.9 && dr[0].low === 16 && dr[0].hint === "");
+  assert.ok(/jump .* energy shape only/.test(C.dropEvidence(dr[0])));
+  // breakdown then a rising build (tension) -> drop at 128
+  const bld = trackOf(320, (t) => (t < 64 ? 0.6 : t < 112 ? 0.15 : t < 128 ? 0.15 + 0.3 * (t - 112) / 16 : t < 192 ? 1 : 0.6));
+  assert.deepStrictEqual(C.anymaDrops(bld, "").map((d) => d.at), [128]);
+  // flat, flat with noise, a gradual rise: nothing
+  assert.deepStrictEqual(C.anymaDrops(trackOf(320, () => 0.6), ""), []);
+  assert.deepStrictEqual(C.anymaDrops(trackOf(320, (t) => 0.6 + 0.01 * Math.sin(t * 1.7)), ""), []);
+  assert.deepStrictEqual(C.anymaDrops(trackOf(320, (t) => 0.1 + 0.9 * t / 320), ""), []);
+  assert.deepStrictEqual(C.anymaDrops(trackOf(320, (t) => 0.1 + 0.9 * t / 320), "anyma"), [], "a rise is no drop, hint or not");
+  // the EDM build -> drop above (already loud before the line) is not an Anyma drop
+  assert.deepStrictEqual(C.anymaDrops(pt, ""), []);
+  // a softer drop (the build ends fairly loud) only counts with a genre / artist hint
+  const soft = trackOf(320, (t) => (t < 64 ? 0.6 : t < 112 ? 0.2 : t < 128 ? 0.2 + 0.65 * (t - 112) / 16 : t < 192 ? 1 : 0.6));
+  assert.deepStrictEqual(C.anymaDrops(soft, ""), []);
+  const sh = C.anymaDrops(soft, "anyma");
+  assert.deepStrictEqual(sh.map((d) => d.at), [128]);
+  assert.ok(/hint anyma/.test(C.dropEvidence(sh[0])));
+  // hints
+  assert.strictEqual(C.anymaHint("Anyma & Rebūke - Syren"), "anyma");
+  assert.strictEqual(C.anymaHint("REBŪKE - Along Came Polly"), "rebuke");
+  assert.strictEqual(C.anymaHint("Tale Of Us - Nova"), "tale of us");
+  assert.strictEqual(C.anymaHint("genre: Melodic Techno"), "melodic techno");
+  assert.strictEqual(C.anymaHint("Taylor Swift - Style"), "");
+  assert.strictEqual(C.anymaHint(null), "");
+  // crossing the line: fires once, a seek / backwards never
+  assert.strictEqual(C.dropCrossed(dr, 127.98, 128.01).at, 128);
+  assert.strictEqual(C.dropCrossed(dr, 128.01, 128.03), null);
+  assert.strictEqual(C.dropCrossed(dr, 100, 128.5), null, "seek over the drop");
+  assert.strictEqual(C.dropCrossed(dr, 128.5, 127.9), null);
+  assert.strictEqual(C.dropCrossed(dr, NaN, 128), null);
+}
+
+// ---- DANCE: poses land on beat and bar times
+{
+  const brk = trackOf(320, (t) => (t < 64 ? 0.6 : t < 128 ? 0.15 : t < 192 ? 1 : 0.6));
+  const at = (t, red) => C.dancePose(C.musicState(brk, t, 120), { weight: 0.7, eye: 0.4 }, !!red);
+  const down = at(128);                               // a bar downbeat (and a beat)
+  assert.ok(Math.abs(down.hit - 1) < 1e-9 && Math.abs(Math.abs(down.sway) - 1) < 1e-9 && Math.abs(down.pose - 1) < 1e-9);
+  assert.strictEqual(down.nod, 0, "no nod on beat 1");
+  const two = at(128.5);                              // beat 2: the backbeat
+  assert.ok(Math.abs(two.nod - 1) < 1e-9 && two.hit > 0.99 && two.pose < 0.1);
+  assert.ok(Math.sign(two.sway) === -Math.sign(down.sway), "sway alternates beat to beat");
+  assert.strictEqual(at(129).nod, 0, "beat 3: no nod");
+  assert.ok(Math.abs(at(129.5).nod - 1) < 1e-9, "beat 4: nod");
+  const mid = at(128.25);                             // between beats: arms and sway at rest
+  assert.ok(mid.hit < 0.02 && Math.abs(mid.sway) < 1e-9);
+  assert.strictEqual(at(128).poseIdx, 0); assert.strictEqual(at(130).poseIdx, 1); assert.strictEqual(at(136).poseIdx, 0);
+  assert.ok(at(130).pose > 0.99, "each bar downbeat: a big pose");
+  assert.ok(Math.abs(down.amp - 1) < 0.01 && at(100).amp < 0.5, "amplitude follows energy");
+  assert.ok(at(128, true).amp < 0.35, "reduced motion: small moves");
+  assert.strictEqual(down.weight, 0.7); assert.strictEqual(down.eye, 0.4);
+  assert.strictEqual(C.dancePose(C.musicStateNew(), null, false).amp, 0);
+  assert.strictEqual(C.POSES.length, 4);
+}
+
+// ---- director: an Anyma drop cuts to the figure, which dances 16-32 bars
+{
+  const run = (track, until, hook) => {
+    const d = C.createDirector(3), m = C.musicStateNew();
+    for (let t = 100; t <= until; t += 1 / 30) {
+      C.musicState(track, t, 120, m);
+      if (Math.abs(t - 128) < 1 / 60) C.queueEvent(d, { type: "anyma", at: t });
+      C.stepDirector(d, m, t, 1 / 30, false);
+      if (hook) hook(d, t);
+    }
+    return d;
+  };
+  const brk = trackOf(320, (t) => (t < 64 ? 0.6 : t < 128 ? 0.15 : t < 192 ? 1 : 0.6));
+  let seen = "", sceneOk = true, flashes = 0, lastF = 0;
+  run(brk, 200, (d, t) => {
+    if (d.last === "anyma") seen = d.scene;
+    if (t > 129 && t < 191 && (d.scene !== "figure" || d.dance < 0.5)) sceneOk = false;
+    if (d.flash > lastF + 0.5) flashes++;
+    lastF = d.flash;
+  });
+  assert.strictEqual(seen, "figure");
+  assert.ok(sceneOk, "the figure dances for the whole drop, no scene change");
+  assert.ok(flashes <= 2, `flash cap holds (${flashes})`);
+  const end = run(brk, 200);
+  assert.ok(end.dance < 0.5 && end.danceUntil <= 192.01, "32 bars max");
+  // a calm / breakdown phrase after 16 bars ends the dance there
+  const calm = C.prepTrack(Object.assign(grid120(320), { energy_curve: grid120(320).energy_times.map((t) => (t < 128 ? 0.15 : t < 160 ? 1 : 0.2)),
+    sections: [{ label: "breakdown", start: 64, end: 128 }, { label: "drop", start: 128, end: 160 }, { label: "breakdown", start: 160, end: 320 }] }));
+  const c = run(calm, 170);
+  assert.ok(Math.abs(c.danceUntil - 160) < 0.1, `stops on the calm line at 16 bars (${c.danceUntil})`);
+  // no dance without the event
+  const plain = C.createDirector(3), m = C.musicStateNew();
+  for (let t = 100; t <= 150; t += 1 / 30) { C.musicState(brk, t, 120, m); C.stepDirector(plain, m, t, 1 / 30, false); }
+  assert.strictEqual(plain.dance, 0);
+}
+
+// ---- SHOW AUTO: the AI sizes the stage on phrase lines
+{
+  // 120 BPM: bar 2 s, phrase 16 s. cls / energy per phrase from `shape`.
+  const M = (t, cls, energy) => ({ ok: true, beat: 0.5, phraseIdx: Math.floor(t / 16), phrasePhase: (t % 16) / 16,
+    cls: cls || "groove", energy: energy == null ? 0.6 : energy });
+  const sim = (from, to, fn) => {
+    const a = C.autoNew(), log = [];
+    let mode = "pip";
+    for (let t = from; t <= to + 1e-9; t = Math.round((t + 0.25) * 100) / 100) {
+      const inp = Object.assign({ on: true, driving: true, mode, ms: M(t), moment: null }, fn ? fn(t) : {});
+      const r = C.autoStep(a, inp, t);
+      if (r) { mode = r.mode; log.push({ t, mode: r.mode, why: r.why, ev: r.evidence, phase: inp.ms.phrasePhase }); }
+    }
+    return log;
+  };
+  // set start: first phrase line after the AI starts driving -> full, held 32 bars, calm -> window
+  const s1 = sim(5, 200, (t) => ({ ms: M(t, t >= 32 ? "calm" : "groove", 0.2) }));
+  assert.deepStrictEqual(s1.map((x) => [x.t, x.mode, x.why]), [[16, "full", "set start"], [80, "pip", "calm section"]]);
+  // a drop on a line in window mode: full; a low breakdown later: window
+  const s2 = sim(0, 300, (t) => ({ moment: t === 144 ? { kind: "drop" } : null,
+    ms: M(t, t >= 240 ? "breakdown" : t >= 64 && t < 144 ? "calm" : "groove", t >= 240 ? 0.2 : 0.7) }));
+  assert.deepStrictEqual(s2.map((x) => [x.t, x.mode, x.why]),
+    [[0, "full", "set start"], [64, "pip", "calm section"], [144, "full", "drop"], [240, "pip", "low-energy breakdown"]]);
+  // a moment mid-phrase waits for the next line; its evidence reaches the log
+  const s3 = sim(0, 200, (t) => ({ moment: t === 140 ? { kind: "anyma drop", evidence: "jump 0.9" } : null,
+    ms: M(t, t >= 64 && t < 136 ? "calm" : "groove") }));
+  assert.deepStrictEqual(s3.slice(2).map((x) => [x.t, x.mode, x.why, x.ev]), [[144, "full", "anyma drop", "jump 0.9"]]);
+  // a high breakdown (energy 0.6) keeps the stage
+  const s4 = sim(0, 200, (t) => ({ ms: M(t, "breakdown", 0.6) }));
+  assert.deepStrictEqual(s4.map((x) => x.mode), ["full"]);
+  // no flapping: a moment on every line and calm every other phrase
+  const s5 = sim(0, 2000, (t) => ({ moment: t % 16 === 0 && (t / 16) % 3 === 0 ? { kind: t % 96 === 0 ? "supermove" : "peak move" } : null,
+    ms: M(t, Math.floor(t / 16) % 2 ? "calm" : "groove") }));
+  assert.ok(s5.length >= 4, `it does switch (${s5.length})`);
+  for (let i = 0; i < s5.length; i++) {
+    assert.ok(s5[i].phase * 8 < 1, `switch at ${s5[i].t} is on a phrase line`);
+    if (i) {
+      const gap = s5[i].t - s5[i - 1].t;
+      assert.ok(gap >= 32 - 0.05, `16-bar minimum (${s5[i - 1].t} -> ${s5[i].t})`);
+      if (s5[i].why !== "supermove") assert.ok(gap >= 64 - 0.05, `one switch per 32 bars (${s5[i - 1].t} -> ${s5[i].t})`);
+      assert.notStrictEqual(s5[i].mode, s5[i - 1].mode);
+    }
+  }
+  // a supermove may break the 32-bar rule, never the 16-bar one
+  const s6 = sim(0, 200, (t) => ({ moment: t === 96 ? { kind: "supermove" } : null, ms: M(t, t >= 32 && t < 90 ? "calm" : "groove") }));
+  assert.deepStrictEqual(s6.map((x) => [x.t, x.mode, x.why]), [[0, "full", "set start"], [64, "pip", "calm section"], [96, "full", "supermove"]]);
+  // user input on the decks: window now (mid-phrase), paused 2 minutes, then back to normal
+  const s7 = sim(0, 400, (t) => ({ user: t === 20.5, moment: t === 48 || t === 176 ? { kind: "drop" } : null }));
+  assert.deepStrictEqual(s7.map((x) => [x.t, x.mode, x.why]),
+    [[0, "full", "set start"], [20.5, "pip", "user input, auto paused 2 min"], [176, "full", "drop"]]);
+  // Esc: same, with its own reason
+  const s8 = sim(0, 100, (t) => ({ esc: t === 30 }));
+  assert.deepStrictEqual(s8.map((x) => [x.t, x.mode, x.why]), [[0, "full", "set start"], [30, "pip", "esc, auto paused 2 min"]]);
+  // the user picking the stage size: kept, auto paused
+  const a9 = C.autoNew();
+  assert.strictEqual(C.autoStep(a9, { on: true, driving: true, mode: "full", ms: M(0), manual: true }, 0), null);
+  assert.strictEqual(C.autoStep(a9, { on: true, driving: true, mode: "full", ms: M(64, "calm"), moment: null }, 64), null);
+  assert.strictEqual(a9.mode, "full");
+  // the AI stops driving: window now; SHOW AUTO off or SHOW off: never acts
+  const s10 = sim(0, 100, (t) => ({ driving: t < 40 }));
+  assert.deepStrictEqual(s10.map((x) => [x.t, x.mode, x.why]), [[0, "full", "set start"], [40, "pip", "AI stopped driving"]]);
+  assert.deepStrictEqual(sim(0, 300, (t) => ({ on: false, moment: { kind: "supermove" } })), []);
+  assert.deepStrictEqual(sim(0, 300, (t) => ({ driving: false, moment: { kind: "drop" } })), []);
+}
+
 // ---- the sim never loads the show (paint only), and the console does
 {
   const fs = require("fs"), path = require("path");
