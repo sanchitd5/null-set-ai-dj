@@ -37,6 +37,8 @@ class SimAI(AIBackend):
 
 
 class SimHost(Host):
+    threaded = False        # the sim steps the pre-render scheduler from its requests: no worker thread
+
     def __init__(self, world):
         self.w = world
         self._ids = itertools.count(1)
@@ -62,6 +64,18 @@ class SimHost(Host):
     # ---- stems and audio ---------------------------------------------------------------
     def queue_stems(self, track_id, urgent=True):
         return self.w.queue_stems(track_id)
+
+    def drop_stems(self, track_id):
+        return self.w.drop_stems(track_id) if self.synthetic else super().drop_stems(track_id)
+
+    def stems_running(self):
+        return self.w.stems_running() if self.synthetic else super().stems_running()
+
+    def tempo_running(self):
+        return self.w.tempo_running() if self.synthetic else super().tempo_running()
+
+    def tempo_gate(self, key):
+        return self.w.tempo_gate(key) if self.synthetic else True
 
     def separate(self, audio_path, two_stems=None, model=None, **kw):
         if not self.synthetic:

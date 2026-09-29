@@ -58,6 +58,20 @@ merge -> hold -> handover), `classic_merge_share` (the fixed 16 / 32 bar merge r
 merge: stems, tempo, key, room, unclean, sub_owner, level, vocal_clash, ...). They are read from the
 console lines `merge gate: ...` and `merge phases: {...}` (`runlog._merge_facts`).
 
+Pre-render metrics (informational too, `autopilot.js awaitBReady` + `world.py`): `ready_at_booking_share`
+(of the transitions where a merge was possible at all, B's stems and, when the tempo gap needs them, its
+key-locked tempo stems were on the deck when the booking first looked; read from the console line
+`prepare ready: ... at_booking=`), `defer_seconds` / `deferred_transitions` / `defer_gave_up` (how long the
+booking waited for B, `merge deferred: waiting for stems | tempo stems`), `wasted_render_seconds` (modelled
+separation and key-lock render seconds spent on songs that never played) and `max_concurrent_heavy_jobs`
+(most separations + key-locked renders running at once, from the modelled intervals).
+
+Readiness model (replay / library worlds): a downloaded song's stems are installed `World.SEP_S` = 26 s after
+its registration on ONE serial worker (the median gap between consecutive real separations, 361 gaps in
+`data/cache/stems`), a key-locked tempo set is served `World.TEMPO_S` = 30 s after the first ask on one serial
+worker (the keylock.py docstring figure, UNVERIFIED), a song already separated this run is a cache hit. Server
+side `app/ui/prerender.py` is stepped by the requests themselves (no worker thread: `SimHost.threaded = False`).
+
 ## Baseline, the gates and the improvement loop
 
 `baseline.json` is the committed suite result (seeds 1-5, long and quick). `suite --check` exits 1

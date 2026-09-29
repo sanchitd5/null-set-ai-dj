@@ -12,6 +12,9 @@ assert.strictEqual(v.aiState({ gate: { in_flight: "live" } }).state, "listening"
 assert.strictEqual(v.aiState({ holdLoop: true }).state, "listening");
 assert.strictEqual(v.aiState({ preplanning: "Song B", gate: { in_flight: "ear" } }).state, "planning");
 assert.ok(v.aiState({ preplanning: "Song B" }).detail.includes("Song B"));
+assert.strictEqual(v.aiState({ preparing: "B's stems", gate: { in_flight: "ear" } }).state, "planning");      // the booking waits for B's stems
+assert.ok(v.aiState({ preparing: "B's stems" }).detail.includes("B's stems"));
+assert.strictEqual(v.aiState({ transitioning: true, preparing: "B's stems" }).state, "mixing");
 assert.strictEqual(v.aiState({ transitioning: true, preplanning: "x", gate: { in_flight: "plan" } }).state, "mixing");
 assert.ok(v.aiState({ model: { backend: "mlx", ready: false, detail: "starting" } }).detail.includes("starting"));
 assert.strictEqual(v.aiState({ model: { backend: null, ready: false, detail: "starting" } }).detail, "riding the mix");

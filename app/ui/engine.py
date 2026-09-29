@@ -57,6 +57,8 @@ class AIBackend:
 class Host:
     """Production host: the real edges."""
 
+    threaded = True     # background workers (pre-render) run on their own threads; the sim steps them itself
+
     # ---- YouTube ----------------------------------------------------------------
     def search_songs(self, query, limit=8):
         from app.ui import download_service
@@ -83,6 +85,29 @@ class Host:
         from app.ui import server
 
         return server._queue_stems_impl(track_id, urgent)
+
+    def drop_stems(self, track_id):
+        """Cancel a separation that is queued and not started (a pool candidate that left the list)."""
+        from app.ui import server
+
+        return server._dequeue_stems_impl(track_id)
+
+    def stems_running(self):
+        from app.ui import server
+
+        return server._stem_busy is not None
+
+    def tempo_running(self):
+        """Key-locked tempo renders in flight (Rubber Band, one thread each)."""
+        from app.music_brain import keylock
+
+        with keylock._lock:
+            return sum(1 for s in keylock._jobs.values() if s == "running")
+
+    def tempo_gate(self, key):
+        """A finished tempo set may be served now (production: always; the sim holds it back until the
+        render would have finished on the virtual clock)."""
+        return True
 
     def separate(self, audio_path, **kw):
         from app.music_brain import stem_service

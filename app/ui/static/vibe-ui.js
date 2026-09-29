@@ -39,6 +39,7 @@
     const out = (state, label, detail) => ({ state, label, detail, queue, job });
     if (s.transitioning) return out("mixing", "MIXING", s.recipe ? `playing ${s.recipe}` : "transition running");
     if (s.preplanning) return out("planning", "PLANNING", `pre-planning the mix into ${s.preplanning}`);
+    if (s.preparing) return out("planning", "PLANNING", `waiting for ${s.preparing} before booking the merge`);
     if (job === "ear" || job === "live") return out("listening", "LISTENING", JOB_TXT[job]);
     if (job) return out("thinking", "THINKING", JOB_TXT[job] || job);
     if (s.holdLoop || s.earRecent) return out("listening", "LISTENING", s.holdLoop ? "hold loop: ear on the seam" : "live ear listening");
@@ -569,6 +570,7 @@
     const s = aiState({
       transitioning: !!(mind && mind.transitioning),
       preplanning: ap && ap.preplanning,
+      preparing: ap && ap.preparing,
       recipe: ap && ap.next && ap.next.recipe,
       gate: llm.gate, model: llm,
       holdLoop: !!(mind && mind.holdLoopInfo && mind.holdLoopInfo()),

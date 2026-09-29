@@ -436,7 +436,85 @@ var autopilotCore = (function () {
     const ex = exitPastHigh(o.t, 16 * 240 / o.bpm, spans, o.phraseS, o.trackEnd);
     return { t: ex.moved ? ex.t : o.t, moved: ex.moved };
   }
-  const api = { emptyRetryMs, useLibraryFallback, rememberPairReject, pairRejected, awaitJob, keySafeRecipe, KEY_SAFE_MIN, energyStepOk, hybridWindowKey, highSpans, quantileLinear, median, exitPastHigh, learnedRecipe, vocalRecipe, stemBlendBars, stemBlendFader, phraseWaitS, introBars, FADER_PARK_BARS, homePlan, maskedGlideBars, maskedDropAt, HOME_DROP_PCT, LADDER_STEP_PCT,
+  // ---- pre-render readiness (next song's stems + key-locked tempo stems made BEFORE the booking) ------
+  // Measured on 25 real transitions (data/cache/sessions): the booking follows the deck load by a
+  // median 6 s, the fire comes a median 206 s later, and 9 of 25 songs had no stems on the deck at the
+  // booking (they landed 38-159 s after the load), so the merge was refused for a state that would
+  // have been fine 1-2 minutes on. The merge gate therefore WAITS (bounded) instead of deciding at once.
+  const READY_MIN_GAP = 0.02;          // below 2 % the pitched mix locks; above it key-locked stems are needed
+  const DEFER_MAX_S = 100;             // never hold a booking longer (the search watchdog fires at 150 s)
+  const DEFER_MIN_LEAD_S = 45;         // the booking needs this long before the earliest exit (preplan, plan, 15 s floor)
+  const PREFER_READY_JUMP = 1;         // a ready candidate may pass at most this many not-ready ones (taste still wins)
+  const roundBpm = (b) => Math.round(b / 0.5) * 0.5;
+  // Tempi a candidate may have to play at, so its key-locked sets are rendered ahead: the tempo A has
+  // now and A's native tempo (where an easing-home deck ends up), each folded to B by half / double
+  // time, kept when the gap is inside the key-lock cap and past the pitch-only range.
+  // o: {aEff, aNative, bBpm, lim} -> [bpm, ...] (0.5 BPM steps, unique)
+  function prerenderTargets(o) {
+    if (!(o.bBpm > 0)) return [];
+    const out = [];
+    for (const a of [o.aEff, o.aNative]) {
+      if (!(a > 0)) continue;
+      const m = [1, 2, 0.5].reduce((b, x) => (Math.abs(a / (o.bBpm * x) - 1) < Math.abs(a / (o.bBpm * b) - 1) ? x : b));
+      const gap = Math.abs(a / (o.bBpm * m) - 1);
+      if (gap > READY_MIN_GAP && gap <= o.lim) {
+        const t = roundBpm(a / m);
+        if (!out.includes(t)) out.push(t);
+      }
+    }
+    return out;
+  }
+  // What a merge-capable booking still waits for. o: {aStems, bStems, aEff, bBpm, tempoStemsBpm, lim, keyScore}
+  // -> {needs: ["stems" | "tempo stems"], skip: why waiting is pointless | null}. Waiting is pointless
+  // when the merge cannot happen anyway (A has no stems, keys clash, the tempo gap is past the cap).
+  function readinessNeeds(o) {
+    if (!o.aStems) return { needs: [], skip: "A has no stems" };
+    if (o.keyScore != null && o.keyScore < KEY_SAFE_MIN) return { needs: [], skip: `keys clash (camelot ${o.keyScore})` };
+    if (!(o.aEff > 0) || !(o.bBpm > 0)) return { needs: [], skip: "tempo unknown" };
+    const gap = Math.abs(o.aEff / o.bBpm - 1);
+    if (gap > o.lim) return { needs: [], skip: `gap ${(gap * 100).toFixed(1)} % over the cap` };
+    const needs = [];
+    if (!o.bStems) needs.push("stems");
+    if (gap > READY_MIN_GAP && !(o.tempoStemsBpm && Math.abs(o.tempoStemsBpm / o.aEff - 1) < 0.01)) needs.push("tempo stems");
+    // A is still easing back to its own tempo after its lock: the tempo stems B needs are the ones for A's HOME
+    // tempo (where it will be when the merge runs), and every gate (tempo-rule.planFit, planHold) reads A's
+    // tempo right now, so the booking waits for the glide to end instead of chasing a moving tempo.
+    if (o.aSettled === false) needs.push("A's tempo home");
+    return { needs, skip: null };
+  }
+  const SETTLED_PCT = 0.05;            // |pitch| under this: the deck is at its own tempo (tempo-rule STILL_PCT)
+  // The tempo A will have when the merge runs: its own (native) tempo while it is still easing home, else its
+  // live tempo. o: {bpm, rate, pitchPct} -> {bpm, settled}
+  function aTempoAtEntry(o) {
+    const settled = Math.abs(o.pitchPct || 0) < SETTLED_PCT;
+    return { bpm: settled ? o.bpm * o.rate : o.bpm, settled };
+  }
+  // Seconds the booking may wait: until the earliest exit minus the lead the plan needs, at most DEFER_MAX_S.
+  // o: {nowPos, exitLo (track s), minLeadS?, maxS?}
+  function deferBudgetS(o) {
+    const lead = o.minLeadS == null ? DEFER_MIN_LEAD_S : o.minLeadS, max = o.maxS == null ? DEFER_MAX_S : o.maxS;
+    return Math.max(0, Math.min(max, o.exitLo - o.nowPos - lead));
+  }
+  // o: {needs, waitedS, budgetS} -> {wait, why}. `why` is the line the log and the sim read.
+  function deferDecision(o) {
+    if (!o.needs.length) return { wait: false, why: "ready" };
+    const what = o.needs.join(" and ");
+    if (o.waitedS >= o.budgetS) return { wait: false, why: `gave up after ${o.waitedS.toFixed(0)} s waiting for ${what}` };
+    return { wait: true, why: `waiting for ${what}` };
+  }
+  // Prefer candidates whose stems and tempo sets are already made, bounded: a ready one may move ahead of at
+  // most `maxJump` not-ready ones, so the AI's own order still decides between candidates that differ.
+  function orderByReadiness(pool, isReady, maxJump = PREFER_READY_JUMP) {
+    const out = pool.slice();
+    for (let i = 1; i < out.length; i++) {
+      if (!isReady(out[i])) continue;
+      let j = i, jumped = 0;
+      while (j > 0 && jumped < maxJump && !isReady(out[j - 1])) { [out[j - 1], out[j]] = [out[j], out[j - 1]]; j--; jumped++; }
+    }
+    return out;
+  }
+  const api = { prerenderTargets, readinessNeeds, aTempoAtEntry, deferBudgetS, deferDecision, orderByReadiness, DEFER_MAX_S, DEFER_MIN_LEAD_S, PREFER_READY_JUMP,
+    emptyRetryMs, useLibraryFallback, rememberPairReject, pairRejected, awaitJob, keySafeRecipe, KEY_SAFE_MIN, energyStepOk, hybridWindowKey, highSpans, quantileLinear, median, exitPastHigh, learnedRecipe, vocalRecipe, stemBlendBars, stemBlendFader, phraseWaitS, introBars, FADER_PARK_BARS, homePlan, maskedGlideBars, maskedDropAt, HOME_DROP_PCT, LADDER_STEP_PCT,
     tempoLockableAt, recipeKind, decideRecipe, planSkipReason, WINDOWS, playWindowFor, exitBounds, exitPick, exitTiming, exitHighPush, audibleEnd, entryClamp, SILENT_FLOOR };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   return api;
@@ -1517,7 +1595,71 @@ function createAutopilotEngine({ host, ai }) {
     ready.push(c);
     while (ready.length > MAX_READY) ready.shift();
     showQueue();
+    syncPrerender();   // its stems and key-locked tempo stems start now, not at the booking
   }
+
+  // ── pre-render: the next songs' stems + key-locked tempo stems are made AHEAD of the booking ──
+  // The ranked candidates (the one being tried, the booked one, the pool) go to the server, which makes
+  // their stems and the tempo sets they may need (A's tempo now and A's native tempo) one heavy job at
+  // a time, and cancels the queued work of a song that left the list (app/ui/prerender.py). The answer
+  // says what is ready; the pool order prefers ready songs (bounded) and the booking waits for B's stems
+  // instead of refusing a merge for a state that is minutes from being fine (awaitBReady).
+  const PRERENDER_POLL_MS = 8000;
+  let heldPool = [];            // the pool prepareTransition is working through (ready[] is empty meanwhile)
+  let focusCand = null;         // the candidate being tried right now: rank 0 for the server
+  let prerenderSig = "";        // the last list sent
+  let prerenderTimer = null;
+  let prerenderBusy = false;
+  let deferNote = null;         // while the booking waits: "B's stems" (VIBE strip)
+  const rdyById = {};           // track_id -> the server's readiness row (+ seen_at)
+  const aTempoOf = (d) => autopilotCore.aTempoAtEntry({ bpm: d.bpm, rate: d._playbackRate(), pitchPct: d._pitchPercent });
+  function poolRanked() {
+    const seen = new Set(), out = [];
+    for (const c of [focusCand, scheduledNext, ...ready, ...heldPool]) {
+      if (c && c.track_id && !c._dead && !history.includes(c.name) && !seen.has(c.track_id)) { seen.add(c.track_id); out.push(c); }
+    }
+    return out;
+  }
+  function prerenderItems() {
+    const d = host.decks && host.decks[activeDeck];
+    const aEff = d && d.bpm > 0 ? aTempoOf(d).bpm : 0, aNative = (d && d.bpm) || 0;
+    return poolRanked().map((c) => ({ track_id: c.track_id,
+      bpms: autopilotCore.prerenderTargets({ aEff, aNative, bBpm: c.bpm, lim: keyLockLim() }) }));
+  }
+  function noteReady(row) {
+    const prev = rdyById[row.track_id] || {};
+    const now = host.clock.now();
+    rdyById[row.track_id] = Object.assign({}, row, { seen_at: now });
+    const c = poolRanked().find((x) => x.track_id === row.track_id);
+    const name = c ? c.name : row.track_id;
+    for (const [stage, on, was] of [["stems", row.stems, prev.stems], ["tempo stems", row.ready, prev.ready]]) {
+      if (!on || was) continue;
+      host.log.step("prepare_ready", { track_id: row.track_id, phase: "planning", decision: `${stage} ready`, why: name,
+        result: { stage, at: now, asked_at: row.asked_at, stems_at: row.stems_at, tempo_at: row.tempo_at, rank: row.rank } });
+    }
+  }
+  async function syncPrerender(force) {
+    if (!active || prerenderBusy) return;
+    const items = prerenderItems(), sig = JSON.stringify(items);
+    const allReady = items.every((i) => rdyById[i.track_id] && rdyById[i.track_id].ready);
+    if (!force && sig === prerenderSig && allReady) return;
+    prerenderSig = sig;
+    prerenderBusy = true;
+    try {
+      const res = await fetch("/api/prerender", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ items }) });
+      if (!res.ok) return;
+      const data = await res.json();
+      for (const row of data.items || []) noteReady(row);
+    } catch (e) { /* the server is restarting: the next poll retries */ }
+    finally { prerenderBusy = false; }
+    if (!prerenderTimer && active) prerenderTimer = setInterval(() => { if (active) syncPrerender(); }, PRERENDER_POLL_MS);
+  }
+  function stopPrerender() {
+    if (prerenderTimer) { clearInterval(prerenderTimer); prerenderTimer = null; }
+    heldPool = []; focusCand = null; deferNote = null; prerenderSig = "";
+    fetch("/api/prerender", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ items: [] }) }).catch(() => {});
+  }
+  const candReady = (c) => !!(rdyById[c.track_id] && rdyById[c.track_id].ready);
 
   // Match + gates + load + schedule one downloaded candidate. True = scheduled.
   // Can `cand` be tempo-locked to the playing deck (half/double time counts)?
@@ -1813,6 +1955,67 @@ function createAutopilotEngine({ host, ai }) {
     return dir * Math.log(c / cur) >= -0.02;
   }
 
+  function pairKeyScore(od, sd) {
+    const cs = host.mod.djMind && host.mod.djMind.core && host.mod.djMind.core.camelotScore;
+    const ka = od.analysis && od.analysis.key && od.analysis.key.camelot, kb = sd.analysis && sd.analysis.key && sd.analysis.key.camelot;
+    return cs && ka && kb ? cs(ka, kb) : null;
+  }
+  // The booking waits for B's stems and key-locked tempo stems (bounded by autopilotCore.deferBudgetS: to
+  // the earliest exit minus the lead the plan needs, at most 100 s). Waiting is pointless, and skipped, when
+  // no merge could happen (A has no stems, keys clash, the tempo gap is past the cap). On timeout the
+  // booking goes on exactly as before (the merge gate refuses, the old chain plays). Logs
+  // `merge deferred: waiting for <stems|tempo stems>` and how long it waited; returns the evidence the
+  // step log and the sim read, or null when merges are off / no deck.
+  async function awaitBReady(currentId, nextId, nextName, candidate, gen) {
+    const od = host.decks && host.decks[activeDeck], sd = host.decks && host.decks[stagingDeck()];
+    if (!od || !sd || !mergesOn() || !(od.bpm > 0)) return null;
+    const probe = () => {
+      if (od.stems && !od.stemsReady && od.rearmStems) od.rearmStems("readiness check");
+      const at = aTempoOf(od), aEff = at.bpm;
+      return { aEff, r: autopilotCore.readinessNeeds({ aStems: !stemsWhy(od), bStems: !!sd.stems, aEff, bBpm: sd.bpm,
+        tempoStemsBpm: sd.tempoStems && sd.tempoStems.bpm, lim: keyLockLim(), keyScore: pairKeyScore(od, sd),
+        aSettled: at.settled || !!bridge }) };
+    };
+    let p = probe();
+    const res = { firstReady: p.r.needs.length === 0 && !p.r.skip, deferS: 0, gaveUp: false, skip: p.r.skip, needs: p.r.needs };
+    const budget = autopilotCore.deferBudgetS({ nowPos: deckPosition(activeDeck), exitLo: exitWindow(candidate.score || 50).lo });
+    const t0 = host.clock.now();
+    let waited = 0, lastTry = -1e9;
+    let d = autopilotCore.deferDecision({ needs: p.r.needs, waitedS: 0, budgetS: budget });
+    if (p.r.needs.length) {
+      console.info("merge deferred:", `${d.why} (budget ${budget.toFixed(0)} s)`);
+      host.log.step("merge_deferred", { track_id: nextId, phase: "planning", decision: d.wait ? "deferred" : "not deferred", why: `${nextName}: ${d.why}`, result: { needs: p.r.needs, budget_s: budget } });
+    }
+    while (d.wait) {
+      deferNote = `B's ${p.r.needs.join(" and ")}`;
+      apStatus(`Waiting for ${nextName}: ${p.r.needs.join(" and ")} (${Math.round(waited)} s of ${Math.round(budget)} s)`);
+      // native stems on the deck but the tempo set not asked for (or the last try failed): ask now
+      if (p.r.needs.includes("tempo stems") && sd.stems && sd.useTempoStems && host.clock.now() - lastTry > 15000) {
+        lastTry = host.clock.now();
+        sd._tempoStemsJob = sd.useTempoStems(p.aEff);
+      }
+      await new Promise((r) => setTimeout(r, 1000));
+      if (!active || currentTrackId !== currentId || (gen !== undefined && gen !== prepGen)) break;
+      prepStartedAt = host.clock.now();      // waiting is progress, not a stalled search (watchdog)
+      p = probe();
+      waited = (host.clock.now() - t0) / 1000;
+      d = autopilotCore.deferDecision({ needs: p.r.needs, waitedS: waited, budgetS: budget });
+    }
+    deferNote = null;
+    res.deferS = waited; res.needs = p.r.needs; res.gaveUp = p.r.needs.length > 0;
+    if (waited > 0) {
+      console.info("merge deferred:", res.gaveUp ? d.why : `waited ${waited.toFixed(0)} s, B ready`);
+      host.log.step("merge_deferred", { track_id: nextId, phase: "planning", decision: res.gaveUp ? "gave up" : "ready", why: `${nextName}: ${res.gaveUp ? d.why : `waited ${waited.toFixed(0)} s`}`, result: { waited_s: waited, needs: p.r.needs } });
+    }
+    const rd = rdyById[nextId] || {};
+    res.stems = !!sd.stems; res.tempo = sd.tempoStems ? sd.tempoStems.bpm : null;
+    console.info("prepare ready:", `${nextName} at_booking=${res.firstReady ? 1 : 0} defer_s=${waited.toFixed(0)} stems=${res.stems ? 1 : 0} tempo=${res.tempo ? 1 : 0} gave_up=${res.gaveUp ? 1 : 0} skip=${res.skip ? 1 : 0}`);
+    host.log.step("prepare_ready", { track_id: nextId, phase: "planning", decision: res.gaveUp ? "not ready at booking" : res.firstReady ? "ready at booking" : "ready after waiting",
+      why: nextName, result: { at_booking: res.firstReady, defer_s: waited, stems: res.stems, tempo_stems_bpm: res.tempo, skip: res.skip,
+        stems_at: rd.stems_at || null, tempo_at: rd.tempo_at || null, asked_at: rd.asked_at || null } });
+    return res;
+  }
+
   async function evaluateCandidate(currentId, cand, gen) {
     if (!active || !cand) return false;
     const nextId = cand.track_id;
@@ -1908,10 +2111,13 @@ function createAutopilotEngine({ host, ai }) {
     {
       const oa1 = host.decks && host.decks[activeDeck], sd1 = host.decks && host.decks[stagingDeck()];
       if (oa1 && sd1 && oa1.bpm && sd1.useTempoStems) {
-        const waitStems = async () => { for (let i = 0; i < 40 && !sd1.stems; i++) await new Promise((r) => setTimeout(r, 500)); };
+        // stems land 40-160 s after the load when the song was just downloaded (measured): the old 20 s
+        // wait gave up first and the tempo sets were never asked for. Wait until this deck's song changes.
+        const an1 = sd1.analysis;
+        const waitStems = async () => { for (let i = 0; i < 300 && !sd1.stems && active && sd1.analysis === an1; i++) await new Promise((r) => setTimeout(r, 500)); };
         waitStems().then(() => {
-          if (!sd1.bpm || !sd1.stems) return;
-          const aEff1 = oa1.bpm * oa1._playbackRate();
+          if (!sd1.bpm || !sd1.stems || !active || sd1.analysis !== an1) return;
+          const aEff1 = aTempoOf(oa1).bpm;     // A's HOME tempo while it is still easing back (not a moving target)
           const m1 = [1, 2, 0.5].reduce((b, m) => (Math.abs(aEff1 / (sd1.bpm * m) - 1) < Math.abs(aEff1 / (sd1.bpm * b) - 1) ? m : b));
           const g1 = Math.abs(aEff1 / (sd1.bpm * m1) - 1);
           if (g1 > 0.02 && g1 <= keyLockLim()) sd1._tempoStemsJob = sd1.useTempoStems(aEff1 / m1);
@@ -1989,6 +2195,13 @@ function createAutopilotEngine({ host, ai }) {
     if (layer && !(layer.start >= deckPosition(activeDeck) + 16)) layer = null; // start slipped past
 
     if (gen !== undefined && gen !== prepGen) return false; // superseded by a restarted search
+    // B's stems and key-locked tempo stems are on their way (server pre-render): wait for them, bounded,
+    // instead of booking a merge-less transition for a state a minute from being fine.
+    let prep = null;
+    if (!layer) {
+      prep = await awaitBReady(currentId, nextId, nextName, candidate, gen);
+      if (!active || currentTrackId !== currentId || (gen !== undefined && gen !== prepGen)) return false;
+    }
     // The silent ear pre-plans the transition (when B starts inside A, from which
     // of B's lines, how long both play, who owns each stem); the master plays it.
     if (!layer) {
@@ -2275,11 +2488,20 @@ function createAutopilotEngine({ host, ai }) {
   }
 
   async function tryCandidate(currentId, cand, gen) {
-    try { return await evaluateCandidate(currentId, cand, gen); }
-    catch (e) {
+    focusCand = cand;
+    syncPrerender();     // the song being tried is rank 0: its stems and tempo sets come first
+    try {
+      const ok = await evaluateCandidate(currentId, cand, gen);
+      if (!ok && cand && !cand.keep) cand._dead = true;     // rejected for good: no more work for it
+      return ok;
+    } catch (e) {
       console.warn("Autopilot candidate failed:", cand && cand.name, e.message);
       apStatus(`Skipping ${cand && cand.name}: ${e.message}`);
+      if (cand) cand._dead = true;
       return false;
+    } finally {
+      if (focusCand === cand) focusCand = null;
+      deferNote = null;
     }
   }
 
@@ -2325,6 +2547,18 @@ function createAutopilotEngine({ host, ai }) {
     const step = bridgeTarget(false);
     if (step) pool.sort((x, y) => (x.bpm ? Math.abs(Math.log(pulseNear(x.bpm, step) / step)) : 9) -
                                   (y.bpm ? Math.abs(Math.log(pulseNear(y.bpm, step) / step)) : 9));
+    // a song whose stems and tempo stems are already made may pass ONE not-ready song (taste still wins)
+    if (pool.length > 1) {
+      const ordered = autopilotCore.orderByReadiness(pool, candReady);
+      if (ordered.some((c, i) => c !== pool[i])) {
+        const moved = ordered.filter((c, i) => pool.indexOf(c) > i).map((c) => c.name);
+        console.info("pool order:", `readiness moved ${moved.join(", ")} up (${ordered.map((c) => `${c.name}${candReady(c) ? " ready" : ""}`).join(" > ")})`);
+        host.log.step("candidate_order", { phase: "selection", decision: "ready song first", why: ordered.map((c) => `${c.name}${candReady(c) ? " (ready)" : ""}`).join(" > ") });
+        pool.splice(0, pool.length, ...ordered);
+      }
+    }
+    heldPool = pool;     // ready[] is empty while the pool is tried: keep them in the server's list
+    syncPrerender(true); // A's tempo changed with the new song: the tempo sets to make are recomputed
     for (let i = 0; i < pool.length; i++) {
       if (!active || gen !== prepGen) return;
       const c = pool[i];
@@ -2786,6 +3020,7 @@ function createAutopilotEngine({ host, ai }) {
         jumpPending = false;
         if (steering === "move") steerStep++;
         scheduledNext = null;
+        heldPool = [];
         activeDeck = stagingDeck();
         currentTrackId = nextId;
         entryPos = riffEntry != null ? riffEntry : nextEntry;
@@ -3132,6 +3367,7 @@ function createAutopilotEngine({ host, ai }) {
     if (watchdog) { clearInterval(watchdog); watchdog = null; }
     active = false;
     ready.length = 0;
+    stopPrerender();
     cancelLead();
     scheduledNext = null;
     pendingSugs = [];
@@ -3167,6 +3403,7 @@ function createAutopilotEngine({ host, ai }) {
     get fireAt() { return scheduledNext ? scheduledFireAt : null; },
     get layering() { return !!(host.mod.djMind && host.mod.djMind.layerActive); },
     get preplanning() { return preplanFor; },
+    get preparing() { return deferNote; },      // "B's stems": the booking waits for them (VIBE strip)
     get next() { return scheduledNext ? { name: scheduledNext.name || null, recipe: bookedRecipe } : null; },
   });
 
