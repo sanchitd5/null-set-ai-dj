@@ -1338,6 +1338,25 @@ def get_learned_moves():
     return {"moves": tq.learned_moves()}
 
 
+@app.get("/api/learn/progress")
+def get_learn_progress():
+    """Set studies (agent_bridge learn-set), newest first: each with state running|done|error|stale,
+    elapsed_s and, while running, a rough eta_s. Read-only; nothing here starts a study."""
+    from app.music_brain import learn_progress as lp
+
+    return {"studies": lp.read_all()}
+
+
+@app.get("/api/learn/progress/{set_id}")
+def get_learn_progress_one(set_id: str):
+    from app.music_brain import learn_progress as lp
+
+    d = lp.read_one(set_id)
+    if d is None:
+        raise HTTPException(status_code=404, detail="no such study")
+    return d
+
+
 @app.get("/api/techniques")
 def get_techniques(a: str, b: str, keylock: bool = False):
     """Which learned techniques fit A -> B, each with its reasons (app.music_brain.techniques)."""

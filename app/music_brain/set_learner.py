@@ -978,6 +978,14 @@ def clip_audio(src: Path, t0: float, t1: float, out_dir: Path) -> Path:
     return out
 
 
+def _set_title(set_id: str, set_path: Path) -> str:
+    """The set's title for the progress file: yt-dlp's info.json when there is one, else the file name."""
+    try:
+        return json.loads((SETS_DIR / f"{set_id}.info.json").read_text(encoding="utf-8")).get("title") or set_path.stem
+    except (OSError, ValueError, AttributeError):
+        return set_path.stem
+
+
 def _parallel(fn: Callable, items: Sequence, jobs: int, log: Callable[[str], None], label: Callable[[object], str]) -> list:
     """fn over items, at most `jobs` at once, results in item order. One failure is logged, not fatal."""
     from concurrent.futures import ThreadPoolExecutor
@@ -996,13 +1004,29 @@ def _parallel(fn: Callable, items: Sequence, jobs: int, log: Callable[[str], Non
 def learn_set(source: str, tracklist: Optional[str] = None, download: bool = True,
               store_path: Path = LEARNED_PATH, log: Callable[[str], None] = lambda m: None,
               jobs: int = DEFAULT_JOBS, ai: bool = True) -> dict:
-    """Study one set. tracklist: text or a path to a text file. jobs: Demucs runs at once."""
+    """Study one set. tracklist: text or a path to a text file. jobs: Demucs runs at once.
+    Progress is written to CACHE_DIR/learn_progress/<set_id>.json (learn_progress.py) for the console panel."""
+    from app.music_brain.learn_progress import Progress
+
+    prog = Progress(source, announce=log)
+    try:
+        report = _learn_set(source, tracklist, download, store_path, prog.wrap_log(log), jobs, ai, prog)
+    except BaseException as exc:                   # incl. Ctrl-C: the file must not say `running`
+        prog.fail(exc)
+        raise
+    prog.finish()
+    return report
+
+
+def _learn_set(source: str, tracklist: Optional[str], download: bool, store_path: Path,
+               log: Callable[[str], None], jobs: int, ai: bool, prog) -> dict:
     import librosa
 
     from app.music_brain.analyzer import analyze
     from app.music_brain.stem_service import separate
 
     set_path, set_id, desc = fetch_set(source)
+    prog.set_id(set_id, title=_set_title(set_id, set_path))
     text = tracklist or ""
     if text and len(text) < 4096 and Path(text).expanduser().is_file():
         text = Path(text).expanduser().read_text(encoding="utf-8")
@@ -1010,21 +1034,27 @@ def learn_set(source: str, tracklist: Optional[str] = None, download: bool = Tru
     if len(entries) < 2:
         raise ValueError("need a tracklist with at least 2 timestamped songs (--tracklist, or the video description)")
 
+    prog.update(tracks_total=len(entries))
+    prog.stage("fetch", total=len(entries))
     missing = []
     for e in entries:
+        prog.update(current=e.title)
         p = find_or_fetch_song(e.title, SETS_DIR / set_id / "songs", download=download, exclude_ids=(set_id,))
         e.path = str(p) if p else None
         if not p:
             missing.append(e.title)
         log(f"song {e.title}: {p or 'NOT FOUND'}")
+        prog.tick("fetch")
 
     duration = float(librosa.get_duration(path=str(set_path)))
     clips = plan_clips([e.start for e in entries], duration)
+    prog.stage("cut", total=len(clips))
     log(f"clipping {len(clips)} blend windows ({sum(b - a for a, b in clips) / 60:.0f} of {duration / 60:.0f} min)")
     cut: List[Tuple[Tuple[float, float], Path]] = []
     for a, b in clips:
         try:                                    # one undecodable stretch must not sink the study
             cut.append(((a, b), clip_audio(set_path, a, b, SETS_DIR / set_id / "clips")))
+            prog.tick("cut", current=f"{a / 60:.1f}-{b / 60:.1f} min")
         except Exception as exc:
             log(f"failed to cut clip {a:.0f}-{b:.0f} s: {exc}")
     if not cut:                                 # before any song is sent to Demucs
@@ -1034,6 +1064,7 @@ def learn_set(source: str, tracklist: Optional[str] = None, download: bool = Tru
 
     def song_job(path: str):
         log(f"separating {Path(path).name}")
+        prog.update(current=Path(path).name)
         stems = separate(path).stems
         env, vdb = {}, None
         for n, q in stems.items():
@@ -1051,6 +1082,7 @@ def learn_set(source: str, tracklist: Optional[str] = None, download: bool = Tru
         # clip's four stems at once (~180 KB/s of set, 75 min of clips = ~0.8 GB)
         (t0, _), path = item
         log(f"separating clip {path.name}")
+        prog.update(current=f"clip {t0 / 60:.1f} min")
         stems = {n: _load(q) for n, q in separate(path).stems.items() if n in STEMS}
         if "drums" not in stems:
             return None
@@ -1063,13 +1095,28 @@ def learn_set(source: str, tracklist: Optional[str] = None, download: bool = Tru
                               track=False, t0=t0))
 
     uniq = sorted({e.path for e in entries if e.path})           # a song listed 3x separates once
-    done = dict(zip(uniq, _parallel(song_job, uniq, jobs, log, lambda x: Path(x).name)))
+    prog.update(tracks_total=len(uniq))
+    prog.stage("separate", total=len(uniq))
+    def song_counted(path):                     # a song counts done whether it worked or not
+        try:
+            return song_job(path)
+        finally:
+            prog.tick("separate", current=Path(path).name)
+
+    done = dict(zip(uniq, _parallel(song_counted, uniq, jobs, log, lambda x: Path(x).name)))
     songs = [SongData(e.title, e.start, **(done.get(e.path) or {"bpm": 0.0, "key": None, "env": {}})) for e in entries]
 
     rows: List[dict] = []
     vrows: List[dict] = []
     crows: List[dict] = []
-    for res in _parallel(clip_job, cut, jobs, log, lambda x: x[1].name):
+    prog.stage("analyze", total=len(cut))
+    def counted(item):                          # a clip counts done whether it worked or not
+        try:
+            return clip_job(item)
+        finally:
+            prog.tick("analyze")
+
+    for res in _parallel(counted, cut, jobs, log, lambda x: x[1].name):
         if res:
             rows += res[0]
             vrows += res[1]
@@ -1077,6 +1124,7 @@ def learn_set(source: str, tracklist: Optional[str] = None, download: bool = Tru
     if not rows:
         raise ValueError("no clip could be separated")
 
+    prog.stage("detect")
     vrows, crows = _only_sung(vrows, songs, VWIN_S), _only_sung(crows, songs, CWIN_S)
     verdict = verify_songs(rows, songs)
     for i, v in enumerate(verdict):
@@ -1085,7 +1133,9 @@ def learn_set(source: str, tracklist: Optional[str] = None, download: bool = Tru
             songs[i] = SongData(songs[i].title, songs[i].start, songs[i].bpm, songs[i].key, {})
     bad = {i for i, v in enumerate(verdict) if v["likely_wrong_song"]}
     rows, vrows, crows = (_drop_tracks(x, bad) for x in (rows, vrows, crows))
+    prog.stage("lyrics")
     _attach_lyrics(songs, entries, verdict, vocal_paths, log)
+    prog.stage("detect")
     obs = transitions(rows, songs, set_id) + vocal_recuts(vrows, songs, set_id) + acapella_drops(rows, songs, set_id) \
         + vocal_chops(crows, songs, set_id)
     # the balance the DJ ran at each move: what the user's feedback is usually about
@@ -1094,9 +1144,12 @@ def learn_set(source: str, tracklist: Optional[str] = None, download: bool = Tru
     for o in obs:
         t = max((x for x in ts if x <= o.at), default=ts[0])
         o.detail["levels_db"] = {n: lv.get((t, n)) for n in STEMS}
+    prog.techniques(obs)
     ai_res = {"kept": obs, "rejected": [], "ai": "off"}
     if ai:
         from app.music_brain import set_ai
+
+        prog.stage("ai_review", total=len(obs))
 
         try:                      # the review is advice: its failure keeps the measurement
             ai_res = set_ai.review(obs, log=log)
@@ -1104,6 +1157,8 @@ def learn_set(source: str, tracklist: Optional[str] = None, download: bool = Tru
             ai_res = {"kept": obs, "rejected": [], "ai": f"skipped (review failed: {exc})"[:200]}
         log(f"ai: {ai_res['ai']}, kept {len(ai_res['kept'])}, rejected {len(ai_res['rejected'])}")
         obs = ai_res["kept"]
+        prog.techniques(obs)
+    prog.stage("merge")
     store = merge(obs, store_path, set_ids=(set_id,))
 
     report = {
