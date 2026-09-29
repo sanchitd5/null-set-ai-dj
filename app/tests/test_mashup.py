@@ -92,3 +92,63 @@ def test_full_mashup_32_bars(regions):
     regions["guest.wav"] = [(0.0, 240.0)]
     plan = mashup.plan_mashup(host, guest, lambda: "host.wav", lambda: "guest.wav", bars=32)
     assert plan["ok"] and plan["guest_duration"] == pytest.approx(64.0) and plan["mute_host_vocals"] is False
+
+
+# ---- parameters measured from the audio (waveform_params) -----------------------------------------------
+
+def _band_wav(path, lo, hi, amp, seconds=100, seed=0, sr=11025):
+    import numpy as np
+    import soundfile as sf
+
+    rng = np.random.RandomState(seed)
+    n = seconds * sr
+    spec = np.fft.rfft(rng.standard_normal(n))
+    f = np.fft.rfftfreq(n, 1 / sr)
+    spec[(f < lo) | (f > hi)] = 0
+    y = np.fft.irfft(spec, n)
+    sf.write(path, (y / np.sqrt(np.mean(y ** 2)) * amp).astype("float32"), sr)
+    return str(path)
+
+
+def _mix_wav(path, bed_amp, low_hi, seed):
+    """A host mix: a voice-band bed at bed_amp over a bass line that reaches low_hi Hz."""
+    import numpy as np
+    import soundfile as sf
+
+    _band_wav(path.with_name("bed.wav"), 300, 3400, bed_amp, seed=seed)
+    _band_wav(path.with_name("bass.wav"), 40, low_hi, 0.2, seed=seed + 1)
+    a, sr = sf.read(path.with_name("bed.wav"))
+    b, _ = sf.read(path.with_name("bass.wav"))
+    sf.write(path, (a + b).astype("float32"), sr)
+    return str(path)
+
+
+def test_guest_gain_and_highpass_follow_the_host_audio(regions, tmp_path):
+    secs = [StructureSection("intro", 0, 10, 0.3), StructureSection("verse", 10, 90, 0.6), StructureSection("outro", 90, 100, 0.3)]
+    guest_voc = _band_wav(tmp_path / "guest_voc.wav", 300, 3400, 0.05, seed=5)
+    plans = {}
+    for name, bed, low_hi in (("loud", 0.15, 90), ("quiet", 0.01, 190)):
+        d = tmp_path / name
+        d.mkdir()
+        host_path = _mix_wav(d / "host.wav", bed, low_hi, seed=1)
+        host = _track(host_path, 120, "8A", duration=100, sections=secs)
+        guest = _track("g", 120, "8A", duration=100, sections=secs)
+        regions[str(d / "hv.wav")] = []
+        regions[guest_voc] = [(0.0, 100.0)]
+        plans[name] = mashup.plan_mashup(host, guest, lambda p=str(d / "hv.wav"): p, lambda: guest_voc, bars=8)
+    loud, quiet = plans["loud"], plans["quiet"]
+    assert loud["ok"] and quiet["ok"]
+    assert loud["param_sources"] == quiet["param_sources"] == {"guest_level": "measured", "hp_hz": "measured"}
+    assert len(loud["host_levels"]) == len(loud["host_entries"])
+    assert loud["level"] > quiet["level"] + 0.3                 # a quiet host bed asks for a much quieter guest vocal
+    assert loud["hp_hz"] == 120.0                                # deep sub: the KB crossover
+    assert 130.0 < quiet["hp_hz"] <= 200.0                       # a bass that reaches 190 Hz: the vocal leaves more low end
+
+
+def test_unmeasurable_audio_keeps_the_old_constants(regions):
+    host, guest = _track("h", 120, "8A"), _track("g", 120, "8A")
+    regions["host.wav"] = []
+    regions["guest.wav"] = [(0.0, 240.0)]
+    plan = mashup.plan_mashup(host, guest, lambda: "host.wav", lambda: "guest.wav", bars=8)
+    assert plan["level"] == mashup.FALLBACK_LEVEL and plan["hp_hz"] == 120.0
+    assert plan["param_sources"] == {"guest_level": "fallback", "hp_hz": "fallback"}

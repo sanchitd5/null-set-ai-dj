@@ -65,8 +65,14 @@ def _db(x: float) -> float:
 def _read_mono(path: Path, sr: int = SR) -> Tuple[np.ndarray, int]:
     import soundfile as sf
 
-    y, file_sr = sf.read(str(path), dtype="float32", always_2d=True)
-    y = y.mean(axis=1)
+    try:
+        y, file_sr = sf.read(str(path), dtype="float32", always_2d=True)
+        y = y.mean(axis=1)
+    except Exception:                                   # a format libsndfile lacks (mp3 on older builds): librosa decodes it
+        import librosa
+
+        y, _ = librosa.load(str(path), sr=sr, mono=True)
+        return y.astype(np.float32), sr
     if file_sr > sr:
         from math import gcd
 
