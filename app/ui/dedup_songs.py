@@ -5,6 +5,7 @@ Demucs stems, waveform and key-lock sets.
 
     python3 -m app.ui.dedup_songs                       # dry run (default): report only, deletes nothing
     python3 -m app.ui.dedup_songs --apply [--group ID]  # move duplicates to a quarantine dir (reversible)
+    ... --include-review                                # also drop REVIEW pairs: one kept copy per component
     python3 -m app.ui.dedup_songs --restore TS          # put a quarantine run back
     python3 -m app.ui.dedup_songs --purge TS --yes      # delete a quarantine run for good
 
@@ -533,6 +534,46 @@ def find_groups(tracks: Dict[str, Track], audio_only_review: bool = True) -> Tup
     return groups, reviews
 
 
+def review_groups(groups: List[Group], reviews: List[Review], cache: Optional[Path] = None) -> List[Group]:
+    """--include-review: every connected component of REVIEW pairs (a~b, b~c) becomes one removal group with a
+    single kept copy, chosen by pick_canonical.  Never drops a canonical of a confirmed group or an alias
+    target (those win the pick; a component with none left to drop is skipped).  evidence = why each drop was
+    in REVIEW."""
+    protected = {g.canonical.id for g in groups} | (set(load_aliases(cache).values()) if cache else set())
+    gone = {d.id for g in groups for d in g.duplicates}          # already removed by a confirmed group
+    parent: Dict[str, str] = {}
+
+    def find(x):
+        parent.setdefault(x, x)
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    tr: Dict[str, Track] = {}
+    why: Dict[str, List[str]] = {}
+    for r in reviews:
+        if r.a.id in gone or r.b.id in gone:
+            continue
+        tr[r.a.id], tr[r.b.id] = r.a, r.b
+        parent[find(r.a.id)] = find(r.b.id)
+        for t, o in ((r.a, r.b), (r.b, r.a)):
+            why.setdefault(t.id, []).append(f"{r.kind} vs {o.id}: {r.detail}")
+    comps: Dict[str, List[Track]] = {}
+    for tid, t in tr.items():
+        comps.setdefault(find(tid), []).append(t)
+    out: List[Group] = []
+    for members in comps.values():
+        keep_pool = [m for m in members if m.id in protected] or members
+        canon, reason = pick_canonical(keep_pool)
+        dups = sorted((m for m in members if m is not canon and m.id not in protected), key=lambda m: m.id)
+        if dups:
+            out.append(Group(group_id(m.id for m in [canon] + dups), canon, dups, reason,
+                             {d.id: "REVIEW: " + "; ".join(why[d.id]) for d in dups}))
+    out.sort(key=lambda g: (g.canonical.ident.title, g.id))
+    return out
+
+
 # ---------------------------------------------------------------------------------------------
 # aliases and references
 # ---------------------------------------------------------------------------------------------
@@ -621,8 +662,11 @@ def _gb(n: int) -> str:
     return f"{n / 1e9:.2f} GB"
 
 
-def build_report(cache: Path, tracks: Dict[str, Track], groups: List[Group], reviews: List[Review]) -> str:
+def build_report(cache: Path, tracks: Dict[str, Track], groups: List[Group], reviews: List[Review],
+                 rgroups: Optional[List[Group]] = None) -> str:
     cache = Path(cache)
+    rgroups = rgroups or []
+    groups = groups + rgroups
     cat_tot = {c: 0 for c in CATEGORIES}
     L: List[str] = []
     dup_n = sum(len(g.duplicates) for g in groups)
@@ -642,7 +686,8 @@ def build_report(cache: Path, tracks: Dict[str, Track], groups: List[Group], rev
     for g in groups:
         c = g.canonical
         L += [f"### {g.id}: {c.ident.artist or '?'} / {c.ident.title}"
-              + (f" [{', '.join(sorted(c.ident.markers))}]" if c.ident.markers else ""), "",
+              + (f" [{', '.join(sorted(c.ident.markers))}]" if c.ident.markers else "")
+              + (" (REVIEW component, --include-review)" if g in rgroups else ""), "",
               f"- KEEP `{c.id}` {c.name!r} ({_gb(c.total)}); why: {g.why}"]
         for d in g.duplicates:
             parts = ", ".join(f"{k} {d.sizes[k] / 1e6:.0f} MB" for k in CATEGORIES if d.sizes[k])
@@ -651,7 +696,7 @@ def build_report(cache: Path, tracks: Dict[str, Track], groups: List[Group], rev
             if r:
                 L.append("  - references: " + "; ".join(f"{f} x{n}" for f, n in sorted(r.items())))
         L.append("")
-    L += ["## REVIEW (never auto-merged)", ""]
+    L += ["## REVIEW (never auto-merged)" if not rgroups else "## REVIEW pairs left (protected copies)", ""]
     for r in reviews:
         L.append(f"- {r.kind}: `{r.a.id}` {r.a.name!r} vs `{r.b.id}` {r.b.name!r}: {r.detail}")
     if not reviews:
@@ -903,6 +948,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--cache", type=Path, default=None, help="cache dir (default: the app's data/cache)")
     ap.add_argument("--apply", action="store_true", help="quarantine duplicates (default is a dry run)")
+    ap.add_argument("--include-review", action="store_true",
+                    help="also treat every REVIEW pair as a duplicate: keep one copy per connected component")
     ap.add_argument("--group", help="apply only this group id (or any member track id)")
     ap.add_argument("--restore", metavar="TS", help="restore a quarantine run")
     ap.add_argument("--purge", metavar="TS", help="delete a quarantine run for good")
@@ -924,13 +971,19 @@ def main(argv: Optional[List[str]] = None) -> int:
             return 0
         tracks = scan(cache)
         groups, reviews = find_groups(tracks)
+        rgroups: List[Group] = []
+        if args.include_review:
+            rgroups = review_groups(groups, reviews, cache)
+            moved_ids = {m.id for g in rgroups for m in g.members}
+            reviews = [r for r in reviews if not (r.a.id in moved_ids and r.b.id in moved_ids)]
+            groups = groups + rgroups
         if args.apply:
             m = apply(cache, groups, only=args.group, is_running=running)
             moved = sum(x["size"] for g in m["groups"] for x in g["moved"])
             print(f"quarantined {sum(len(g['duplicates']) for g in m['groups'])} duplicate(s), {_gb(moved)}: "
                   f"{cache / QUARANTINE / m['timestamp']}\nrestore: --restore {m['timestamp']}")
             return 0
-        report = build_report(cache, tracks, groups, reviews)
+        report = build_report(cache, tracks, groups[:len(groups) - len(rgroups)], reviews, rgroups)
         print(report)
         if args.report:
             args.report.parent.mkdir(parents=True, exist_ok=True)
