@@ -1582,6 +1582,29 @@ button.rebind-btn.is-armed {
   .dl-fill.indeterminate { animation: none; width: 100%; opacity: 0.4; }
 }
 
+/* ── LEARNING panel (learn-progress.js) ─────────────────────────────── */
+.lp-panel { margin: 6px 0; padding: 4px 8px; font-size: 11px; border: 1px solid rgba(255,255,255,0.08); border-radius: 4px; background: rgba(255,255,255,0.02); }
+.lp-panel[hidden] { display: none; }
+.lp-panel > summary { cursor: pointer; }
+.lp-body { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
+.lp-row { display: flex; flex-direction: column; gap: 3px; }
+.lp-top { display: flex; justify-content: space-between; gap: 10px; }
+.lp-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lp-stage, .lp-meta { opacity: 0.7; font-variant-numeric: tabular-nums; }
+.lp-bar { height: 4px; border-radius: 2px; overflow: hidden; background: rgba(255,255,255,0.08); }
+.lp-fill { height: 100%; width: 2%; background: #22d3ee; transition: width 0.4s ease; }
+.lp-fill.indeterminate { width: 30%; animation: dl-slide 1.2s ease-in-out infinite; }
+.lp-done .lp-fill { background: #4ade80; }
+.lp-error .lp-fill, .lp-stale .lp-fill { background: #f97316; }
+.lp-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.lp-chips:empty, .lp-note:empty, .lp-meta:empty { display: none; }
+.lp-chip { padding: 0 6px; border-radius: 8px; background: rgba(255,255,255,0.08); font-size: 10px; }
+.lp-note { opacity: 0.65; font-size: 10px; }
+.lp-note.lp-err { opacity: 1; color: #f97316; }
+@media (prefers-reduced-motion: reduce) {
+  .lp-fill.indeterminate { animation: none; width: 100%; opacity: 0.4; }
+}
+
 /* ── LEAD TO ─────────────────────────────────────────────────────────── */
 .ap-lead { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 6px 0; }
 .ap-lead input[type="text"], .ap-lead input[type="search"] { flex: 1 1 360px; min-width: 240px; }

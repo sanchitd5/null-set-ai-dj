@@ -216,6 +216,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_learn.add_argument("--jobs", type=int, default=2, help="Demucs runs at once (default 2; each holds a model in memory).")
 
     sub.add_parser("learned", help="List techniques learned from studied sets.")
+    sub.add_parser("learn-status", help="Progress of running / recent set studies (human readable, no server needed).")
 
     p_hd = sub.add_parser("hook-drop", help="Plan (and audition) an acapella drop on a song's emotional hook.")
     p_hd.add_argument("audio")
@@ -305,6 +306,12 @@ def main(argv: Optional[list[str]] = None) -> int:
                                               start=args.start, end=args.end, log=log)
         elif args.command == "learned":
             payload = learned()
+        elif args.command == "learn-status":
+            from app.music_brain import learn_progress as lp
+
+            docs = lp.read_all()
+            print("\n".join(lp.summary(d) for d in docs) or "no set study recorded yet")
+            return 0
         elif args.command == "lyrics":
             from app.music_brain import lyrics as ly
 

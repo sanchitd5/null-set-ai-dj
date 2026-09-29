@@ -866,6 +866,12 @@
     </div>
   </div>
 
+  <!-- LEARNING: progress of set studies (agent_bridge learn-set); hidden unless one runs or finished in the last 10 min -->
+  <details class="lp-panel" id="learn-panel" open hidden>
+    <summary class="hud-label" title="A DJ set is being studied for techniques (python -m app.music_brain.agent_bridge learn-set). Progress is read from data/cache/learn_progress/">LEARNING <span id="learn-summary"></span></summary>
+    <div class="lp-body" id="learn-body"></div>
+  </details>
+
   <!-- LEAD TO: steer the running set toward a song / artist / genre over N songs -->
   <div class="ap-lead" id="ap-lead">
     <label class="hud-label" for="ap-lead-input">LEAD TO</label>
@@ -986,6 +992,7 @@
 <script src="/live-ear.js"></script>
 <script src="/master-watch.js"></script>
 <script src="/download-progress.js"></script>
+<script src="/learn-progress.js"></script>
 <script src="/step-log.js"></script>
 <script src="/autopilot.js"></script>
 <script src="/beat-grid-ai.js"></script>
