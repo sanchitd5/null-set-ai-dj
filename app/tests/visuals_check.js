@@ -281,17 +281,24 @@ assert.strictEqual(safeBeat(-1), 60 / 128);
   assert.strictEqual(V.anymaFlash(1, false), 0.5);
   assert.strictEqual(V.anymaFlash(NaN, false), 0);
   for (const c of Object.values(V.ANYMA_COL)) assert.ok(!/^#f{6}$/i.test(c), "never pure white");
-  // VFX yields to SHOW: window or stage up -> nothing drawn, bass band included
+  // SHOW never hides the VFX layer (bass band + classic effects); the manual STAGE only dims it
   const on = { enabled: true, hidden: false, playing: true, bassAlive: true, autopilot: { active: true } };
-  assert.deepStrictEqual(V.vfxLayers({ ...on, show: "off" }), { bass: true, ai: true });
-  assert.deepStrictEqual(V.vfxLayers({ ...on, show: "embed" }), { bass: false, ai: false });
-  assert.deepStrictEqual(V.vfxLayers({ ...on, show: "full" }), { bass: false, ai: false });
-  assert.deepStrictEqual(V.vfxLayers({ ...on, show: undefined }), { bass: true, ai: true });
-  assert.strictEqual(V.showYields("embed"), true); assert.strictEqual(V.showYields("off"), false);
+  for (const show of ["off", "elements", "full", "embed", undefined]) {
+    assert.deepStrictEqual(V.vfxLayers({ ...on, show }), { bass: true, ai: true }, `SHOW ${show}`);
+  }
+  assert.strictEqual(V.showYields("full"), true); assert.strictEqual(V.showYields("off"), false);
+  assert.strictEqual(V.showYields("elements"), false, "SHOW in the elements is no stage");
+  // SHOW in the elements: the page-wide Anyma motifs stand down (the look lives in the elements)
+  assert.strictEqual(V.anymaYields("elements"), true); assert.strictEqual(V.anymaYields("off"), false);
   // the gates hold in ANYMA too: the look only draws inside the ai layer
-  assert.ok(/if \(L\.ai\) anymaFrame\(/.test(src));
-  // one loop: visuals.js has exactly one requestAnimationFrame call site for its frame
+  assert.ok(/if \(L\.ai && style === "anyma" && !anymaYields\(lay\.show\)\) anymaFrame\(/.test(src));
+  // ANYMA adds on top: the classic spawn gate no longer skips the anyma style
+  assert.ok(!/style === "anyma"\) return;/.test(src), "classic effects fire in ANYMA LOOK too");
+  // one loop: visuals.js has exactly one requestAnimationFrame call site for its frame,
+  // and the SHOW's element ticks ride it (anyma-show.js adds a tick, no rAF of its own there)
   assert.strictEqual((src.match(/requestAnimationFrame\(frame\)/g) || []).length, 1);
+  assert.ok(/for \(let i = 0; i < ticks\.length; i\+\+\) if \(ticks\[i\]\(now, dt\)\) keep = true;/.test(src));
+  assert.ok(/addTick\(fn\)/.test(src) && /removeTick\(fn\)/.test(src));
   // NULL-BOT: the ANYMA tint is CSS only (mascot.js untouched by the look)
   const nb = fs.readFileSync(path.join(__dirname, "../ui/static/null-bot.css"), "utf8");
   assert.ok(/\.anyma-look \.nul-super \{ --sm-glow: #3fd8ff !important; \}/.test(nb));
