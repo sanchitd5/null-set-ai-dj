@@ -853,7 +853,8 @@ def get_track_stems(track_id: str, separate: bool = False, bpm: Optional[float] 
             r = keylock.ensure_tempo(stem_service.file_hash(_track_path(track_id)), stems, native, bpm)
             if r["state"].startswith("error"):
                 raise HTTPException(status_code=422, detail=r["state"])
-            if r["state"] != "done" or not _host().tempo_gate(r["key"]):
+            gate_open = _host().tempo_gate(r["key"])       # registers the ask (the sim models the render time)
+            if r["state"] != "done" or not gate_open:
                 return {"stems": None, "pending": True, "bpm": r["bpm"]}
             return {"stems": {n: f"/api/riff/{r['key']}/{n}" for n in STEM_NAMES}, "pending": False,
                     "bpm": r["bpm"], "ratio": r["ratio"], "native_bpm": native}

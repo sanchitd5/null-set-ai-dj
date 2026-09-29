@@ -115,6 +115,13 @@ class World:
         self.seed_track: Optional[dict] = None
         self.steps: list = []                # song_log steps captured with virtual time
         self.touched: dict = {}              # hash -> name of every pool entry this run used (record)
+        self._stems_state: dict = {}         # track id -> "pending" | "done": the modelled separation queue (replay / library)
+        self._stems_hashes: set = set()      # audio hashes already separated this run (cache hits)
+        self._sep_q: list = []               # serial separation worker: {tid, hash, enq, start, done}
+        self._sep_free_at = 0.0
+        self.jobs: list = []                 # finished separations: {kind, hash, start, done}
+        self._tempo: dict = {}               # tempo set key -> {key, enq, start, done}
+        self._tempo_order: list = []         # serial key-lock worker, first asked first served
 
     def _blank_fixture(self) -> dict:
         return {"version": FIXTURE_VERSION, "name": self.name, "source": self.mode, "seed": self.seed,
@@ -140,6 +147,12 @@ class World:
         server._suggest_inflight.clear()
         server._set_memory = None
         server._pair_cache.clear()
+        server._stem_cache.clear()
+        server._stem_queue.clear()
+        server._stem_backlog.clear()
+        from app.ui import prerender
+
+        prerender.reset()                       # a fresh pre-render scheduler for the fresh engine
         self._seed_shared_files()
 
     def uninstall(self) -> None:
@@ -284,6 +297,7 @@ class World:
     def set_time(self, t: float) -> None:
         """The console's virtual clock (seconds), stamped on each request it makes."""
         self._vt = t
+        self._advance()
 
     def vclock(self) -> float:
         return self._vt
@@ -568,7 +582,9 @@ class World:
     # ---- stems / registration -------------------------------------------------------------
     def queue_stems(self, track_id: str) -> bool:
         """server._queue_stems: a song was registered. Replay / library: install its frozen
-        analysis, vibe, energy, vocal regions and stem state. Live: separate now (capped)."""
+        analysis, vibe, energy and vocal regions now and its STEMS after the modelled separation
+        (SEP_S on one serial worker, virtual time); a song separated earlier in the run is a cache
+        hit. Live: separate now (capped)."""
         from app.ui import server
 
         path = server._tracks.get(track_id)
@@ -579,7 +595,112 @@ class World:
             return self._register_live(track_id, path)
         entry = self.entry_for(tag["hash"])
         self._install_entry(track_id, path, entry)
+        self._enqueue_stems(track_id, entry)
         return True
+
+    # ---- modelled job latency (virtual time) --------------------------------------------------
+    # One separation at a time and one key-locked render at a time, as the pre-render scheduler runs them.
+    # SEP_S: median gap between consecutive finished separations of the real app (361 gaps under 200 s in
+    # data/cache/stems, median 26 s, p10 7 s, p90 81 s). TEMPO_S: the keylock.py docstring's "~30 s to render
+    # a 3-4 min song" (not measurable from the logs: UNVERIFIED). A repeat of a song already separated this
+    # run is a cache hit (0 s), as is a tempo set already rendered.
+    SEP_S = 26.0
+    TEMPO_S = 30.0
+
+    def _enqueue_stems(self, track_id: str, entry: dict) -> None:
+        h = entry["hash"]
+        st = self._stems_state.get(track_id)
+        if st in ("pending", "done"):
+            return
+        if h in self._stems_hashes:                       # cache hit: the same audio was separated earlier in the run
+            self._finish_stems(track_id, entry)
+            return
+        self._stems_state[track_id] = "pending"
+        self._sep_q.append({"tid": track_id, "hash": h, "enq": self.vclock(), "start": None, "done": None})
+        self._advance()
+
+    def _finish_stems(self, track_id: str, entry: dict) -> None:
+        from app.ui import server
+
+        files = self._synth.get(entry["hash"])
+        if files and files["stems"]:
+            server._stem_cache[track_id] = dict(files["stems"])
+        self._stems_state[track_id] = "done"
+        self._stems_hashes.add(entry["hash"])
+
+    def _schedule(self) -> None:
+        free = self._sep_free_at
+        for j in self._sep_q:
+            j["start"] = max(free, j["enq"])
+            j["done"] = j["start"] + self.SEP_S
+            free = j["done"]
+
+    def _advance(self) -> None:
+        """Land every separation whose modelled time has passed (called on each request's virtual time)."""
+        self._schedule()
+        now = self._vt
+        while self._sep_q and self._sep_q[0]["done"] <= now:
+            j = self._sep_q.pop(0)
+            self._sep_free_at = j["done"]
+            self.jobs.append({"kind": "stems", "hash": j["hash"], "start": j["start"], "done": j["done"]})
+            self._finish_stems(j["tid"], self._tracks[j["tid"]])
+            self._schedule()
+
+    def drop_stems(self, track_id: str) -> bool:
+        """A separation queued and not yet started is cancelled (a running one finishes)."""
+        self._advance()
+        for j in list(self._sep_q):
+            if j["tid"] == track_id and j["start"] > self._vt:
+                self._sep_q.remove(j)
+                self._stems_state.pop(track_id, None)
+                self._schedule()
+                return True
+        return False
+
+    def stems_running(self) -> bool:
+        self._advance()
+        return bool(self._sep_q and self._sep_q[0]["start"] <= self._vt)
+
+    def tempo_gate(self, key: str) -> bool:
+        """server.get_track_stems / prerender: a tempo set the real Rubber Band already wrote may be served only
+        once its modelled render (TEMPO_S, serial, from the first time anyone asked) has passed."""
+        j = self._tempo.get(key)
+        if j is None:
+            j = self._tempo[key] = {"key": key, "enq": self._vt}
+            self._tempo_order.append(j)
+            free = 0.0
+            for x in self._tempo_order:
+                x["start"] = max(free, x["enq"])
+                x["done"] = x["start"] + self.TEMPO_S
+                free = x["done"]
+        return j["done"] <= self._vt
+
+    def tempo_running(self) -> int:
+        return sum(1 for j in self._tempo_order if j["start"] <= self._vt < j["done"])
+
+    def prerender_report(self, played_hashes: set) -> dict:
+        """Render seconds spent on songs that never played, and the most heavy jobs (separations + key-locked
+        renders) running at once, from the modelled intervals. Informational metrics (scorer)."""
+        self._advance()
+        iv, wasted = [], 0.0
+        for j in self.jobs:
+            iv.append((j["start"], j["done"]))
+            if j["hash"] not in played_hashes:
+                wasted += j["done"] - j["start"]
+        for j in self._tempo_order:
+            if j["done"] > self._vt:
+                continue                                    # never finished inside the run: not counted as spent
+            iv.append((j["start"], j["done"]))
+            prefix = j["key"][1:25]
+            if not any(h.startswith(prefix) for h in played_hashes):
+                wasted += j["done"] - j["start"]
+        ev = sorted([(a, 1) for a, _ in iv] + [(b, -1) for _, b in iv], key=lambda x: (x[0], x[1]))
+        cur = peak = 0
+        for _, d in ev:
+            cur += d
+            peak = max(peak, cur)
+        return {"wasted_render_seconds": round(wasted, 1), "max_concurrent_heavy_jobs": peak,
+                "stems_jobs": len(self.jobs), "tempo_jobs": sum(1 for j in self._tempo_order if j["done"] <= self._vt)}
 
     def entry_for(self, h: str) -> dict:
         entry = self.pool.load(h)
@@ -601,10 +722,7 @@ class World:
         for suffix, key in (("v5.json", "analysis"), ("vibe.json", "vibe"), ("energy.json", "energy")):
             (a / f"{h}.{suffix}").write_text(json.dumps(entry[key]), encoding="utf-8")
         server._vocal_regions[track_id] = [list(r) for r in entry.get("vocals") or []]
-        files = self._synth.get(h)
-        if files and files["stems"]:
-            server._stem_cache[track_id] = dict(files["stems"])
-        self._tracks[track_id] = entry
+        self._tracks[track_id] = entry                # the stems themselves land in _finish_stems (modelled separation time)
         self.touched[h] = entry.get("name", "")
 
     def _register_live(self, track_id: str, path: Path) -> bool:

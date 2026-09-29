@@ -229,6 +229,18 @@ def score_run(run: dict, artists_of: Optional[Callable[[str], set]] = None, iden
     m["hold_seconds_max"] = round(max((t["hold_s"] for t in held), default=0.0), 1)
     m["merge_refusals"] = dict(sorted(Counter(t["merge_gate"] for t in trans
                                               if t.get("merge_outcome") in ("classic", "refused") and t.get("merge_gate")).items()))
+    # PRE-RENDER, informational only: was B's stems / tempo stems ready when the booking first looked (the
+    # transitions where a merge was possible at all), how long the booking waited, render seconds spent on songs
+    # that never played, and the most heavy jobs (separation + key-locked render) that ran at once.
+    seen = [t for t in trans if t.get("prep_seen") and not t.get("prep_skip")]
+    m["ready_at_booking_share"] = round(sum(1 for t in seen if t["prep_at_booking"]) / len(seen), 3) if seen else 0.0
+    dfr = [t["prep_defer_s"] for t in trans if t.get("prep_defer_s")]
+    m["defer_seconds"] = round(sum(dfr), 1)
+    m["deferred_transitions"] = len(dfr)
+    m["defer_gave_up"] = sum(1 for t in trans if t.get("prep_gave_up"))
+    pre = run.get("prerender") or {}
+    m["wasted_render_seconds"] = pre.get("wasted_render_seconds", 0.0)
+    m["max_concurrent_heavy_jobs"] = pre.get("max_concurrent_heavy_jobs", 0)
     long_over = sum(max(0.0, s - MAX_SONG_S) / 60.0 for s in secs)
     pen = {
         "transitions": round(sum(r[0] for r in rows), 3),

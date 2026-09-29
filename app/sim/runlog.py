@@ -102,8 +102,9 @@ def build_run(js: dict, world, meta: dict) -> dict:
         mind = [st for st in steps if st.get("kind") == "mind_plan" and prev_end - 0.001 <= st["t"] - 1_790_000_000.0 <= s["t"] + 0.5]
         parsed = any(((st.get("result") or {}).get("parsed") is True) for st in mind)
         merge = _merge_facts(lines, executed)
+        prep = _prepare_facts(lines)
         transitions.append({
-            **merge,
+            **merge, **prep,
             "i": i + 1, "from": d["from"], "to": d["to"], "from_id": d["from"], "to_id": d["to"],
             "from_bpm": round(a["bpm"], 2), "to_bpm": round(b["bpm"], 2), "from_key": a["key"], "to_key": b["key"],
             "key_score": key_console, "key_kb": key_kb,
@@ -142,13 +143,32 @@ def build_run(js: dict, world, meta: dict) -> dict:
                                if _RETRY.search(st["text"]) and (transitions[k - 1]["fire_t"] if k else 0) < st["t"] <= t["fire_t"]] or [0]),
               "song_index": k + 1} for k, t in enumerate(transitions)]
     counters["candidates"] = len(rejects) + len(transitions)
+    played = {(by_name.get(s["name"]) or {}).get("hash") for s in songs} - {None}
     return {"meta": {**meta, "tracks_played": len(songs), "stalled": js["ended"] != "songs", "ended": js["ended"],
                      "llm": llm_summary(world.llm_calls),
                      "replay_misses": len(world.misses), "replay_drift": len(world.drift),
                      # threads ask in any order: the list is sorted so a run's outputs are byte-stable
                      "misses": sorted(world.misses, key=lambda m: (m["what"], m["key"]))[:20]},
+            "prerender": world.prerender_report(played),
             "songs": songs, "transitions": transitions, "preps": preps, "rejects": rejects, "counters": counters,
             "audible": {"set": js["audible"].get("set")}}
+
+
+_PREPARE = re.compile(r"prepare ready: .*? at_booking=(\d) defer_s=(\d+) stems=(\d) tempo=(\d) gave_up=(\d) skip=(\d)")
+
+
+def _prepare_facts(lines: list) -> dict:
+    """Pre-render evidence for one transition (informational): read from the console's own line
+    `prepare ready: <song> at_booking=1|0 defer_s=N stems=.. tempo=.. gave_up=.. skip=..` written by
+    autopilot.js awaitBReady for the candidate that was booked (the last such line before the fire).
+    at_booking: B's stems (and key-locked tempo stems when the gap needs them) were on the deck when the
+    booking first looked; skip: no merge was possible anyway (A stemless, keys clash, gap over the cap)."""
+    got = [m for m in (_PREPARE.search(x) for x in lines) if m]
+    if not got:
+        return {"prep_seen": False, "prep_at_booking": False, "prep_defer_s": 0.0, "prep_gave_up": False, "prep_skip": False}
+    m = got[-1]
+    return {"prep_seen": True, "prep_at_booking": m.group(1) == "1", "prep_defer_s": float(m.group(2)),
+            "prep_gave_up": m.group(5) == "1", "prep_skip": m.group(6) == "1"}
 
 
 _MERGE_GATE = re.compile(r"merge gate: (\w+): (.*?)(; classic merge)?$")

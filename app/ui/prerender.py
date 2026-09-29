@@ -255,7 +255,9 @@ class ServerIO:
         key, native, h = self._key(tid, bpm)
         stems = srv._cached_stems4(tid)
         if stems:
-            keylock.ensure_tempo(h, stems, native, bpm)
+            r = keylock.ensure_tempo(h, stems, native, bpm)
+            if r.get("key"):
+                self._host().tempo_gate(r["key"])       # registers the ask (the sim models the render time)
 
 
 _sched: Optional[Prerender] = None
