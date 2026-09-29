@@ -250,7 +250,7 @@ def decide(wav: Optional[bytes], m: dict) -> dict:
         out = rule_decision(m)
         out["fallback"] = "Qwen-Omni busy with the previous phrase"
         return out
-    from app.ui import llm_gate, session_log
+    from app.ui import engine, llm_gate, session_log
 
     shared = shares_text_model(c)
     # One model for everything (start.sh --single-omni): take the gate's LIVE slot
@@ -261,9 +261,9 @@ def decide(wav: Optional[bytes], m: dict) -> dict:
     try:
         if shared:
             with llm_gate.gate.slot(llm_gate.LIVE, wait_timeout=llm_gate.LIVE_WAIT_S) as waited:
-                text = _ask_omni(c, wav, m)
+                text = engine.current().ai.ear(c, wav, m)
         else:
-            text = _ask_omni(c, wav, m)
+            text = engine.current().ai.ear(c, wav, m)
         res = validate(_extract_json(text), m)
         res["model"] = c["model"]
     except Exception as exc:  # network, auth, bad JSON: rules answer instead

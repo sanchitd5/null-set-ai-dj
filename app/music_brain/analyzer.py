@@ -88,6 +88,13 @@ class TrackAnalysis:
 
 
 def _file_hash(path: Path) -> str:
+    """Content hash of an audio file, through the installed engine's host."""
+    from app.ui import engine
+
+    return engine.current().host.file_hash(path)
+
+
+def _file_hash_impl(path: Path) -> str:
     h = hashlib.sha256()
     with open(path, "rb") as f:
         for chunk in iter(lambda: f.read(1 << 20), b""):
@@ -363,7 +370,9 @@ def vocal_presence_map(
     Flags windows where vocal RMS > threshold_dbfs as active, then merges
     consecutive active windows into (start, end) region tuples.
     """
-    y, sr = librosa.load(str(vocals_stem_path), sr=SAMPLE_RATE, mono=True)
+    from app.ui import engine
+
+    y, sr = engine.load_audio(str(vocals_stem_path), sr=SAMPLE_RATE, mono=True)
     hop_length = int(sr * hop_seconds)
     rms = librosa.feature.rms(y=y, hop_length=hop_length)[0]
     times = librosa.frames_to_time(np.arange(len(rms)), sr=sr, hop_length=hop_length)

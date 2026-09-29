@@ -55,16 +55,16 @@ def _thin(times: list, values: list, keep: int) -> Dict[str, list]:
 def compute(audio_path: Path, stems: Optional[Dict[str, str]] = None,
             analysis: Optional[dict] = None) -> dict:
     """waveform.json content for one song (mix + every stem file that exists)."""
-    import librosa
+    from app.ui import engine
     a = analysis or {}
-    y, _ = librosa.load(str(audio_path), sr=SR, mono=True)
+    y, _ = engine.load_audio(str(audio_path), sr=SR, mono=True)
     duration = len(y) / SR
     bins = max(1, min(int(duration * RATE_HZ), MAX_BINS))
     lanes = {"mix": lane(y, bins)}
     for name in LANES:
         p = (stems or {}).get(name)
         if p and Path(p).exists():
-            ys, _ = librosa.load(str(p), sr=SR, mono=True)
+            ys, _ = engine.load_audio(str(p), sr=SR, mono=True)
             lanes[name] = lane(ys, bins)
     key = a.get("key")
     return {

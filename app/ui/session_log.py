@@ -40,6 +40,13 @@ def _path(session: Optional[str] = None) -> Path:
 
 
 def log(kind: str, **fields) -> None:
+    """One event into the installed engine's log sink (production: the session file below)."""
+    from app.ui import engine
+
+    engine.current().host.log_event(kind, **fields)
+
+
+def _write(kind: str, **fields) -> None:
     """Append one event. Never raises: logging must not break a live set."""
     try:
         ev = {"t": round(time.time(), 3), "at": time.strftime("%H:%M:%S"), "kind": str(kind)[:40]}

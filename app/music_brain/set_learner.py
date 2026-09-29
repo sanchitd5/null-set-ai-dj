@@ -288,9 +288,9 @@ def pick_result(entries: Sequence[dict], artist: str, track: str) -> Optional[di
 
 # ------------------------------------------------------------------ matching
 def _load(path: str) -> np.ndarray:
-    import librosa
+    from app.ui import engine
 
-    y, _ = librosa.load(path, sr=SR, mono=True)
+    y, _ = engine.load_audio(path, sr=SR, mono=True)
     return y
 
 

@@ -105,9 +105,9 @@ def rank(e_a: Dict[str, float], e_b: Dict[str, float], key_score: Optional[float
 
 # ------------------------------------------------------------------- listen
 def _slice(path: str, t0: float, dur: float, sr: int) -> np.ndarray:
-    import librosa
+    from app.ui import engine
 
-    y, _ = librosa.load(path, sr=sr, mono=True, offset=max(0.0, t0), duration=dur)
+    y, _ = engine.load_audio(path, sr=sr, mono=True, offset=max(0.0, t0), duration=dur)
     return y
 
 
@@ -172,11 +172,11 @@ def ear_rate(wav: bytes, what: str, ask: Optional[Callable[[str, bytes, str], st
     a transition PLAN, before song suggestions) and holds look-aheads off meanwhile."""
     try:
         if ask is None:
-            from app.ui import llm_gate
+            from app.ui import engine, llm_gate
 
             llm_gate.gate.note_ear(30)
             with llm_gate.gate.slot(llm_gate.EAR, wait_timeout=EAR_WAIT_S):
-                raw = _ask_omni(EAR_SYSTEM, wav, f"Merged layers: {what}. Rate this merge.")
+                raw = engine.current().ai.audition(EAR_SYSTEM, wav, f"Merged layers: {what}. Rate this merge.")
         else:
             raw = ask(EAR_SYSTEM, wav, f"Merged layers: {what}. Rate this merge.")
     except Exception:              # incl. GateTimeout: the algorithm's rank stands

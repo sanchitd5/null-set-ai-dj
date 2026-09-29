@@ -16,12 +16,13 @@ result when it is done.
 """
 from __future__ import annotations
 
-import secrets
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Optional
+
+from app.ui import engine
 
 PENDING, RUNNING, DONE, ERROR, EXPIRED = "pending", "running", "done", "error", "expired"
 
@@ -66,10 +67,10 @@ class JobRunner:
                 return j
             if sum(1 for x in self._jobs.values() if x.status == PENDING) >= self.max_pending:
                 return None
-            j = Job(id=secrets.token_hex(8), key=key, created=self._clock(), fn=fn)
+            j = Job(id=engine.current().host.new_id(8), key=key, created=self._clock(), fn=fn)
             self._jobs[j.id] = j
             self._by_key[key] = j.id
-        self._pool.submit(self._run, j)
+        engine.current().host.spawn(self._pool, self._run, j)
         return j
 
     def get(self, job_id: str) -> Optional[Job]:
