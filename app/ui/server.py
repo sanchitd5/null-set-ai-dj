@@ -2450,5 +2450,16 @@ from app.ui.atlas_api import router as _atlas_router  # noqa: E402 -- pair atlas
 
 app.include_router(_atlas_router)
 
+class _RevalidatingStatic(StaticFiles):
+    """The console's own JS/CSS/HTML: always revalidated (ETag -> cheap 304), never taken from the
+    browser's heuristic cache. Without Cache-Control the browser kept an old mascot.js next to new
+    modules after an update, so NULL-BOT ran stale code."""
+
+    async def get_response(self, path, scope):
+        resp = await super().get_response(path, scope)
+        resp.headers["Cache-Control"] = "no-cache"
+        return resp
+
+
 if STATIC_DIR.exists():
-    app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")
+    app.mount("/", _RevalidatingStatic(directory=str(STATIC_DIR), html=True), name="static")

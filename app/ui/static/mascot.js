@@ -274,6 +274,11 @@
     function syncDock() {
       const mode = showMode(), dancing = !!dance && performance.now() < dance.untilMs;
       if (dance && !dancing) { dance = null; sup.classList.remove("nul-sm-dance"); }
+      // idle (no dance, no full SHOW): nothing to place, and no layout read every 150 ms
+      if (!dancing && mode !== "full") {
+        if (dockKey !== "") { dockKey = ""; sup.classList.remove("nul-sm-dock"); }
+        return;
+      }
       let rect = null;
       if (mode !== "off" && mode !== "full" && dancing) {
         const stg = document.querySelector(".anyma-stage");
