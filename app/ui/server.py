@@ -1320,7 +1320,7 @@ def post_riff_balance(key: str, b_levels: dict):
     """Gains for a rendered riff (A level-matched, B's rap and bass under the riff)."""
     from app.music_brain import keylock
 
-    m = keylock.meta(key)
+    m = keylock.backfill_voice_band(key)
     if not m or "a_mix_db" not in m:
         raise HTTPException(status_code=404, detail="riff not rendered")
     try:

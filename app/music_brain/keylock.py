@@ -29,6 +29,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import numpy as np
 import soundfile as sf
 
+from app.music_brain import waveform_params as wp
 from app.music_brain.config import CACHE_DIR
 
 KEYLOCK_DIR = CACHE_DIR / "keylock"
@@ -131,14 +132,39 @@ def stretched_levels(folder: Path, meta: dict, plan: dict) -> dict:
         ys[n] = y.mean(axis=1)
     mix = sum(ys.values())
     cut = lambda y, a, b: y[int(a * sr): int(b * sr)]  # noqa: E731
-    return {"a_mix_db": rms_db(cut(mix, g0, g1)), "a_riff_db": rms_db(cut(ys["other"], s0, s1)),
+    riff = cut(ys["other"], s0, s1)
+    return {"a_mix_db": rms_db(cut(mix, g0, g1)), "a_riff_db": rms_db(riff),
+            "a_riff_voice_db": _voice_band_db(riff, sr),        # how much of the riff competes with a voice (300-3400 Hz)
             "a_solo_mix_db": rms_db(cut(mix, s0, s1)),
             "a_peak_db": float(20 * np.log10(np.max(np.abs(mix[int(g0 * sr): int(s1 * sr)])) + 1e-9))}
 
 
+def backfill_voice_band(key: str) -> Optional[dict]:
+    """meta of a render made before the voice-band level was measured, with it added (and saved). None when absent."""
+    p = KEYLOCK_DIR / key
+    m = meta(key)
+    if m is None or "a_riff_voice_db" in m or not (p / "other.wav").exists():
+        return m
+    try:
+        y, sr = sf.read(p / "other.wav", always_2d=True)
+        ws, r = m["window_start"], m["ratio"]
+        y = y.mean(axis=1)[int((m["a_solo"][0] - ws) * r * sr): int((m["a_solo"][1] - ws) * r * sr)]
+        m["a_riff_voice_db"] = _voice_band_db(y, sr)
+        (p / "meta.json").write_text(json.dumps(m))
+    except Exception:
+        pass
+    return m
+
+
+def _voice_band_db(y: np.ndarray, sr: int) -> Optional[float]:
+    if len(y) < wp.WIN:
+        return None
+    return wp.mean_db(wp.measure(y, sr), "voice_db", 0.0, len(y) / sr + 1.0)
+
+
 # Balance targets (user, 2026-09-27: "rap volume should be lower than Aerodynamic";
 # USB002 set: bass sits ~9 dB under the riff while the rap rides the riff).
-RAP_UNDER_RIFF_DB = 9.0   # user x2: 'rap is loud... in concert vocals are low, music vibes' (3 dB still overtook the riff)
+RAP_UNDER_RIFF_DB = wp.RAP_UNDER_RIFF_DB   # the fallback and the reference; a run's value is measured (waveform_params.rap_offsets). user x2: 'rap is loud... in concert vocals are low, music vibes' (3 dB still overtook the riff)
 BASS_UNDER_RIFF_DB = 9.0
 MAX_A_BOOST_DB = 8.0
 
@@ -150,11 +176,17 @@ def balance(meta: dict, b_levels: dict) -> dict:
         a_gain_db = max(0.0, min(a_gain_db, -3.0 - meta["a_peak_db"]))
     riff = meta["a_riff_db"] + a_gain_db
     lin = lambda db: float(10 ** (db / 20))  # noqa: E731
+    # rap offset and second-half lift from THIS riff's spectrum (the fixed 9 dB / x1.5 only when it was not measured)
+    rap_off, lift_db, src = wp.rap_offsets(meta["a_riff_db"], meta.get("a_riff_voice_db"))
+    wp.note("riff_over_rap", {"rap_under_riff_db": src, "rap_lift": src})
     return {
         "a_gain": lin(a_gain_db),
-        "b_vocals": min(1.0, max(0.1, lin(riff - RAP_UNDER_RIFF_DB - b_levels["b_vocals_db"]))),
+        "b_vocals": min(1.0, max(0.1, lin(riff - rap_off - b_levels["b_vocals_db"]))),
         "b_bass": min(1.0, max(0.2, lin(riff - BASS_UNDER_RIFF_DB - b_levels["b_bass_db"]))),
         "a_gain_db": round(a_gain_db, 1),
+        "rap_under_riff_db": round(rap_off, 1),
+        "rap_lift": round(lin(lift_db), 3),
+        "param_source": src,
     }
 
 

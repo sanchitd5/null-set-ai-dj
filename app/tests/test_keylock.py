@@ -87,6 +87,52 @@ def test_balance_puts_rap_under_riff_and_matches_loudness():
     assert loud_a["a_gain_db"] == 0.0                                     # never turned down, never boosted past 8 dB
 
 
+def _riff_folder(tmp_path, name, other):
+    """A rendered-riff folder: 4 stems, `other` is the riff. 22.05 kHz, 12 s, groove 0-8 s, solo 8-12 s."""
+    import soundfile as sf
+
+    folder = tmp_path / name
+    folder.mkdir()
+    for n in keylock.STEMS:
+        sf.write(folder / f"{n}.wav", other if n == "other" else 0.01 * other, 22050)
+    return folder
+
+
+def _band(lo, hi, amp, seed):
+    import numpy as np
+
+    rng = np.random.RandomState(seed)
+    n = 22050 * 12
+    spec = np.fft.rfft(rng.standard_normal(n))
+    f = np.fft.rfftfreq(n, 1 / 22050)
+    spec[(f < lo) | (f > hi)] = 0
+    y = np.fft.irfft(spec, n)
+    return (y / np.sqrt(np.mean(y ** 2)) * amp).astype(np.float32)
+
+
+def test_balance_derives_the_rap_offset_from_each_riffs_spectrum(tmp_path):
+    plan = {"ratio": 1.0, "a_groove": [0.0, 8.0], "a_solo": [8.0, 12.0]}
+    meta = {"window_start": 0.0, "ratio": 1.0}
+    bass_riff = _riff_folder(tmp_path, "bass", _band(40, 250, 0.2, 1) + _band(300, 3400, 0.02, 2))
+    bright_riff = _riff_folder(tmp_path, "bright", _band(300, 3400, 0.2, 3))
+    lv_bass = keylock.stretched_levels(bass_riff, meta, plan)
+    lv_bright = keylock.stretched_levels(bright_riff, meta, plan)
+    assert lv_bass["a_riff_voice_db"] < lv_bass["a_riff_db"] - 8          # measured: the riff is mostly low end
+    assert abs(lv_bright["a_riff_voice_db"] - lv_bright["a_riff_db"]) < 1.5
+    b = {"b_mix_db": -16.0, "b_vocals_db": -20.0, "b_bass_db": -19.0}
+    gb = keylock.balance({**lv_bass, "a_mix_db": -22.0}, b)
+    gh = keylock.balance({**lv_bright, "a_mix_db": -22.0}, b)
+    assert gb["param_source"] == gh["param_source"] == "measured"
+    assert gb["rap_under_riff_db"] > gh["rap_under_riff_db"] + 3          # the rap sits differently per riff
+    assert gb["rap_lift"] > gh["rap_lift"] > 1.2
+
+
+def test_balance_without_a_voice_band_measurement_keeps_the_old_constants():
+    g = keylock.balance({"a_mix_db": -22.0, "a_riff_db": -26.0}, {"b_mix_db": -16.0, "b_vocals_db": -20.0, "b_bass_db": -19.0})
+    assert g["param_source"] == "fallback" and g["rap_under_riff_db"] == 9.0
+    assert g["rap_lift"] == pytest.approx(1.5, abs=0.05)
+
+
 def test_balance_never_lifts_a_past_its_peak_headroom():
     g = keylock.balance({"a_mix_db": -22.0, "a_riff_db": -26.0, "a_peak_db": -5.0},
                         {"b_mix_db": -10.0, "b_vocals_db": -20.0, "b_bass_db": -19.0})

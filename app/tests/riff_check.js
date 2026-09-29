@@ -19,6 +19,10 @@ for (const m of [16, 32]) {
   // second half of the mashup: rap x1.5, still rap only
   const lift = events.find((e) => e.bar === 24 + m / 2);
   assert.ok(Math.abs(lift.bRamp.stems.vocals - 0.6) < 1e-9); assert.strictEqual(lift.bRamp.stems.drums, 0);
+  { // the lift is the measured one when the plan carries it (server: rap_lift), x1.5 otherwise
+    const measured = schedule({ gains: { a_gain: 1, b_vocals: 0.3, rap_lift: 2 }, timeline: TL(m) }).events.find((e) => e.bar === 24 + m / 2);
+    assert.ok(Math.abs(measured.bRamp.stems.vocals - 0.6) < 1e-9);
+  }
   // A's drop plays once untouched: nothing of B until the mashup (user)
   const start = events.find((e) => e.b === "start");
   assert.strictEqual(start.bar, 24);

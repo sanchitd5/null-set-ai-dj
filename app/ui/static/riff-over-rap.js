@@ -25,6 +25,8 @@
     const tl = plan.timeline || { break: 16, rap: 24, mashup: 24, blend: 40, swap: 44, end: 48, mashup_bars: 16 };
     const gb = plan.gains || { a_gain: 1, b_vocals: 1 };
     const rapOnly = { drums: 0, bass: 0, vocals: gb.b_vocals, other: 0 };
+    // the lift comes from this riff's measured spectrum (server: waveform_params.rap_offsets); x1.5 only when unmeasured
+    const lift = gb.rap_lift > 1 ? gb.rap_lift : RAP_LIFT;
     const half = tl.swap - tl.blend, rest = tl.end - tl.swap;
     return {
       events: [
@@ -35,8 +37,8 @@
           why: `the mashup: that half of A's drop looped, B's rap on top (${db(gb.b_vocals)} dB, ${tl.mashup_bars} bars)` },
         // second half of the mashup: the rap comes up x1.5 so A's music doesn't
         // bury it (user), ramped over 2 bars
-        { bar: tl.mashup + tl.mashup_bars / 2, bRamp: { stems: { ...rapOnly, vocals: Math.min(1, gb.b_vocals * RAP_LIFT) }, bars: 2 },
-          why: `the rap comes up for the second half of the mashup (${db(Math.min(1, gb.b_vocals * RAP_LIFT))} dB)` },
+        { bar: tl.mashup + tl.mashup_bars / 2, bRamp: { stems: { ...rapOnly, vocals: Math.min(1, gb.b_vocals * lift) }, bars: 2 },
+          why: `the rap comes up for the second half of the mashup (${db(Math.min(1, gb.b_vocals * lift))} dB)` },
         // stem remix inside the mashup (user: stem separation remixing in mashups):
         // "hold on" at the end of each 16 bars: the rap's last bar looped over 4
         ...Array.from({ length: Math.floor(tl.mashup_bars / 16) }, (_, k) => {
