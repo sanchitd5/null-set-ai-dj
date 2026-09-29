@@ -429,12 +429,15 @@ const trackOf = (len, fn, extra) => C.prepTrack(Object.assign(grid120(len), { en
   // 120 BPM: bar 2 s, phrase 16 s. cls / energy per phrase from `shape`.
   const M = (t, cls, energy) => ({ ok: true, beat: 0.5, phraseIdx: Math.floor(t / 16), phrasePhase: (t % 16) / 16,
     cls: cls || "groove", energy: energy == null ? 0.6 : energy });
+  let kept = [];
   const sim = (from, to, fn) => {
     const a = C.autoNew(), log = [];
+    kept = [];
     let mode = "pip";
     for (let t = from; t <= to + 1e-9; t = Math.round((t + 0.25) * 100) / 100) {
       const inp = Object.assign({ on: true, driving: true, mode, ms: M(t), moment: null }, fn ? fn(t) : {});
       const r = C.autoStep(a, inp, t);
+      if (r && r.kept) { kept.push({ t, why: r.why, ev: r.evidence }); continue; }
       if (r) { mode = r.mode; log.push({ t, mode: r.mode, why: r.why, ev: r.evidence, phase: inp.ms.phrasePhase }); }
     }
     return log;
@@ -451,6 +454,10 @@ const trackOf = (len, fn, extra) => C.prepTrack(Object.assign(grid120(len), { en
   const s3 = sim(0, 200, (t) => ({ moment: t === 140 ? { kind: "anyma drop", evidence: "jump 0.9" } : null,
     ms: M(t, t >= 64 && t < 136 ? "calm" : "groove") }));
   assert.deepStrictEqual(s3.slice(2).map((x) => [x.t, x.mode, x.why, x.ev]), [[144, "full", "anyma drop", "jump 0.9"]]);
+  // an Anyma drop while already on the stage: no switch, but a log line with the evidence
+  const s3b = sim(0, 100, (t) => ({ moment: t === 48 ? { kind: "anyma drop", evidence: "jump 1" } : null }));
+  assert.deepStrictEqual(s3b.map((x) => x.mode), ["full"]);
+  assert.deepStrictEqual(kept, [{ t: 48, why: "anyma drop (already full)", ev: "jump 1" }]);
   // a high breakdown (energy 0.6) keeps the stage
   const s4 = sim(0, 200, (t) => ({ ms: M(t, "breakdown", 0.6) }));
   assert.deepStrictEqual(s4.map((x) => x.mode), ["full"]);

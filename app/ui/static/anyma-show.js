@@ -610,7 +610,11 @@
     const gapOk = now - a.lastSwitch >= AUTO.GAP_BARS * bar - eps;
     if (a.pending && (newLine || ((first || i.moment) && inFirstBar))) {
       const p = a.pending, holdBars = p.kind === "set start" ? AUTO.START_BARS : AUTO.FULL_BARS;
-      if (a.mode === "full") { a.holdUntil = Math.max(a.holdUntil, now + holdBars * bar - eps); a.pending = null; return null; }
+      if (a.mode === "full") {
+        a.holdUntil = Math.max(a.holdUntil, now + holdBars * bar - eps); a.pending = null;
+        // already on the stage: an Anyma drop is still worth a log line (kept: no switch)
+        return p.kind === "anyma drop" ? { mode: "full", why: "anyma drop (already full)", evidence: p.evidence || "", kept: true } : null;
+      }
       if (dwellOk && (gapOk || p.kind === "supermove")) {
         a.pending = null; a.holdUntil = now + holdBars * bar - eps;
         return autoSwitch(a, "full", p.kind, now, p.evidence);
