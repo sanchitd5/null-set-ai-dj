@@ -251,8 +251,17 @@
     return [{ ...e, key, t: now, count: 1, id: ++feedSeq }].concat(out).slice(0, FEED_MAX);
   }
 
+  // Pure: the ANYMA scene cell from the in-element look (anyma-ui.js `look`):
+  // {on, scene, drop}. Off when SHOW is off or the look has nothing to say.
+  function sceneCell(look) {
+    if (!look || look.on !== true) return { on: false, scene: "", drop: "" };
+    const scene = typeof look.scene === "string" ? look.scene : "";
+    const drop = typeof look.countdown === "string" ? look.countdown : "";
+    return { on: true, scene: scene || "--", drop };
+  }
+
   const core = {
-    STEMS, aiState, countdown, fmtSecs, mergeLanes, mergePlayhead, mergePhase, phraseAt, phraseProgress, progressSnaps,
+    STEMS, aiState, sceneCell, countdown, fmtSecs, mergeLanes, mergePlayhead, mergePhase, phraseAt, phraseProgress, progressSnaps,
     harmony, energyChips,
     trailPush, stemLevels, nextHook, nextCue, pruneCues, feedEntry, feedPush, feedPrune,
     FEED_TTL_MS, FEED_MAX, FEED_DEDUPE_MS,
@@ -297,6 +306,7 @@
         <span class="vb-k">KEY</span><span class="vb-num vb-keys">-- · --</span><span class="vb-sub vb-harm"></span>
       </div>
       <div class="vb-cell vb-stemcell">${stemCol("a")}${stemCol("b")}</div>
+      <div class="vb-cell vb-scene" title="Anyma scene and the next anticipated moment (SHOW on, ANYMA LOOK)"><span class="vb-k">SCENE</span><span class="vb-num vb-scn">--</span><span class="vb-sub vb-dropcd"></span></div>
       <div class="vb-cell vb-hook" hidden><span class="vb-k">DROP</span><span class="vb-num vb-hookcd"></span><span class="vb-sub vb-hooktxt"></span></div>
       <div class="vb-cell vb-badges"></div>
       <ol class="vb-feed" aria-live="polite" aria-label="AI events"></ol>
@@ -311,6 +321,7 @@
     curn: $(".vb-curn"), nxtn: $(".vb-nxtn"), trail: $(".vb-trail"),
     keyCell: $(".vb-key"), keys: $(".vb-keys"), harm: $(".vb-harm"),
     stems: { a: $('.vb-stems[data-deck="a"]'), b: $('.vb-stems[data-deck="b"]') },
+    scene: $(".vb-scene"), scn: $(".vb-scn"), dropcd: $(".vb-dropcd"),
     hook: $(".vb-hook"), hookcd: $(".vb-hookcd"), hooktxt: $(".vb-hooktxt"),
     badges: $(".vb-badges"), feed: $(".vb-feed"),
   };
@@ -582,6 +593,14 @@
     } else put(el.hook, "hidden", true);
   }
 
+  // shown only via CSS (html.anyma-look.anyma-el): a fixed-width cell, text only here
+  function renderScene() {
+    const c = sceneCell(root.anymaUi && root.anymaUi.look);
+    put(el.scn, "text", c.on ? c.scene : "--");
+    put(el.dropcd, "text", c.on ? c.drop : "");
+    put(el.scene, "class:vb-armed", c.on && !!c.drop);
+  }
+
   function renderBadges() {
     const b = [];
     const yt = sig.yt;
@@ -672,6 +691,7 @@
     renderKey();
     renderStems();
     renderHook(d, now);
+    renderScene();
     renderBadges();
     renderFeed(Date.now());
     dirty = false;
@@ -686,5 +706,6 @@
     requestAnimationFrame(frame);
   }, 100);
 
-  root.vibeUi = { core, get hidden() { return hidden; } };
+  // pulse(red): the SHOW's in-element moments (an Anyma drop on the line) hit the strip too
+  root.vibeUi = { core, get hidden() { return hidden; }, pulse: (red) => borderPulse(!!red) };
 })(typeof window !== "undefined" ? window : globalThis);

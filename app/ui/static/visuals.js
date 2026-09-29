@@ -31,9 +31,10 @@
 // the bass band is a flat glow whose brightness changes slowly.
 // Toggle: the VFX button in the top bar, remembered in localStorage. Off means
 // nothing is drawn at all, the bass band included.
-// Style: ANYMA LOOK (#vfx-anyma-toggle, VISUALS drawer) swaps the classic deck
-// colours for the SHOW look (see the ANYMA section), same gates, same loop.
-// While the SHOW stage is up (window or full) this layer yields and draws nothing.
+// Style: ANYMA LOOK (#vfx-anyma-toggle, VISUALS drawer) ADDS the SHOW look's
+// cyan motifs (see the ANYMA section) on top of the classic layer, same gates,
+// same loop; it never replaces the bass band or the classic effects. SHOW never
+// hides this layer either; only the manual STAGE takeover dims it to half.
 (function (root) {
   "use strict";
 
@@ -78,9 +79,10 @@
   // Pure: which layers draw this frame. o = {enabled, hidden, playing,
   // bassAlive, autopilot}. The bass band needs no AI; every other effect does.
   // The bass band keeps drawing while it fades out after the music stops.
-  // o.show = window.anymaShow.mode: while the SHOW stage is up this layer yields.
+  // o.show = window.anymaShow.mode: SHOW never hides this layer (NULL-BOT's bass
+  // band and effects always draw); only the manual STAGE takeover dims it.
   function vfxLayers(o) {
-    const on = !!o && o.enabled === true && o.hidden !== true && !showYields(o.show);
+    const on = !!o && o.enabled === true && o.hidden !== true;
     return { bass: on && (o.playing === true || o.bassAlive === true), ai: on && aiDriving(o.autopilot) };
   }
   // Pure: the photosensitivity cap. last = time of the last flash (s).
@@ -245,8 +247,11 @@
     try { const o = JSON.parse(raw); return o && typeof o === "object" && o[STYLE_ID] === true ? "anyma" : "classic"; }
     catch (e) { return "classic"; }
   }
-  // Pure: the SHOW stage (window or full) is up -> this layer draws nothing.
-  function showYields(mode) { return mode === "embed" || mode === "full"; }
+  // Pure: the manual SHOW stage (full) is up -> this layer is dimmed (never hidden).
+  function showYields(mode) { return mode === "full"; }
+  // Pure: SHOW is on in the DJ elements -> the page-wide Anyma motifs stand down
+  // (the look lives in the platters / lanes then); the bass band stays.
+  function anymaYields(mode) { return mode === "elements"; }
   // Pure: alpha of the tinted flash overlay from the director's flash level.
   // Capped at 0.5, tinted cyan (never white), none under reduced motion.
   function anymaFlash(level, reduced) {
@@ -270,7 +275,7 @@
                        peakAllowed, DROP_PEAK_GAP_S, SEEK_JUMP_S, vfxLayers, flashAllowed, safeBeat,
                        MIN_PULSE_GAP_S, bassState, bassFollow, bassAlive, deckBass, bassMix, mixHex,
                        afterPulse, DROP_BURST_S, DROP_AFTER_BEATS,
-                       STYLE_ID, STORE_KEY, ANYMA_COL, styleFromStore, showYields, anymaFlash, anymaMotif, anymaCore };
+                       STYLE_ID, STORE_KEY, ANYMA_COL, styleFromStore, showYields, anymaYields, anymaFlash, anymaMotif, anymaCore };
   }
   if (typeof document === "undefined") return;
 
@@ -335,7 +340,7 @@
   const aiOn = () => aiDriving(root.autopilotState);
   const dropTimes = [];                           // performance-clock seconds, booked + fired
   function spawn(fx) {
-    if (!enabled || !fx || document.hidden || !aiOn() || style === "anyma") return;   // ANYMA: its director draws cues
+    if (!enabled || !fx || document.hidden || !aiOn()) return;   // every style: ANYMA layers on top
     fx.t0 = nowS();
     if (fx.type === "drop") {
       fx.flash = !fx.still && flashAllowed(fx.t0, lastFlash);
@@ -709,15 +714,25 @@
   // ---- loop: runs only while something is on screen ------------------------
   let raf = 0, lastT = 0;
   const lay = { enabled: false, hidden: false, playing: false, bassAlive: false, autopilot: null, show: "off" };
+  // shared ticks (the SHOW's in-element Anyma look): run on this one loop, even
+  // with the VFX layer off; a tick returns true while it still needs frames
+  const ticks = [];
+  let dimmed = false;
   function wake() {
-    if (raf || !enabled || document.hidden) return;
+    if (raf || (!enabled && !ticks.length) || document.hidden) return;
     lastT = nowS();
     raf = requestAnimationFrame(frame);
   }
   function frame() {
     raf = 0;
-    if (!enabled) return;
     const now = nowS(), dt = Math.min(0.1, now - lastT);
+    let keep = false;
+    for (let i = 0; i < ticks.length; i++) if (ticks[i](now, dt)) keep = true;
+    if (enabled) draw(now, dt);
+    else lastT = now;
+    if (keep) wake();
+  }
+  function draw(now, dt) {
     lastT = now;
     const ai = aiOn();
     if (!ai) effects.length = 0;                     // user took over: AI effects gone
@@ -728,19 +743,18 @@
     lay.autopilot = root.autopilotState; lay.show = root.anymaShow ? root.anymaShow.mode : "off";
     const L = vfxLayers(lay);
     clear();
-    if (showYields(lay.show)) return;               // the SHOW stage is up: one heavy layer at a time
-    if (style === "anyma") {
-      if (L.bass) {
-        drawBass(ANYMA_COL.cyan, now);
-        if (bandTop < H) { cx.globalAlpha = Math.min(1, 0.25 + 0.5 * bass.level); cx.fillStyle = ANYMA_COL.ice; cx.fillRect(0, bandTop + 1, W, 1); cx.globalAlpha = 1; }
-      }
-      if (L.ai) anymaFrame(now, dt);
-      if (playing || bassAlive(bass)) wake();
-      return;
-    }
+    // the manual STAGE dims this layer (CSS opacity, set on change only), never hides it
+    const dim = showYields(lay.show);
+    if (dim !== dimmed) { dimmed = dim; cv.style.opacity = dimmed ? "0.5" : ""; }
+    // the classic NULL-BOT layer ALWAYS draws (bass band, kick, drop / transition /
+    // energy-peak effects); ANYMA LOOK only adds its cyan motifs on top of it
     if (L.ai) checkPeaks();
     const bc = L.bass ? bassColor() : null;
-    if (L.bass) drawBass(bc, now);
+    if (L.bass) {
+      drawBass(bc, now);
+      if (style === "anyma" && bandTop < H) { cx.globalAlpha = Math.min(1, 0.25 + 0.5 * bass.level); cx.fillStyle = ANYMA_COL.ice; cx.fillRect(0, bandTop + 1, W, 1); cx.globalAlpha = 1; }
+    }
+    if (L.ai && style === "anyma" && !anymaYields(lay.show)) anymaFrame(now, dt);
     if (L.ai) {
       if (bass.hit > 0.01 && !reduced) edgeGlow(bc || COLOR.ai, 0.2 * bass.hit);   // kick vignette
       if (holding) {
@@ -766,7 +780,7 @@
     else wake();
   });
   // a deck starting (hand or AI) or a hold loop wakes the sleeping loop
-  setInterval(() => { if (!raf && (anyPlaying() || (holding && aiOn()))) wake(); }, 1000);
+  setInterval(() => { if (!raf && (anyPlaying() || (enabled && holding && aiOn()))) wake(); }, 1000);
 
   // VFX style: the drawer toggle, restored early from the drawer's own store so
   // the first frame already has the right look (the drawer re-applies it later)
@@ -785,5 +799,8 @@
   setEnabled(enabled);
   setStyle(style);
   root.nulVisuals = { setEnabled, get enabled() { return enabled; }, setStyle, get style() { return style; },
-                      spawn: (kind, deck) => spawn(effectFor({ kind, deck }, reduced)) };
+                      spawn: (kind, deck) => spawn(effectFor({ kind, deck }, reduced)),
+                      addTick(fn) { if (typeof fn === "function" && !ticks.includes(fn)) ticks.push(fn); wake(); },
+                      removeTick(fn) { const i = ticks.indexOf(fn); if (i >= 0) ticks.splice(i, 1); },
+                      wake };
 })(typeof window !== "undefined" ? window : globalThis);

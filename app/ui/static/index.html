@@ -11,6 +11,7 @@
   <link rel="stylesheet" href="/null-bot.css" />
   <link rel="stylesheet" href="/vibe.css" />
   <link rel="stylesheet" href="/anyma-show.css" />
+<link rel="stylesheet" href="/anyma-ui.css" />
   <link rel="stylesheet" href="/toggle-drawer.css" />
   <script src="https://unpkg.com/wavesurfer.js@7/dist/wavesurfer.min.js"></script>
   <script src="https://unpkg.com/wavesurfer.js@7/dist/plugins/regions.min.js"></script>
@@ -92,7 +93,7 @@
   <button class="hw-btn vfx-btn" id="vfx-toggle" type="button" aria-pressed="true"
           title="Full-screen visuals: drops, transitions and kicks light up the screen">VFX</button>
   <button class="hw-btn vfx-btn" id="show-stage" type="button" aria-pressed="false"
-          title="SHOW takes over the console (IN CONSOLE or Esc puts it back behind the decks)">STAGE</button>
+          title="STAGE: the full-page Anyma show behind the console, manual only (IN CONSOLE or Esc closes it). SHOW alone never opens it">STAGE</button>
 
   <button class="hw-btn help-btn" id="help-toggle" aria-expanded="false" aria-controls="shortcut-overlay"
           title="Show / hide the keyboard shortcut map (` or ?)">?</button>
@@ -916,10 +917,10 @@
       <label class="hud-label" title="The AI programs the BEAT GRID per song (pattern from the genre, kick muted, low level) and plays it on the song's drop for 8 bars, once per song. Pressing RUN yourself takes the grid over.">
         <input type="checkbox" id="ap-grid-toggle" checked /> AI BEATS
       </label>
-      <label class="hud-label" data-group="VISUALS" title="Anyma-style stage show: an android head, a giant figure, a corridor and a monolith, cut and dissolved by the music playing (beats, phrases, drops, vocals, stems). Esc exits">
+      <label class="hud-label" data-group="VISUALS" title="Anyma elements on (with ANYMA LOOK): the platters get an android eye lit by the vocal and rings of light on the kick, the waveforms go ice / cyan with a scan line per bar, the VIBE strip shows the scene. No stage, no overlay (STAGE in the top bar opens the full show)">
         <input type="checkbox" id="ap-show-toggle" /> SHOW
       </label>
-      <label class="hud-label" data-group="VISUALS" title="While the AI drives and SHOW is on, the AI sizes the stage itself: full stage on big moments (set start, supermove, peak move, merge into hold, drops, Anyma-style drops where the figure dances), back to the window in calm phrases. Phrase lines only, 16+ bars per mode. Touching the decks or Esc returns to the window and pauses it for 2 minutes">
+      <label class="hud-label" data-group="VISUALS" title="With SHOW on: the director runs the moments inside the DJ elements: ring bursts on drops and supermoves, DROP IN N BARS in the VIBE strip, a small dancing figure in the waveform of the deck that makes an Anyma-style drop. It never opens the stage">
         <input type="checkbox" id="ap-show-auto" checked /> SHOW AUTO
       </label>
       <label class="hud-label" data-group="VISUALS" title="VFX and VIBE strip in the Anyma look: black space, ice-white and cyan thin lines and particles, phrase-locked cuts, capped flashes. Off keeps the classic deck-colour look">
@@ -1071,6 +1072,7 @@
 <script src="/ai-overlay.js"></script>
 <script src="/mascot.js"></script>
 <script src="/visuals.js"></script>
+<script src="/anyma-ui.js"></script>
 <script src="/anyma-show.js"></script>
 <script src="/tempo-rule.js"></script>
 <script src="/fx-budget.js"></script>

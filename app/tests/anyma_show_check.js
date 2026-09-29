@@ -554,20 +554,28 @@ const trackOf = (len, fn, extra) => C.prepTrack(Object.assign(grid120(len), { en
   const js = fs.readFileSync(path.join(__dirname, "../ui/static/anyma-show.js"), "utf8");
   const css = fs.readFileSync(path.join(__dirname, "../ui/static/anyma-show.css"), "utf8");
   assert.ok(!/requestFullscreen|anyma-bar/.test(js), "no browser fullscreen, no floating control bar");
-  assert.ok(/doc\.body\.insertBefore\(stage, bandTop/.test(js), "stage is inserted in the console flow before .wave-stage");
   const base = css.match(/\.anyma-stage \{([^}]*)\}/)[1];
   assert.ok(/position: absolute/.test(base) && /z-index: -1/.test(base) && /pointer-events: none/.test(base), "a background layer");
   assert.ok(!/\.anyma-bar|z-index: 87\d/.test(css), "no overlay z-index");
-  assert.ok(/body\.show-embed/.test(css) && /body\.show-full/.test(css), "WINDOW / FULL are console layout states");
+  // SHOW on alone: no embedded band, no translucent panels; only the manual STAGE (show-full)
+  const glue = js.slice(js.indexOf("// ---- DOM / WebGL glue"));
+  assert.ok(!/show-embed/.test(css) && !/show-embed|placeBand|"embed"/.test(glue), "no embed layer left");
+  assert.ok(/body\.show-full/.test(css), "FULL is still a console layout state");
+  assert.ok(/stage\.hidden = m !== "full"/.test(js), "the stage shows only in FULL");
 }
 {
   const fs = require("fs"), path = require("path");
   const js = fs.readFileSync(path.join(__dirname, "../ui/static/anyma-show.js"), "utf8");
   assert.ok(!/"pip"/.test(js), "no PIP / floating-window mode left");
   assert.ok(/"IN CONSOLE"/.test(js), "stage button reads IN CONSOLE");
-  assert.ok(/debug\(\)\s*\{/.test(js) && /whyNotFull/.test(js), "anymaShow.debug() reports why not full");
-  assert.ok(/ap\.active === true\) \|\| !!\(d && d\.playing && ms\.ok\)/.test(js), "a playing analysed deck drives SHOW AUTO too");
-  assert.ok(/mode === "full" && e\.target\.closest/.test(js), "deck clicks only pause auto from FULL");
+  assert.ok(/debug\(\)\s*\{/.test(js), "anymaShow.debug()");
+  // SHOW AUTO never opens the stage: the glue has no auto path into setMode
+  const glue = js.slice(js.indexOf("// ---- DOM / WebGL glue"));
+  assert.ok(!/autoStep\(|autoSwitch\(/.test(glue), "SHOW AUTO does not size the stage any more");
+  assert.deepStrictEqual((glue.match(/setMode\("full"\)|setMode\(mode === "full" \? "elements" : "full"\)/g) || []),
+    ['setMode(mode === "full" ? "elements" : "full")'], "only the STAGE button opens FULL");
+  assert.ok(/toggle\.checked \? \(mode === "full" \? "full" : "elements"\) : "off"/.test(glue), "SHOW on = elements");
+  assert.ok(/sv\.addTick\(tick\)/.test(glue), "elements ride the shared visuals.js loop");
 }
 // manual play (driving true, no AI) with a booked moment still goes full ahead of it
 {

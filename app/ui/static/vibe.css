@@ -226,6 +226,18 @@
 @keyframes vb-flash-1 { from { background: var(--ai-soft); } to { background: transparent; } }
 @keyframes vb-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
 
+/* SCENE cell: its own cell, only with SHOW on in the ANYMA LOOK (html.anyma-el,
+   anyma-ui.js), so it appears once when SHOW turns on, never per tick. Fixed
+   width, one line, text-only updates afterwards. */
+.vb-scene { display: none; }
+.anyma-look.anyma-el .vb-scene {
+  display: flex; align-items: baseline; gap: 6px;
+  flex: 0 0 212px; width: 212px; overflow: hidden; white-space: nowrap; contain: layout paint;
+}
+.anyma-look .vb-scn { color: #cfe9ff; }
+.anyma-look .vb-dropcd { color: #3fd8ff; }
+.anyma-look .vb-scene.vb-armed .vb-dropcd { text-shadow: 0 0 5px rgba(63, 216, 255, 0.8); }
+
 /* ANYMA theme: html.anyma-look (visuals.js, from the ANYMA LOOK drawer toggle).
    Presentation only: the strip's own palette variables are re-pointed at ice
    white / cyan on black, weights go thin, the phase text reads like an LED
