@@ -85,6 +85,9 @@ class World:
         self._last_net = 0.0
         self.last_llm_key = ""
         self._synth: dict = {}               # audio hash -> {mix, stems} synthesised files of this run
+        from collections import Counter
+
+        self.prompt_flags: Counter = Counter()   # what the prompts the model saw contained (set memory, energy notes)
         self.fatal: Optional[WorldError] = None     # set when a needed dependency is missing: the run stops
         self._live_curves: dict = {}
         self.seed_track: Optional[dict] = None
@@ -133,6 +136,7 @@ class World:
         self._patch(energy, "library_raws", lambda: raws)
         if self.mode != "live":
             self._install_frozen_stems(server)
+            self._install_synth_stems(server)
         from app.ui import song_log
 
         self._patch(song_log, "step", self._song_step)
@@ -212,6 +216,55 @@ class World:
             return list((e or {}).get("hook_drops") or [])
 
         self._patch(server, "_safe_hook_drops", hook_drops)
+
+    def _install_synth_stems(self, server) -> None:
+        """Replay / library: separation and key-lock renders never run Demucs / rubberband on the
+        synthetic audio: the stems come from the synthesised files (synth.py)."""
+        from app.music_brain import keylock, stem_service
+
+        def synth_for_path(path):
+            tag = read_tag(Path(path))
+            return self._synth.get(tag["hash"]) if tag and tag.get("hash") else None
+
+        def vocals_stem(track_id: str) -> str:
+            e = self._tracks.get(track_id)
+            files = self._synth.get(e["hash"]) if e else None
+            if not files or not files["stems"]:
+                raise WorldError(f"no synthetic vocal stem for {track_id}")
+            return files["stems"]["vocals"]
+
+        def separate(audio_path, two_stems=None, model=None, **kw):
+            files = synth_for_path(audio_path)
+            if not files or not files["stems"]:
+                raise WorldError(f"no synthetic stems for {audio_path}")
+            st = dict(files["stems"])
+            if two_stems == "vocals":
+                st = {"vocals": st["vocals"], "no_vocals": files["mix"]}
+            return stem_service.StemResult(audio_hash=Path(audio_path).stem, model=model or "sim", two_stems=two_stems, stems=st,
+                                           cache_dir=str(Path(files["mix"]).parent), from_cache=True)
+
+        self._patch(server, "_vocals_stem", vocals_stem)
+        self._patch(stem_service, "separate", separate)
+        self._patch(server, "separate_stems", separate)
+        orig_stem_path = keylock.stem_path
+
+        def stem_path(key, name):
+            """A key-locked render is real rubberband output; tag it so the audio graph knows the stem."""
+            p = orig_stem_path(key, name)
+            if p is None:
+                return None
+            tagged = Path(p).with_name(f"{Path(p).stem}.sim.wav")
+            if not tagged.exists():
+                import numpy as np
+                import soundfile as sf
+
+                from app.sim.synth import write_wav
+
+                x, sr = sf.read(str(p), always_2d=True, dtype="float32")
+                write_wav(tagged, x[:, 0].astype(np.float64), sr, {"stem": name, "keylock": key})
+            return tagged
+
+        self._patch(keylock, "stem_path", stem_path)
 
     def live_curves(self, tid: str):
         """live mode: stem curves of a song separated in this run (computed once, kept)."""
@@ -334,6 +387,15 @@ class World:
             kind = "plan"
         else:
             kind = str(prio or "other").lower()
+        if kind in ("suggest", "lookahead"):
+            m2 = re.search(r"are exempt\): (.*)", user)
+            if m2 and m2.group(1).strip().lower() != "none":
+                self.prompt_flags["earlier_sets"] += 1                     # set memory offered earlier sets' songs
+            for phrase, key in (("at peak energy for a while", "dip"), ("near its end - one track that calls back", "callback"),
+                                ("recurring hook", "reprise")):
+                if phrase in user:
+                    self.prompt_flags["energy_note"] += 1
+                    self.prompt_flags[f"energy_note_{key}"] += 1
         sig = hashlib.sha1(f"{system}\n{user}".encode("utf-8")).hexdigest()[:16]
         n = self._llm_n.get(kind, 0)
         self._llm_n[kind] = n + 1

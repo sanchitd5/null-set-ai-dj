@@ -135,6 +135,16 @@ class Sampler {
       const a = s.avail[deck] || (s.avail[deck] = { mix: 0, stems: 0 });
       a[stem === "mix" ? "mix" : "stems"] += cv.low[k] + cv.aud[k];
     }
+    // the decks themselves: where each is in its song, at what heard tempo, whether it plays
+    const decks = this.env.window.decks || {};
+    s.deck = {};
+    for (const id of ["a", "b"]) {
+      const d = decks[id];
+      if (!d) continue;
+      let rate = 1, pos = 0;
+      try { rate = d._playbackRate(); pos = d._currentPosition(); } catch (e) { /* deck without a buffer */ }
+      s.deck[id] = { playing: !!d.playing, rate: +rate.toFixed(4), pos: +pos.toFixed(2), bpm: +(+d.bpm || 0).toFixed(2), stems: !!d.stemsReady, tempoStems: !!d.tempoStems };
+    }
     this.series.push(s);
     if (this.series.length > 60000) this.series.shift();
   }
@@ -154,11 +164,29 @@ function analyseWindow(series, t0, t1, opts = {}) {
   const before = series.filter((s) => s.t >= t0 - 8 && s.t < t0).map((s) => s.P);
   const ref = opts.ref || (before.length ? before.reduce((a, b) => a + b, 0) / before.length : (w.length ? Math.max(...w.map((s) => s.P)) : 0));
   const out = { window: [t0, t1], samples: w.length, ref_db: ref > 0 ? +db(ref, 1).toFixed(1) : null,
-    dead_air_s: 0, min_db: 0, bass_overlap_s: 0, vocal_clash_s: 0, silent_run_s: 0, peak_over_db: 0, holes: [] };
+    dead_air_s: 0, min_db: 0, bass_overlap_s: 0, vocal_clash_s: 0, silent_run_s: 0, peak_over_db: 0, holes: [],
+    unlocked_overlap_s: 0, in_silent_s: 0, rate_max_pct: { a: 0, b: 0 }, start: null };
   if (!w.length || !(ref > 0)) return out;
   const SIL = 15, QUIET = 6, LOWFLOOR = -20, VOC = -20;
   let run = 0, runStart = null;
+  const s0 = w[0];
+  out.start = { t: s0.t, deck: s0.deck };
   for (const s of w) {
+    // beats of two decks at tempos that do not lock, both audible: a tempo clash
+    const da = s.deck && s.deck.a, dbk = s.deck && s.deck.b;
+    if (da && dbk && da.playing && dbk.playing && s.decks.a && s.decks.b) {
+      const both = db(Math.min(s.decks.a.P, s.decks.b.P), ref) > -25;
+      const ea = da.bpm * da.rate, eb = dbk.bpm * dbk.rate;
+      if (both && ea > 0 && eb > 0) {
+        const gap = Math.min(...[1, 2, 0.5].map((m) => Math.abs(ea / (eb * m) - 1)));
+        if (gap > 0.04) out.unlocked_overlap_s += HOP_S;
+      }
+    }
+    for (const id of ["a", "b"]) if (s.deck && s.deck[id]) out.rate_max_pct[id] = Math.max(out.rate_max_pct[id], Math.abs(s.deck[id].rate - 1) * 100);
+    if (opts.inDeck && s.t - t0 <= 12 && s.t >= t0) {
+      const inP = (s.decks[opts.inDeck] || { P: 0 }).P;
+      if (db(inP, ref) < -40) out.in_silent_s += HOP_S;
+    }
     const rel = db(s.P, ref);
     out.min_db = Math.min(out.min_db, rel);
     out.peak_over_db = Math.max(out.peak_over_db, rel);
@@ -178,7 +206,8 @@ function analyseWindow(series, t0, t1, opts = {}) {
   }
   if (run > out.silent_run_s) out.silent_run_s = run;
   if (run >= 1 && runStart !== null) out.holes.push([+runStart.toFixed(2), +(runStart + run).toFixed(2)]);
-  for (const k of ["dead_air_s", "bass_overlap_s", "vocal_clash_s", "silent_run_s"]) out[k] = +out[k].toFixed(2);
+  for (const k of ["dead_air_s", "bass_overlap_s", "vocal_clash_s", "silent_run_s", "unlocked_overlap_s", "in_silent_s"]) out[k] = +out[k].toFixed(2);
+  out.rate_max_pct = { a: +out.rate_max_pct.a.toFixed(2), b: +out.rate_max_pct.b.toFixed(2) };
   out.min_db = +out.min_db.toFixed(1);
   return out;
 }

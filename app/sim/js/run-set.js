@@ -12,6 +12,24 @@ const { Sampler, analyseWindow } = require("./graph");
 
 const STATIC = path.resolve(__dirname, "..", "..", "ui", "static");
 
+// NULL-BOT supermoves: the mascot's own pure rule (mascot.js supermoveFor) over the engine's events
+function loadPure(file) {       // a console file's node exports, in a sandbox with no window / document
+  const vm = require("vm");
+  const sb = { module: { exports: {} }, console };
+  vm.createContext(sb);
+  vm.runInContext(fs.readFileSync(file, "utf8"), sb, { filename: file });
+  return sb.module.exports;
+}
+function superMoves(events) {
+  const mascot = loadPure(path.join(STATIC, "mascot.js"));
+  const out = [];
+  for (const e of events) {
+    const sm = mascot.supermoveFor({ type: e.type, detail: e.detail });
+    if (sm) out.push({ t: e.t, ...sm });
+  }
+  return out;
+}
+
 async function main() {
   const cfg = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
   // paint-only scripts (waveforms, canvas visuals, marquee) are not part of the engine: skipped
@@ -35,6 +53,15 @@ async function main() {
   await env.clock.run(0.5);
   const sampler = new Sampler(env);       // what the audio graph would have played, every 250 ms
   sampler.start();
+  // the presentation layer's own state (VIBE strip, NULL-BOT), every 5 virtual seconds
+  const uiStates = [];
+  env.clock.setInterval(() => {
+    const bar = document.getElementById("vibe-bar"), bot = document.getElementById("nul-mascot");
+    const snap = { t: +env.clock.now.toFixed(1), vibe: bar ? bar.textContent.replace(/\s+/g, " ").trim().slice(0, 240) : null,
+      vibe_classes: bar ? bar.className : null, mascot: bot ? { cls: bot.className, mood: bot.dataset.mood || null, text: bot.textContent.trim().slice(0, 40) } : null };
+    const last = uiStates[uiStates.length - 1];
+    if (!last || last.vibe !== snap.vibe || JSON.stringify(last.mascot) !== JSON.stringify(snap.mascot)) uiStates.push(snap);
+  }, 5000);
   $("ap-start-btn").click();
   const want = Math.max(1, (cfg.tracks || 4) - 1);
   let why = "";
@@ -55,7 +82,8 @@ async function main() {
   const ends = ev.filter((e) => e.data.event === "transition_end");
   const windows = starts.map((s, i) => {
     const t1 = (ends[i] && ends[i].t) || s.t + (s.data.seconds || 30);
-    return { i, from: s.data.from, to: s.data.to, recipe: s.data.recipe, planned: s.data.planned, t0: s.t, t1, ...analyseWindow(sampler.series, s.t - 1, t1) };
+    return { i, from: s.data.from, to: s.data.to, recipe: s.data.recipe, planned: s.data.planned, out: s.data.out, in: s.data.in, seconds: s.data.seconds, t0: s.t, t1,
+      ...analyseWindow(sampler.series, s.t - 1, t1, { inDeck: s.data.in }) };
   });
   const whole = sampler.series.length ? analyseWindow(sampler.series, sampler.series[0].t + 5, sampler.series[sampler.series.length - 1].t) : null;
   const series1hz = sampler.series.filter((s, k) => k % 4 === 0).map((s) => [s.t, +(10 * Math.log10(Math.max(1e-18, s.P))).toFixed(1),
@@ -65,6 +93,8 @@ async function main() {
     profile,
     ended: why, virtual_seconds: +env.clock.now.toFixed(2), timer_firings: env.clock.firings,
     scripts: env.scripts, errors: env.logs.errors, console: env.logs.console, events: env.logs.events,
+    ui_states: uiStates, supermoves: superMoves(env.logs.events),
+    status_log: document.textLog, play_start_t: (sampler.series.find((s) => s.deck && Object.values(s.deck).some((d) => d.playing)) || {}).t,
     net: env.net.log, session_events: env.net.sessionEvents, audible: { transitions: windows, set: whole, series_1hz: series1hz },
     audio_errors: env.audio ? env.audio._errors : [],
     dom_misses: [...(document.misses || [])].slice(0, 50),

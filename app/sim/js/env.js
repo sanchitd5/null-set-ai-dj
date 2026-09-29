@@ -132,6 +132,7 @@ async function createEnv(opts) {
   const doc = new Document();
   doc.load(html);
   g.document = doc;
+  doc._now = () => clock.now;
   g.window = g; g.self = g; g.top = g; g.parent = g; g.globalThis = g;
   doc._view = g;
   const wl = new Listeners();

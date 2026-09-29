@@ -171,7 +171,11 @@ class Element {
   get nextElementSibling() { const s = this.parentNode && this.parentNode.children; return s ? s[s.indexOf(this) + 1] || null : null; }
   get previousElementSibling() { const s = this.parentNode && this.parentNode.children; return s ? s[s.indexOf(this) - 1] || null : null; }
   get textContent() { return this.children.length ? this.children.map((c) => c.textContent).join("") + this._text : this._text; }
-  set textContent(v) { this._detachChildren(); this._text = String(v == null ? "" : v); }
+  set textContent(v) {
+    this._detachChildren(); this._text = String(v == null ? "" : v);
+    const d = this.ownerDocument;      // the sim watches a few status elements (the console's own words)
+    if (d && d._watch && d._watch.has(this.id) && d.textLog.length < 20000) d.textLog.push({ t: +d._now().toFixed(3), id: this.id, text: this._text.slice(0, 300) });
+  }
   get innerText() { return this.textContent; }
   set innerText(v) { this.textContent = v; }
   get innerHTML() { return this._html || ""; }
@@ -352,6 +356,7 @@ class Document extends Element {
     this.cookie = "";
     this.activeElement = null;
     this.fonts = { ready: Promise.resolve(), load() { return Promise.resolve(); } };
+    this._watch = new Set(["ap-status"]); this.textLog = []; this._now = () => 0;
   }
   load(html) {
     const root = new Element(this, "html");
