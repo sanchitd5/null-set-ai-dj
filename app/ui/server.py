@@ -1794,6 +1794,9 @@ class AutopilotSuggestRequest(BaseModel):
     # "reprise" only: display name of the set's recurring hook (dj-mind.js
     # motifHook, set study mDtud5fLgFQ section 5). Ignored for other notes.
     energy_hook: Optional[str] = None
+    # Measured 1-10 levels of the songs played so far (oldest first, playing one last):
+    # the cumulative-fall rule (energy.next_ok) needs the set's recent peak.
+    energy_history: list[float] = []
     # Look-ahead (songs for AFTER the booked next one): lowest LLM priority,
     # waits behind any transition plan (app/ui/llm_gate.py).
     lookahead: bool = False
@@ -2029,14 +2032,15 @@ def _autopilot_suggest_impl(req: AutopilotSuggestRequest):
 
     # Cross-set memory: remember this set's songs, offer the earlier sets' ones
     # to the prompt as "heard recently, prefer fresh" (not on look-ahead calls).
-    from app.ui.set_memory import SetMemory
+    from app.ui.set_memory import MAX_SONGS, SetMemory
     global _set_memory
     if _set_memory is None:
         _set_memory = SetMemory(CACHE_DIR / "set_memory.json")
     set_id = _clean_set_id(req.set_id)
     if not req.lookahead:
         _set_memory.record(history_display, set_id)
-    earlier = _set_memory.earlier_sets(history_display + avoid_display, set_id=set_id)
+    # every remembered song, not just the prompt's 40: the filter must know them all
+    earlier = _set_memory.earlier_sets(history_display + avoid_display, set_id=set_id, limit=MAX_SONGS)
 
     # Absolute loudness (Avg Energy is peak-normalised per song). Best-effort.
     loudness_dbfs = None
@@ -2071,6 +2075,8 @@ def _autopilot_suggest_impl(req: AutopilotSuggestRequest):
             avoid_display=avoid_display,
             lookahead=req.lookahead,
             earlier_sets=earlier,
+            energy_history=[int(round(v)) for v in req.energy_history[-8:] if 1 <= v <= 10],
+            energy_reset=(req.energy_note == "dip"),
             # No favourites: memory can't tell user picks from AI picks, so the
             # AI's own picks became "favourites" and fed back (Fred again.. loop).
             favourite_artists=[],

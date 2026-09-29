@@ -21,6 +21,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, wait
 
 from app.ui import engine, llm_gate
+from app.ui.set_memory import PROMPT_LIMIT
 
 # ── Camelot wheel compatibility rules ─────────────────────────────────────────
 # Listed explicitly so a small local model doesn't have to derive them.
@@ -531,6 +532,8 @@ def _profile_clash(cur: dict, sug: dict) -> str | None:
         gap = abs(_e(sug.get("energy")) - cur_e)
         if gap > _MAX_ENERGY_GAP:
             return f"energy gap {gap:.0f}"
+        if cur.get("_lo") is not None and _e(sug.get("energy")) < cur["_lo"]:
+            return f"energy below the set floor {cur['_lo']}"
     except (TypeError, ValueError):
         pass
     tf = {str(cur.get("tempo_feel", "")).lower(), str(sug.get("tempo_feel", "")).lower()}
@@ -606,13 +609,16 @@ from app.music_brain.genre import MAX_ERA_GAP, era_gap  # noqa: E402
 def _filter_suggestions(
     data: dict, history: list[str], occasion_set: bool = False, current_key: str | None = None,
     allow_genre_change: bool = False, current_artist: str = "", measured_energy: int | None = None,
+    energy_lo: int | None = None,
 ) -> list[dict]:
     """Drop sets/interviews, exact repeats, profile clashes and (unless steering)
     suggestions whose expected_key clashes with `current_key`. A pick that clashes
     (energy/mood/tempo feel, key, scene) is never kept as a last resort: an empty
     list makes the caller ask again with the rejects named.
     measured_energy: the library-measured 1-10 level of the playing song; it replaces
-    the model's own guess of the current energy in the profile check."""
+    the model's own guess of the current energy in the profile check.
+    energy_lo: the lowest level the set's energy rule allows next (energy.allowed_window);
+    a pick the model rates below it is a clash (a set that only ever falls drains)."""
     from app.ui.download_service import _is_mix, _is_non_music
 
     played = {h.lower() for h in history}
@@ -635,7 +641,7 @@ def _filter_suggestions(
     played_versions = {" ".join(str(h).lower().split()) for h in history}
     cur = data.get("current_profile")
     if measured_energy is not None:
-        cur = {**(cur if isinstance(cur, dict) else {}), "energy": measured_energy, "_measured": True}
+        cur = {**(cur if isinstance(cur, dict) else {}), "energy": measured_energy, "_measured": True, "_lo": energy_lo}
     ok, clashes, key_clashes, genre_jumps = [], [], [], []
     # "move" only licenses a genre jump inside an occasion: with no occasion the
     # model says "move" freely (it let Pal Pal -> Delilah through).
@@ -871,13 +877,14 @@ def prompt_history(played: list | None, queued: list | None = None, skip: list |
     return " | ".join(parts) if parts else "none"
 
 
-def energy_line(avg: float, measured: int | None, relaxed: bool = False) -> str:
+def energy_line(avg: float, measured: int | None, relaxed: bool = False,
+                window: tuple | None = None) -> str:
     """The prompt's energy fact: the measured 1-10 level (app.music_brain.energy) with the
     range the next song must stay in, else the old per-song relative number."""
     if measured is None:
         return f"Avg Energy: {avg:.2f}/1.0 (relative to this song's own peak)"
     step = 1 if relaxed else 2
-    lo, hi = max(1, measured - step), min(10, measured + step)
+    lo, hi = window if window else (max(1, measured - step), min(10, measured + step))
     return (f"MEASURED ENERGY: {measured}/10 (vs the library) - every suggestion's track_profile energy "
             f"MUST be {lo}-{hi}: no swings between low and high energy songs")
 
@@ -887,16 +894,23 @@ ARTIST_MAX_IN_WINDOW = 2     # ... nor more than this often in ARTIST_WINDOW son
 ARTIST_WINDOW = 6
 
 
-def _artists_of(name_or_pick) -> set:
+def _artists_of(name_or_pick, known: frozenset = frozenset()) -> set:
+    """Artist keys credited on a song. `known`: artist keys already seen in the recent
+    songs; one that appears anywhere in the full name counts too, because credits run
+    into the title without " - " ("Atlantic Records - CA7RIEL, Fred again..-Sexy Magic")."""
     from app.ui.set_memory import artist_key
     from app.ui.track_identity import credited_artists
 
     if isinstance(name_or_pick, dict):
         artist, title = name_or_pick.get("artist", ""), name_or_pick.get("title", "")
         names = [artist] + credited_artists(f"{artist} - {title}")
+        text = f"{artist} {title}"
     else:
         names = credited_artists(str(name_or_pick))
-    return {k for k in (artist_key(n) for n in names if n) if k}
+        text = str(name_or_pick)
+    keys = {k for k in (artist_key(n) for n in names if n) if k}
+    flat = artist_key(text)
+    return keys | {k for k in known if len(k) >= 5 and k in flat}
 
 
 def artist_spacing(picks: list, recent: list) -> list:
@@ -905,21 +919,28 @@ def artist_spacing(picks: list, recent: list) -> list:
     ARTIST_MAX_IN_WINDOW in the last ARTIST_WINDOW, one pick per artist. Never empty
     when picks exist: if everything breaks the rule, the least-repeated pick is kept."""
     recent = [r for r in (recent or []) if r][-ARTIST_WINDOW:]
-    near = set().union(*[_artists_of(r) for r in recent[-ARTIST_GAP_SONGS:]]) if recent else set()
+    known = frozenset().union(*[_artists_of(r) for r in recent]) if recent else frozenset()
+    near = set().union(*[_artists_of(r, known) for r in recent[-ARTIST_GAP_SONGS:]]) if recent else set()
     counts: dict = {}
     for r in recent:
-        for a in _artists_of(r):
+        for a in _artists_of(r, known):
             counts[a] = counts.get(a, 0) + 1
     out, used = [], set()
     for x in picks:
-        arts = _artists_of(x)
+        arts = _artists_of(x, known)
         if arts & near or arts & used or any(counts.get(a, 0) >= ARTIST_MAX_IN_WINDOW for a in arts):
             continue
         out.append(x)
         used |= arts
     if out or not picks:
         return out
-    best = min(picks, key=lambda x: sum(counts.get(a, 0) for a in _artists_of(x)))
+    # Every pick breaks a rule. One that only exceeds the window cap may stand rather than
+    # nothing, but never one of the last ARTIST_GAP_SONGS' artists: keeping those let 7
+    # Fred again.. songs in a row through (session 2026-09-29_005748). [] -> caller retries.
+    open_ = [x for x in picks if not (_artists_of(x, known) & near)]
+    if not open_:
+        return []
+    best = min(open_, key=lambda x: sum(counts.get(a, 0) for a in _artists_of(x, known)))
     print(f"WARNING [suggest] every pick repeats a recent artist; kept {best.get('artist', '')} - {best.get('title', '')}", flush=True)
     return [best]
 
@@ -997,6 +1018,8 @@ def suggest_next_tracks(
     lead_steps: int = 0,
     lead_bpm: float | None = None,
     measured_energy: int | None = None,
+    energy_history: list[int] | None = None,
+    energy_reset: bool = False,
 ) -> list[dict]:
     """
     Call local Ollama (gemma3:4b) to suggest next n tracks.
@@ -1019,6 +1042,16 @@ def suggest_next_tracks(
         target = float(tempo_target) if tempo_target is not None else 0.0
     except (TypeError, ValueError):
         target = 0.0
+    # The energy window the set rule allows next (not just +-2 of the playing song):
+    # the same next_ok the console gate runs, fed the played levels, so the prompt and
+    # the gate agree and a set that has slid down is asked to climb back.
+    energy_window = None
+    if measured_energy is not None:
+        from app.music_brain import energy as _en
+        energy_window = _en.allowed_window(
+            measured_energy, relaxed=relaxed, songs=len(history_display or history), recent=energy_history,
+            reset=energy_reset, set_pos=set_position)
+    energy_lo = energy_window[0] if energy_window else None
     tempo_line = (
         tempo_bridge_line(target, str(tempo_note or "").strip()) if target > 0
         else _TEMPO_WINDOW_LINE.format(tempo_window=tempo_window(bpm))
@@ -1034,12 +1067,12 @@ def suggest_next_tracks(
         camelot=camelot,
         duration=duration,
         energy=avg_energy,
-        energy_line=energy_line(avg_energy, measured_energy, relaxed),
+        energy_line=energy_line(avg_energy, measured_energy, relaxed, energy_window),
         occasion=occasion or "general DJ set",
         set_mode_line=SET_MODE_LINES.get(set_mode, SET_MODE_LINES["hybrid"]),
         history=prompt_history(history_display or history, queue_display, avoid_display),
         recent_artists=_recent_artists(history_display or history),
-        earlier_sets=", ".join(earlier_sets or []) or "none",
+        earlier_sets=", ".join((earlier_sets or [])[:PROMPT_LIMIT]) or "none",   # the filter below checks ALL remembered songs
         favourite_artists=", ".join(favourite_artists or []) or "none",
         set_pos_pct=round(set_position * 100),
         arc_phase=RELAXED_ARC if relaxed else _set_arc_phase(set_position),
@@ -1108,7 +1141,7 @@ def suggest_next_tracks(
         data["steering"] = "move"  # the user's destination: no continuity / key filters against it
     suggestions = _filter_suggestions(
         data, history, occasion_set=bool((occasion or "").strip()) and not lead_to, current_key=camelot,
-        allow_genre_change=bool(lead_to), current_artist=artist, measured_energy=measured_energy,
+        allow_genre_change=bool(lead_to), current_artist=artist, measured_energy=measured_energy, energy_lo=energy_lo,
     )
     # Every pick clashed (energy / mood / tempo feel / key / scene): none is kept as a
     # last resort; ask once more with the rejects and their reasons named.
@@ -1127,7 +1160,7 @@ def suggest_next_tracks(
             retry = _filter_suggestions(
                 data2, history, occasion_set=bool((occasion or "").strip()) and not lead_to,
                 current_key=camelot, allow_genre_change=bool(lead_to), current_artist=artist,
-                measured_energy=measured_energy)
+                measured_energy=measured_energy, energy_lo=energy_lo)
             if retry:
                 data, suggestions = data2, retry
         except ValueError as exc:
@@ -1150,7 +1183,7 @@ def suggest_next_tracks(
             data2.setdefault("current_era", data.get("current_era"))
             retry = _filter_suggestions(
                 data2, history, occasion_set=bool((occasion or "").strip()) and not lead_to,
-                current_key=camelot, allow_genre_change=bool(lead_to), current_artist=artist, measured_energy=measured_energy)
+                current_key=camelot, allow_genre_change=bool(lead_to), current_artist=artist, measured_energy=measured_energy, energy_lo=energy_lo)
             if retry and not str(retry[0].get("rejected_reason", "")).startswith(("genre jump", "era jump")):
                 data, suggestions = data2, retry
         except ValueError as exc:
@@ -1179,7 +1212,7 @@ def suggest_next_tracks(
                 data2.setdefault("current_era", data.get("current_era"))
                 retry = _filter_suggestions(
                     data2, history, occasion_set=bool((occasion or "").strip()) and not lead_to,
-                    current_key=camelot, allow_genre_change=bool(lead_to), current_artist=artist, measured_energy=measured_energy)
+                    current_key=camelot, allow_genre_change=bool(lead_to), current_artist=artist, measured_energy=measured_energy, energy_lo=energy_lo)
                 retry = [x for x in retry if _tempo_locks(target, x.get("expected_bpm")) is not False]
                 if retry:
                     data, suggestions = data2, retry
@@ -1207,7 +1240,7 @@ def suggest_next_tracks(
             data2.setdefault("current_era", data.get("current_era"))
             retry = _filter_suggestions(
                 data2, history, occasion_set=bool((occasion or "").strip()) and not lead_to,
-                current_key=camelot, allow_genre_change=bool(lead_to), current_artist=artist, measured_energy=measured_energy)
+                current_key=camelot, allow_genre_change=bool(lead_to), current_artist=artist, measured_energy=measured_energy, energy_lo=energy_lo)
             if not moving:
                 retry = [x for x in retry if _tempo_locks(target, x.get("expected_bpm")) is not False]
             retry = [x for x in retry if _bare_title(x.get("title", "")) != seed]
@@ -1248,13 +1281,37 @@ def suggest_next_tracks(
             data3.setdefault("current_era", data.get("current_era"))
             retry = _filter_suggestions(
                 data3, history, occasion_set=bool((occasion or "").strip()) and not lead_to,
-                current_key=camelot, allow_genre_change=bool(lead_to), current_artist=artist, measured_energy=measured_energy)
+                current_key=camelot, allow_genre_change=bool(lead_to), current_artist=artist, measured_energy=measured_energy, energy_lo=energy_lo)
             retry = [x for x in retry if _bare_title(x.get("title", "")) != seed]
             real3, _ = _verify_picks(retry)
             fresh = [x for x in real3 if _bare_title(x.get("title", "")) not in heard]
         except ValueError as exc:
             print(f"[suggest] earlier-set retry failed: {exc}", flush=True)
-    suggestions = artist_spacing(fresh or suggestions, (history_display or history) + list(queue_display or []))[:n]
+    recent_all = (history_display or history) + list(queue_display or [])
+    pool = fresh or suggestions
+    spaced = artist_spacing(pool, recent_all)
+    # Every pick was by an artist that just played: ask once more, naming them.
+    if pool and not spaced and can_retry():
+        names = "; ".join(f"{x.get('artist', '')} - {x.get('title', '')}" for x in pool)[:400]
+        print(f"[suggest] every pick repeats a recent artist: {names}", flush=True)
+        try:
+            data4 = _extract_json(chat_raw(system_msg, user_msg + (
+                f"\n\nREJECTED - too many songs by the same artist lately: {names}. "
+                "Suggest songs by OTHER artists that still fit the current song."),
+                temperature=0.6, max_tokens=mt, priority=prio))
+            data4.setdefault("current_genre", data.get("current_genre"))
+            data4.setdefault("current_era", data.get("current_era"))
+            retry = _filter_suggestions(
+                data4, history, occasion_set=bool((occasion or "").strip()) and not lead_to,
+                current_key=camelot, allow_genre_change=bool(lead_to), current_artist=artist,
+                measured_energy=measured_energy, energy_lo=energy_lo)
+            retry = [x for x in retry if _bare_title(x.get("title", "")) != seed
+                     and _bare_title(x.get("title", "")) not in heard]
+            real4, _ = _verify_picks(retry)
+            spaced = artist_spacing(real4, recent_all)
+        except ValueError as exc:
+            print(f"[suggest] artist retry failed: {exc}", flush=True)
+    suggestions = spaced[:n]
     if not suggestions:
         # the client backs off and falls back to a library pick on repeated empties; the
         # reply text is what tells a model that answers "[]" from a filter that ate every pick
