@@ -20,7 +20,7 @@
 # live ear's Qwen3-Omni also makes the autopilot's text decisions, so there is no
 # separate text model (~17 GB less RAM) and ear + picks share one server. That server
 # batches concurrent requests (mlx-vlm continuous batching), so a short ear call does
-# not queue behind a long pick; OMNI_MAX_SEQS (default 2) caps concurrent sequences to
+# not queue behind a long pick; OMNI_MAX_SEQS (default 6) caps concurrent sequences to
 # bound KV-cache memory. Without the mlx-vlm venv the script falls back to --dual.
 #
 # Settings live in .env (LLM_BACKEND, MLX_MODEL, MLX_PORT, OLLAMA_MODEL,
@@ -59,7 +59,7 @@ MLX_PORT="${MLX_PORT:-8081}"
 OMNI_PY="${OMNI_PY:-$HOME/.venvs/mlx-vlm/bin/python}"
 OMNI_MODEL="${OMNI_MODEL:-mlx-community/Qwen3-Omni-30B-A3B-Instruct-4bit}"
 OMNI_PORT="${OMNI_PORT:-8901}"
-OMNI_MAX_SEQS="${OMNI_MAX_SEQS:-2}"
+OMNI_MAX_SEQS="${OMNI_MAX_SEQS:-6}"
 # YouTube cookies (Netscape cookies.txt from a logged-in browser) for yt-dlp's bot
 # checks: app.music_brain.yt_guard adds them only after a plain request is refused.
 # Kept outside the repo; never commit it (it is your YouTube login).
@@ -69,7 +69,14 @@ if [[ -f "$YTDLP_COOKIES_FILE" ]]; then
     chmod 600 "$YTDLP_COOKIES_FILE" 2>/dev/null   # owner-only: it is a login
   fi
   export YTDLP_COOKIES_FILE
-  echo "yt-dlp: using cookies from $YTDLP_COOKIES_FILE (only after a bot check)"
+  # Fresh cookies: the bot-check guard is off by default (YT_GUARD=on brings back the
+  # cooldown circuit breaker and cookies-only-after-a-bot-check).
+  export YT_GUARD="${YT_GUARD:-off}"
+  if [[ "$YT_GUARD" == "off" ]]; then
+    echo "yt-dlp: using cookies from $YTDLP_COOKIES_FILE on every request (yt guard off)"
+  else
+    echo "yt-dlp: using cookies from $YTDLP_COOKIES_FILE (only after a bot check)"
+  fi
 else
   unset YTDLP_COOKIES_FILE
   echo "yt-dlp: no cookies file at ~/.config/ai-dj/youtube-cookies.txt (bot checks back off and heal on their own)"

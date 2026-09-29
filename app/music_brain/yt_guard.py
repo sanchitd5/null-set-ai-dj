@@ -70,8 +70,9 @@ def _write(state: dict) -> None:
 def status() -> dict:
     s = _read()
     until = float(s.get("until") or 0)
-    return {"cooling": until > time.time(), "until": until or None, "strikes": int(s.get("strikes") or 0),
-            "last_error": s.get("last_error")}
+    off = disabled()
+    return {"cooling": (not off) and until > time.time(), "until": None if off else (until or None),
+            "strikes": int(s.get("strikes") or 0), "last_error": s.get("last_error"), "disabled": off}
 
 
 def check() -> None:
@@ -125,10 +126,18 @@ def _log(msg: str, level: str = "INFO") -> None:
     print(f"{level} [yt_guard] {msg}", file=sys.stderr, flush=True)
 
 
+def disabled() -> bool:
+    """YT_GUARD=off: no circuit breaker, no cooldowns; every call goes straight to YouTube."""
+    return os.environ.get("YT_GUARD", "").strip().lower() in ("off", "0", "false", "no")
+
+
 def call(fn: Callable[[dict], T]) -> T:
     """Run fn(extra_ydl_opts) under the guard. Non-bot errors pass through unchanged."""
-    check()
     cookies = os.environ.get("YTDLP_COOKIES_FILE")
+    if disabled():
+        # guard off (fresh cookies): cookies on the first request, errors pass straight through
+        return fn({"cookiefile": os.path.expanduser(cookies)} if cookies else {})
+    check()
     last: Optional[BaseException] = None
     for clients in CLIENTS:
         extra: dict = {"logger": _Quiet()}
