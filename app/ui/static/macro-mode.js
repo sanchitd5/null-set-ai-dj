@@ -448,6 +448,7 @@
     const run = (id) => { if (ACTIONS[id]) return ACTIONS[id](); return undefined; };
     if (root.aiActions && typeof root.aiActions.register === "function") for (const id of Object.keys(ACTIONS)) root.aiActions.register(id, ACTIONS[id]);
     if (root.djEvents && root.djEvents.addEventListener) root.djEvents.addEventListener("ai-action", (e) => run(e.detail && e.detail.id));
+    if (host.bus && host.bus.on) host.bus.on("ai-action", (e) => run(e && e.detail && e.detail.id));
 
     const on = (id, ev, fn) => { const el = ui.el(id); if (el) el.addEventListener(ev, fn); };
     on("macro-select", "change", (e) => loadMacro(e.target.value).catch((x) => say(x.message, false)));

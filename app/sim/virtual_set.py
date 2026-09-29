@@ -120,8 +120,11 @@ def run_set(a: argparse.Namespace) -> dict:
     try:
         seed_url = world.pick_seed(random.Random(f"sim:{seed}"))
         with serve(world) as port:
-            js = run_console(port, {"seedUrl": seed_url, "mode": mode, "tracks": tracks, "seed": seed, "occasion": occasion,
-                                    "maxSeconds": max(1500, tracks * 520), "echo": bool(a.echo)})
+            cfg = {"seedUrl": seed_url, "mode": mode, "tracks": tracks, "seed": seed, "occasion": occasion,
+                   "maxSeconds": max(1500, tracks * 520), "echo": bool(a.echo)}
+            if getattr(a, "macro", None):     # MACRO MODE on a saved macro (macro-mode.js); gates still apply
+                cfg.update(macro=a.macro, toggles={"ap-macro-mode": True})
+            js = run_console(port, cfg)
         if world.fatal:
             raise world.fatal
     finally:
@@ -181,6 +184,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-downloads", type=int, default=14, help="cap on YouTube downloads in a live run")
     p.add_argument("--fixtures", default=None, help="fixtures dir (default app/sim/fixtures)")
     p.add_argument("--echo", action="store_true", help="print the console's own log lines while it runs (debugging)")
+    p.add_argument("--macro", metavar="NAME", default=None,
+                   help="play a saved macro (CACHE_DIR/macros/NAME.json) in MACRO MODE; its songs must be in the sim library")
     return p
 
 
