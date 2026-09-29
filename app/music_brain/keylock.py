@@ -241,10 +241,13 @@ def pitch_shift_semitones(ratio: float) -> float:
 # ---------------------------------------------------------- tempo stem sets
 # Full-song stems key-locked at another BPM (user: "multiple BPM separated
 # stems"). A deck plays them in place of its pitched mix, so a pair up to
-# ~15 % apart in tempo is beatmatched at its original key. One set per
+# up to 8 % apart in tempo is beatmatched at its original key. One set per
 # (song, BPM rounded to 0.5), cached; ~30 s to render a 3-4 min song.
 TEMPO_STEP = 0.5
-MAX_TEMPO_STRETCH = 0.26   # leavemealone (174) x Victory Lap (140): 24 %
+# Client cap is 8 % (tempo-rule KEYLOCK_RANGE_PCT, techniques MAX_KEYLOCK_STRETCH);
+# +0.5 % for the 0.5 BPM rounding of the target. Past it the stretch smears
+# (Ben 124 played 3 min at 110): refuse, never render. Cached sets stay valid.
+MAX_TEMPO_STRETCH = 0.085
 
 
 def tempo_key(audio_hash: str, native_bpm: float, target_bpm: float) -> Tuple[str, float]:
