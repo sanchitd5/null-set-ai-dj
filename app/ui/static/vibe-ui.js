@@ -592,7 +592,7 @@
     const st = sig.stems;
     if (st) {
       const left = (st.backlog || 0) + ((st.urgent && st.urgent.length) || 0) + (st.busy ? 1 : 0);
-      if (left) b.push(["ai", `STEMS ${left} left${st.llm_busy ? " (paused: LLM)" : ""}`]);
+      if (left) b.push(["ai", `STEMS ${left} left${st.llm_busy && st.wait_note ? ` (${st.wait_note})` : ""}`]);
     }
     const hl = root.djMind && root.djMind.holdLoopInfo && root.djMind.holdLoopInfo();
     if (hl) b.push(["ai", `HOLD LOOP ${hl.bars} bars · ${fmtSecs(hl.secs)}`]);
