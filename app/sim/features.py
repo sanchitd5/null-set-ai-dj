@@ -49,6 +49,10 @@ CATALOG = {
     "learned_vocal_resequence": ("in-song", "learned move: the phrase's vocal lines re-cut in a new order over the same beat"),
     "learned_vocal_chop": ("in-song", "learned move: short vocal chops re-triggered on the 1/8 or 1/16 grid"),
     "learned_loop_extend": ("in-song", "learned move: a break / intro extended by looping its last 16 beats (cap 32), or the wait filler"),
+    "artist_slip_loop": ("in-song", "artist move S13: slip loop before a phrase line, released onto the shadow playhead"),
+    "artist_cue_tease": ("in-song", "artist move S14: 1-2 beat high-passed stabs of B's drum hit before B enters"),
+    "artist_roll": ("in-song", "artist move S12: 1/2-beat roll of A's drums at low wet into B's entry"),
+    "artist_perc_bridge": ("in-song", "artist move S11: third-deck percussion bridge (refused: two decks)"),
     "mashup_break": ("in-song", "remix inside a mashup"),
     "auto_sampler": ("in-song", "sampler / one-shot hits on drops"),
     "dj_mind": ("in-song", "DJ mind decisions (fakeout, beat boost, stutter, filter build, hold loop ...)"),
@@ -211,6 +215,40 @@ def learned_moves_report(js: dict, F: dict) -> dict:
             "vocal_clash_s": round(metrics["vocal_clash_s"], 2)}
 
 
+ARTIST_MOVES = ("slip_loop", "cue_tease", "roll", "perc_bridge")
+
+
+def artist_moves_report(js: dict, F: dict) -> dict:
+    """The batch C artist moves (artist-moves.js), informational only: per move the runs, the refusing gates, and
+    per-run checks: on the beat grid, inside its hard cap, no dead air, one sub-bass owner (from the audible
+    window run-set.js cuts), and for a slip loop that the release landed on the shadow playhead / phrase line."""
+    fired = {k: 0 for k in ARTIST_MOVES}
+    for e in js.get("events") or []:
+        d = e.get("detail") or {}
+        if e.get("type") != "ai-activity" or d.get("move") not in fired:
+            continue
+        f = F[f"artist_{d['move']}"]
+        if d.get("kind") == "artist_move":
+            fired[d["move"]] += 1
+            f.executed += 1
+            f.check("on_beat_grid", (d.get("grid_err_s") or 0) <= GRID_TOL_S)
+            f.check("within_cap", (d.get("beats") or 0) <= (d.get("cap_beats") or 0))
+        elif d.get("kind") == "artist_move_release":
+            f.check("release_on_shadow", (d.get("shadow_err_s") or 0) <= GRID_TOL_S and (d.get("line_err_s") or 0) <= GRID_TOL_S)
+    dead_s = sub_s = 0.0
+    for w in ((js.get("audible") or {}).get("artist")) or []:
+        if w.get("move") not in fired:
+            continue
+        f = F[f"artist_{w['move']}"]
+        dead, sub = w.get("dead_air_s") or 0, w.get("bass_overlap_s") or 0
+        dead_s += dead
+        sub_s += sub
+        f.check("no_dead_air", dead <= WINDOW_DEAD_AIR_S)
+        f.check("one_sub_bass_owner", sub <= 1.0)
+    return {"fired": fired, "refused": {k: dict(sorted(F[f"artist_{k}"].refused.items())) for k in ARTIST_MOVES},
+            "dead_air_introduced_s": round(dead_s, 2), "sub_overlap_s": round(sub_s, 2)}
+
+
 def _phrase_err(entry: Optional[dict], pos: Optional[float]) -> Optional[float]:
     """Distance (s) from a song position to the nearest 8-bar phrase line of that song."""
     if not entry or pos is None:
@@ -271,6 +309,9 @@ def feature_table(js: dict, world, run: dict) -> dict:
         m = re.match(r"^learned move (vocal_loop|vocal_resequence|vocal_chop|loop_extend) skipped: (\w+)", t)
         if m:
             F[f"learned_{m.group(1)}"].refused[m.group(2)] += 1        # the gate that failed (learned-moves.js)
+        m = re.match(r"^artist move (slip_loop|cue_tease|roll|perc_bridge) skipped: (\w+)", t)
+        if m:
+            F[f"artist_{m.group(1)}"].refused[m.group(2)] += 1         # the gate that failed (artist-moves.js)
         m = re.match(r"^remix (\w): (\w+) skipped", t)
         if m:
             F.get(f"remix_{m.group(2)}", F["remix_synth_hold"]).refused["skipped"] += 1
@@ -347,6 +388,7 @@ def feature_table(js: dict, world, run: dict) -> dict:
         F["dj_mind"].details.append(f"{act} x{n}")
 
     learned = learned_moves_report(js, F)
+    artist = artist_moves_report(js, F)
 
     # ---- transitions: which move ran, and how it held up ----------------------------------------------------
     for tr in trans:
@@ -463,7 +505,7 @@ def feature_table(js: dict, world, run: dict) -> dict:
     never = sorted(k for k, v in table.items() if v["triggered"] == 0)
     return {"table": table, "never_triggered": never, "triggered": sorted(k for k in table if table[k]["triggered"]),
             "cookbook": {"viable": sorted(probe["viable"]), "top1": sorted(probe["top1"]), "total": probe["total"]},
-            "learned_moves": learned}
+            "learned_moves": learned, "artist_moves": artist}
 
 
 def recipe_probe(run: dict, by_name: dict) -> dict:
