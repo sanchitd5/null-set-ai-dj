@@ -149,8 +149,16 @@ def record_panel(panel: list) -> int:
         return 4
     print(f"recording {len(panel)} sets with {ep.backend} {ep.model} @ {ep.base_url}", flush=True)
     for e in panel:
+        fx = SIM / "fixtures" / e["name"] / "run.json"
+        try:
+            if json.loads(fx.read_text(encoding="utf-8")).get("source") == "live":
+                print(f"kept {e['name']} (already recorded with the real model; delete its fixture dir to redo)", flush=True)
+                continue
+        except (OSError, ValueError):
+            pass
         cmd = [sys.executable, "-m", "app.sim.virtual_set", "--record", e["name"], "--seed", str(e["seed"]),
-               "--tracks", str(e.get("tracks", 10)), "--mode", e["mode"], "--max-downloads", str(e.get("max_downloads", 14))]
+               "--tracks", str(e.get("tracks", 10)), "--mode", e["mode"], "--max-downloads", str(e.get("max_downloads", 14)),
+               "--out", str(DEFAULT_OUT.parent / "rec" / e["name"])]        # the live run's own report: compare to its replay
         p = subprocess.run(cmd, cwd=SIM.parent.parent, capture_output=True, text=True)
         if p.returncode != 0:
             print(f"{e['name']}: record failed (rc {p.returncode}): {p.stderr.strip()[-500:]}", file=sys.stderr)

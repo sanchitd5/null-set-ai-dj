@@ -5,7 +5,19 @@ mean score improves without regressing a hard metric (tempo over cap, key-clash 
 songs, stalls) or losing a feature (`suite --check` / `app.sim.compare` exit 1), refresh
 `baseline.json` for kept changes only.
 
-## Status: iterations NOT run (model server down)
+## Update 2: live recording works, the text model died mid-panel
+
+With MLX :8081 and Omni :8901 up, `llm_probe` found the model and a 3-song live smoke set ran end to end
+(real LLM, real YouTube, Demucs, ffmpeg-decoded audio in the fake AudioContext; live score 7.75). Fixes
+that needed: the fake AudioContext could only decode the sim's own WAVs (now ffmpeg for real files), failed
+downloads / verifies were not recorded (replay then ran on library matches), lyrics were not recorded
+(`Host.lrclib_search` added), and `set_memory.json` is frozen into `fixtures/_shared` so `set_memory`
+can trigger. A 6-song set costs ~40 min wall (download + a 4-model Demucs bag per song), so the 11-run
+`real-*` panel is ~7 h. The first attempt died with the background job (1 h cap); the second died when
+`:8081` stopped answering (log ends mid-request at 14:41; not restarted). Nothing recorded, no baseline
+from the real model, no iterations: still the provisional stub baseline below.
+
+## Status before that: iterations NOT run (model server down)
 
 PART 0 of the task made the real model the source of the baseline. The app's model server was not
 reachable when this was written (`llm_probe.resolve()`: MLX :8081, Omni :8901, Ollama :11434 all

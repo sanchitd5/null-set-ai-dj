@@ -78,6 +78,11 @@ class Host:
 
         return download_service.download_to_dir(url, output_dir, progress=progress)
 
+    def lrclib_search(self, artist, track):
+        from app.music_brain import lyrics
+
+        return lyrics._lrclib_search(artist, track)
+
     # ---- stems and audio ------------------------------------------------------------
     def queue_stems(self, track_id, urgent=True):
         from app.ui import server

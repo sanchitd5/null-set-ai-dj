@@ -35,6 +35,7 @@ from app.sim.stubllm import LLM, StubLLM, split_name
 from app.sim.synth import read_tag
 
 FIXTURE_VERSION = 1
+SHARED_FILES = ("learned_techniques.json", "set_memory.json")   # frozen stores every run of a panel starts from
 _WORD = re.compile(r"[a-z0-9]+")
 
 
@@ -153,10 +154,14 @@ class World:
     def _seed_shared_files(self) -> None:
         """The frozen learned_techniques.json (fixtures/_shared) goes into the run's private cache:
         before / after a rule change the run sees the same learned store."""
-        for fn in ("learned_techniques.json",):
+        for fn in SHARED_FILES:
             src = SHARED_DIR / fn
-            if src.exists():
+            if src.exists():                                           # frozen: every run of a panel starts from the same store
                 (self.run_cache / fn).write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+            elif self.mode == "live" and self.library is not None:     # the first recording freezes the user's real store
+                text = self.library.shared_files().get(fn)
+                if text is not None:
+                    (self.run_cache / fn).write_text(text, encoding="utf-8")
 
     def song_step(self, kind, track_id, **fields) -> None:
         self.steps.append({"t": round(1_790_000_000.0 + self.vclock(), 3), "track_id": track_id, "kind": kind,
@@ -476,6 +481,8 @@ class World:
     def search_songs(self, query: str, limit: int, real):
         if self.mode == "replay":
             hit = self.fx["search"].get(query)
+            if isinstance(hit, dict) and "error" in hit:
+                raise RuntimeError(hit["error"])
             if hit is not None:
                 return hit
             self.misses.append({"what": "search", "key": query})
@@ -486,7 +493,7 @@ class World:
             res = [{"title": m[1], "url": f"sim://{m[0]}", "duration": 0}] if m else []
         else:
             self._throttle()
-            res = real(query, limit)
+            res = self._recorded_call(self.fx["search"], query, lambda: real(query, limit))
         if self.record:
             self.fx["search"][query] = res
         return res
@@ -495,28 +502,66 @@ class World:
         key = f"{artist}|{title}"
         if self.mode == "replay":
             if key in self.fx["verify"]:
-                return self.fx["verify"][key]
+                v = self.fx["verify"][key]
+                if isinstance(v, dict) and "error" in v:
+                    raise RuntimeError(v["error"])
+                return v
             self.misses.append({"what": "verify", "key": key})
             return None if self._lib_match(f"{artist} {title}") is None else True
         if self.mode == "library":
             res = self._lib_match(f"{artist} {title}") is not None
         else:
             self._throttle()
-            res = real(artist, title)
+            res = self._recorded_call(self.fx["verify"], key, lambda: real(artist, title))
         if self.record:
             self.fx["verify"][key] = res
         return res
 
     def song_views(self, name: str, real):
         if self.mode == "replay":
-            return self.fx["views"].get(name)
+            v = self.fx["views"].get(name)
+            if isinstance(v, dict) and "error" in v:
+                raise RuntimeError(v["error"])
+            return v
         if self.mode == "library":
             res = None
         else:
             self._throttle()
-            res = real(name)
+            res = self._recorded_call(self.fx["views"], name, lambda: real(name))
         if self.record:
             self.fx["views"][name] = res
+        return res
+
+    def _recorded_call(self, store: dict, key: str, call):
+        """A live edge call. When recording, a failure is kept as {"error": text} (a download that finds no studio
+        track is part of the set: replay must fail the same way) and re-raised."""
+        try:
+            return call()
+        except Exception as exc:
+            if self.record:
+                store[key] = {"error": f"{type(exc).__name__}: {exc}"[:300] if not str(exc) else str(exc)[:300]}
+            raise
+
+    def lrclib_search(self, artist: str, track: str, real):
+        """Lyrics candidates (LRCLIB). live: the real service, recorded (top candidates only); replay: the
+        recording, else none; library: none."""
+        key = f"{artist}|{track}"
+        if self.mode == "replay":
+            hit = self.fx.get("lyrics", {}).get(key)
+            if hit is None:
+                self.misses.append({"what": "lyrics", "key": key})
+            return hit or []
+        if self.mode == "library":
+            return []
+        self._throttle()
+        try:
+            res = real(artist, track)
+        except Exception:
+            if self.record:
+                self.fx.setdefault("lyrics", {})[key] = []      # lyrics.fetch treats a failure as "no lyrics"
+            raise
+        if self.record:
+            self.fx.setdefault("lyrics", {})[key] = res[:6]
         return res
 
     def download_to_dir(self, url: str, output_dir: Path, progress, real):
@@ -526,7 +571,7 @@ class World:
             raise WorldError(f"download cap reached ({self.caps.max_downloads} per run)")
         if self.mode == "live":
             self._throttle()
-            paths = real(url, output_dir, progress)
+            paths = self._recorded_call(self.fx["downloads"], url, lambda: real(url, output_dir, progress))
             self.downloads += len(paths)
             if self.record:
                 from app.music_brain.analyzer import _file_hash
@@ -536,6 +581,8 @@ class World:
         # replay / library: the song's audio is synthesised from its frozen energy curves (synth.py)
         if self.mode == "replay" and url in self.fx["downloads"]:
             found = self.fx["downloads"][url]
+            if isinstance(found, dict) and "error" in found:       # the download failed when it was recorded
+                raise RuntimeError(found["error"])
         else:
             if self.mode == "replay":
                 self.misses.append({"what": "download", "key": url})
