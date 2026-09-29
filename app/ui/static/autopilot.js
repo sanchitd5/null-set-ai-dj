@@ -189,6 +189,51 @@ var autopilotCore = (function () {
     while (hits(t) && t + phraseS <= limit && moved < 12) { t += phraseS; moved++; }
     return hits(t) ? { t: exit, clear: false, moved: 0 } : { t, clear: true, moved };
   }
+  // S22 breakdown ownership (research/notes/artist-signature-techniques.md): A's breakdowns
+  // [[t0, t1]], same rule as app/music_brain/preplan.breakdown_spans (golden vectors in
+  // app/tests/fixtures/rule_vectors.json): energy <= its 30th percentile AND 0.15 x range under
+  // its median, between the first and last frame at or above the median (not intro / outro),
+  // joined across gaps up to 2 bars, at least 8 bars long. Thresholds GUESSED from counts.
+  const BD_PCT = 30, BD_BELOW_MEDIAN = 0.15, BD_JOIN_BARS = 2, BD_MIN_BARS = 8;
+  function breakdownSpans(times, curve, bar) {
+    if (!times || !curve || times.length < 4 || times.length !== curve.length) return [];
+    const sorted = [...curve].sort((x, y) => x - y);
+    const range = sorted[sorted.length - 1] - sorted[0];
+    if (!(range > 1e-6)) return [];                                  // flat
+    const med = median(sorted), thr = Math.min(quantileLinear(sorted, BD_PCT / 100), med - BD_BELOW_MEDIAN * range);
+    let first = null, last = null;
+    for (let i = 0; i < times.length; i++) {
+      if (curve[i] >= med) { if (first === null) first = times[i]; last = times[i]; }
+    }
+    const spans = [];
+    for (let i = 0; i < times.length; i++) {
+      const t = times[i];
+      if (curve[i] > thr || t <= first || t >= last) continue;
+      const prev = spans[spans.length - 1];
+      if (prev && t - prev[1] <= BD_JOIN_BARS * bar) prev[1] = t;
+      else spans.push([t, t]);
+    }
+    const hop = times[1] - times[0];
+    return spans.filter(([x, y]) => y + hop - x >= BD_MIN_BARS * bar).map(([x, y]) => [x, y + hop]);
+  }
+  // Exit kept out of A's breakdowns by whole phrases: first the latest phrase before the
+  // breakdown (the section before it, no earlier than `lo`), else the first one past its end
+  // (the drop, no later than `limit`). Neither fits -> unchanged, clear false (logged, not refused).
+  function exitOutOfBreakdown(exit, spans, phraseS, lo, limit) {
+    const inBd = (x) => spans.some(([a, b]) => x >= a && x < b);
+    if (!inBd(exit) || !(phraseS > 0)) return { t: exit, clear: !inBd(exit), moved: 0 };
+    for (let k = 1; k <= 12; k++) {
+      const t = exit - k * phraseS;
+      if (t < lo) break;
+      if (!inBd(t)) return { t, clear: true, moved: -k };
+    }
+    for (let k = 1; k <= 12; k++) {
+      const t = exit + k * phraseS;
+      if (t > limit) break;
+      if (!inBd(t)) return { t, clear: true, moved: k };
+    }
+    return { t: exit, clear: false, moved: 0 };
+  }
   // The live rule; app/music_brain/energy.next_ok mirrors it (same golden vectors,
   // app/tests/fixtures/rule_vectors.json): at most 2 levels a song (1 relaxed,
   // +1 on the last-round fallback); early in the set (< 30 %) it may not fall more
@@ -436,6 +481,14 @@ var autopilotCore = (function () {
     const ex = exitPastHigh(o.t, 16 * 240 / o.bpm, spans, o.phraseS, o.trackEnd);
     return { t: ex.moved ? ex.t : o.t, moved: ex.moved };
   }
+  // S22: never start the blend inside A's breakdown (A owns the room). Same exemptions as
+  // exitHighPush. o: {t, lo (earliest allowed, e.g. now + 15 s), phraseS, bpm, trackEnd,
+  // energyTimes, energyCurve} -> {t, moved (phrases, negative = earlier), clear}
+  function exitBreakdownPush(o) {
+    if (!o.energyTimes || !o.energyCurve || !(o.bpm > 0)) return { t: o.t, moved: 0, clear: true };
+    const spans = breakdownSpans(o.energyTimes, o.energyCurve, 240 / o.bpm);
+    return exitOutOfBreakdown(o.t, spans, o.phraseS, o.lo == null ? -Infinity : o.lo, o.trackEnd);
+  }
   // ---- pre-render readiness (next song's stems + key-locked tempo stems made BEFORE the booking) ------
   // Measured on 25 real transitions (data/cache/sessions): the booking follows the deck load by a
   // median 6 s, the fire comes a median 206 s later, and 9 of 25 songs had no stems on the deck at the
@@ -515,7 +568,8 @@ var autopilotCore = (function () {
   }
   const api = { prerenderTargets, readinessNeeds, aTempoAtEntry, deferBudgetS, deferDecision, orderByReadiness, DEFER_MAX_S, DEFER_MIN_LEAD_S, PREFER_READY_JUMP,
     emptyRetryMs, useLibraryFallback, rememberPairReject, pairRejected, awaitJob, keySafeRecipe, KEY_SAFE_MIN, energyStepOk, hybridWindowKey, highSpans, quantileLinear, median, exitPastHigh, learnedRecipe, vocalRecipe, stemBlendBars, stemBlendFader, phraseWaitS, introBars, FADER_PARK_BARS, homePlan, maskedGlideBars, maskedDropAt, HOME_DROP_PCT, LADDER_STEP_PCT,
-    tempoLockableAt, recipeKind, decideRecipe, planSkipReason, WINDOWS, playWindowFor, exitBounds, exitPick, exitTiming, exitHighPush, audibleEnd, entryClamp, SILENT_FLOOR };
+    tempoLockableAt, recipeKind, decideRecipe, planSkipReason, WINDOWS, playWindowFor, exitBounds, exitPick, exitTiming, exitHighPush, audibleEnd, entryClamp, SILENT_FLOOR,
+    breakdownSpans, exitOutOfBreakdown, exitBreakdownPush };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   return api;
 })();
@@ -2785,10 +2839,23 @@ function createAutopilotEngine({ host, ai }) {
       console.info("transition recipe:", `Stem Merge (pre-planned): ${pp.direction}, B from ${fmtTime(pp.b_start)} at A ${fmtTime(pp.a_in)}, ` +
         `${pp.bars} bars, ${pp.label}${pp.ear ? `, ear ${pp.ear.score}/10` : ""}`);
     }
+    // S22 breakdown ownership: the blend never starts inside A's breakdown; back to the
+    // section before it, else on to the drop (whole phrases). Before the high push so a
+    // move onto the drop is then carried past A's high.
+    if (!peakT && !layer && !preplanned && od && od.analysis && host.ui.flag("ap-breakdown-toggle", true)) {
+      const bd = autopilotCore.exitBreakdownPush({ t: effectiveATime, lo: Math.max(lo, nowPos + 15), phraseS, bpm: od0bpm, trackEnd,
+        energyTimes: od.analysis.energy_times, energyCurve: od.analysis.energy_curve });
+      if (bd.moved) {
+        console.info("transition timing:", `exit moved ${bd.moved} phrase(s) to ${fmtTime(bd.t)}: A is in its breakdown`); host.log.step("exit_moved", { deck: activeDeck, decision: `exit ${bd.moved > 0 ? "+" : ""}${bd.moved} phrase(s)`, why: "A is in its breakdown", result: { from: effectiveATime, to: bd.t } });
+        effectiveATime = bd.t;
+      } else if (!bd.clear) {
+        console.info("transition timing:", `exit at ${fmtTime(effectiveATime)} is inside A's breakdown, no phrase fits outside it`);
+      }
+    }
     // Never transition out of A while it's at its energy high: push the exit past it
     // by whole phrases (not for PEAK / LAYER / pre-planned: they chose their line).
     if (!peakT && !layer && !preplanned && od && od.analysis) {
-      const ex = autopilotCore.exitHighPush({ t: effectiveATime, phraseS, bpm: od0bpm, trackEnd,
+      const ex =autopilotCore.exitHighPush({ t: effectiveATime, phraseS, bpm: od0bpm, trackEnd,
         energyTimes: od.analysis.energy_times, energyCurve: od.analysis.energy_curve });
       if (ex.moved) {
         console.info("transition timing:", `exit moved ${ex.moved} phrase(s) to ${fmtTime(ex.t)}: A is at its energy high`); host.log.step("exit_moved", { deck: activeDeck, decision: `exit +${ex.moved} phrase(s)`, why: "A is at its energy high", result: { from: effectiveATime, to: ex.t } });
@@ -2990,7 +3057,8 @@ function createAutopilotEngine({ host, ai }) {
           bookedRecipe = ranMove;   // VIBE strip ("playing X") and ap.next read this
           if (ranMove !== recipe) host.log.step("recipe_executed", { deck: outgoing, decision: ranMove, why: `booked ${recipe}, ran ${ranMove}` });
           sessionEvent("track", { event: "transition_start", from: history[history.length - 1] || null, to: nextName, recipe: ranMove,
-                                  planned: ranMove !== recipe ? recipe : undefined, out: outgoing, in: incoming, seconds: Math.round(totalMs / 100) / 10 });
+                                  planned: ranMove !== recipe ? recipe : undefined, out: outgoing, in: incoming, seconds: Math.round(totalMs / 100) / 10,
+                                  a_pos: Math.round(deckPosition(outgoing) * 100) / 100 });   // A's song s at the exit (sim: exits in a breakdown)
           host.bus.emit("ai-cue", { at: t0, kind: "transition",
             deck: incoming, bar: 240 / ((host.decks[incoming] && host.decks[incoming].bpm) || 128), why: `${ranMove}: B's first downbeat` });
         }
