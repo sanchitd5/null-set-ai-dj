@@ -176,7 +176,7 @@ _LYRIC_UPLOAD_RE = re.compile(r"lyric|lyrical|letra|visuali[sz]er|lyrics? bookle
 
 
 def _search_match_filter(words: list[str], song: Optional[tuple[list[str], list[str], str]] = None,
-                         official_only: bool = False):
+                         official_only: bool = False, check_live: bool = True):
     """yt-dlp match_filter: accept only a real song whose title matches the query.
 
     song = (artist_words, title_words, raw_title) for "Artist - Title" queries:
@@ -202,7 +202,7 @@ def _search_match_filter(words: list[str], song: Optional[tuple[list[str], list[
             return "title looks like a mix/set"
         if _is_non_music(title):
             return "title looks like an interview/non-music video"
-        if _is_live(title):
+        if check_live and _is_live(title):   # a URL the user pasted may be a live version on purpose
             return "title looks like a live recording"
         if official_only and _LYRIC_UPLOAD_RE.search(title) and not (song and _LYRIC_UPLOAD_RE.search(song[2])):
             return "lyric/visualizer upload (an official audio is preferred)"
@@ -453,7 +453,7 @@ def _ytdlp(url: str, output_dir: Path, progress: Optional[Progress] = None,
         # a search results page IS a playlist; only single direct links get noplaylist
         "noplaylist": not is_search,
         "playlistend": _SEARCH_POOL,
-        "match_filter": _search_match_filter(words, song, official_only),
+        "match_filter": _search_match_filter(words, song, official_only, check_live=is_search),
         "progress_hooks": [_dl_hook],
         "max_downloads": 1,
         "quiet": True,
