@@ -37,7 +37,7 @@ CATALOG = {
     "long_blend": ("transition", "Long Blend (one song, key-locked stems)"),
     "bass_swap": ("transition", "Bass Swap"),
     "learned_technique": ("brain", "a move learned from studied sets replaces the recipe"),
-    "cookbook_recipes": ("brain", "the 28 cookbook recipes the matcher can rank (probed on every played pair)"),
+    "cookbook_recipes": ("brain", "the cookbook recipes the matcher can rank (probed on every played pair)"),
     "remix_synth_hold": ("in-song", "stem remix: synth hold"),
     "remix_acapella": ("in-song", "stem remix: acapella"),
     "remix_vocal_hold": ("in-song", "stem remix: vocal hold (HOLD ON)"),
@@ -338,7 +338,7 @@ def feature_table(js: dict, world, run: dict) -> dict:
     F["set_memory"].executed = world.prompt_flags.get("earlier_sets", 0)
     F["energy_note"].executed = world.prompt_flags.get("energy_note", 0)
 
-    # ---- the 28 cookbook recipes: probed on every played pair (real matcher) ------------------------------------------
+    # ---- the cookbook recipes: probed on every played pair (real matcher) ------------------------------------------
     probe = recipe_probe(run, by_name)
     F["cookbook_recipes"].executed = len(probe["viable"])
     F["cookbook_recipes"].details = [f"viable {len(probe['viable'])}/{probe['total']}", f"top-1: {', '.join(sorted(probe['top1']))}"]

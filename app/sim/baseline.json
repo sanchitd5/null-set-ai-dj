@@ -1,0 +1,930 @@
+{
+ "aggregate": {
+  "breakdown": {
+   "dead_air": 3.825,
+   "degraded": 6.15,
+   "discarded_plan": 3.5,
+   "empty_pick": 34.2,
+   "key_false_rewrite": 4.4,
+   "key_hard_clash": 4.4,
+   "key_weak": 1.55,
+   "key_weak_blend": 0.6,
+   "long_song": 0.33,
+   "no_plan": 0.8,
+   "plan_mismatch": 3.9,
+   "same_artist": 0.4,
+   "short_song": 0.6,
+   "silent_intro": 6.3,
+   "stall": 36.0,
+   "tempo_jump": 1.8,
+   "tempo_stretch": 7.136,
+   "unlocked_overlap": 7.9
+  },
+  "metrics": {
+   "dead_air_seconds": 2.55,
+   "dead_air_transitions": 1.0,
+   "degraded_moves": 4.1,
+   "discarded_plans": 3.5,
+   "download_failures": 0.0,
+   "echo_out_share": 0.419,
+   "empty_picks": 17.1,
+   "energy_falls_ge3": 0.0,
+   "energy_final": 4.7,
+   "energy_max_fall": 1.2,
+   "energy_peak": 5.7,
+   "http_errors": 58.1,
+   "key_clash_blends": 0.0,
+   "key_clash_count": 3.7,
+   "key_clash_rate": 0.5,
+   "key_false_rewrites": 2.2,
+   "key_hard_clash_count": 1.1,
+   "key_weak_blends": 0.6,
+   "key_zero_count": 3.7,
+   "long_blend_share": 0.216,
+   "max_artist_run": 1.1,
+   "no_plan": 1.6,
+   "plan_exec_mismatch": 1.3,
+   "repeat_songs": 0.0,
+   "replay_misses": 16.7,
+   "same_artist_repeats": 0.1,
+   "search_rounds_extra": 2.2,
+   "short_songs": 0.3,
+   "silent_intros": 2.1,
+   "song_max_s": 300.6,
+   "song_mean_s": 174.92,
+   "song_min_s": 102.48,
+   "songs_played": 8.6,
+   "stalls": 6.0,
+   "tempo_jumps": 0.9,
+   "tempo_over_cap": 0.0,
+   "tempo_stretch_max_pct": 5.766,
+   "tempo_stretch_mean_pct": 2.813,
+   "transitions": 7.6,
+   "unlocked_overlap_seconds": 15.8
+  },
+  "recipes": {
+   "EQ blend": 5,
+   "Echo Out": 32,
+   "Long Blend": 18,
+   "Stem Bridge": 9,
+   "Stem Merge": 12
+  },
+  "runs": 10,
+  "score": 21.457
+ },
+ "runs": {
+  "lib-s1-long": {
+   "metrics": {
+    "dead_air_seconds": 0.0,
+    "dead_air_transitions": 0,
+    "degraded_moves": 5,
+    "discarded_plans": 2,
+    "download_failures": 0,
+    "echo_out_share": 0.571,
+    "empty_picks": 72,
+    "energy_falls_ge3": 0,
+    "energy_final": 5,
+    "energy_max_fall": 1,
+    "energy_peak": 5,
+    "http_errors": 249,
+    "key_clash_blends": 0,
+    "key_clash_count": 3,
+    "key_clash_rate": 0.429,
+    "key_false_rewrites": 1,
+    "key_hard_clash_count": 0,
+    "key_weak_blends": 1,
+    "key_zero_count": 3,
+    "long_blend_share": 0.143,
+    "max_artist_run": 1,
+    "no_plan": 4,
+    "plan_exec_mismatch": 1,
+    "recipes": {
+     "EQ blend": 1,
+     "Echo Out": 4,
+     "Long Blend": 1,
+     "Stem Merge": 1
+    },
+    "repeat_songs": 0,
+    "replay_misses": 0,
+    "same_artist_repeats": 0,
+    "search_rounds_extra": 4,
+    "short_songs": 0,
+    "silent_intros": 2,
+    "song_max_s": 232.6,
+    "song_mean_s": 170.7,
+    "song_min_s": 90.6,
+    "songs_played": 8,
+    "stalls": 28,
+    "tempo_jumps": 1,
+    "tempo_over_cap": 0,
+    "tempo_stretch_max_pct": 2.52,
+    "tempo_stretch_mean_pct": 1.87,
+    "transitions": 7,
+    "unlocked_overlap_seconds": 32.25
+   },
+   "score": 51.446,
+   "worst": [
+    {
+     "from": "Skrillex - Rise Ft. Krewella (UNRELEASED 2012)",
+     "penalty": 27.12,
+     "reasons": [
+      "tempo jump 106.7->116.99 BPM",
+      "32s of beats overlapping at tempos that never lock",
+      "silent intro stem (None)",
+      "planned Stem Bridge but executed EQ blend",
+      "stem bridge a->b refused: master -13.8 dB at 14.06 (floor -8 dB)"
+     ],
+     "to": "Rina Sawayama - XS",
+     "transition": 1
+    },
+    {
+     "from": "Gorgon City - Ready For Your Love ft. MNEK",
+     "penalty": 6.51,
+     "reasons": [
+      "silent intro stem (None)",
+      "stem bridge b->a refused: master -17.4 dB at 12.91 (floor -8 dB)"
+     ],
+     "to": "Fred again.. - Tate (How I Feel) (Lyrics) \uff5c And you ain't heard from none of the broskis",
+     "transition": 4
+    },
+    {
+     "from": "Lane 8, Kasbo & BJOERN - World Is Mine (Official Music Video)",
+     "penalty": 4.51,
+     "reasons": [
+      "tonal Stem Merge across weak keys 7B->6A (0.75)",
+      "Long Blend -> Echo Out for keys the KB does not call a clash (7B->6A, KB 0.75)"
+     ],
+     "to": "Bonobo - Kerala (NFS Payback Soundtrack)",
+     "transition": 7
+    }
+   ]
+  },
+  "lib-s1-quick": {
+   "metrics": {
+    "dead_air_seconds": 0.0,
+    "dead_air_transitions": 0,
+    "degraded_moves": 3,
+    "discarded_plans": 3,
+    "download_failures": 0,
+    "echo_out_share": 0.25,
+    "empty_picks": 96,
+    "energy_falls_ge3": 0,
+    "energy_final": 3,
+    "energy_max_fall": 1,
+    "energy_peak": 4,
+    "http_errors": 294,
+    "key_clash_blends": 0,
+    "key_clash_count": 3,
+    "key_clash_rate": 0.75,
+    "key_false_rewrites": 2,
+    "key_hard_clash_count": 1,
+    "key_weak_blends": 0,
+    "key_zero_count": 3,
+    "long_blend_share": 0.0,
+    "max_artist_run": 1,
+    "no_plan": 0,
+    "plan_exec_mismatch": 3,
+    "recipes": {
+     "EQ blend": 2,
+     "Echo Out": 1,
+     "Stem Bridge": 1
+    },
+    "repeat_songs": 0,
+    "replay_misses": 135,
+    "same_artist_repeats": 0,
+    "search_rounds_extra": 3,
+    "short_songs": 1,
+    "silent_intros": 2,
+    "song_max_s": 168.5,
+    "song_mean_s": 127.9,
+    "song_min_s": 89.8,
+    "songs_played": 5,
+    "stalls": 32,
+    "tempo_jumps": 1,
+    "tempo_over_cap": 0,
+    "tempo_stretch_max_pct": 5.04,
+    "tempo_stretch_mean_pct": 2.25,
+    "transitions": 4,
+    "unlocked_overlap_seconds": 11.75
+   },
+   "score": 107.02,
+   "worst": [
+    {
+     "from": "Phoebe Bridgers - I Know the End (Official Video)",
+     "penalty": 12.38,
+     "reasons": [
+      "tempo jump 112.0->128.0 BPM",
+      "12s of beats overlapping at tempos that never lock",
+      "planned Stem Bridge but executed EQ blend",
+      "stem bridge a->b refused: master -9.3 dB at 13.66 (floor -8 dB)"
+     ],
+     "to": "ilan Bluestone - 43",
+     "transition": 3
+    },
+    {
+     "from": "Disclosure - Omen ft. Sam Smith (Audio HQ)",
+     "penalty": 11.52,
+     "reasons": [
+      "key clash 6A->3B (3+ hours apart)",
+      "silent intro stem (None)",
+      "stem bridge b->a refused: master -9.4 dB at 14.10 (floor -8 dB)"
+     ],
+     "to": "Phoebe Bridgers - I Know the End (Official Video)",
+     "transition": 2
+    },
+    {
+     "from": "ilan Bluestone - 43",
+     "penalty": 9.92,
+     "reasons": [
+      "Long Blend -> Echo Out for keys the KB does not call a clash (3B->1A, KB 0.3)",
+      "silent intro stem (None)",
+      "planned Echo Out but executed Stem Bridge"
+     ],
+     "to": "Tems - Free Mind",
+     "transition": 4
+    }
+   ]
+  },
+  "lib-s2-long": {
+   "metrics": {
+    "dead_air_seconds": 3.25,
+    "dead_air_transitions": 2,
+    "degraded_moves": 1,
+    "discarded_plans": 2,
+    "download_failures": 0,
+    "echo_out_share": 0.5,
+    "empty_picks": 2,
+    "energy_falls_ge3": 0,
+    "energy_final": 4,
+    "energy_max_fall": 1,
+    "energy_peak": 4,
+    "http_errors": 5,
+    "key_clash_blends": 0,
+    "key_clash_count": 4,
+    "key_clash_rate": 0.667,
+    "key_false_rewrites": 2,
+    "key_hard_clash_count": 2,
+    "key_weak_blends": 0,
+    "key_zero_count": 4,
+    "long_blend_share": 0.0,
+    "max_artist_run": 1,
+    "no_plan": 4,
+    "plan_exec_mismatch": 3,
+    "recipes": {
+     "Echo Out": 3,
+     "Stem Bridge": 3
+    },
+    "repeat_songs": 0,
+    "replay_misses": 0,
+    "same_artist_repeats": 0,
+    "search_rounds_extra": 5,
+    "short_songs": 0,
+    "silent_intros": 4,
+    "song_max_s": 211.6,
+    "song_mean_s": 152.8,
+    "song_min_s": 91.9,
+    "songs_played": 7,
+    "stalls": 0,
+    "tempo_jumps": 2,
+    "tempo_over_cap": 0,
+    "tempo_stretch_max_pct": 7.49,
+    "tempo_stretch_mean_pct": 5.08,
+    "transitions": 6,
+    "unlocked_overlap_seconds": 15.75
+   },
+   "score": 11.478,
+   "worst": [
+    {
+     "from": "Disclosure - Omen ft. Sam Smith (Audio HQ)",
+     "penalty": 15.38,
+     "reasons": [
+      "key clash 6A->2B (3+ hours apart)",
+      "tempo jump 106.0->92.01 BPM",
+      "6s of beats overlapping at tempos that never lock",
+      "silent intro stem (None)",
+      "planned Echo Out but executed Stem Bridge"
+     ],
+     "to": "Myke Towers - LALA (Lyric Video)",
+     "transition": 6
+    },
+    {
+     "from": "Phoebe Bridgers - I Know the End (Official Video)",
+     "penalty": 14.0,
+     "reasons": [
+      "Long Blend -> Echo Out for keys the KB does not call a clash (3B->2A, KB 0.75)",
+      "tempo jump 112.0->98.05 BPM",
+      "5s of beats overlapping at tempos that never lock",
+      "silent intro stem (None)",
+      "planned Echo Out but executed Stem Bridge"
+     ],
+     "to": "Panjabi MC - Mundian To Bach Ke (Beware Of The Boys) (Official Video)",
+     "transition": 2
+    },
+    {
+     "from": "Panjabi MC - Mundian To Bach Ke (Beware Of The Boys) (Official Video)",
+     "penalty": 12.12,
+     "reasons": [
+      "4s of beats overlapping at tempos that never lock",
+      "silent intro stem (None)",
+      "planned Echo Out but executed Stem Bridge"
+     ],
+     "to": "Laura Mvula - Green Garden (Audio)",
+     "transition": 3
+    }
+   ]
+  },
+  "lib-s2-quick": {
+   "metrics": {
+    "dead_air_seconds": 0.0,
+    "dead_air_transitions": 0,
+    "degraded_moves": 4,
+    "discarded_plans": 5,
+    "download_failures": 0,
+    "echo_out_share": 0.444,
+    "empty_picks": 1,
+    "energy_falls_ge3": 0,
+    "energy_final": 5,
+    "energy_max_fall": 1,
+    "energy_peak": 5,
+    "http_errors": 4,
+    "key_clash_blends": 0,
+    "key_clash_count": 6,
+    "key_clash_rate": 0.667,
+    "key_false_rewrites": 2,
+    "key_hard_clash_count": 3,
+    "key_weak_blends": 2,
+    "key_zero_count": 6,
+    "long_blend_share": 0.222,
+    "max_artist_run": 1,
+    "no_plan": 0,
+    "plan_exec_mismatch": 1,
+    "recipes": {
+     "Echo Out": 4,
+     "Long Blend": 2,
+     "Stem Bridge": 2,
+     "Stem Merge": 1
+    },
+    "repeat_songs": 0,
+    "replay_misses": 0,
+    "same_artist_repeats": 0,
+    "search_rounds_extra": 5,
+    "short_songs": 1,
+    "silent_intros": 5,
+    "song_max_s": 310.3,
+    "song_mean_s": 169.2,
+    "song_min_s": 89.7,
+    "songs_played": 10,
+    "stalls": 0,
+    "tempo_jumps": 3,
+    "tempo_over_cap": 0,
+    "tempo_stretch_max_pct": 7.49,
+    "tempo_stretch_mean_pct": 5.39,
+    "transitions": 9,
+    "unlocked_overlap_seconds": 25.75
+   },
+   "score": 9.48,
+   "worst": [
+    {
+     "from": "Disclosure - Omen ft. Sam Smith (Audio HQ)",
+     "penalty": 18.75,
+     "reasons": [
+      "key clash 6A->12A (3+ hours apart)",
+      "tempo jump 106.0->116.02 BPM",
+      "14s of beats overlapping at tempos that never lock",
+      "silent intro stem (None)",
+      "stem bridge a->b refused: master -10.4 dB at 14.26 (floor -8 dB)"
+     ],
+     "to": "Shakira, Burna Boy - Dai Dai (Official Video)",
+     "transition": 7
+    },
+    {
+     "from": "Phoebe Bridgers - I Know the End (Official Video)",
+     "penalty": 14.25,
+     "reasons": [
+      "Long Blend -> Echo Out for keys the KB does not call a clash (3B->2A, KB 0.75)",
+      "tempo jump 112.0->98.05 BPM",
+      "6s of beats overlapping at tempos that never lock",
+      "silent intro stem (None)",
+      "planned Echo Out but executed Stem Bridge"
+     ],
+     "to": "Panjabi MC - Mundian To Bach Ke (Beware Of The Boys) (Official Video)",
+     "transition": 2
+    },
+    {
+     "from": "Lauv - I Like Me Better (Ryan Riback Remix) [Official Audio]",
+     "penalty": 11.2,
+     "reasons": [
+      "key clash 11B->3B (3+ hours apart)",
+      "silent intro stem (None)",
+      "stem bridge a->b refused: master -8.8 dB at 10.71 (floor -8 dB)"
+     ],
+     "to": "Daddy Yankee + Katy Perry feat. Snow - Con Calma Remix (Video con Letra Oficial)",
+     "transition": 9
+    }
+   ]
+  },
+  "lib-s3-long": {
+   "metrics": {
+    "dead_air_seconds": 0.25,
+    "dead_air_transitions": 1,
+    "degraded_moves": 7,
+    "discarded_plans": 4,
+    "download_failures": 0,
+    "echo_out_share": 0.75,
+    "empty_picks": 0,
+    "energy_falls_ge3": 0,
+    "energy_final": 4,
+    "energy_max_fall": 1,
+    "energy_peak": 7,
+    "http_errors": 0,
+    "key_clash_blends": 0,
+    "key_clash_count": 5,
+    "key_clash_rate": 0.625,
+    "key_false_rewrites": 4,
+    "key_hard_clash_count": 0,
+    "key_weak_blends": 0,
+    "key_zero_count": 5,
+    "long_blend_share": 0.25,
+    "max_artist_run": 1,
+    "no_plan": 2,
+    "plan_exec_mismatch": 0,
+    "recipes": {
+     "Echo Out": 6,
+     "Long Blend": 2
+    },
+    "repeat_songs": 0,
+    "replay_misses": 0,
+    "same_artist_repeats": 0,
+    "search_rounds_extra": 0,
+    "short_songs": 0,
+    "silent_intros": 0,
+    "song_max_s": 491.4,
+    "song_mean_s": 257.8,
+    "song_min_s": 151.7,
+    "songs_played": 9,
+    "stalls": 0,
+    "tempo_jumps": 0,
+    "tempo_over_cap": 0,
+    "tempo_stretch_max_pct": 6.57,
+    "tempo_stretch_mean_pct": 1.78,
+    "transitions": 8,
+    "unlocked_overlap_seconds": 0.0
+   },
+   "score": 4.157,
+   "worst": [
+    {
+     "from": "Four Tet - Parallel 4",
+     "penalty": 6.06,
+     "reasons": [
+      "Long Blend -> Echo Out for keys the KB does not call a clash (2B->4A, KB 0.3)",
+      "stem bridge a->b refused: master -38.7 dB at 5.61 (floor -8 dB)"
+     ],
+     "to": "Jon Hopkins - Open Eye Signal (under the fabric)",
+     "transition": 3
+    },
+    {
+     "from": "Ben B\u00f6hmer - Beyond Beliefs (Official Visualiser)",
+     "penalty": 5.32,
+     "reasons": [
+      "Long Blend -> Echo Out for keys the KB does not call a clash (3B->4A, KB 0.75)",
+      "stem bridge a->b refused: master -8.7 dB at 5.69 (floor -8 dB)"
+     ],
+     "to": "YOTTO - Is This Trance\uff1f (Official Audio) [Odd One Out]",
+     "transition": 5
+    },
+    {
+     "from": "Fred again.. - Jungle",
+     "penalty": 5.13,
+     "reasons": [
+      "stem bridge b->a refused: master -12.7 dB at 8.84 (floor -8 dB)"
+     ],
+     "to": "Four Tet - Parallel 4",
+     "transition": 2
+    }
+   ]
+  },
+  "lib-s3-quick": {
+   "metrics": {
+    "dead_air_seconds": 2.25,
+    "dead_air_transitions": 1,
+    "degraded_moves": 5,
+    "discarded_plans": 6,
+    "download_failures": 0,
+    "echo_out_share": 0.222,
+    "empty_picks": 0,
+    "energy_falls_ge3": 0,
+    "energy_final": 5,
+    "energy_max_fall": 1,
+    "energy_peak": 7,
+    "http_errors": 0,
+    "key_clash_blends": 0,
+    "key_clash_count": 5,
+    "key_clash_rate": 0.556,
+    "key_false_rewrites": 5,
+    "key_hard_clash_count": 0,
+    "key_weak_blends": 0,
+    "key_zero_count": 5,
+    "long_blend_share": 0.444,
+    "max_artist_run": 2,
+    "no_plan": 0,
+    "plan_exec_mismatch": 3,
+    "recipes": {
+     "EQ blend": 1,
+     "Echo Out": 2,
+     "Long Blend": 4,
+     "Stem Bridge": 2
+    },
+    "repeat_songs": 0,
+    "replay_misses": 0,
+    "same_artist_repeats": 1,
+    "search_rounds_extra": 0,
+    "short_songs": 1,
+    "silent_intros": 4,
+    "song_max_s": 236.4,
+    "song_mean_s": 137.5,
+    "song_min_s": 73.6,
+    "songs_played": 10,
+    "stalls": 0,
+    "tempo_jumps": 0,
+    "tempo_over_cap": 0,
+    "tempo_stretch_max_pct": 6.69,
+    "tempo_stretch_mean_pct": 3.1,
+    "transitions": 9,
+    "unlocked_overlap_seconds": 0.0
+   },
+   "score": 7.505,
+   "worst": [
+    {
+     "from": "Yotto & S\u00d8NIN - 'Let You Go' (feat. AunA)' (Official Audio) [Odd One Out]",
+     "penalty": 11.31,
+     "reasons": [
+      "Long Blend -> Echo Out for keys the KB does not call a clash (6A->7B, KB 0.75)",
+      "silent intro stem (None)",
+      "planned Stem Merge but executed EQ blend",
+      "merge a->b refused: A drums + B bass + B vox + B synth: master -20.4 dB at 15.19 (floor -8 dB); B drums + A bass + A vox + A synth: master -13.0 dB at 8.19 (floor -8 dB)"
+     ],
+     "to": "Atlantic Records - CA7RIEL, Paco Amoroso, PinkPantheress, Fred again..\u2013Sexy Magic (From Grand Theft Auto VI: The Album)",
+     "transition": 7
+    },
+    {
+     "from": "Jon Hopkins - Open Eye Signal (under the fabric)",
+     "penalty": 9.98,
+     "reasons": [
+      "Long Blend -> Echo Out for keys the KB does not call a clash (4A->3B, KB 0.75)",
+      "silent intro stem (None)",
+      "planned Echo Out but executed Stem Bridge"
+     ],
+     "to": "Ben B\u00f6hmer - Beyond Beliefs (Official Visualiser)",
+     "transition": 4
+    },
+    {
+     "from": "Ben B\u00f6hmer - Beyond Beliefs (Official Visualiser)",
+     "penalty": 9.82,
+     "reasons": [
+      "Long Blend -> Echo Out for keys the KB does not call a clash (3B->4A, KB 0.75)",
+      "silent intro stem (None)",
+      "planned Echo Out but executed Stem Bridge"
+     ],
+     "to": "YOTTO - Is This Trance\uff1f (Official Audio) [Odd One Out]",
+     "transition": 5
+    }
+   ]
+  },
+  "lib-s4-long": {
+   "metrics": {
+    "dead_air_seconds": 4.75,
+    "dead_air_transitions": 2,
+    "degraded_moves": 6,
+    "discarded_plans": 2,
+    "download_failures": 0,
+    "echo_out_share": 0.625,
+    "empty_picks": 0,
+    "energy_falls_ge3": 0,
+    "energy_final": 6,
+    "energy_max_fall": 2,
+    "energy_peak": 8,
+    "http_errors": 7,
+    "key_clash_blends": 0,
+    "key_clash_count": 2,
+    "key_clash_rate": 0.25,
+    "key_false_rewrites": 1,
+    "key_hard_clash_count": 0,
+    "key_weak_blends": 1,
+    "key_zero_count": 2,
+    "long_blend_share": 0.125,
+    "max_artist_run": 1,
+    "no_plan": 3,
+    "plan_exec_mismatch": 0,
+    "recipes": {
+     "Echo Out": 5,
+     "Long Blend": 1,
+     "Stem Merge": 2
+    },
+    "repeat_songs": 0,
+    "replay_misses": 8,
+    "same_artist_repeats": 0,
+    "search_rounds_extra": 1,
+    "short_songs": 0,
+    "silent_intros": 0,
+    "song_max_s": 546.3,
+    "song_mean_s": 216.3,
+    "song_min_s": 108.7,
+    "songs_played": 9,
+    "stalls": 0,
+    "tempo_jumps": 0,
+    "tempo_over_cap": 0,
+    "tempo_stretch_max_pct": 4.05,
+    "tempo_stretch_mean_pct": 1.03,
+    "transitions": 8,
+    "unlocked_overlap_seconds": 0.0
+   },
+   "score": 3.691,
+   "worst": [
+    {
+     "from": "Bonobo - Cirrus (Official Video)",
+     "penalty": 10.37,
+     "reasons": [
+      "4.5s estimated dead air",
+      "stem bridge a->b refused: master -17.8 dB at 11.85 (floor -8 dB)"
+     ],
+     "to": "Fred again.., LATIN MAFIA, Lil Yachty - Halo",
+     "transition": 3
+    },
+    {
+     "from": "AL006 - Tale Of Us & Vaal - Monument",
+     "penalty": 5.0,
+     "reasons": [
+      "Long Blend -> Echo Out for keys the KB does not call a clash (6A->8B, KB 0.3)",
+      "stem bridge a->b refused: master -40.1 dB at 6.13 (floor -8 dB)"
+     ],
+     "to": "Fred again.. & Obongjayar - adore u",
+     "transition": 8
+    },
+    {
+     "from": "The Weeknd - Starboy (Audio) ft. Daft Punk",
+     "penalty": 4.0,
+     "reasons": [
+      "tonal Stem Merge across weak keys 8A->6A (0.6)",
+      "stem bridge a->b refused: master -9.8 dB at 9.76 (floor -8 dB)"
+     ],
+     "to": "AL006 - Tale Of Us & Vaal - Monument",
+     "transition": 7
+    }
+   ]
+  },
+  "lib-s4-quick": {
+   "metrics": {
+    "dead_air_seconds": 11.0,
+    "dead_air_transitions": 2,
+    "degraded_moves": 2,
+    "discarded_plans": 3,
+    "download_failures": 0,
+    "echo_out_share": 0.0,
+    "empty_picks": 0,
+    "energy_falls_ge3": 0,
+    "energy_final": 6,
+    "energy_max_fall": 2,
+    "energy_peak": 7,
+    "http_errors": 7,
+    "key_clash_blends": 0,
+    "key_clash_count": 2,
+    "key_clash_rate": 0.25,
+    "key_false_rewrites": 3,
+    "key_hard_clash_count": 0,
+    "key_weak_blends": 1,
+    "key_zero_count": 2,
+    "long_blend_share": 0.5,
+    "max_artist_run": 1,
+    "no_plan": 0,
+    "plan_exec_mismatch": 1,
+    "recipes": {
+     "EQ blend": 1,
+     "Long Blend": 4,
+     "Stem Merge": 3
+    },
+    "repeat_songs": 0,
+    "replay_misses": 0,
+    "same_artist_repeats": 0,
+    "search_rounds_extra": 1,
+    "short_songs": 0,
+    "silent_intros": 1,
+    "song_max_s": 231.3,
+    "song_mean_s": 152.2,
+    "song_min_s": 103.6,
+    "songs_played": 9,
+    "stalls": 0,
+    "tempo_jumps": 0,
+    "tempo_over_cap": 0,
+    "tempo_stretch_max_pct": 4.05,
+    "tempo_stretch_mean_pct": 1.16,
+    "transitions": 8,
+    "unlocked_overlap_seconds": 0.0
+   },
+   "score": 5.027,
+   "worst": [
+    {
+     "from": "Lane 8, Kasbo & BJOERN - World Is Mine (Official Music Video)",
+     "penalty": 17.29,
+     "reasons": [
+      "10.5s estimated dead air"
+     ],
+     "to": "Bonobo - Cirrus (Official Video)",
+     "transition": 2
+    },
+    {
+     "from": "Sian & Burko  - 'Holding On' (Official Audio) [Odd One Out]",
+     "penalty": 8.0,
+     "reasons": [
+      "Long Blend -> Echo Out for keys the KB does not call a clash (7A->8B, KB 0.75)",
+      "planned Stem Merge but executed EQ blend",
+      "mashup b->a refused: master -15.0 dB at 8.19 (floor -8 dB)"
+     ],
+     "to": "Fred again.. & Obongjayar - adore u",
+     "transition": 8
+    },
+    {
+     "from": "Amelie Lens - Exhale",
+     "penalty": 4.5,
+     "reasons": [
+      "tonal Stem Merge across weak keys 9A->8B (0.75)",
+      "Long Blend -> Echo Out for keys the KB does not call a clash (9A->8B, KB 0.75)"
+     ],
+     "to": "Tinlicker & Helsloot - Because You Move Me (Official Music Video)",
+     "transition": 5
+    }
+   ]
+  },
+  "lib-s5-long": {
+   "metrics": {
+    "dead_air_seconds": 0.0,
+    "dead_air_transitions": 0,
+    "degraded_moves": 4,
+    "discarded_plans": 2,
+    "download_failures": 0,
+    "echo_out_share": 0.5,
+    "empty_picks": 0,
+    "energy_falls_ge3": 0,
+    "energy_final": 5,
+    "energy_max_fall": 1,
+    "energy_peak": 5,
+    "http_errors": 8,
+    "key_clash_blends": 0,
+    "key_clash_count": 2,
+    "key_clash_rate": 0.25,
+    "key_false_rewrites": 0,
+    "key_hard_clash_count": 2,
+    "key_weak_blends": 0,
+    "key_zero_count": 2,
+    "long_blend_share": 0.25,
+    "max_artist_run": 1,
+    "no_plan": 3,
+    "plan_exec_mismatch": 0,
+    "recipes": {
+     "Echo Out": 4,
+     "Long Blend": 2,
+     "Stem Merge": 2
+    },
+    "repeat_songs": 0,
+    "replay_misses": 24,
+    "same_artist_repeats": 0,
+    "search_rounds_extra": 2,
+    "short_songs": 0,
+    "silent_intros": 0,
+    "song_max_s": 289.3,
+    "song_mean_s": 201.3,
+    "song_min_s": 128.0,
+    "songs_played": 9,
+    "stalls": 0,
+    "tempo_jumps": 1,
+    "tempo_over_cap": 0,
+    "tempo_stretch_max_pct": 6.88,
+    "tempo_stretch_mean_pct": 3.75,
+    "transitions": 8,
+    "unlocked_overlap_seconds": 66.5
+   },
+   "score": 7.907,
+   "worst": [
+    {
+     "from": "Big Thief - Mythological Beauty [Official Music Video]",
+     "penalty": 35.25,
+     "reasons": [
+      "tempo jump 106.64->116.33 BPM",
+      "66s of beats overlapping at tempos that never lock"
+     ],
+     "to": "Flume - Never Be Like You feat. Kai",
+     "transition": 2
+    },
+    {
+     "from": "Rina Sawayama - XS",
+     "penalty": 7.94,
+     "reasons": [
+      "key clash 6A->10B (3+ hours apart)",
+      "stem bridge b->a refused: master -19.9 dB at 13.85 (floor -8 dB)"
+     ],
+     "to": "Daft Punk - One More Time (Official Video)",
+     "transition": 4
+    },
+    {
+     "from": "Daft Punk - One More Time (Official Video)",
+     "penalty": 7.46,
+     "reasons": [
+      "key clash 10B->6A (3+ hours apart)",
+      "stem bridge a->b refused: master -9.3 dB at 11.72 (floor -8 dB)"
+     ],
+     "to": "The Weeknd - Cry For Me (Official Music Video)",
+     "transition": 5
+    }
+   ]
+  },
+  "lib-s5-quick": {
+   "metrics": {
+    "dead_air_seconds": 4.0,
+    "dead_air_transitions": 2,
+    "degraded_moves": 4,
+    "discarded_plans": 6,
+    "download_failures": 0,
+    "echo_out_share": 0.333,
+    "empty_picks": 0,
+    "energy_falls_ge3": 0,
+    "energy_final": 4,
+    "energy_max_fall": 1,
+    "energy_peak": 5,
+    "http_errors": 7,
+    "key_clash_blends": 0,
+    "key_clash_count": 5,
+    "key_clash_rate": 0.556,
+    "key_false_rewrites": 2,
+    "key_hard_clash_count": 3,
+    "key_weak_blends": 1,
+    "key_zero_count": 5,
+    "long_blend_share": 0.222,
+    "max_artist_run": 1,
+    "no_plan": 0,
+    "plan_exec_mismatch": 1,
+    "recipes": {
+     "Echo Out": 3,
+     "Long Blend": 2,
+     "Stem Bridge": 1,
+     "Stem Merge": 3
+    },
+    "repeat_songs": 0,
+    "replay_misses": 0,
+    "same_artist_repeats": 0,
+    "search_rounds_extra": 1,
+    "short_songs": 0,
+    "silent_intros": 3,
+    "song_max_s": 288.3,
+    "song_mean_s": 163.5,
+    "song_min_s": 97.2,
+    "songs_played": 10,
+    "stalls": 0,
+    "tempo_jumps": 1,
+    "tempo_over_cap": 0,
+    "tempo_stretch_max_pct": 6.88,
+    "tempo_stretch_mean_pct": 2.72,
+    "transitions": 9,
+    "unlocked_overlap_seconds": 6.0
+   },
+   "score": 6.857,
+   "worst": [
+    {
+     "from": "Lane 8, Kasbo & BJOERN - World Is Mine (Official Music Video)",
+     "penalty": 14.26,
+     "reasons": [
+      "key clash 7B->10B (3+ hours apart)",
+      "2.0s estimated dead air",
+      "silent intro stem (None)",
+      "stem bridge a->b refused: master -14.0 dB at 10.68 (floor -8 dB)"
+     ],
+     "to": "Taylor Swift - The Albatross (Official Lyric Video)",
+     "transition": 9
+    },
+    {
+     "from": "Daft Punk - One More Time (Official Video)",
+     "penalty": 11.21,
+     "reasons": [
+      "key clash 10B->6A (3+ hours apart)",
+      "silent intro stem (None)",
+      "planned Echo Out but executed Stem Bridge"
+     ],
+     "to": "Gorgon City - Ready For Your Love ft. MNEK",
+     "transition": 5
+    },
+    {
+     "from": "Big Thief - Mythological Beauty [Official Music Video]",
+     "penalty": 10.5,
+     "reasons": [
+      "tempo jump 106.64->116.33 BPM",
+      "6s of beats overlapping at tempos that never lock",
+      "2.0s estimated dead air",
+      "stem blend b->a refused: master -12.6 dB at 3.94 (floor -8 dB); EQ path instead"
+     ],
+     "to": "Flume - Never Be Like You feat. Kai",
+     "transition": 2
+    }
+   ]
+  }
+ },
+ "score_direction": "lower is better",
+ "version": 1
+}
