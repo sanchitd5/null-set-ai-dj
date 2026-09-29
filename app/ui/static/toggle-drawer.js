@@ -206,16 +206,20 @@
       const n = doc.getElementById("ap-moves-count");
       if (n) n.textContent = `(${on} on / ${total})`;
     }
+    let obs = null;
     const scan = () => {
-      row.querySelectorAll("label").forEach((l) => { if (l.querySelector("input[type=checkbox]")) collect(l); });
-      doc.querySelectorAll("[data-ai-toggle]").forEach(collect);
-      paint();
+      if (obs) obs.disconnect();   // our own moves must not re-trigger the observer (a loop freezes the page)
+      try {
+        row.querySelectorAll("label").forEach((l) => { if (l.querySelector("input[type=checkbox]")) collect(l); });
+        doc.querySelectorAll("[data-ai-toggle]").forEach(collect);
+        paint();
+      } finally { if (obs) obs.observe(row, { childList: true, subtree: true }); }
     };
+    if (typeof MutationObserver === "function") {
+      obs = new MutationObserver((ms) => { if (ms.some((m) => m.addedNodes.length)) scan(); });
+    }
     scan();
     search.addEventListener("input", paint);
-    if (typeof MutationObserver === "function") {
-      new MutationObserver((ms) => { if (ms.some((m) => m.addedNodes.length)) scan(); }).observe(row, { childList: true, subtree: true });
-    }
   }
 
   // ---- MORE ACTIONS: the AI ACTIONS bar keeps its favourites, the rest go in a grouped, searchable menu
@@ -224,7 +228,14 @@
     if (!bar || !btn || !panel) return;
     const { search, body } = makeDrawer(btn, panel, "MORE ACTIONS", "Search actions");
     const secs = new Map(), seen = new Set();
+    let obs = null;
     function scan() {
+      // our own moves (favourites re-ordered, buttons moved into the menu) are mutations of `bar`
+      // too: pause the observer while scanning, or it re-triggers itself forever and freezes the page
+      if (obs) obs.disconnect();
+      try { scanBar(); } finally { if (obs) obs.observe(bar, { childList: true }); }
+    }
+    function scanBar() {
       const aa = root.Engine && root.Engine.mods && root.Engine.mods.aiActions;
       bar.querySelectorAll("[data-ai-action]").forEach((b) => {
         const id = b.dataset.aiAction;
@@ -244,7 +255,13 @@
         secs.get(g).rows.append(r);
       });
       // favourites keep their order, ahead of the MORE button
-      for (const id of FAV_ACTIONS) { const b = bar.querySelector(`[data-ai-action="${id}"]`); if (b) bar.insertBefore(b, btn); }
+      let at = btn;   // walk back from MORE: move a favourite only when it is out of place
+      for (let i = FAV_ACTIONS.length - 1; i >= 0; i--) {
+        const b = bar.querySelector(`[data-ai-action="${FAV_ACTIONS[i]}"]`);
+        if (!b) continue;
+        if (b.nextElementSibling !== at) bar.insertBefore(b, at);
+        at = b;
+      }
       paint();
     }
     function paint() {
@@ -263,10 +280,10 @@
     // clicking an action inside the menu closes it (the step log / status line tell the result)
     body.addEventListener("click", (e) => { if (e.target.closest("[data-ai-action]")) btn.click(); });
     search.addEventListener("input", paint);
-    scan();
     if (typeof MutationObserver === "function") {
-      new MutationObserver((ms) => { if (ms.some((m) => m.addedNodes.length)) scan(); }).observe(bar, { childList: true });
+      obs = new MutationObserver((ms) => { if (ms.some((m) => m.addedNodes.length)) scan(); });
     }
+    scan();   // attaches the observer at its end
   }
 
   toggles();
