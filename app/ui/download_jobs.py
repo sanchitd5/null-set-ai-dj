@@ -63,9 +63,11 @@ def start_job(
     download_fn: Callable,
     register_fn: Callable[[List[Path]], List[dict]],
     analyze_fn: Callable[[str], object],
+    reuse_fn: Optional[Callable[[str], Optional[List[dict]]]] = None,
 ) -> str:
     """Queue a download. register_fn moves files into the registry and returns
-    [{track_id, filename, display_name}]; analyze_fn(track_id) -> TrackAnalysis."""
+    [{track_id, filename, display_name}]; analyze_fn(track_id) -> TrackAnalysis.
+    reuse_fn(url) -> tracks already in the library for the same song (no second upload is downloaded)."""
     host = engine.current().host
     job_id = host.new_id(6)
     now = host.now()
@@ -81,12 +83,16 @@ def start_job(
         tmp_dir = upload_dir / f"_dl_{host.new_id(16)}"
         try:
             _update(job_id, state="running", stage="starting")
-            paths = download_fn(
-                url, tmp_dir,
-                progress=lambda stage, pct=None: _update(job_id, stage=stage, percent=pct),
-            )
-            _update(job_id, stage="registering", percent=None)
-            tracks = register_fn(paths)
+            tracks = reuse_fn(url) if reuse_fn else None
+            if tracks:
+                _update(job_id, stage="already in library", percent=None)
+            else:
+                paths = download_fn(
+                    url, tmp_dir,
+                    progress=lambda stage, pct=None: _update(job_id, stage=stage, percent=pct),
+                )
+                _update(job_id, stage="registering", percent=None)
+                tracks = register_fn(paths)
             for t in tracks:
                 _update(job_id, stage="analyzing", percent=None)
                 analysis = analyze_fn(t["track_id"])

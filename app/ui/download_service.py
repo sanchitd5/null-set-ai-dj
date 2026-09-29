@@ -170,7 +170,13 @@ def _sequel(video_title: str, wanted_title: str) -> bool:
     return False
 
 
-def _search_match_filter(words: list[str], song: Optional[tuple[list[str], list[str], str]] = None):
+# Lyric / visualizer uploads of a song: same audio as the official audio, but a second copy of it
+# in the library when both get downloaded.  Preferred against on the first search pass only.
+_LYRIC_UPLOAD_RE = re.compile(r"lyric|lyrical|letra|visuali[sz]er|lyrics? booklet|visual backdrop", re.IGNORECASE)
+
+
+def _search_match_filter(words: list[str], song: Optional[tuple[list[str], list[str], str]] = None,
+                         official_only: bool = False):
     """yt-dlp match_filter: accept only a real song whose title matches the query.
 
     song = (artist_words, title_words, raw_title) for "Artist - Title" queries:
@@ -198,6 +204,8 @@ def _search_match_filter(words: list[str], song: Optional[tuple[list[str], list[
             return "title looks like an interview/non-music video"
         if _is_live(title):
             return "title looks like a live recording"
+        if official_only and _LYRIC_UPLOAD_RE.search(title) and not (song and _LYRIC_UPLOAD_RE.search(song[2])):
+            return "lyric/visualizer upload (an official audio is preferred)"
         if song:
             artist_w, title_w, raw_title = song
             vt = " " + _norm(title) + " "
@@ -259,6 +267,7 @@ def search_songs(query: str, limit: int = 8) -> list[dict]:
                     "duration": dur})
         if len(out) >= limit:
             break
+    out.sort(key=lambda r: bool(_LYRIC_UPLOAD_RE.search(r["title"])))     # stable: official audio first
     return out
 
 
@@ -379,17 +388,26 @@ def download_to_dir(url: str, output_dir: Path, progress: Optional[Progress] = N
         if not title:
             artist, title = "", query
         song = (_words_of(artist), _words_of(title), title)
+
+        def attempt(official_only: bool) -> list[Path]:
+            try:
+                return _ytdlp(
+                    f"https://music.youtube.com/search?q={quote_plus(query)}#songs",
+                    output_dir, progress, words=_words_of(query), song=song, official_only=official_only,
+                )
+            except RuntimeError as exc:
+                if "No matching studio track" not in str(exc):
+                    raise
+                progress("searching YouTube", None)  # song not on YT Music: regular search
+                return _ytdlp(f"ytsearch{_SEARCH_POOL}:{query} audio", output_dir, progress,
+                              words=_words_of(query), song=song, official_only=official_only)
+
         try:
-            return _ytdlp(
-                f"https://music.youtube.com/search?q={quote_plus(query)}#songs",
-                output_dir, progress, words=_words_of(query), song=song,
-            )
+            return attempt(True)            # official audio over a lyric / visualizer upload of the same song
         except RuntimeError as exc:
             if "No matching studio track" not in str(exc):
                 raise
-            progress("searching YouTube", None)  # song not on YT Music: regular search
-            return _ytdlp(f"ytsearch{_SEARCH_POOL}:{query} audio", output_dir, progress,
-                          words=_words_of(query), song=song)
+            return attempt(False)           # only a lyric / visualizer upload exists: take it
     progress("searching YouTube" if _YTSEARCH_RE.match(url) else "fetching", None)
     return _ytdlp(url, output_dir, progress)
 
@@ -400,7 +418,8 @@ def _words_of(query: str) -> list[str]:
 
 def _ytdlp(url: str, output_dir: Path, progress: Optional[Progress] = None,
            words: Optional[list[str]] = None,
-           song: Optional[tuple[list[str], list[str], str]] = None) -> list[Path]:
+           song: Optional[tuple[list[str], list[str], str]] = None,
+           official_only: bool = False) -> list[Path]:
     background = progress is not None           # a job (with progress) waits out a YouTube pause
     progress = progress or _noop_progress
 
@@ -434,7 +453,7 @@ def _ytdlp(url: str, output_dir: Path, progress: Optional[Progress] = None,
         # a search results page IS a playlist; only single direct links get noplaylist
         "noplaylist": not is_search,
         "playlistend": _SEARCH_POOL,
-        "match_filter": _search_match_filter(words, song),
+        "match_filter": _search_match_filter(words, song, official_only),
         "progress_hooks": [_dl_hook],
         "max_downloads": 1,
         "quiet": True,

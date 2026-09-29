@@ -143,6 +143,11 @@ _load_registry_from_disk()
 def _track_path(track_id: str) -> Path:
     path = _tracks.get(track_id)
     if path is None or not path.exists():
+        from app.ui import dedup_songs
+
+        canonical = dedup_songs.resolve_alias(track_id, CACHE_DIR)   # a quarantined duplicate resolves to its kept copy
+        path = _tracks.get(canonical) if canonical != track_id else None
+    if path is None or not path.exists():
         raise HTTPException(status_code=404, detail=f"Unknown track_id: {track_id}")
     return path
 
@@ -258,6 +263,9 @@ async def download_from_url(req: DownloadRequest):
 
     # Download into a private temp dir so thumbnails / .part files from a failed
     # or filtered run never land in UPLOAD_DIR; only the final audio is moved over.
+    existing = _reuse_existing(req.url)
+    if existing:                          # same song already in the library: no second upload
+        return {"source": source, "tracks": existing, "reused": True}
     tmp_dir = UPLOAD_DIR / f"_dl_{uuid.uuid4().hex}"
     try:
         try:
@@ -279,6 +287,21 @@ async def download_from_url(req: DownloadRequest):
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
     return {"source": source, "tracks": results}
+
+
+def _reuse_existing(url: str) -> Optional[List[dict]]:
+    """A search URL for "Artist - Title" that the library already holds (same recording, remix markers
+    included, aliases resolved): the existing track, so no second upload of it is downloaded."""
+    from app.ui import dedup_songs
+
+    wanted = dedup_songs.wanted_from_url(url)
+    if not wanted:
+        return None
+    tid = dedup_songs.find_existing(
+        wanted, _track_names, exists=lambda i: i in _tracks and _tracks[i].exists(), cache=CACHE_DIR)
+    if not tid:
+        return None
+    return [{"track_id": tid, "filename": _tracks[tid].name, "display_name": _track_names.get(tid) or wanted}]
 
 
 def _register_downloaded(paths: List[Path]) -> List[dict]:
@@ -340,6 +363,7 @@ def post_download_job(req: DownloadJobRequest):
         req.url, req.label[:120], UPLOAD_DIR,
         download_fn=_host().download_to_dir,
         register_fn=_register_downloaded,
+        reuse_fn=_reuse_existing,
         analyze_fn=lambda tid: analyze_track(_track_path(tid)),
     )
     return {"job_id": job_id}
