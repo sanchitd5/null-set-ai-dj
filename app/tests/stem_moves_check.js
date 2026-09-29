@@ -378,3 +378,23 @@ console.log("stem moves core ok");
   assert.strictEqual(remixPick({ ...base, energy: { drums: 0.3, bass: 0, vocals: 0.01, other: 0 } }), null);
   console.log("dead-air guards ok");
 }
+{
+  // intro loudness + EQ gate (fix2-A)
+  const { introGate } = require("../ui/static/stem-moves.js");
+  const outE = { drums: 0.2, bass: 0.2, vocals: 0.1, other: 0.2 };          // A's mix ~0.35 RMS
+  const okE = { drums: 0.05, bass: 0.1, vocals: 0, other: 0.15 };
+  assert.ok(introGate({ intro: "other", energy: okE, outEnergy: outE, lowCut: true }).ok);
+  // audible by the silence floor (0.012) but ~-30 dB under A's mix: refused
+  const quiet = { drums: 0, bass: 0, vocals: 0, other: 0.012 };
+  const g = introGate({ intro: "other", energy: quiet, outEnergy: outE, lowCut: true });
+  assert.ok(!g.ok && /dB under/.test(g.why), g.why);
+  // no A measurement: only the silence check applies
+  assert.ok(introGate({ intro: "other", energy: quiet, outEnergy: null, lowCut: false }).ok);
+  // silent stays refused
+  assert.ok(!introGate({ intro: "other", energy: { other: 0.001 }, outEnergy: outE }).ok);
+  // drums-only never while the low EQ is cut; fine with the lows open
+  const dr = { drums: 0.2, bass: 0, vocals: 0, other: 0 };
+  assert.ok(!introGate({ intro: "drums", energy: dr, outEnergy: outE, lowCut: true }).ok);
+  assert.ok(introGate({ intro: "drums", energy: dr, outEnergy: outE, lowCut: false }).ok);
+  console.log("intro gate ok");
+}

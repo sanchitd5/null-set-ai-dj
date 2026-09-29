@@ -338,6 +338,15 @@ var autopilotCore = (function () {
     if (lockS.beat && stemsBoth && o.mashupFits && o.mashupFits()) recipe = "Mashup → Transition";
     return { recipe, blend, dropLayer, blendClean, vocalShort, vocalCut, vocalRule, oneSong, stemsBoth, lockS, keyRewrite, cutRewrite };
   }
+  // Would the plan LLM call change what plays? With stems on both decks and a beat lock,
+  // decideRecipe forces the recipe, the blend plan owns the exit, LAYER is rule-gated,
+  // and the stem remix/breakdown ticks own moves on a stem deck. PEAK moves (fakeout,
+  // beat_boost) only come from the plan, so they keep it. -> reason string, or null (ask).
+  function planSkipReason(o) {
+    if (!o || !o.stemsBoth || !o.lockBeat) return null;
+    if (o.peakOn) return null;
+    return "stems on both decks and tempo locked: recipe, exit and moves are rule-decided";
+  }
   // Play-time windows by set mode, counted from when a song came in.
   //   long   songs ride 3-6 min, long 24 s blends;  quick  40-100 s, 8 s blends
   //   hybrid per song: weak match or high energy -> quick, low energy -> long
@@ -399,7 +408,7 @@ var autopilotCore = (function () {
     return { t: ex.moved ? ex.t : o.t, moved: ex.moved };
   }
   const api = { emptyRetryMs, useLibraryFallback, rememberPairReject, pairRejected, awaitJob, keySafeRecipe, KEY_SAFE_MIN, energyStepOk, hybridWindowKey, highSpans, quantileLinear, median, exitPastHigh, learnedRecipe, vocalRecipe, stemBlendBars, stemBlendFader, phraseWaitS, introBars, FADER_PARK_BARS, homePlan, maskedGlideBars, maskedDropAt, HOME_DROP_PCT, LADDER_STEP_PCT,
-    tempoLockableAt, recipeKind, decideRecipe, WINDOWS, playWindowFor, exitBounds, exitPick, exitTiming, exitHighPush };
+    tempoLockableAt, recipeKind, decideRecipe, planSkipReason, WINDOWS, playWindowFor, exitBounds, exitPick, exitTiming, exitHighPush };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   return api;
 })();
@@ -1773,7 +1782,11 @@ function createAutopilotEngine({ host, ai }) {
 
     // AI plan for this pair (candidate, exit phrase, DJ-mind moves), fetched
     // while the next track loads. Rules-only if it fails or times out.
-    const aiPlan = requestMindPlan(currentId, nextId, candidate);
+    // Stems on A and no peak moves: the plan may turn out skippable once B's stems and
+    // the tempo lock are known (planSkipReason), so it is asked after the load below.
+    const peakElP = ui.el("ap-peak-toggle"), peakOnP = !peakElP || peakElP.checked;
+    const deferPlan = !!(host.decks && host.decks[activeDeck] && host.decks[activeDeck].stems) && !peakOnP;
+    let aiPlan = deferPlan ? null : requestMindPlan(currentId, nextId, candidate);
 
     // Preload next track into staging deck
     apStatus(`Loading ${nextName} into deck ${stagingDeck().toUpperCase()}…`);
@@ -1811,6 +1824,7 @@ function createAutopilotEngine({ host, ai }) {
         return false;
       }
     }
+    let planFitState = null;
     // Plan-before-pick (user): only accept a candidate whose transition is
     // already smooth. Same pure gate scheduleTransition uses (tempoRule.planFit),
     // so pick time and play time can't disagree. Skip while a forced tempo jump
@@ -1825,6 +1839,7 @@ function createAutopilotEngine({ host, ai }) {
           aEff: odF.bpm * odF._playbackRate(), bBpm: sdF.bpm, stemsBoth: stemsBothF,
           tempoStemsBpm: sdF.tempoStems && sdF.tempoStems.bpm,
         });
+        planFitState = { stemsBoth: stemsBothF, beat: !!fit.beat };
         candidate.plannedFit = fit; // scheduleTransition re-derives with the same fn + live state
         if (!fit.smooth && !allowTempoJump) {
           console.warn("Autopilot plan-fit reject:", nextName, fit.why);
@@ -1837,6 +1852,14 @@ function createAutopilotEngine({ host, ai }) {
       }
     }
     matchGain(activeDeck, stagingDeck(), candidate.vibe && candidate.vibe.gain_match_db);
+    if (deferPlan) {
+      const skip = autopilotCore.planSkipReason({ stemsBoth: !!(planFitState && planFitState.stemsBoth),
+        lockBeat: !!(planFitState && planFitState.beat), peakOn: peakOnP });
+      if (skip) {
+        console.info("AI plan skipped:", `${nextName}: ${skip}`);
+        host.log.step("plan_skip", { track_id: nextId, decision: "skip plan LLM", why: skip });
+      } else aiPlan = requestMindPlan(currentId, nextId, candidate);
+    }
     const plan = await aiPlan;
     if (!active || currentTrackId !== currentId) return false;
     if (plan && plan.candidate) {
@@ -2599,10 +2622,14 @@ function createAutopilotEngine({ host, ai }) {
           }
         } else {
           totalMs = executeTransition(recipe, outgoing, incoming, xfDuration, t0) + XF_LOOKAHEAD_MS;
-          sessionEvent("track", { event: "transition_start", from: history[history.length - 1] || null, to: nextName, recipe: executedMove || recipe,
-                                  planned: executedMove && executedMove !== recipe ? recipe : undefined, out: outgoing, in: incoming, seconds: Math.round(totalMs / 100) / 10 });
+          // every label from here on is the move that ran, not the one that was booked
+          const ranMove = executedMove || recipe;
+          bookedRecipe = ranMove;   // VIBE strip ("playing X") and ap.next read this
+          if (ranMove !== recipe) host.log.step("recipe_executed", { deck: outgoing, decision: ranMove, why: `booked ${recipe}, ran ${ranMove}` });
+          sessionEvent("track", { event: "transition_start", from: history[history.length - 1] || null, to: nextName, recipe: ranMove,
+                                  planned: ranMove !== recipe ? recipe : undefined, out: outgoing, in: incoming, seconds: Math.round(totalMs / 100) / 10 });
           host.bus.emit("ai-cue", { at: t0, kind: "transition",
-            deck: incoming, bar: 240 / ((host.decks[incoming] && host.decks[incoming].bpm) || 128), why: `${recipe}: B's first downbeat` });
+            deck: incoming, bar: 240 / ((host.decks[incoming] && host.decks[incoming].bpm) || 128), why: `${ranMove}: B's first downbeat` });
         }
         later(totalMs + 500, afterBlend);
       });
