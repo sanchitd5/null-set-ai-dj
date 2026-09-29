@@ -256,7 +256,7 @@ def learn_macros(set_id: str, cache_dir: Optional[Path] = None, log: Callable[[s
             from app.music_brain.pair_atlas import build
         with _atlas_lock(cache_dir):
             doc = build(cache_dir, seed_macros_to=cache_dir, log=log)
-        sid = re.escape(set_id)
+        sid = re.escape(set_id.lower())   # macro names are slugs: lowercased (macros.slug)
         mine = re.compile(rf"studied-{sid}-\d+|studied-set-{sid}")
         out["written"] = [m["name"] for m in doc.get("seeded", []) if mine.fullmatch(m["name"])]
     except Exception as exc:  # noqa: BLE001 -- the learn result stands whatever happens here

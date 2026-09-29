@@ -40,8 +40,9 @@ def imported(monkeypatch):
 def _fake_build(seen):
     def build(cache_dir, seed_macros_to=None, log=print, **kw):
         seen.append({"cache_dir": cache_dir, "seed_macros_to": seed_macros_to, **kw})
-        return {"seeded": [{"name": n} for n in (f"studied-{SID}-2", f"studied-set-{SID}", "studied-S10-2",
-                                                 "studied-other-3", "atlas-top-1")]}
+        # real macro names are slugs (macros.slug lowercases), whatever the set id's case
+        return {"seeded": [{"name": n} for n in (f"studied-{SID.lower()}-2", f"studied-set-{SID.lower()}",
+                                                 "studied-s10-2", "studied-other-3", "atlas-top-1")]}
     return build
 
 
@@ -50,7 +51,8 @@ def test_learn_macros_imports_then_builds_incrementally(tmp_path, imported):
     out = si.learn_macros(SID, tmp_path, build=_fake_build(seen))
     assert imported == [SID]
     assert seen == [{"cache_dir": tmp_path, "seed_macros_to": tmp_path}], "incremental: no full=True, no only="
-    assert out == {"imported": 1, "skipped": 0, "written": [f"studied-{SID}-2", f"studied-set-{SID}"], "error": None}
+    assert out == {"imported": 1, "skipped": 0, "written": [f"studied-{SID.lower()}-2", f"studied-set-{SID.lower()}"],
+                   "error": None}
     assert (tmp_path / "pair_atlas.lock").exists()
 
 
