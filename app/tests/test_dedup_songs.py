@@ -385,3 +385,82 @@ def test_official_audio_is_preferred_over_lyric_uploads_on_the_first_search_pass
     audio = {"title": "Artist - Song (Official Audio)", "duration": 200, "channel": "Artist"}
     assert strict(lyric) and strict(audio) is None
     assert lenient(lyric) is None and lenient(audio) is None
+
+
+# ------------------------------------------------------------------------------------ --include-review
+
+
+@pytest.fixture
+def rev(tmp_path):
+    """A, B, C: same name, three different energy curves -> three REVIEW pairs, one component."""
+    cache = tmp_path / "cache"
+    make_track(cache, A, "Artist - Song", seed=1, stems=True)
+    make_track(cache, B, "Artist - Song (Official Audio)", seed=2)
+    make_track(cache, C, "Artist - Song (Official Video)", seed=3)
+    make_track(cache, "d" * 16, "Other - Thing", seed=9, bpm=99.0, key="3B")
+    return cache
+
+
+def rgroups(cache):
+    groups, reviews = ds.find_groups(ds.scan(cache))
+    return groups, ds.review_groups(groups, reviews, cache)
+
+
+def test_review_chain_component_keeps_one_copy_by_the_canonical_rule(rev):
+    groups, rg = rgroups(rev)
+    assert groups == [] and len(rg) == 1
+    assert rg[0].canonical.id == A and {d.id for d in rg[0].duplicates} == {B, C}     # stems win
+    assert all(v.startswith("REVIEW: name match, audio mismatch") for v in rg[0].evidence.values())
+
+
+def test_review_pair_keeps_exactly_one(tmp_path):
+    cache = tmp_path / "c"
+    make_track(cache, A, "Artist - Song", seed=1)
+    make_track(cache, B, "Artist - Song (Official Audio)", seed=2)
+    _, rg = rgroups(cache)
+    assert len(rg) == 1 and len(rg[0].duplicates) == 1 and rg[0].canonical.id == A    # all equal: id order
+
+
+def test_review_never_drops_alias_target_or_confirmed_canonical(rev):
+    (rev / ds.ALIASES_FILE).write_text(json.dumps({"z" * 16: C}))
+    _, rg = rgroups(rev)
+    assert rg[0].canonical.id == C and {d.id for d in rg[0].duplicates} == {A, B}     # alias target wins the pick
+    (rev / ds.ALIASES_FILE).write_text(json.dumps({"y" * 16: A, "z" * 16: C}))
+    _, rg = rgroups(rev)
+    assert {d.id for d in rg[0].duplicates} == {B}                                    # both protected stay
+
+
+def test_review_dry_run_deletes_nothing_and_lists_keep_drop(rev, tmp_path):
+    before = snapshot(rev)
+    assert ds.main(["--cache", str(rev), "--include-review", "--report", str(tmp_path / "r.md")]) == 0
+    assert snapshot(rev) == before
+    text = (tmp_path / "r.md").read_text()
+    assert f"KEEP `{A}`" in text and f"DUP  `{B}`" in text and "REVIEW component" in text
+    assert "REVIEW: name match" in text and "—" not in text
+
+
+def test_review_apply_restore_alias_and_idempotent(rev):
+    before = snapshot(rev)
+    _, rg = rgroups(rev)
+    m = ds.apply(rev, rg, is_running=lambda: False, stamp="T1")
+    assert not (rev / "uploads" / f"{B}.flac").exists() and not (rev / "uploads" / f"{C}.flac").exists()
+    assert (rev / "uploads" / f"{A}.flac").exists()
+    assert ds.resolve_alias(B, rev) == A and ds.resolve_alias(C, rev) == A
+    assert len(m["groups"]) == 1
+    groups, reviews = ds.find_groups(ds.scan(rev))
+    assert reviews == [] and ds.review_groups(groups, reviews, rev) == []             # idempotent
+    ds.restore(rev, "T1", is_running=lambda: False)
+    after = snapshot(rev)
+    after.pop(ds.ALIASES_FILE, None)
+    assert after == before
+
+
+def test_review_apply_refuses_while_app_runs_and_flag_off_is_unchanged(rev, capsys):
+    _, rg = rgroups(rev)
+    with pytest.raises(ds.ApplyRefused):
+        ds.apply(rev, rg, is_running=lambda: True)
+    assert (rev / "uploads" / f"{B}.flac").exists()
+    ds.main(["--cache", str(rev)])
+    assert "REVIEW component" not in capsys.readouterr().out
+    assert ds.main(["--cache", str(rev), "--apply", "--app-port", "1"]) == 0          # no groups: nothing moves
+    assert (rev / "uploads" / f"{B}.flac").exists()
