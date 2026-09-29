@@ -29,6 +29,7 @@ Regions = List[Tuple[float, float]]
 MAX_TEMPO_DEVIATION = 0.08     # beyond this a pitch-locked blend sounds wrong
 MAX_VOCAL_COVERAGE = 0.15      # "instrumental" = at most 15% of the blend has vocal
 DROP_HOLD_BARS = 8             # play at least this much of A's first drop before leaving
+FINALE_S = 30.0                # a drop whose high-energy run ends this close to the song's end plays out whole
 ENTRY_SEARCH_FRACTION = 0.45   # B's entry must leave >= 55% of the song to play
 ENERGY_MATCH_WEIGHT = 1.5      # |A exit energy - B entry energy| penalty (both 0-1, own-peak normalised)
 ALLOWED_BARS = (8, 16, 32)
@@ -133,19 +134,73 @@ def tempo_lock(a_bpm: float, b_bpm: float) -> Optional[Tuple[float, float]]:
     return best if abs(best[0] - 1) <= MAX_TEMPO_DEVIATION else None
 
 
+def _breakdown_drops(a, bar: float, known) -> List[Tuple[float, float]]:
+    """Drops that come out of a breakdown but are no louder than the song's intro, so
+    drop_lines' top-quartile test misses them (Anyma - Atoma: a loud synth intro, a
+    breakdown 1:00-1:45, the drop after it). A phrase counts when it is within 90 % of
+    the loudest phrase and 0.25 above the quieter of the two phrases before it. Used only
+    by the exit floor; drop_lines (shared with dj-mind.js dropLines) is unchanged."""
+    L = 8 * bar
+    ph = sorted(a.phrase_boundaries_8bar or [])
+    es = [_curve_mean(a.energy_times, a.energy_curve, p, p + L) for p in ph]
+    top = max((e for e in es if e is not None), default=None)
+    if top is None:
+        return []
+    out = []
+    for i in range(2, len(ph)):
+        e, p1, p2 = es[i], es[i - 1], es[i - 2]
+        if e is None or p1 is None or p2 is None or ph[i] in known:
+            continue
+        # the phrase just before is still clearly lower (a build into it), not already the drop
+        if e >= 0.9 * top and e - min(p1, p2) >= 0.25 and p1 <= 0.85 * e:
+            out.append((ph[i], e))
+    return out
+
+
 def min_exit_floor(a: TrackAnalysis, a_entry: Optional[float], window_lo: float,
                    window_hi: float, bars: int) -> Tuple[Optional[float], float, float]:
     """(min_exit, window_lo, window_hi): the exit may not come before A's first
     drop after `a_entry` has played DROP_HOLD_BARS; the window stretches to
     allow it when `bars` more of A still fit. min_exit None = no floor."""
     a_own_bar = 240.0 / a.bpm if a.bpm > 0 else 2.0
-    a_drops = [t for t, _, _ in drop_lines(a.phrase_boundaries_8bar, a.energy_times, a.energy_curve, a_own_bar)]
-    after = [t for t in a_drops if t >= (a_entry or 0.0) - 0.01]
+    lines = [(t, e) for t, e, _ in drop_lines(a.phrase_boundaries_8bar, a.energy_times, a.energy_curve, a_own_bar)]
+    lines += _breakdown_drops(a, a_own_bar, {t for t, _ in lines})
+    after = sorted((t, e) for t, e in lines if t >= (a_entry or 0.0) - 0.01)
     if not after:
         return None, window_lo, window_hi
-    min_exit = after[0] + DROP_HOLD_BARS * a_own_bar
-    if min_exit + bars * a_own_bar > a.duration:
-        return None, window_lo, window_hi
+    # The first drop, and also the song's BIGGEST drop when it comes later (a short track
+    # whose one real drop sits near the end, e.g. Anyma - Atoma 1:40-2:25 of 2:30): leaving
+    # before it plays skips the moment the song is built for.
+    first = after[0][0]
+    main_t, main_e = max(after, key=lambda x: (x[1], x[0]))
+    min_exit = max(first, main_t) + DROP_HOLD_BARS * a_own_bar
+    # A FINALE drop (its high-energy run lasts to within FINALE_S of the end) plays out whole:
+    # crossfading inside it cuts the song's climax. A drop in the middle of a long song keeps
+    # the DROP_HOLD_BARS floor (leaving later in it is a normal DJ move).
+    L = 8 * a_own_bar
+    run_end = main_t + L
+    for p in sorted(x for x in (a.phrase_boundaries_8bar or []) if x > main_t + 1e-6):
+        e = _curve_mean(a.energy_times, a.energy_curve, p, p + L)
+        if e is None or e < 0.85 * main_e:
+            break
+        run_end = p + L
+    # ... and bar by bar into the phrase after it while the drop still carries (its tail)
+    tail = run_end
+    while tail + a_own_bar <= a.duration:
+        e = _curve_mean(a.energy_times, a.energy_curve, tail, tail + a_own_bar)
+        if e is None or e < 0.7 * main_e:
+            break
+        tail += a_own_bar
+    run_end = min(tail, a.duration)
+    if a.duration - run_end <= FINALE_S:
+        min_exit = max(min_exit, run_end - a_own_bar)
+    # Never drop the floor because a full `bars` blend no longer fits after the drop: the
+    # caller then has less room (a shorter move, or an exit over the drop's tail), which is
+    # better than crossfading out before the drop. Only a floor past the song's end is moot.
+    if min_exit >= a.duration - a_own_bar:
+        min_exit = max(first, a.duration - bars * a_own_bar) if first < a.duration - a_own_bar else None
+        if min_exit is None:
+            return None, window_lo, window_hi
     window_lo = max(window_lo, min_exit)
     return min_exit, window_lo, max(window_hi, window_lo)
 
