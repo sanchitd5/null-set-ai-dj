@@ -14,11 +14,11 @@ const FILES = ["deck-controller.js", "stem-moves.js", "ai-actions.js", "automati
 // file -> line numbers (1-based) allowed to call the bare setter directly.
 const ALLOW = {
   "deck-controller.js": [
-    857,  // setPitchPercent(pct) { ... }            -- the definition itself
+    961,  // setPitchPercent(pct) { ... }            -- the definition itself
     413,  // rampPitchPercent's own not-playing fallback -- deck isn't producing sound yet
-    887,  // aiSetPitch's fallback when tempoGlideSeconds() found no real change (g === 0)
-    1534, // SYNC button -- the user's own control
-    1595, // pitch fader input handler -- the user's own control
+    991,  // aiSetPitch's fallback when tempoGlideSeconds() found no real change (g === 0)
+    1643, // SYNC button -- the user's own control
+    1704, // pitch fader input handler -- the user's own control
   ],
   "autopilot.js": [],
 };

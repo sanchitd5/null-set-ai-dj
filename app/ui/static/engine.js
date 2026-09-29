@@ -39,7 +39,8 @@
       "crossfaderGain", "volumeGain", "lowFilter", "midFilter", "highFilter", "inputGain", "mixGain", "fame", "hookDrops"],
     methods: ["_playbackRate", "_currentPosition", "_positionAt", "play", "stopNow", "stopSourcesAt", "stemMix", "holdStem",
       "rearmStems", "rampPitchPercent", "aiSetPitch", "setEQ", "setLoopBeats", "useTempoStems", "fetchTempoStems",
-      "swapTempoStemsAt", "onMaster", "brake", "seek", "jumpBeats", "toggleLoop", "stemSlices", "releaseSlices"],
+      "swapTempoStemsAt", "onMaster", "brake", "seek", "jumpBeats", "toggleLoop", "stemSlices", "releaseSlices",
+      "slipLoop", "slipPosition", "slipRelease", "layerPieces", "releaseLayers"],
   };
 
   function assertHost(host, what = "host") {

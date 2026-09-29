@@ -415,8 +415,10 @@ class Deck {
     }
     const t0 = Math.max(now, at || 0);
     const r0 = this._playbackRate();
+    const shadow = this.slipPosition();
     this.startOffset = this._currentPosition();   // rebase on the old curve first
     this.startedAt = now;
+    this._slipRebase(shadow);
     this._pitchPercent = pct;
     this._rateRamp = { t0, t1: t0 + seconds, r0, r1: Math.max(0.05, 1 + (pct + this._bendPercent) / 100) };
     for (const s of this._allSources()) this._scheduleRate(s.playbackRate, s._rateMul || 1, now);
@@ -493,13 +495,15 @@ class Deck {
   // accounting, so rebase the clock to "now" before the rate actually changes.
   _applyRate() {
     if (this._spinningUp) return; // let the spin-up ramp finish first
-    if (this.playing && !this._braking) {
+    const rebase = this.playing && !this._braking, shadow = this.slipPosition();   // a slip shadow rebases with the clock
+    if (rebase) {
       this.startOffset = this._currentPosition();   // on the glide curve if one runs
       this.startedAt = audioCtx.currentTime;
     }
     // a manual rate change wins over a booked glide (the fader now says where)
     const gliding = !!this._rateRamp;
     this._rateRamp = null;
+    if (rebase) this._slipRebase(shadow);
     if (this.source && !this._braking) {
       for (const s of this._allSources()) {
         if (gliding) s.playbackRate.cancelScheduledValues(audioCtx.currentTime);
@@ -848,6 +852,106 @@ class Deck {
     delete this._stemSrc["hold_" + name];
   }
 
+  // Slip loop (artist move S13, Beat Masher / Flux style): loop `beats` from the
+  // current position while a shadow playhead keeps the song's own timeline
+  // running underneath. slipRelease() lands on the shadow, where the track would
+  // have been had the loop never played, so the phrase grid is not lost.
+  // `start` (song s, default now) is the grid point the loop begins on; a call more than
+  // 0.1 s off it is late and refused. The shadow starts from the real playhead, so the
+  // song's timeline is never moved. Refused (false) with no buffer, stopped, reversed or
+  // a loop already on.
+  slipLoop(beats, start) {
+    if (!this.buffer || !this.playing || this.reversed || this.loopOn || this._slip || !(beats > 0)) return false;
+    const pos = this._currentPosition(), from = start == null ? pos : start;
+    if (Math.abs(from - pos) > 0.1) return false;
+    const prevBeats = this.loopBeats;
+    this.loopBeats = beats;
+    this.loopOn = true;
+    this.play(from);
+    // the shadow runs from the real playhead at the rate in force (rebased on every rate change / glide)
+    this._slip = { pos, at: this.startedAt, rate: this._playbackRate(), prevBeats };
+    return true;
+  }
+
+  // Where the song would be now (null when no slip loop runs): the rate held since the last rebase, or the
+  // glide's own integral (_travelled) while one runs from that rebase.
+  slipPosition() {
+    const s = this._slip;
+    if (!s) return null;
+    const T = audioCtx.currentTime;
+    const run = this._rateRamp && this.startedAt === s.at ? this._travelled(T) : Math.max(0, T - s.at) * s.rate;
+    return this._clampPos(s.pos + run);
+  }
+  _slipRebase(shadow) {   // after the deck clock was rebased at startedAt
+    if (this._slip) Object.assign(this._slip, { pos: shadow, at: this.startedAt, rate: this._playbackRate() });
+  }
+
+  // Leave the slip loop onto the shadow playhead. Returns the landing position or null.
+  slipRelease() {
+    const s = this._slip;
+    if (!s) return null;
+    if (!this.loopOn) { this._dropSlip(); return null; }   // the loop was already taken off
+    const to = this.slipPosition();
+    this._slip = null;
+    this.loopOn = false;
+    this.loopBeats = s.prevBeats;
+    if (this.playing) this.play(to);
+    return to;
+  }
+
+  // Forget the slip shadow without moving (someone else took the loop over).
+  _dropSlip() {
+    if (!this._slip) return;
+    this.loopBeats = this._slip.prevBeats;
+    this._slip = null;
+  }
+
+  // Layer pieces of ANY buffer (this deck's own stem, or the next track's stem)
+  // into this deck's channel on the audio clock, band-limited by a high-pass,
+  // under the live signal (nothing is muted). Artist moves S12 (roll at low wet)
+  // and S14 (cue-tease stabs). pieces: [{from, dur, at}] in buffer seconds / audio
+  // time; `rate` plays the buffer at this deck's heard tempo. Every piece has
+  // >= 6 ms edges. -> {ok, until} or false (nothing armed).
+  layerPieces(buffer, pieces, opts = {}) {
+    const now = audioCtx.currentTime, rate = opts.rate || 1, gain = Math.max(0, Math.min(1, opts.gain == null ? 0.3 : opts.gain));
+    if (!buffer || !this.playing || !Array.isArray(pieces) || !pieces.length || !(rate > 0)) return false;
+    if (pieces.some((p) => !(p.dur > 0) || !(p.from >= 0) || !(p.at >= now - 0.005))) return false;
+    const hp = audioCtx.createBiquadFilter();
+    hp.type = "highpass";
+    hp.frequency.value = Math.max(120, opts.hpHz || 150);
+    hp.connect(this.inputGain);
+    const srcs = [];
+    let until = now;
+    for (const p of pieces) {
+      const t1 = p.at + p.dur / rate, e = Math.max(0.006, Math.min(0.02, (t1 - p.at) / 3));
+      const s = audioCtx.createBufferSource();
+      s.buffer = buffer;
+      s.playbackRate.value = rate;
+      const g = audioCtx.createGain();
+      g.gain.setValueAtTime(0, p.at);
+      g.gain.linearRampToValueAtTime(gain, p.at + e);
+      g.gain.setValueAtTime(gain, t1 - e);
+      g.gain.linearRampToValueAtTime(0, t1);
+      s.connect(g); g.connect(hp);
+      s.start(p.at, Math.max(0, Math.min(p.from, buffer.duration - 0.01)));
+      s.stop(t1 + 0.02);
+      srcs.push(s);
+      until = Math.max(until, t1);
+    }
+    const rec = { srcs, hp, until };
+    (this._layers = this._layers || []).push(rec);
+    setTimeout(() => { this._layers = (this._layers || []).filter((r) => r !== rec); try { hp.disconnect(); } catch (e) { /* gone */ } },
+      Math.max(0, (until - now) * 1000) + 100);
+    return { ok: true, until };
+  }
+
+  // Stop every booked layerPieces window now.
+  releaseLayers() {
+    const t = audioCtx.currentTime;
+    for (const r of this._layers || []) for (const s of r.srcs) { try { s.stop(t); } catch (e) { /* already stopped */ } }
+    this._layers = [];
+  }
+
   _emitStem(state) {
     if (typeof window.dispatchEvent === "function") {
       window.dispatchEvent(new CustomEvent("ai-activity", { detail: { kind: "stems", deck: this.id, state } }));
@@ -1006,7 +1110,9 @@ class Deck {
     this._cancelBrake();
     this._cancelSpinUp();
     this._stopSource();
+    this.releaseLayers();
     this.playing = false;
+    if (this._slip) { this.loopOn = false; this.loopBeats = this._slip.prevBeats; this._slip = null; }
     if (this.onPlayStateChange) this.onPlayStateChange(false);
   }
 
@@ -1180,6 +1286,7 @@ class Deck {
 
   toggleLoop() {
     const pos = this._currentPosition(); // read while the loop still wraps
+    this._dropSlip();                    // the listener takes the loop over
     this.loopOn = !this.loopOn;
     if (this.playing) this.play(pos);
     return this.loopOn;
@@ -1206,6 +1313,7 @@ class Deck {
   seek(position, opts = {}) {
     if (!this.buffer) return false;
     const pos = this._clampPos(position);
+    if (opts.user && this._slip) { this._dropSlip(); this.loopOn = false; }   // a scrub ends the AI's slip loop
     if (this.playing && !opts.user && this._onAir()) {
       const cur = this._currentPosition(), end = this._loopSpan && this._loopSpan[1];
       // natural: inaudible, a loop's own end, or a slip release onto the song's own timeline
@@ -1246,6 +1354,7 @@ class Deck {
   _setReversed(on) {
     if (on === this.reversed) return;
     const pos = this._currentPosition();
+    if (this._slip) { this._dropSlip(); this.loopOn = false; }   // no slip shadow runs backwards
     const wasPlaying = this.playing;
     if (on) this._ensureReverseBuffer();
     if (wasPlaying) {
