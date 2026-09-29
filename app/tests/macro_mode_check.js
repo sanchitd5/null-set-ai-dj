@@ -200,5 +200,19 @@ function mulberry(seed) { return () => { seed = (seed + 0x6D2B79F5) >>> 0; let t
     const off = await rt2.firstCandidates(SEVEN, { played: [], recent: [] });
     assert.deepStrictEqual(off.map((c) => c.track_id), [STUD, LANE8, OTHER], "FOLLOW SET off: combos only (studied first)");
   }
+  // MACRO panel: 8 songs = 7 transitions + a last row; the header counts both
+  {
+    const ids = Array.from({ length: 8 }, (_, i) => String(i).repeat(16));
+    const names = ["Jon Hopkins", "YOTTO", "S3", "S4", "S5", "S6", "ARTBAT", "Chemicals"];
+    const macro = { name: "chain-2-jon-hopkins---open", tracks: ids,
+      steps: ids.slice(0, 7).map((a, i) => ({ n: i + 1, a, b: ids[i + 1], a_name: names[i], b_name: names[i + 1], recipe: "Bass Swap" })) };
+    const rows = mm.macroRows(macro);
+    assert.strictEqual(rows.length, 8, "every song has a row");
+    assert.deepStrictEqual(rows[7], { kind: "last", n: 8, id: ids[7], name: "Chemicals" });
+    assert.strictEqual(rows[6].step.b_name, "Chemicals");
+    assert.deepStrictEqual(mm.macroRows(null), []);
+    assert.strictEqual(mm.macroListLabel({ name: macro.name, songs: 8, steps: 7 }), "chain-2-jon-hopkins---open · 8 songs · 7 transitions");
+    assert.strictEqual(mm.macroListLabel({ name: "x", songs: 2 }), "x · 2 songs · 1 transition");
+  }
   console.log("macro mode OK");
 })().catch((e) => { console.error(e); process.exit(1); });

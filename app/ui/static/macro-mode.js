@@ -283,7 +283,22 @@
     return g.ok ? { ok: true, why: g.why || `step ${step.n}: ${g.recipe}`, recipe: g.recipe } : g;
   }
 
+  // MACRO panel rows: one per song (N songs = N-1 transitions + the last song, which plays out).
+  // The <ol> numbers them, so a row carries no number of its own.
+  function macroRows(macro) {
+    const steps = (macro && macro.steps) || [];
+    const rows = steps.map((s) => ({ kind: "step", n: s.n, step: s }));
+    const last = steps[steps.length - 1];
+    if (last) rows.push({ kind: "last", n: steps.length + 1, id: last.b, name: last.b_name || last.b });
+    return rows;
+  }
+  function macroListLabel(m) {
+    const songs = Number(m && m.songs) || 0, steps = Number.isFinite(Number(m && m.steps)) ? Number(m.steps) : Math.max(0, songs - 1);
+    return `${m && m.name} · ${songs} song${songs === 1 ? "" : "s"} · ${steps} transition${steps === 1 ? "" : "s"}`;
+  }
+
   const core = { MACRO_PREFERENCE, COMBO_MIN_WORKS, COMBO_LABEL, FOLLOW_WINDOW, artistOf, studiedLabel, followCandidates, macroOrder, comboCandidates, macroCandidate,
+                 macroRows, macroListLabel,
                  macroPrefer, streakAfter, streakLabel, applyPlan, fireAt, stepGate, editStep, setToMacro, runNowCheck, forcedOf, stepForPair, runNext, upcomingIds,
                  createRuntime: create };   // node checks drive the runtime over a fake Host
   if (typeof module !== "undefined" && module.exports) module.exports = core;
@@ -460,11 +475,13 @@
       const el = ui.el("macro-steps");
       if (!el) return;
       if (!loaded) { el.innerHTML = `<li class="macro-empty">no macro loaded</li>`; return; }
-      el.innerHTML = loaded.steps.map((s, i) => `<li data-n="${s.n}" class="${i === cursor ? "macro-next" : ""}">` +
-        `<b>${s.n}.</b> ${esc(s.a_name || s.a)} → ${esc(s.b_name || s.b)} <span class="macro-rec">${esc(s.recipe)}</span>` +
+      el.innerHTML = macroRows(loaded).map((r, i) => r.kind === "last"
+        ? `<li data-n="${r.n}" class="macro-last${i === cursor ? " macro-next" : ""}">${esc(r.name)} <span class="macro-pts">(last song, plays out)</span></li>`
+        : ((s) => `<li data-n="${s.n}" class="${i === cursor ? "macro-next" : ""}">` +
+        `${esc(s.a_name || s.a)} → ${esc(s.b_name || s.b)} <span class="macro-rec">${esc(s.recipe)}</span>` +
         ` <span class="macro-pts">exit ${fmt(s.a_time)} / entry ${fmt(s.b_time)}</span>` +
         (s.merge ? ` <span class="macro-merge">hold ${esc(s.merge.hold_bars)} bars${s.merge.phases && s.merge.phases.handover ? `, handover ${esc(s.merge.phases.handover.bars)} bars` : ""}</span>` : "") +
-        `</li>`).join("");
+        `</li>`)(r.step)).join("");
     }
     const fmt = (t) => (Number.isFinite(t) ? `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, "0")}` : "?");
     async function refreshList() {
@@ -472,7 +489,7 @@
       const sel = ui.el("macro-select");
       try {
         const list = (await getJSON("/api/macros")).macros || [];
-        if (sel) sel.innerHTML = `<option value="">MACROS…</option>` + list.map((m) => `<option value="${esc(m.name)}">${esc(m.name)} · ${m.songs} songs</option>`).join("");
+        if (sel) sel.innerHTML = `<option value="">MACROS…</option>` + list.map((m) => `<option value="${esc(m.name)}">${esc(macroListLabel(m))}</option>`).join("");
         macros = [];
         for (const m of macroOrder(list, 20)) { try { macros.push((await getJSON(`/api/macros/${encodeURIComponent(m.name)}`)).macro); } catch (e) { /* skip */ } }
       } catch (e) { say(`macros: ${e.message}`, false); }
@@ -483,7 +500,7 @@
       loaded = d.macro; cursor = 0;
       const bad = (d.validation || []).filter((v) => !v.ok);
       renderMacro();
-      say(`macro ${loaded.name}: ${loaded.steps.length} steps${bad.length ? `; ${bad.length} need a fallback (${bad[0].issues[0]})` : ""}`, !bad.length);
+      say(`macro ${macroListLabel({ name: loaded.name, songs: (loaded.tracks || []).length, steps: loaded.steps.length })}${bad.length ? `; ${bad.length} need a fallback (${bad[0].issues[0]})` : ""}`, !bad.length);
     }
     function deckState() {
       const ap = host.mod.autopilotState, decks = host.decks || {}, st = host.state || {};
