@@ -137,6 +137,18 @@
     if (a + b < 0.02) return null;
     return Math.round((b / (a + b)) * 16) / 16;
   }
+  // Pure: the crossfade as the bass band sees it. t = bassMix (B's share 0..1, null = silent),
+  // st = the previous state. While both decks carry bass the INCOMING deck is the one whose
+  // share rises; front = its share (0..1): its colour covers that part of the band from its
+  // own side (A left, B right) and the swell travels from it toward the outgoing side.
+  function fadeStep(st, t) {
+    const s = st || { inc: null, front: 0, prev: null };
+    if (t === null || t <= 0 || t >= 1) { s.inc = null; s.front = 0; s.prev = t; return s; }
+    if (s.prev !== null && Number.isFinite(s.prev) && Math.abs(t - s.prev) > 1e-3) s.inc = t > s.prev ? "b" : "a";
+    s.front = s.inc === "b" ? t : s.inc === "a" ? 1 - t : 0;
+    s.prev = t;
+    return s;
+  }
   // Pure: blend two #rrggbb colours, t = 0 -> a, 1 -> b.
   function mixHex(a, b, t) {
     const pa = /^#?([0-9a-f]{6})$/i.exec(a || ""), pb = /^#?([0-9a-f]{6})$/i.exec(b || "");
@@ -273,7 +285,7 @@
   if (typeof module !== "undefined" && module.exports) {
     module.exports = { effectFor, env, FLASH_GAP_S, aiDriving, energyPeaks, nextPeakIdx, stepPeaks,
                        peakAllowed, DROP_PEAK_GAP_S, SEEK_JUMP_S, vfxLayers, flashAllowed, safeBeat,
-                       MIN_PULSE_GAP_S, bassState, bassFollow, bassAlive, deckBass, bassMix, mixHex,
+                       MIN_PULSE_GAP_S, bassState, bassFollow, bassAlive, deckBass, bassMix, mixHex, fadeStep,
                        afterPulse, DROP_BURST_S, DROP_AFTER_BEATS,
                        STYLE_ID, STORE_KEY, ANYMA_COL, styleFromStore, showYields, anymaYields, anymaFlash, anymaMotif, anymaCore };
   }
@@ -413,9 +425,11 @@
     return !!((ds.a && ds.a.playing) || (ds.b && ds.b.playing));
   }
   // colour of whoever carries the low end; master (AI accent) colour if unknown
+  const fade = { inc: null, front: 0, prev: null };
   function bassColor() {
     const ds = root.decks || {};
     const t = bassMix(deckBass(ds.a), deckBass(ds.b));
+    fadeStep(fade, t);
     return t === null ? COLOR.ai : t === 0 ? COLOR.a : t === 1 ? COLOR.b : mixHex(COLOR.a, COLOR.b, t);
   }
 
@@ -490,6 +504,25 @@
   // nothing, so it sits in the margin under the decks and never hides text.
   const BAND_PTS = 32;
   function drawBass(color, now) {
+    // crossfading: the wave comes from the incoming deck's side and its colour takes the
+    // band over from that side as its share grows (the outgoing colour holds the rest)
+    if (fade.inc && !reduced) {
+      const inc = fade.inc, out = inc === "a" ? "b" : "a";
+      const fx = Math.max(0, Math.min(W, fade.front * W));
+      const x0 = inc === "a" ? 0 : W - fx;
+      const band = (col, cx0, cw) => {
+        if (cw <= 0.5) return;
+        cx.save(); cx.beginPath(); cx.rect(cx0, 0, cw, H); cx.clip();
+        bandShape(col, now, inc === "b" ? 1 : -1); cx.restore();
+      };
+      band(COLOR[inc], x0, fx);
+      band(COLOR[out], inc === "a" ? fx : 0, W - fx);
+      return;
+    }
+    bandShape(color, now, 1);
+  }
+  // dir: +1 the swell travels right -> left (from deck B's side), -1 left -> right (from A's)
+  function bandShape(color, now, dir) {
     const drive = bass.level * bass.level;       // contrast: quiet stays low
     const hit = bass.hit;
     const h = H * (reduced ? 0.06 : 0.025 + 0.06 * drive + 0.035 * hit);
@@ -508,7 +541,7 @@
     if (reduced) cx.lineTo(0, -1), cx.lineTo(W, -1);
     else {
       // a slow travelling swell on the top edge, deeper with more bass
-      const amp = 0.25 * drive + 0.1 * hit, ph = now * 1.3;
+      const amp = 0.25 * drive + 0.1 * hit, ph = now * 1.3 * dir;
       for (let i = 0; i <= BAND_PTS; i++) {
         const u = i / BAND_PTS;
         cx.lineTo(u * W, -(1 - amp * (0.5 + 0.5 * Math.sin(u * 11 + ph))));
