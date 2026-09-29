@@ -21,7 +21,8 @@ def test_energy_step_python_matches_vectors():
     for c in cases:
         o = c["o"]
         got = energy.next_ok(c["cur"], c["nxt"], relaxed=bool(o.get("relaxed")), force=bool(o.get("force")),
-                             songs=o.get("songs"), set_pos=o.get("setPos"), raw_delta=o.get("rawDelta"))
+                             songs=o.get("songs"), set_pos=o.get("setPos"), raw_delta=o.get("rawDelta"),
+                             recent=o.get("recent"), reset=bool(o.get("reset")))
         assert got == c["expect"], (c["cur"], c["nxt"], o)
 
 

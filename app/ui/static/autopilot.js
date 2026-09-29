@@ -196,7 +196,11 @@ var autopilotCore = (function () {
   const ENERGY_MIN_RAW = 0.1;      // raw 0-1: below this the two songs measure the same, whatever the levels say
   const WARMUP_SONGS = 5;          // the set builds over its first songs; open-ended after (no known end)
   const LOW_ENERGY_SET_MAX = 4;    // cur at or below this: the set is already playing low (sufi, relaxing) -- warmup's "build" assumption doesn't apply, don't force it up
-  // o: {relaxed, force, songs (played so far), rawDelta (raw_b - raw_a)}
+  // Cumulative fall (mirrors energy.py PEAK_WINDOW / MAX_BELOW_PEAK): per-step falls are capped
+  // but 9 > 7 > 4 > 2 still drained a set. DJ/06 Energy Management & Dynamics holds a valley to ~3
+  // below the peak, and only as a deliberate reset, so landing 3+ under the last 6 songs' peak is refused.
+  const PEAK_WINDOW = 6, MAX_BELOW_PEAK = 2;
+  // o: {relaxed, force, songs (played so far), rawDelta (raw_b - raw_a), recent (measured levels played, playing last), reset (a dip was asked for)}
   function energyStepOk(cur, nxt, o = {}) {
     const step = nxt - cur, lim = (o.relaxed ? 1 : 2) + (o.force && step > 0 ? 1 : 0); // force widens rises only, never falls
     if (o.rawDelta != null && Math.abs(o.rawDelta) < ENERGY_MIN_RAW) {
@@ -213,6 +217,10 @@ var autopilotCore = (function () {
     if (Math.abs(step) > lim) return { ok: false, step, why: `energy ${step > 0 ? "jump" : "drop"} ${cur} -> ${nxt} (max ${lim} a song)` };
     if (!o.force && arc === "build" && step < -1) return { ok: false, step, why: `energy falls ${cur} -> ${nxt} while the set is building` };
     if (!o.force && arc === "cool" && step > 1) return { ok: false, step, why: `energy rises ${cur} -> ${nxt} while the set is cooling down` };
+    if (step < 0 && o.recent && o.recent.length && !o.reset && !o.relaxed && arc !== "cool") {
+      const peak = Math.max(cur, ...o.recent.slice(-PEAK_WINDOW).filter((v) => v != null && Number.isFinite(v)));
+      if (peak > LOW_ENERGY_SET_MAX && peak - nxt > MAX_BELOW_PEAK) return { ok: false, step, why: `energy ${cur} -> ${nxt} drains the set: ${peak - nxt} below its recent peak ${peak}` };
+    }
     return { ok: true, step, why: `energy ${cur} -> ${nxt}` };
   }
 
@@ -1279,6 +1287,9 @@ function createAutopilotEngine({ host, ai }) {
   }
 
   let energyNotedFor = null; // track whose energy the DJ mind already logged
+  const measuredById = {};   // measured 1-10 level (energy.py) per track id, learnt at the energy gate
+  let dipAsked = false;      // a "dip" note went to the picker: a deliberate fall is allowed until the next song plays
+  const playedEnergies = () => playedIds.map((id) => measuredById[id]).filter((v) => Number.isFinite(v)).slice(-8);
   const profileById = {};    // LLM current_profile energy (1-10) per track id: PEAK mode
   // Network-level failures (server restarting, connection refused) are retried
   // with backoff and do NOT use up one of prepareTransition's rounds.
@@ -1311,7 +1322,8 @@ function createAutopilotEngine({ host, ai }) {
     const hint = host.mod.djMind && !opts.lookAhead ? host.mod.djMind.nextEnergyNote(setPos, history) : null;
     const energyNote = hint ? hint.note : null;
     const energyHook = hint ? hint.hook : null;
-    const data = await ai.suggest({ set_id: setId, track_id: trackId, occasion: occasionWithBridge(opts), ...leadFields(opts), history: history.slice(-30), avoid: avoid.slice(-6), queue: queueNames(), set_position: setPos, set_mode: setMode(), relaxed: !!host.session.relaxed, energy_note: energyNote, energy_hook: energyHook, lookahead: !!opts.lookAhead,
+    if (energyNote === "dip") dipAsked = true;
+    const data = await ai.suggest({ set_id: setId, track_id: trackId, occasion: occasionWithBridge(opts), ...leadFields(opts), history: history.slice(-30), avoid: avoid.slice(-6), queue: queueNames(), set_position: setPos, set_mode: setMode(), relaxed: !!host.session.relaxed, energy_note: energyNote, energy_hook: energyHook, energy_history: playedEnergies(), lookahead: !!opts.lookAhead,
         variety_run: varietyRun().run, variety_genre: varietyRun().genre,
         tempo_target: bridgeTarget(opts.lookAhead), tempo_note: bridgeNote(opts.lookAhead) || null,
         elapsed_seconds: setStartedAt ? (host.clock.now() - setStartedAt) / 1000 : null });
@@ -1747,8 +1759,9 @@ function createAutopilotEngine({ host, ai }) {
     // The last-round fallback allows one more level so the set never stalls.
     const ev = candidate.vibe;
     if (ev && Number.isFinite(ev.energy_a) && Number.isFinite(ev.energy_b)) {
+      measuredById[currentId] = ev.energy_a; measuredById[nextId] = ev.energy_b;
       const verdict = autopilotCore.energyStepOk(ev.energy_a, ev.energy_b, {
-        relaxed: !!(host.session && host.session.relaxed), songs: history.length, force: forceJump,
+        relaxed: !!(host.session && host.session.relaxed), songs: history.length, force: forceJump, recent: playedEnergies(), reset: dipAsked,
         rawDelta: Number.isFinite(ev.energy_raw_a) && Number.isFinite(ev.energy_raw_b) ? ev.energy_raw_b - ev.energy_raw_a : null });
       if (!verdict.ok) {
         console.warn("Autopilot energy reject:", nextName, verdict.why); host.log.step("candidate_reject", { track_id: nextId, phase: "selection", decision: "energy reject", why: verdict.why });
@@ -2619,6 +2632,7 @@ function createAutopilotEngine({ host, ai }) {
         resetDeck(outgoing);
 
         history.push(nextName);
+        dipAsked = false;
         sessionEvent("track", { event: "transition_end", now_playing: nextName, deck: incoming, set_songs: history.length });
         if (host.mod.liveEar && host.mod.liveEar.flush) host.mod.liveEar.flush("transition done");
         advanceLead();

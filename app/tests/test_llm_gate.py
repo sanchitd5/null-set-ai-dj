@@ -303,4 +303,7 @@ def test_artist_spacing_breaks_a_one_artist_loop():
     assert svc.artist_spacing(picks, ["X - a", "Y - b", "Z - c"])[0]["title"] == "Delilah"   # Fred ok after a gap...
     many = ["Fred again.. - a", "Q - x", "Fred again.. - b", "R - y", "S - z", "T - w"]
     assert all(p["artist"] != "Fred again.." for p in svc.artist_spacing(picks, many))  # ...not a 3rd time in 6
-    assert svc.artist_spacing([fred("Delilah")], ["Fred again.. - Kyle"]) == [fred("Delilah")]   # never empty
+    # just-played artist: never kept as a last resort (7 Fred songs in a row); [] makes suggest ask again
+    assert svc.artist_spacing([fred("Delilah")], ["Fred again.. - Kyle"]) == []
+    # over the window cap but not just played: kept rather than nothing
+    assert svc.artist_spacing([fred("Delilah")], ["Fred again.. - a", "Q - x", "Fred again.. - b", "R - y", "S - z", "T - w"]) == [fred("Delilah")]

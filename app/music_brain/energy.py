@@ -144,11 +144,18 @@ def level(audio_path, bpm: float) -> dict:
 ENERGY_MIN_RAW = 0.1       # raw 0-1: below this the two songs measure the same, whatever the levels say
 WARMUP_SONGS = 5           # the set builds over its first songs; open-ended after (no known end)
 LOW_ENERGY_SET_MAX = 4     # cur at or below this: already a low-energy set (sufi, relaxing) -- don't force "build"
+# Cumulative fall: per-step falls are capped, but 9 > 7 > 4 > 2 still drained a set. Set curves in
+# DJ/06 - Energy & Crowd/Energy Management & Dynamics.md hold a valley to ~3 below the peak and only as a
+# deliberate "Reset Valley" (8.5 -> 5-6, 60 min curve; house wave 8.5 -> 6). So without a reset context a
+# song may not land 3+ levels under the peak of the last PEAK_WINDOW songs.
+PEAK_WINDOW = 6
+MAX_BELOW_PEAK = 2
 
 
 def next_ok(cur: int, nxt: int, relaxed: bool = False, force: bool = False,
             songs: Optional[int] = None, set_pos: Optional[float] = None,
-            raw_delta: Optional[float] = None) -> dict:
+            raw_delta: Optional[float] = None, recent: Optional[list] = None,
+            reset: bool = False) -> dict:
     """May `nxt` follow `cur`? {ok, step, why}. The live rule is the console's
     autopilot.js energyStepOk(); this mirrors it exactly (golden vectors in
     app/tests/fixtures/rule_vectors.json check both).
@@ -157,7 +164,10 @@ def next_ok(cur: int, nxt: int, relaxed: bool = False, force: bool = False,
     already LOW_ENERGY_SET_MAX or below -- a sufi/relaxing set isn't "building"
     just because it's early). set_pos 0-1, used only without songs: < 0.3 builds,
     > 0.85 cools. raw_delta: raw_b - raw_a; under ENERGY_MIN_RAW the songs measure
-    the same, whatever the levels say."""
+    the same, whatever the levels say. recent: measured levels of the songs played so
+    far, playing one last; a fall that lands MAX_BELOW_PEAK+1 or more under their peak
+    (last PEAK_WINDOW) is refused unless reset (a deliberate dip was asked for), the
+    session is relaxed, the set is in its cool-down or the peak is itself low."""
     step = nxt - cur
     base = RELAXED_STEP if relaxed else MAX_STEP
     # the last-round force only widens RISES: widening falls let 9 > 7 > 4 > 2 slide through
@@ -176,4 +186,17 @@ def next_ok(cur: int, nxt: int, relaxed: bool = False, force: bool = False,
         return {"ok": False, "step": step, "why": f"energy falls {cur} -> {nxt} while the set is building"}
     if not force and arc == "cool" and step > 1:
         return {"ok": False, "step": step, "why": f"energy rises {cur} -> {nxt} while the set is cooling down"}
+    if step < 0 and recent and not reset and not relaxed and arc != "cool":
+        peak = max([v for v in recent[-PEAK_WINDOW:] if v is not None] + [cur])
+        if peak > LOW_ENERGY_SET_MAX and peak - nxt > MAX_BELOW_PEAK:
+            return {"ok": False, "step": step, "why": f"energy {cur} -> {nxt} drains the set: {peak - nxt} below its recent peak {peak}"}
     return {"ok": True, "step": step, "why": f"energy {cur} -> {nxt}"}
+
+
+def allowed_window(cur: int, relaxed: bool = False, songs: Optional[int] = None,
+                   set_pos: Optional[float] = None, recent: Optional[list] = None,
+                   reset: bool = False) -> tuple:
+    """(lo, hi): the levels next_ok accepts after `cur`, for the suggest prompt and filter."""
+    ok = [n for n in range(1, 11)
+          if next_ok(cur, n, relaxed=relaxed, songs=songs, set_pos=set_pos, recent=recent, reset=reset)["ok"]]
+    return (min(ok), max(ok)) if ok else (cur, cur)
