@@ -1,8 +1,10 @@
 """The world outside the decision code: model, YouTube, downloads, stems, caches.
 
 The virtual set runs the REAL server code (app.ui.server, autopilot_service, download
-routes, analysis, matcher ...) through a test client. Only the edges that touch the network
-or a GPU are replaced, and every replaced edge goes through one of three backends:
+routes, analysis, matcher ...) through a test client. The edges that touch the network or a
+GPU are the ports of `app.ui.engine.Engine` (host + AI backend): the World fills them
+(simhost.py builds SimHost / SimAI over this class) and installs the Engine. Nothing is
+monkeypatched. Every edge goes through one of three backends:
 
   live     the real thing: the LLM server, YouTube search / download, Demucs, librosa.
            With `record=True` every answer is written to a fixture (app/sim/fixtures/<run>/).
@@ -11,17 +13,11 @@ or a GPU are replaced, and every replaced edge goes through one of three backend
            seeded StubLLM. Used to build the first fixtures without a model server, and by
            pytest.
 
-The edges (each patched once, all in install()):
-  autopilot_service._chat_call          the LLM HTTP call (suggest, look-ahead, plan)
-  download_service.search_songs / verify_song / song_views / download_to_dir   YouTube
-  server._queue_stems                   Demucs (live: separates synchronously, capped)
-  analyzer._file_hash (+ vibe copy)     replay songs are placeholder files, not audio
-  energy.library_raws                   the library's energy distribution, frozen per run
-  session_log.log                       events land in the run's events.jsonl, virtual time
-
-A replay that diverges from the recording (a rule change picked another song) is answered
-from the pool / StubLLM where it can be and counts a `miss`; the report shows the count so a
-run that left its recording is never mistaken for one that followed it.
+Replay is keyed by subject, not by prompt text: a suggestion by the song playing, a plan by
+its tempo / key pair, an ear call by its loop. A rule change that rewords a prompt still gets
+the reply the model gave for that situation (counted as `drift`); only a call with no recorded
+reply is a `miss` (answered by the StubLLM, seeded by subject). The report shows both counts so
+a run that left its recording is never mistaken for one that followed it.
 """
 from __future__ import annotations
 
@@ -40,6 +36,30 @@ from app.sim.synth import read_tag
 
 FIXTURE_VERSION = 1
 _WORD = re.compile(r"[a-z0-9]+")
+
+
+def reply_quality(kind: str, reply: str) -> str:
+    """ok | empty | invalid: what a model reply is worth, for the scorer. A suggestion with no picks, a plan
+    that is "{}" or a reply that is not a JSON object is the model failing the task (the sim then shows the
+    rules coping, which is real but is not a fair test of them)."""
+    text = (reply or "").strip()
+    if not text:
+        return "empty"
+    if kind not in ("suggest", "lookahead", "plan", "ear", "audition"):
+        return "ok"
+    from app.ui.autopilot_service import _extract_json
+
+    try:
+        d = _extract_json(text)
+    except Exception:
+        return "invalid"
+    if not isinstance(d, dict):
+        return "invalid"
+    if kind in ("suggest", "lookahead"):
+        return "ok" if d.get("suggestions") else "empty"
+    if kind in ("ear", "audition"):
+        return "ok"
+    return "ok" if d else "empty"
 
 
 class WorldError(RuntimeError):
@@ -79,9 +99,11 @@ class World:
         self.fx = self._blank_fixture()
         if mode == "replay":
             self.fx = json.loads((self.dir / "run.json").read_text(encoding="utf-8"))
-        self._llm_n: dict = {}
+        self._llm_n: dict = {}               # subject (kind + song / tempo pair) -> calls so far
         self._tracks: dict = {}              # track id -> pool entry (hash, name) for tracks in this run
-        self._patched: list = []
+        self.llm_calls: list = []            # every model call of the run: kind, quality, latency
+        self._req_llm_s = 0.0
+        self.drift: list = []                # replay answers recovered from the recording for the same subject
         self._last_net = 0.0
         self.last_llm_key = ""
         self._synth: dict = {}               # audio hash -> {mix, stems} synthesised files of this run
@@ -99,49 +121,18 @@ class World:
                 "llm": [], "search": {}, "verify": {}, "views": {}, "downloads": {}, "library_raws": [],
                 "seed_track": None, "pool": []}
 
-    # ---- patching -----------------------------------------------------------------
-    def _patch(self, obj, attr, value) -> None:
-        self._patched.append((obj, attr, getattr(obj, attr)))
-        setattr(obj, attr, value)
-
-    def uninstall(self) -> None:
-        while self._patched:
-            obj, attr, old = self._patched.pop()
-            setattr(obj, attr, old)
-
+    # ---- the engine ------------------------------------------------------------------
     def install(self) -> None:
-        """Patch every edge. Call once, after AIDJ_CACHE_DIR points at run_cache."""
-        from app.music_brain import analyzer, energy, vibe
+        """Build the Engine (SimHost + SimAI) and install it. Call once, after AIDJ_CACHE_DIR points
+        at run_cache. Nothing in the brain is patched: it finds its edges through the engine."""
+        from app.sim.simhost import SimAI, SimHost
         from app.ui import autopilot_service as svc
-        from app.ui import download_service as dl
-        from app.ui import server, session_log
+        from app.ui import engine, server
 
-        orig_hash = analyzer._file_hash
-
-        def file_hash(path):
-            tag = read_tag(Path(path))              # a synthetic file names the real song it stands for
-            return tag["hash"] if tag and tag.get("hash") else orig_hash(path)
-
-        self._patch(analyzer, "_file_hash", file_hash)
-        self._patch(vibe, "_file_hash", file_hash)
-        self._patch(session_log, "log", self._emit)
-        self._patch(svc, "_chat_call", self._chat_call)
-        self._patch(svc, "SUGGEST_BUDGET_S", 1e9)     # retries are a rule, not a race against a wall clock
-        self._patch(dl, "search_songs", self._search_songs)
-        self._patch(dl, "verify_song", self._verify_song)
-        self._patch(dl, "song_views", self._song_views)
-        self._patch(dl, "download_to_dir", self._download_to_dir)
-        self._patch(server, "_queue_stems", self._queue_stems)
-        raws = self._library_raws()
-        self._patch(energy, "library_raws", lambda: raws)
-        if self.mode != "live":
-            self._install_frozen_stems(server)
-            self._install_synth_stems(server)
-        from app.ui import song_log
-
-        self._install_inline_jobs(server)
-        self._patch(song_log, "step", self._song_step)
-        self._patch(song_log, "on_session_event", lambda *a, **k: None)
+        self._raws = self._library_raws()
+        # retries are a rule, not a race against a wall clock
+        self.engine = engine.Engine(SimHost(self), SimAI(self), engine.EngineConfig(suggest_budget_s=1e9))
+        engine.use(self.engine)
         # a fresh run never sees a song lookup cached by an earlier one
         svc._verify_cache.clear()
         svc._verify_inflight.clear()
@@ -149,21 +140,15 @@ class World:
         server._suggest_inflight.clear()
         server._set_memory = None
         server._pair_cache.clear()
-        self._orig = {"file_hash": orig_hash}
         self._seed_shared_files()
 
-    def _install_inline_jobs(self, server) -> None:
-        """Background jobs (download jobs, the silent ear's preplan / audition) run inline, in the request
-        that starts them: their result then never depends on thread timing. The console's polling and the
-        modelled download time are the transport's job (js/net.js)."""
-        from app.ui import download_jobs
+    def uninstall(self) -> None:
+        from app.ui import engine
 
-        class Inline:
-            def submit(self, fn, *args, **kw):
-                fn(*args, **kw)
+        engine.use(None)
 
-        self._patch(download_jobs, "_executor", Inline())
-        self._patch(server._ear_jobs, "_pool", Inline())
+    def library_raws_frozen(self) -> list:
+        return self._raws
 
     def _seed_shared_files(self) -> None:
         """The frozen learned_techniques.json (fixtures/_shared) goes into the run's private cache:
@@ -173,112 +158,45 @@ class World:
             if src.exists():
                 (self.run_cache / fn).write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
 
-    def _song_step(self, kind, track_id, **fields) -> None:
+    def song_step(self, kind, track_id, **fields) -> None:
         self.steps.append({"t": round(1_790_000_000.0 + self.vclock(), 3), "track_id": track_id, "kind": kind,
                            "phase": fields.get("phase"), "decision": fields.get("decision"), "why": fields.get("why"),
                            "inputs": fields.get("inputs"), "result": fields.get("result")})
 
-    def _install_frozen_stems(self, server) -> None:
-        """Replay / library: the stems are pool curves, not audio. server._pair_features (grooves,
-        breakdowns, rap detection for the technique library) reads stem audio through librosa.load,
-        techniques.stem_map and techniques.vocal_style: those three are answered from the pool's
-        frozen results (the same functions ran on the real stems when the entry was built), the
-        rest of _pair_features runs as is."""
-        import librosa
-        import numpy as np
+    # ---- synthetic audio (replay / library) ------------------------------------------------
+    def stem_tag(self, path):
+        """The tag of a synthetic stem file of this run, else None (then the real audio is read)."""
+        if not str(path).startswith(str(self.run_cache / "synth")):
+            return None
+        tag = read_tag(Path(path))
+        return tag if tag and tag.get("stem") in ("drums", "bass", "vocals", "other") else None
 
-        from app.music_brain import techniques as tq
+    def synth_for_path(self, path):
+        tag = read_tag(Path(path))
+        return self._synth.get(tag["hash"]) if tag and tag.get("hash") else None
 
-        class Tagged(np.ndarray):
-            pass
+    def track_entry(self, track_id: str):
+        return self._tracks.get(track_id)
 
-        orig_load = librosa.load
-        synth_dir = str(self.run_cache / "synth")
+    def synth_vocals_stem(self, track_id: str) -> str:
+        e = self._tracks.get(track_id)
+        files = self._synth.get(e["hash"]) if e else None
+        if not files or not files["stems"]:
+            raise WorldError(f"no synthetic vocal stem for {track_id}")
+        return files["stems"]["vocals"]
 
-        def load(path, sr=22050, mono=True, offset=0.0, duration=None, **kw):
-            tag = read_tag(Path(path)) if str(path).startswith(synth_dir) else None
-            if not tag or tag.get("stem") not in ("drums", "bass", "vocals", "other"):
-                return orig_load(path, sr=sr, mono=mono, offset=offset, duration=duration, **kw)
-            a = np.zeros(1, dtype=np.float32).view(Tagged)
-            a.tag = (tag["hash"], tag["stem"], round(float(offset or 0.0), 3))
-            return a, sr
+    def tag_keylock_render(self, p, key, name):
+        """A key-locked render is real rubberband output; tag it so the audio graph knows the stem."""
+        tagged = Path(p).with_name(f"{Path(p).stem}.sim.wav")
+        if not tagged.exists():
+            import numpy as np
+            import soundfile as sf
 
-        def entry(h):
-            e = self.pool.load(h)
-            if e is None:
-                raise WorldError(f"no fixture data for audio {h[:12]}")
-            return e
+            from app.sim.synth import write_wav
 
-        orig_map, orig_style = tq.stem_map, tq.vocal_style
-
-        def stem_map(audio, sr, phrases):
-            if hasattr(audio.get("drums"), "tag"):
-                return entry(audio["drums"].tag[0]).get("smap") or []
-            return orig_map(audio, sr, phrases)            # real audio (building a pool entry)
-
-        def vocal_style(y, sr):
-            if hasattr(y, "tag"):
-                return entry(y.tag[0]).get("vocal_style", {}).get(repr(y.tag[2])) or {"rap": False, "rap_score": 0.0}
-            return orig_style(y, sr)
-
-        self._patch(librosa, "load", load)
-        self._patch(tq, "stem_map", stem_map)
-        self._patch(tq, "vocal_style", vocal_style)
-
-        def hook_drops(tid):
-            e = self._tracks.get(tid)
-            return list((e or {}).get("hook_drops") or [])
-
-        self._patch(server, "_safe_hook_drops", hook_drops)
-
-    def _install_synth_stems(self, server) -> None:
-        """Replay / library: separation and key-lock renders never run Demucs / rubberband on the
-        synthetic audio: the stems come from the synthesised files (synth.py)."""
-        from app.music_brain import keylock, stem_service
-
-        def synth_for_path(path):
-            tag = read_tag(Path(path))
-            return self._synth.get(tag["hash"]) if tag and tag.get("hash") else None
-
-        def vocals_stem(track_id: str) -> str:
-            e = self._tracks.get(track_id)
-            files = self._synth.get(e["hash"]) if e else None
-            if not files or not files["stems"]:
-                raise WorldError(f"no synthetic vocal stem for {track_id}")
-            return files["stems"]["vocals"]
-
-        def separate(audio_path, two_stems=None, model=None, **kw):
-            files = synth_for_path(audio_path)
-            if not files or not files["stems"]:
-                raise WorldError(f"no synthetic stems for {audio_path}")
-            st = dict(files["stems"])
-            if two_stems == "vocals":
-                st = {"vocals": st["vocals"], "no_vocals": files["mix"]}
-            return stem_service.StemResult(audio_hash=Path(audio_path).stem, model=model or "sim", two_stems=two_stems, stems=st,
-                                           cache_dir=str(Path(files["mix"]).parent), from_cache=True)
-
-        self._patch(server, "_vocals_stem", vocals_stem)
-        self._patch(stem_service, "separate", separate)
-        self._patch(server, "separate_stems", separate)
-        orig_stem_path = keylock.stem_path
-
-        def stem_path(key, name):
-            """A key-locked render is real rubberband output; tag it so the audio graph knows the stem."""
-            p = orig_stem_path(key, name)
-            if p is None:
-                return None
-            tagged = Path(p).with_name(f"{Path(p).stem}.sim.wav")
-            if not tagged.exists():
-                import numpy as np
-                import soundfile as sf
-
-                from app.sim.synth import write_wav
-
-                x, sr = sf.read(str(p), always_2d=True, dtype="float32")
-                write_wav(tagged, x[:, 0].astype(np.float64), sr, {"stem": name, "keylock": key})
-            return tagged
-
-        self._patch(keylock, "stem_path", stem_path)
+            x, sr = sf.read(str(p), always_2d=True, dtype="float32")
+            write_wav(tagged, x[:, 0].astype(np.float64), sr, {"stem": name, "keylock": key})
+        return tagged
 
     def live_curves(self, tid: str):
         """live mode: stem curves of a song separated in this run (computed once, kept)."""
@@ -339,7 +257,7 @@ class World:
 
         done = []
         for tid, path in sorted(server._tracks.items()):
-            h = self._orig["file_hash"](path)
+            h = _file_hash(path)
             if pool.has(h):
                 self.touched[h] = server._track_names.get(tid, "")
                 continue
@@ -370,20 +288,25 @@ class World:
     def vclock(self) -> float:
         return self._vt
 
-    def _emit(self, kind: str, **fields) -> None:
+    def emit(self, kind: str, **fields) -> None:
         t = round(self.vclock(), 3)
         ev = {"t": 1_790_000_000.0 + t, "at": time.strftime("%H:%M:%S", time.gmtime(t)), "kind": str(kind)[:40]}
         for k, v in fields.items():
+            if k == "elapsed":                  # wall-clock seconds of a real computation: not part of the virtual run
+                continue
             ev[k] = v if isinstance(v, (int, float, bool, type(None), str)) else json.loads(json.dumps(v, default=str))
         self.events.append(ev)
 
     # ---- LLM ------------------------------------------------------------------------
     _NOW = re.compile(r'NOW PLAYING: "(.*?)" by ')
+    _PAIR = re.compile(r"CURRENT song: ([\d.]+) BPM, key (\w+)\. NEXT song: ([\d.]+) BPM, key (\w+)\.")
 
     def _llm_call_info(self, system: str, user: str) -> dict:
         """What a model call is, read off the call itself (the console drives it, the sim does not
         announce it): its kind (suggest / lookahead by the gate's priority, plan, ear), the
-        signature of the exact prompt, the song playing, and which call of that kind this is."""
+        signature of the exact prompt, a STABLE key (what the call is about, not how the prompt is
+        worded: the song playing for a suggestion, the tempo / key pair for a plan), the song playing,
+        and which call about that subject this is."""
         import hashlib
 
         from app.ui.llm_gate import gate
@@ -395,12 +318,17 @@ class World:
         except Exception:
             pass
         m = self._NOW.search(user)
+        cur = m.group(1) if m else ""
         if "NOW PLAYING" in user:
             kind = "lookahead" if str(prio).lower().startswith("look") else "suggest"
+            stable = f"{kind}|{cur}"
         elif user.startswith("CURRENT song:"):
             kind = "plan"
+            pm = self._PAIR.match(user)
+            stable = "plan|" + "|".join(pm.groups()) if pm else "plan"
         else:
             kind = str(prio or "other").lower()
+            stable = kind
         if kind in ("suggest", "lookahead"):
             m2 = re.search(r"are exempt\): (.*)", user)
             if m2 and m2.group(1).strip().lower() != "none":
@@ -411,49 +339,111 @@ class World:
                     self.prompt_flags["energy_note"] += 1
                     self.prompt_flags[f"energy_note_{key}"] += 1
         sig = hashlib.sha1(f"{system}\n{user}".encode("utf-8")).hexdigest()[:16]
-        n = self._llm_n.get(kind, 0)
-        self._llm_n[kind] = n + 1
-        return {"kind": kind, "sig": sig, "cur": m.group(1) if m else "", "ord": n}
+        n = self._llm_n.get(stable, 0)               # the n-th call ABOUT this subject: unaffected by other calls
+        self._llm_n[stable] = n + 1
+        return {"kind": kind, "sig": sig, "stable": stable, "cur": cur, "ord": n}
 
-    def _chat_call(self, system, user, temperature, timeout, model, max_tokens) -> str:
-        info = self._llm_call_info(system, user)
-        kind, key = info["kind"], f"{info['kind']}|{info['sig']}"
-        self.last_llm_key = key
-        ctx = {"phase": kind, "n_call": info["ord"], "n_picks": 5, "current": info["cur"], "song_index": len(self.ctx.get("history", [])),
-               **{k: v for k, v in self.ctx.items() if k in ("history", "avoid", "queue", "current_meta")}}
+    def _replayed(self, kind: str, sig: str, stable: str, what: str, cur: str = ""):
+        """The recorded entry for this call, or None. Exact prompt first; a drifted prompt (a rule
+        changed what the model is asked) gets the next unused entry recorded for the same subject
+        (`drift`, harmless: it is the reply the model gave for this very situation); only a call
+        with no recorded reply at all is a `miss` (answered by the fallback model)."""
+        for e in self.fx["llm"]:
+            if e.get("sig") == sig and not e.get("_used"):
+                e["_used"] = True
+                return e
+        for e in self.fx["llm"]:
+            if e["kind"] == kind and (e.get("stable") or f"{e['kind']}|{e.get('cur', '')}") == stable and not e.get("_used"):
+                e["_used"] = True
+                self.drift.append({"what": what, "key": stable})
+                return e
+        self.misses.append({"what": what, "key": stable, "cur": cur})
+        return None
+
+    def _model_call(self, info: dict, live, offline) -> str:
+        """One model call, whichever model answers it.
+        live     `live()` is the app's own client (AIBackend, the real server); its wall-clock latency and reply
+                 are what a recording keeps.
+        replay   the recorded reply, and the recorded latency (the console's virtual clock waits as long as the
+                 real model did); a call with no recording is answered by `offline()` (the seeded stub) and is a miss.
+        library  `offline()`.
+        Every call is noted for the scorer (empty / invalid replies) and its latency is added to the request in
+        flight (the console sees it as the round trip)."""
+        kind, latency = info["kind"], None
         if self.mode == "replay":
-            # exact prompt first; a drifted prompt (a rule changed what the model is asked) falls back to
-            # the reply recorded for the same song, else the fallback model. Every fallback is a miss.
-            for e in self.fx["llm"]:
-                if e.get("sig") == info["sig"] and not e.get("_used"):
-                    e["_used"] = True
-                    return e["reply"]
-            self.misses.append({"what": "llm", "key": key, "cur": info["cur"]})
-            for e in self.fx["llm"]:
-                if e["kind"] == kind and e.get("cur") == info["cur"] and info["cur"] and not e.get("_used"):
-                    e["_used"] = True
-                    return e["reply"]
-            if self.llm is None:
-                self.fatal = WorldError(f"replay miss: no recorded model reply for {key} and no fallback model")
-                raise self.fatal
-            return self.llm.reply(kind, system, user, ctx)
-        if self.mode == "library":
-            if self.llm is None:
+            e = self._replayed(kind, info["sig"], info["stable"], kind, info["cur"])
+            if e is not None:
+                reply, latency = e["reply"], e.get("latency_s")
+            else:
+                if offline is None:
+                    self.fatal = WorldError(f"replay miss: no recorded model reply for {info['stable']} and no fallback model")
+                    raise self.fatal
+                reply = offline()
+        elif self.mode == "library":
+            if offline is None:
                 self.fatal = WorldError("library world needs a StubLLM")
                 raise self.fatal
-            reply = self.llm.reply(kind, system, user, ctx)
+            reply = offline()
         else:
             t0 = time.monotonic()
             try:
-                reply = self._orig_chat(system, user, temperature, timeout, model, max_tokens)
+                reply = live()
             except Exception as exc:
+                if kind in ("ear", "audition"):          # optional model: the rules answer, as in the live app
+                    self.fx["ear_errors"] = self.fx.get("ear_errors", 0) + 1
+                    raise
                 self.fatal = WorldError(f"the LLM is unreachable ({type(exc).__name__}: {exc}); "
                                         "start the model server or use --replay")
                 raise self.fatal from exc
-            self.fx.setdefault("llm_elapsed", {})[key] = round(time.monotonic() - t0, 2)
-        if self.record:
-            self.fx["llm"].append({"kind": kind, "sig": info["sig"], "cur": info["cur"], "ord": info["ord"], "reply": reply})
+            latency = round(time.monotonic() - t0, 2)
+        quality = reply_quality(kind, reply)
+        self.llm_calls.append({"kind": kind, "cur": info["cur"], "quality": quality, "latency_s": latency})
+        if latency is not None:
+            self._req_llm_s += latency
+        if self.record and self.mode != "replay":
+            self.fx["llm"].append({"kind": kind, "sig": info["sig"], "stable": info["stable"], "cur": info["cur"],
+                                   "ord": info["ord"], "reply": reply, "latency_s": latency, "quality": quality})
         return reply
+
+    def chat(self, system, user, temperature, timeout, model, max_tokens, real) -> str:
+        """The model behind AIBackend.chat (suggest, look-ahead, plan, set-learning review)."""
+        info = self._llm_call_info(system, user)
+        self.last_llm_key = f"{info['kind']}|{info['sig']}"
+        ctx = {"phase": info["kind"], "n_call": info["ord"], "n_picks": 5, "current": info["cur"],
+               "song_index": len(self.ctx.get("history", [])),
+               **{k: v for k, v in self.ctx.items() if k in ("history", "avoid", "queue", "current_meta")}}
+        offline = (lambda: self.llm.reply(info["kind"], system, user, ctx)) if self.llm is not None else None
+        return self._model_call(info, lambda: real(system, user, temperature, timeout, model, max_tokens), offline)
+
+    def ear(self, cfg: dict, wav: bytes, metrics: dict, real) -> str:
+        """The audio model behind AIBackend.ear (the live ear's Omni call). Without a recording "{}" is
+        the offline answer: live_ear.validate turns it into its rule decision, the fallback the live app
+        takes when the model is busy."""
+        import hashlib
+
+        from app.ui import live_ear
+
+        sig = hashlib.sha1((live_ear._user_text(metrics) + "|" + hashlib.sha1(wav).hexdigest()[:12]).encode("utf-8")).hexdigest()[:16]
+        info = {"kind": "ear", "sig": sig, "stable": f"ear|{metrics.get('deck')}|{bool(metrics.get('precheck'))}", "cur": "", "ord": 0}
+        return self._model_call(info, lambda: real(cfg, wav, metrics), lambda: "{}")
+
+    def audition(self, system: str, wav: bytes, text: str, real) -> str:
+        """The audio model behind AIBackend.audition (the silent ear rating a rendered merge)."""
+        import hashlib
+
+        sig = hashlib.sha1((text + "|" + hashlib.sha1(wav).hexdigest()[:12]).encode("utf-8")).hexdigest()[:16]
+        info = {"kind": "audition", "sig": sig, "stable": f"audition|{text[:80]}", "cur": "", "ord": 0}
+        return self._model_call(info, lambda: real(system, wav, text), lambda: "{}")
+
+    # ---- per-request model latency ---------------------------------------------------------
+    def begin_request(self) -> None:
+        self._req_llm_s = 0.0
+
+    def end_request(self) -> Optional[float]:
+        """Seconds the model spent on the request just served (None when it made no call): the console's
+        transport waits that long on its virtual clock instead of a typical figure."""
+        s, self._req_llm_s = self._req_llm_s, 0.0
+        return s or None
 
     # ---- YouTube edges ----------------------------------------------------------------
     def _throttle(self) -> None:
@@ -483,7 +473,7 @@ class World:
             return {t.hash: t.name for t in self.library.tracks()}
         return dict(self.pool.names())
 
-    def _search_songs(self, query: str, limit: int = 8):
+    def search_songs(self, query: str, limit: int, real):
         if self.mode == "replay":
             hit = self.fx["search"].get(query)
             if hit is not None:
@@ -496,12 +486,12 @@ class World:
             res = [{"title": m[1], "url": f"sim://{m[0]}", "duration": 0}] if m else []
         else:
             self._throttle()
-            res = self._orig_search(query, limit)
+            res = real(query, limit)
         if self.record:
             self.fx["search"][query] = res
         return res
 
-    def _verify_song(self, artist: str, title: str):
+    def verify_song(self, artist: str, title: str, real):
         key = f"{artist}|{title}"
         if self.mode == "replay":
             if key in self.fx["verify"]:
@@ -512,37 +502,36 @@ class World:
             res = self._lib_match(f"{artist} {title}") is not None
         else:
             self._throttle()
-            res = self._orig_verify(artist, title)
+            res = real(artist, title)
         if self.record:
             self.fx["verify"][key] = res
         return res
 
-    def _song_views(self, name: str):
+    def song_views(self, name: str, real):
         if self.mode == "replay":
             return self.fx["views"].get(name)
         if self.mode == "library":
             res = None
         else:
             self._throttle()
-            res = self._orig_views(name)
+            res = real(name)
         if self.record:
             self.fx["views"][name] = res
         return res
 
-    def _download_to_dir(self, url: str, output_dir: Path, progress=None):
+    def download_to_dir(self, url: str, output_dir: Path, progress, real):
         """Same contract as download_service.download_to_dir: files written into output_dir."""
         output_dir = Path(output_dir)
-        if self.downloads >= self.caps.max_downloads:
+        if self.mode == "live" and self.downloads >= self.caps.max_downloads:      # the cap protects YouTube, not a fixture
             raise WorldError(f"download cap reached ({self.caps.max_downloads} per run)")
         if self.mode == "live":
             self._throttle()
-            paths = self._orig_download(url, output_dir, progress)
+            paths = real(url, output_dir, progress)
             self.downloads += len(paths)
             if self.record:
                 from app.music_brain.analyzer import _file_hash
 
-                self.fx["downloads"][url] = [{"name": p.stem, "hash": self._orig["file_hash"](p), "suffix": p.suffix}
-                                             for p in paths]
+                self.fx["downloads"][url] = [{"name": p.stem, "hash": _file_hash(p), "suffix": p.suffix} for p in paths]
             return paths
         # replay / library: the song's audio is synthesised from its frozen energy curves (synth.py)
         if self.mode == "replay" and url in self.fx["downloads"]:
@@ -564,7 +553,7 @@ class World:
         output_dir.mkdir(parents=True, exist_ok=True)
         paths = []
         for f in found:
-            entry = self._entry_for(f["hash"])
+            entry = self.entry_for(f["hash"])
             files = self._synth.get(f["hash"])
             if files is None:
                 files = self._synth[f["hash"]] = synth_track(entry, self.run_cache / "synth" / f["hash"], name="mix")
@@ -577,7 +566,7 @@ class World:
         return paths
 
     # ---- stems / registration -------------------------------------------------------------
-    def _queue_stems(self, track_id: str, urgent: bool = True) -> bool:
+    def queue_stems(self, track_id: str) -> bool:
         """server._queue_stems: a song was registered. Replay / library: install its frozen
         analysis, vibe, energy, vocal regions and stem state. Live: separate now (capped)."""
         from app.ui import server
@@ -588,11 +577,11 @@ class World:
         tag = read_tag(Path(path))
         if not tag or not tag.get("hash"):    # a real file (live)
             return self._register_live(track_id, path)
-        entry = self._entry_for(tag["hash"])
+        entry = self.entry_for(tag["hash"])
         self._install_entry(track_id, path, entry)
         return True
 
-    def _entry_for(self, h: str) -> dict:
+    def entry_for(self, h: str) -> dict:
         entry = self.pool.load(h)
         if entry is None and self.mode == "library" and self.library is not None:
             t = self.library.by_hash(h)
@@ -641,16 +630,6 @@ class World:
         raws = self.library.library_raws() if self.library is not None else []
         self.fx["library_raws"] = raws
         return raws
-
-    # ---- live originals -----------------------------------------------------------------
-    def bind_live(self) -> None:
-        """live mode: remember the real functions before install() replaces them."""
-        from app.ui import autopilot_service as svc
-        from app.ui import download_service as dl
-
-        self._orig_chat = svc._chat_call
-        self._orig_search, self._orig_verify = dl.search_songs, dl.verify_song
-        self._orig_views, self._orig_download = dl.song_views, dl.download_to_dir
 
     # ---- recording -----------------------------------------------------------------------
     def save_fixture(self, seed_track: Optional[dict], run_meta: dict) -> Path:

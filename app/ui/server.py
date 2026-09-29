@@ -37,11 +37,24 @@ from app.music_brain.config import (
 )
 from app.music_brain.knowledge_parser import KnowledgeParser
 from app.music_brain.recipe_matcher import RecipeMatcher
-from app.music_brain.stem_service import separate as separate_stems
 from app.music_brain.transition_renderer import render_full_mix, render_preview
 from app.music_brain.set_log import export_set_log_markdown, validate_set_log
+from app.ui import engine as _engine
 from app.ui.bg_jobs import DONE as _JOB_DONE, ERROR as _JOB_ERROR, EXPIRED as _JOB_EXPIRED, JobRunner
 from app.ui.library_service import scan_library
+
+
+def _host():
+    """The installed engine's host: the port to YouTube, stems, audio reads and the logs."""
+    return _engine.current().host
+
+
+def separate_stems(path, **kw):
+    return _host().separate(path, **kw)
+
+
+def _load_audio(path, **kw):
+    return _host().load_audio(path, **kw)
 
 UPLOAD_DIR = CACHE_DIR / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
@@ -226,8 +239,9 @@ class DownloadRequest(BaseModel):
 @app.post("/api/download")
 async def download_from_url(req: DownloadRequest):
     """Download a YouTube or YouTube Music URL and register as a track."""
-    from app.ui.download_service import detect_source, download_to_dir
+    from app.ui.download_service import detect_source
 
+    download_to_dir = _host().download_to_dir
     source = detect_source(req.url)
     if source == "unknown":
         raise HTTPException(
@@ -285,7 +299,7 @@ class DownloadJobRequest(BaseModel):
 @app.get("/api/search/youtube")
 def get_youtube_search(q: str, limit: int = 8):
     """Song search for LEAD TO (no download); filtered like downloads."""
-    from app.ui.download_service import search_songs
+    search_songs = _host().search_songs
 
     if not (2 <= len(q.strip()) <= 120):
         raise HTTPException(status_code=400, detail="query must be 2-120 characters")
@@ -311,13 +325,13 @@ def get_youtube_status():
 def post_download_job(req: DownloadJobRequest):
     """Start a background download (pre-download / prefetch); poll for progress."""
     from app.ui import download_jobs
-    from app.ui.download_service import detect_source, download_to_dir
+    from app.ui.download_service import detect_source
 
     if detect_source(req.url) == "unknown":
         raise HTTPException(status_code=400, detail="Unsupported URL.")
     job_id = download_jobs.start_job(
         req.url, req.label[:120], UPLOAD_DIR,
-        download_fn=download_to_dir,
+        download_fn=_host().download_to_dir,
         register_fn=_register_downloaded,
         analyze_fn=lambda tid: analyze_track(_track_path(tid)),
     )
@@ -593,6 +607,10 @@ def _start_stem_worker() -> None:
 
 
 def _queue_stems(track_id: str, urgent: bool = True) -> bool:
+    return _host().queue_stems(track_id, urgent)
+
+
+def _queue_stems_impl(track_id: str, urgent: bool = True) -> bool:
     """Queue a 4-stem separation; True while queued or running. Urgent jobs
     (a deck, a new track) go ahead of the library backfill."""
     with _stem_cv:
@@ -659,7 +677,7 @@ def get_vocal_entry(track_id: str):
         return {"entry": None, "reason": "no stems / vocals yet"}
     a = analyze_track(_track_path(track_id)).to_dict()
     bar = 240.0 / a["bpm"]
-    yv, srv = librosa.load(st["vocals"], sr=22050, mono=True)
+    yv, srv = _load_audio(st["vocals"], sr=22050, mono=True)
     rep = tq.repetitive_bars(yv, srv, a["downbeat_times"])
 
     def share(lo, hi):
@@ -672,8 +690,8 @@ def get_vocal_entry(track_id: str):
         entry = tq.skip_repetitive_intro(rep, a["downbeat_times"], a["phrase_boundaries_8bar"], first)
         if share(entry, entry + 16 * bar) < 0.5:
             entry = first
-        y, sr = librosa.load(st["vocals"], sr=16000, mono=True, offset=entry, duration=min(30.0, 16 * bar))
-        style = tq.vocal_style(y, sr)
+        y, sr = _load_audio(st["vocals"], sr=16000, mono=True, offset=entry, duration=min(30.0, 16 * bar))
+        style = _host().vocal_style(y, sr)
         res = {"entry": entry, "rap": style["rap"], "style": style, "bpm": a["bpm"],
                "vocal16": round(share(entry, entry + 16 * bar), 2), "vocal32": round(share(entry, entry + 32 * bar), 2)}
     _vocal_entry_cache[track_id] = res
@@ -826,8 +844,8 @@ def _pair_features(a_id: str, b_id: str, keylock: bool = False):
     lo, hi = max(0.0, ta.duration - 90), ta.duration - 10          # A's exit window (last ~1.5 min)
     grooves, breaks = [], []
     if sa:
-        audio = {n: librosa.load(sa[n], sr=11025, mono=True)[0] for n in tq.STEMS}
-        smap = tq.stem_map(audio, 11025, ta.phrase_boundaries_8bar)
+        audio = {n: _load_audio(sa[n], sr=11025, mono=True)[0] for n in tq.STEMS}
+        smap = _host().stem_map(audio, 11025, ta.phrase_boundaries_8bar)
         grooves, breaks = tq.full_groove_runs(smap), tq.breakdowns(smap)
     b_rap, rap_at = None, []
     if sb and vb:
@@ -838,8 +856,8 @@ def _pair_features(a_id: str, b_id: str, keylock: bool = False):
             step = max(1, len(chunks) // 8)
             rows = []
             for s, e in chunks[::step][:8]:
-                y, sr = librosa.load(sb["vocals"], sr=16000, mono=True, offset=s, duration=e - s)
-                rows.append({"at": round(s, 1), **tq.vocal_style(y, sr)})
+                y, sr = _load_audio(sb["vocals"], sr=16000, mono=True, offset=s, duration=e - s)
+                rows.append({"at": round(s, 1), **_host().vocal_style(y, sr)})
             _voiced_cache[key] = rows
         rows = _voiced_cache[key]
         rap_at = [r["at"] for r in rows if r["rap"]]
@@ -854,6 +872,10 @@ def _pair_features(a_id: str, b_id: str, keylock: bool = False):
 
 
 def _safe_hook_drops(track_id: str) -> list:
+    return _host().hook_drops(track_id)
+
+
+def _safe_hook_drops_impl(track_id: str) -> list:
     try:
         return _hook_drops(track_id)
     except Exception:          # lyrics are a bonus: never break technique ranking
@@ -890,7 +912,7 @@ def _hook_drops(track_id: str, top_n: int = 3, ai_call: bool = False) -> list:
         if stems and stems.get("vocals"):
             import librosa
 
-            y, _ = librosa.load(stems["vocals"], sr=11025, mono=True)
+            y, _ = _load_audio(stems["vocals"], sr=11025, mono=True)
         lines = lyrics.for_file(name, y, 11025, duration=a.duration)
         if not lines:
             _hook_drop_miss[track_id] = time.time()
@@ -919,7 +941,7 @@ def _song_step(kind: str, track_id: Optional[str], **fields) -> None:
     """One AI step into the per-song log (app/ui/song_log.py). Never raises."""
     try:
         from app.ui import song_log
-        song_log.step(kind, track_id, **fields)
+        _host().song_step(kind, track_id, **fields)
     except Exception:
         pass
 
@@ -941,7 +963,7 @@ def post_session_event(ev: SessionEvent):
     fields = {(f"{k}_" if k in ("kind", "t", "at") else k): v for k, v in list(ev.data.items())[:20] if isinstance(k, str)}
     session_log.log(ev.kind, **fields)
     from app.ui import song_log
-    song_log.on_session_event(ev.kind, fields)   # transitions / glitches also land on the song
+    _host().session_event(ev.kind, fields)   # transitions / glitches also land on the song
     return {"ok": True, "session": session_log.SESSION_ID}
 
 
@@ -1254,14 +1276,14 @@ def post_riff_plan(req: RiffRequest):
     sb = _cached_stems4(req.b_id)
 
     def b_bass_db(lo, hi):
-        y, sr = librosa.load(sb["bass"], sr=11025, mono=True, offset=lo, duration=hi - lo)
+        y, sr = _load_audio(sb["bass"], sr=11025, mono=True, offset=lo, duration=hi - lo)
         return float(10 * np.log10(np.mean(y ** 2) + 1e-12))
 
     plan = keylock.choose(a, b, f.a_grooves, f.a_breakdowns, f.b_rap_at, b_bass_db, req.not_before)
     if not plan["ok"]:
         return plan
     # B's entry skips a repeated opening hook (rhythm repeats bar after bar)
-    yv, srv = librosa.load(sb["vocals"], sr=22050, mono=True)
+    yv, srv = _load_audio(sb["vocals"], sr=22050, mono=True)
     rep = tq.repetitive_bars(yv, srv, b["downbeat_times"])
     entry = tq.skip_repetitive_intro(rep, b["downbeat_times"], b["phrase_boundaries_8bar"], plan["b_entry"])
     plan["b_skipped_hook_s"] = round(entry - plan["b_entry"], 2)
@@ -1277,7 +1299,7 @@ def post_riff_plan(req: RiffRequest):
     key, state = keylock.ensure(stem_service.file_hash(_track_path(req.a_id)), _cached_stems4(req.a_id), plan)
     # B's levels where it drops (16 bars from the rap), for the balance
     lo, hi = plan["b_entry"], plan["b_entry"] + 16 * plan["bar_s"]
-    lv = {n: librosa.load(sb[n], sr=11025, mono=True, offset=lo, duration=hi - lo)[0] for n in keylock.STEMS}
+    lv = {n: _load_audio(sb[n], sr=11025, mono=True, offset=lo, duration=hi - lo)[0] for n in keylock.STEMS}
     plan["b_levels"] = {"b_mix_db": keylock.rms_db(sum(lv.values())), "b_vocals_db": keylock.rms_db(lv["vocals"]),
                         "b_bass_db": keylock.rms_db(lv["bass"])}
     plan.update(key=key, state=state, why=fit["reasons"],
@@ -1311,7 +1333,7 @@ def post_riff_balance(key: str, b_levels: dict):
 def get_riff_stem(key: str, name: str):
     from app.music_brain import keylock
 
-    p = keylock.stem_path(key, name)
+    p = _host().keylock_stem_path(key, name)
     if not p:
         raise HTTPException(status_code=404, detail="key-locked stem not rendered")
     return FileResponse(p, media_type="audio/wav")
@@ -1335,7 +1357,6 @@ FAMOUS_VIEWS = 20_000_000   # the room knows it (leavemealone 36M, played 7 min 
 @app.get("/api/tracks/{track_id}/fame")
 def get_track_fame(track_id: str):
     """How well known the song is: YouTube views of its best matching upload."""
-    from app.ui.download_service import song_views
 
     _track_path(track_id)
     if not _fame and FAME_PATH.exists():
@@ -1346,7 +1367,7 @@ def get_track_fame(track_id: str):
     if track_id in _fame:
         return _fame[track_id]
     name = _track_names.get(track_id) or ""
-    views = song_views(name) if len(name) >= 3 else None
+    views = _host().song_views(name) if len(name) >= 3 else None
     res = {"views": views, "famous": bool(views and views >= FAMOUS_VIEWS), "name": name}
     if views is not None:                    # only cache real answers
         _fame[track_id] = res
@@ -1411,6 +1432,10 @@ class MashupRequest(BaseModel):
 
 
 def _vocals_stem(track_id: str) -> str:
+    return _host().vocals_stem(track_id)
+
+
+def _vocals_stem_impl(track_id: str) -> str:
     from app.music_brain.mashup import MASHUP_DEMUCS_MODEL
 
     result = separate_stems(_track_path(track_id), two_stems="vocals", model=MASHUP_DEMUCS_MODEL)
@@ -1946,7 +1971,10 @@ def _autopilot_suggest_impl(req: AutopilotSuggestRequest):
     """Use local LLM (Ollama gemma3:4b by default) to suggest next tracks."""
     import traceback
     import numpy as np
-    from app.ui.autopilot_service import SET_MODES, suggest_next_tracks
+    from app.ui import engine
+    from app.ui.autopilot_service import SET_MODES
+
+    suggest_next_tracks = engine.current().suggest
 
     try:
         path = _track_path(req.track_id)

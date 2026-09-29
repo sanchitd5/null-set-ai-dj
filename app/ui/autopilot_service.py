@@ -20,7 +20,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, wait
 
-from app.ui import llm_gate
+from app.ui import engine, llm_gate
 
 # ── Camelot wheel compatibility rules ─────────────────────────────────────────
 # Listed explicitly so a small local model doesn't have to derive them.
@@ -187,8 +187,7 @@ _verify_inflight: set[tuple[str, str]] = set()                   # songs being l
 
 
 def _verify_song(artist: str, title: str):
-    from app.ui.download_service import verify_song
-    return verify_song(artist, title)
+    return engine.current().host.verify_song(artist, title)
 
 
 def _verify_key(artist, title) -> tuple[str, str]:
@@ -808,7 +807,7 @@ def chat_raw(
         with llm_gate.gate.slot(priority, wait_timeout=wait) as waited:
             left = None if timeout is None else max(5.0, timeout - waited)
             t0 = time.monotonic()
-            raw = _chat_call(system, user, temperature, left, model, max_tokens)
+            raw = engine.current().ai.chat(system, user, temperature, left, model, max_tokens)
     except Exception as exc:
         session_log.log("llm", priority=llm_gate.NAMES.get(priority), max_tokens=max_tokens, ok=False,
                         waited=round(waited, 2) if waited is not None else None,
@@ -1076,7 +1075,7 @@ def suggest_next_tracks(
 
     def can_retry() -> bool:
         """A corrective retry only while it still lands inside the decision budget."""
-        return time.monotonic() - t_start < SUGGEST_BUDGET_S - RETRY_COST_S
+        return time.monotonic() - t_start < engine.current().suggest_budget_s(SUGGEST_BUDGET_S) - RETRY_COST_S
 
     data = None
     # Budget: what recent replies needed (a first call cut at 900 then redone at 1800

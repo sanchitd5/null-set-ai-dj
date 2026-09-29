@@ -140,9 +140,25 @@ def build_run(js: dict, world, meta: dict) -> dict:
               "song_index": k + 1} for k, t in enumerate(transitions)]
     counters["candidates"] = len(rejects) + len(transitions)
     return {"meta": {**meta, "tracks_played": len(songs), "stalled": js["ended"] != "songs", "ended": js["ended"],
-                     "replay_misses": len(world.misses), "misses": world.misses[:20]},
+                     "llm": llm_summary(world.llm_calls),
+                     "replay_misses": len(world.misses), "replay_drift": len(world.drift),
+                     # threads ask in any order: the list is sorted so a run's outputs are byte-stable
+                     "misses": sorted(world.misses, key=lambda m: (m["what"], m["key"]))[:20]},
             "songs": songs, "transitions": transitions, "preps": preps, "rejects": rejects, "counters": counters,
             "audible": {"set": js["audible"].get("set")}}
+
+
+def llm_summary(calls: list) -> dict:
+    """What the model did in this run: calls by kind, replies that were empty (no picks / "{}") or not JSON at
+    all, and the mean latency of the calls that have one (a recording keeps it; the stub has none)."""
+    task = [c for c in calls if c["kind"] in ("suggest", "lookahead", "plan")]
+    lat = [c["latency_s"] for c in calls if c.get("latency_s") is not None]
+    by_kind: dict = {}
+    for c in calls:
+        by_kind[c["kind"]] = by_kind.get(c["kind"], 0) + 1
+    return {"calls": len(calls), "by_kind": dict(sorted(by_kind.items())),
+            "empty": sum(1 for c in task if c["quality"] == "empty"), "invalid": sum(1 for c in task if c["quality"] == "invalid"),
+            "latency_mean_s": round(sum(lat) / len(lat), 2) if lat else None}
 
 
 def _kind_of(recipe: Optional[str]) -> str:

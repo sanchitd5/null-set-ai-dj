@@ -105,7 +105,14 @@ def run_set(a: argparse.Namespace) -> dict:
     world = World(world_mode, name, seed, run_cache, pool=pool, record=bool(a.record), llm=llm, library=library,
                   caps=Caps(max_downloads=a.max_downloads), fixtures_dir=Path(a.fixtures) if a.fixtures else None)
     if world_mode == "live":
-        world.bind_live()
+        # the app's own model, found read-only; down = stop here, before YouTube is touched. Never the stub.
+        from app.sim import llm_probe
+
+        ep = llm_probe.resolve()
+        world.fx["llm_endpoint"] = ep.as_meta()
+        world.fx["ear_server_up"] = llm_probe.ear_up()
+        print(f"model: {ep.backend} {ep.model} @ {ep.base_url}; live ear server {'up' if world.fx['ear_server_up'] else 'down (rules answer)'}",
+              file=sys.stderr, flush=True)
     world.install()
     try:
         seed_url = world.pick_seed(random.Random(f"sim:{seed}"))
@@ -184,8 +191,12 @@ def main(argv=None) -> int:
     try:
         report = run_set(a)
     except Exception as exc:
+        from app.sim.llm_probe import LLMDown
         from app.sim.world import WorldError
 
+        if isinstance(exc, LLMDown):
+            print(f"virtual set stopped: {exc}", file=sys.stderr)
+            return 4
         if isinstance(exc, WorldError):
             print(f"virtual set stopped: {exc}", file=sys.stderr)
             return 3

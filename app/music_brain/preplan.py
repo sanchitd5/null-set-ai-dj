@@ -45,9 +45,9 @@ _unheard: Dict[str, tuple] = {}
 
 def bar_rms(path: str, bar_s: float, sr: int = SR) -> np.ndarray:
     """RMS per bar of one stem (song time = bar index * bar_s)."""
-    import librosa
+    from app.ui import engine
 
-    y, _ = librosa.load(path, sr=sr, mono=True)
+    y, _ = engine.load_audio(path, sr=sr, mono=True)
     n = int(bar_s * sr)
     k = len(y) // n
     if k == 0:

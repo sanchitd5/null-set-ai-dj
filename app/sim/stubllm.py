@@ -11,8 +11,12 @@ measured energy, the songs around it) exactly as a model would, and behaves like
 slightly noisy selector: it knows each catalog song's tempo, key and energy and prefers a
 lockable tempo, a compatible key and a close energy, plus seeded noise so it is not a perfect
 optimiser. Swap it for the real model with `--record`. Every random draw is seeded from
-(seed, kind, the song playing, call number): the answer to a call never depends on which other
-calls happened.
+(seed, kind, the song playing, call number about that song): the answer to a call never depends on
+which other calls happened. It keeps no memory of what it already said: like a model it is shown
+what was played, queued and rejected (the prompt's "around" line) and that is all it excludes. (An
+earlier version remembered every song it had suggested; after ~14 rounds of rejected picks the
+catalog was exhausted and the set stalled for good, a stub artifact that showed up as "stalls" and
+"empty picks" in the seed-1 / seed-2 long sets.)
 """
 from __future__ import annotations
 
@@ -56,7 +60,6 @@ class StubLLM:
         self.catalog = sorted(catalog, key=lambda c: (c["name"].lower(), c.get("id", "")))
         self.noise = noise
         self.calls = 0
-        self.said: set = set()             # songs this model has already suggested in this run
 
     def reply(self, kind: str, system: str, user: str, ctx: dict) -> str:
         self.calls += 1
@@ -82,7 +85,7 @@ class StubLLM:
         scored = []
         for c in self.catalog:
             low = c["name"].lower()
-            if title and title.lower() in low or low in around or low in self.said:
+            if title and title.lower() in low or low in around:
                 continue
             gap = _tempo_gap(cur_bpm, float(c.get("bpm") or 0))
             try:
@@ -95,7 +98,6 @@ class StubLLM:
         scored.sort(key=lambda x: (-x[0], x[1]["name"].lower()))
         picks = []
         for _, c in scored[:n]:
-            self.said.add(c["name"].lower())
             artist, ttl = split_name(c["name"])
             picks.append({
                 "artist": artist or "Unknown", "title": ttl, "reason": "similar tempo and key",

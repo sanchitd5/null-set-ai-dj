@@ -75,7 +75,8 @@ DIRECTION = {
     "same_artist_repeats": -1, "max_artist_run": -1, "repeat_songs": -1, "short_songs": -1, "song_min_s": +1, "song_max_s": 0,
     "song_mean_s": 0, "long_blend_share": 0, "echo_out_share": -1, "plan_exec_mismatch": -1, "degraded_moves": -1,
     "discarded_plans": -1, "no_plan": -1, "empty_picks": -1, "stalls": -1, "search_rounds_extra": -1, "transitions": +1,
-    "songs_played": +1, "replay_misses": -1, "http_errors": -1, "download_failures": -1, "score": -1,
+    "songs_played": +1, "replay_misses": -1, "replay_drift": 0,
+    "llm_calls": 0, "llm_empty_replies": -1, "llm_invalid_replies": -1, "llm_latency_mean_s": 0, "http_errors": -1, "download_failures": -1, "score": -1,
 }
 
 
@@ -212,7 +213,11 @@ def score_run(run: dict, artists_of: Optional[Callable[[str], set]] = None, iden
         "no_plan": sum(1 for t in trans if not t.get("plan_parsed")),
         "empty_picks": counters.get("picks_empty", 0), "stalls": counters.get("stalls", 0),
         "search_rounds_extra": extra_rounds,
-        "replay_misses": run["meta"].get("replay_misses", 0), "http_errors": counters.get("http_errors", 0),
+        "llm_calls": (run["meta"].get("llm") or {}).get("calls", 0),
+        "llm_empty_replies": (run["meta"].get("llm") or {}).get("empty", 0),
+        "llm_invalid_replies": (run["meta"].get("llm") or {}).get("invalid", 0),
+        "llm_latency_mean_s": (run["meta"].get("llm") or {}).get("latency_mean_s") or 0.0,
+        "replay_misses": run["meta"].get("replay_misses", 0), "replay_drift": run["meta"].get("replay_drift", 0), "http_errors": counters.get("http_errors", 0),
         "download_failures": counters.get("download_failures", 0),
     }
     long_over = sum(max(0.0, s - MAX_SONG_S) / 60.0 for s in secs)
@@ -241,6 +246,6 @@ def score_run(run: dict, artists_of: Optional[Callable[[str], set]] = None, iden
         "breakdown": dict(sorted(bd.items(), key=lambda kv: (-kv[1], kv[0]))),
         "metrics": m, "weights": WEIGHTS,
         "worst": [{"transition": r[1], "from": r[2], "to": r[3], "penalty": round(r[0], 2), "reasons": r[4]} for r in worst if r[0] > 0],
-        "meta": {k: run["meta"].get(k) for k in ("seed", "mode", "tracks_played", "world", "name", "stalled", "fixture_source")},
+        "meta": {k: run["meta"].get(k) for k in ("seed", "mode", "tracks_played", "world", "name", "stalled", "fixture_source", "llm")},
         "songs": [{"name": s["name"], "level": s.get("level"), "seconds": s.get("seconds")} for s in songs],
     }

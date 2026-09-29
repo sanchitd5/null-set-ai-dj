@@ -108,6 +108,13 @@ _lib_cache: tuple = (None, [])
 
 
 def library_raws() -> List[float]:
+    """The library's raw energy scores, through the installed engine's host."""
+    from app.ui import engine
+
+    return engine.current().host.library_raws()
+
+
+def _library_raws_impl() -> List[float]:
     """Every measured track's raw score; re-read only when the cache dir changed."""
     global _lib_cache
     try:

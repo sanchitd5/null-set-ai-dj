@@ -14,11 +14,11 @@ from __future__ import annotations
 
 import shutil
 import threading
-import time
-import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
+
+from app.ui import engine
 
 MIN_SONG_SECS = 90
 MAX_SONG_SECS = 9 * 60
@@ -35,7 +35,7 @@ def _update(job_id: str, **fields) -> None:
         job = _jobs.get(job_id)
         if job is not None:
             job.update(fields)
-            job["updated_at"] = time.time()
+            job["updated_at"] = engine.current().host.now()
 
 
 def get_job(job_id: str) -> Optional[dict]:
@@ -66,8 +66,9 @@ def start_job(
 ) -> str:
     """Queue a download. register_fn moves files into the registry and returns
     [{track_id, filename, display_name}]; analyze_fn(track_id) -> TrackAnalysis."""
-    job_id = uuid.uuid4().hex[:12]
-    now = time.time()
+    host = engine.current().host
+    job_id = host.new_id(6)
+    now = host.now()
     with _lock:
         _jobs[job_id] = {
             "id": job_id, "url": url, "label": label or url, "state": "queued",
@@ -77,7 +78,7 @@ def start_job(
         _prune()
 
     def _run() -> None:
-        tmp_dir = upload_dir / f"_dl_{uuid.uuid4().hex}"
+        tmp_dir = upload_dir / f"_dl_{host.new_id(16)}"
         try:
             _update(job_id, state="running", stage="starting")
             paths = download_fn(
@@ -102,5 +103,5 @@ def start_job(
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
-    _executor.submit(_run)
+    host.spawn(_executor, _run)
     return job_id
