@@ -137,6 +137,9 @@ def get_macro(name: str):
         raise HTTPException(status_code=404, detail=f"no macro {name}") from None
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
+    from app.ui import dedup_songs as ds
+    aliases = ds.load_aliases(ATLAS_CACHE_DIR)
+    m = mc.resolve_ids(m, lambda t: ds.resolve_alias(t, ATLAS_CACHE_DIR, aliases))
     return {"macro": m, "validation": mc.validate(m, _known, _has_stems)}
 
 

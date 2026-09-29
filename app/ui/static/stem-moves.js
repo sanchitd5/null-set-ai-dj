@@ -905,7 +905,8 @@
       const M = k * HOLD_PHRASE_BARS;
       const ranked = mergeRank({ eA: meanArr(o.eA, 0, M), eB: meanArr(o.eB, 0, M), keyScore: o.keyScore, bRap: o.bRap });
       if (!ranked.length) { tried.push({ M, gate: "no_combo" }); continue; }
-      const pick = ranked[0], bad = holdUnclean(pick.combo, o.eA, o.eB, k);
+      // a stored move (macro step) asks for its combo: it still passes every gate below
+      const pick = (o.preferLabel && ranked.find((r) => r.label === o.preferLabel)) || ranked[0], bad = holdUnclean(pick.combo, o.eA, o.eB, k);
       if (bad) { tried.push({ M, gate: "unclean", stem: bad.stem, phrase: bad.phrase }); continue; }
       const plan = mergeTransitionPlan(M, pick.combo, false);
       const sub = subOwnerCheck(plan, M);
@@ -925,7 +926,7 @@
       return no(last.gate || "no_combo", `no clean hold: ${tried.map((t) => `${t.M} bars ${t.gate}${t.stem ? ` (${t.stem})` : ""}`).join("; ")}`, tried);
     }
     cands.sort((x, y) => y.score - x.score || y.M - x.M);
-    const b = cands[0], barS = o.barS || 0;
+    const b = (o.preferM && cands.find((c) => c.M === o.preferM)) || cands[0], barS = o.barS || 0;   // stored hold length when clean
     return {
       ok: true, M: b.M, holdBars: b.M - MERGE_START_BARS, holdPhrases: b.k, pick: b.pick, ranked: b.ranked, tried,
       phases: {
