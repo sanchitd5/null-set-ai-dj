@@ -1583,8 +1583,8 @@
     return true;
   }
 
-  // AI ACTIONS wiring (owner contract): aiActions.register when it exists, the "ai-action" event on djEvents
-  // ({id}), and the button itself; one run per click (a second path within 1 s is the same click). The run is
+  // AI ACTIONS wiring (owner contract): aiActions.register when it exists, else the "ai-action" {id} bus event;
+  // one run per click (a second path within 1 s is the same click). The run is
   // logged to the step log and its result (or the named refusal) goes to the status line.
   const ARTIST_LABEL = { filter_loop: "FILTER LOOP", drums_host: "DRUMS HOST" };
   const onDemand = {}, lastRun = {};
@@ -1601,17 +1601,8 @@
       return r;
     };
   }
-  function wireActions() {
-    const aa = host.mod.aiActions;
-    if (aa && typeof aa.register === "function") for (const id of Object.keys(onDemand)) aa.register(id, onDemand[id]);
-    for (const id of Object.keys(onDemand)) {
-      const b = ui.query(`[data-ai-action="${id}"]`);
-      if (b && b.addEventListener && !b._artistWired) { b._artistWired = true; b.addEventListener("click", () => onDemand[id]()); }
-    }
-  }
-  setTimeout(wireActions, 0);
-  const evs = host.mod.djEvents;
-  if (evs && evs.addEventListener) evs.addEventListener("ai-action", (e) => { const id = e && e.detail && e.detail.id; if (onDemand[id]) onDemand[id](); });
+  setTimeout(() => { const aa = host.mod.aiActions; if (aa && typeof aa.register === "function") for (const id of Object.keys(onDemand)) aa.register(id, onDemand[id]); }, 0);
+  host.bus.on("ai-action", (e) => { const id = e && e.detail && e.detail.id; if (onDemand[id]) onDemand[id](); });
 
   const api = { core, mergeTransition, hookDrop, breakdown, handoff, instrumental, reset, audioAt, vocalShare, stemBlend, remix, REMIX_LABEL, mashupBreak, stemBridge, mashupTransition,
                      filterLoopFits, drumsHostFits, artistRunNow, runNow: artistRunNow, onDemand,
