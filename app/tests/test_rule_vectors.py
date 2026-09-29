@@ -42,6 +42,13 @@ def test_breakdown_spans_python_matches_vectors():
         assert [list(s) for s in got] == c["expect"], i
 
 
+def test_energy_target_python_matches_vectors():
+    cases = V["energy_target"]["cases"]
+    assert any(c["expect"]["ok"] for c in cases) and any(not c["expect"]["ok"] for c in cases)
+    for c in cases:
+        assert energy.at_target(c["recent"], c["songs"]) == c["expect"], c
+
+
 def test_preplan_never_starts_inside_a_breakdown():
     """S22: no candidate's B entry (a_in) or handover line lands inside A's breakdown."""
     bpm, bar = 128.0, 240.0 / 128.0

@@ -256,6 +256,8 @@ def set_level_report(js: dict, run: dict, by_name: dict, fame: Optional[dict] = 
         "fx_budget_spent": fx_n, "fx_budget_refused": sum(refused.values()),
         "fx_budget_by_kind": {"spent": dict(sorted(spent.items())), "refused": dict(sorted(refused.items()))},
         "fx_density_per_30min": round(fx_n / dur_min * 30, 2) if dur_min > 0 else 0.0,
+        # hidden-practices item 10: overlap near 25 % of on-air time at most (measured, not enforced)
+        "overlap_share": round(sum(ov) / (dur_min * 60), 3) if dur_min > 0 else 0.0,
         "exits_checked": checked, "exits_in_breakdown": len(inside), "exits_in_breakdown_at": inside,
         "overlap_seconds": {"n": len(ov), "min": q(0), "p50": q(0.5), "p90": q(0.9), "max": q(1.0 - 1e-9),
                             "mean": round(sum(ov) / len(ov), 1) if ov else 0.0},
@@ -469,10 +471,12 @@ def feature_table(js: dict, world, run: dict) -> dict:
     F["fame"].executed += sum(1 for n in net if n["path"].endswith("/fame"))
     F["mashup_layer"].executed += sum(1 for n in net if n["path"].startswith("/api/mashup/plan") and n.get("status") == 200)
 
+    set_level = set_level_report(js, run, by_name, {server._track_names[t]: bool(f.get("famous"))
+                                                    for t, f in server._fame.items() if t in server._track_names})
     status = js.get("status_log") or []
     labels, last_label = Counter(), None
     for st in status:
-        m = re.search(r"\| (LONG|MID|QUICK·bail|QUICK|BRIDGE|FULL·famous) ", st["text"])
+        m = re.search(r"\| (LONG|MID|QUICK·bail|QUICK|BRIDGE|FULL·famous|FULL·finish) ", st["text"])
         if m and m.group(1) != last_label:          # count each window once (the status line repeats every second)
             labels[m.group(1)] += 1
         if m:
@@ -484,6 +488,7 @@ def feature_table(js: dict, world, run: dict) -> dict:
         F["set_mode_windows"].details.append(f"{lab} x{n}")
     if labels.get("FULL·famous"):
         F["fame"].executed += labels["FULL·famous"]
+    set_level["full_playthrough_count"] = labels.get("FULL·finish", 0)   # "let the song finish" windows
 
     orb = Counter()
     for u in js.get("ui_states") or []:
@@ -516,9 +521,7 @@ def feature_table(js: dict, world, run: dict) -> dict:
     never = sorted(k for k, v in table.items() if v["triggered"] == 0)
     return {"table": table, "never_triggered": never, "triggered": sorted(k for k in table if table[k]["triggered"]),
             "cookbook": {"viable": sorted(probe["viable"]), "top1": sorted(probe["top1"]), "total": probe["total"]},
-            "learned_moves": learned,
-            "set_level": set_level_report(js, run, by_name, {server._track_names[t]: bool(f.get("famous"))
-                                                              for t, f in server._fame.items() if t in server._track_names})}
+            "learned_moves": learned, "set_level": set_level}
 
 
 def recipe_probe(run: dict, by_name: dict) -> dict:

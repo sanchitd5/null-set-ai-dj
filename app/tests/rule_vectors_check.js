@@ -24,6 +24,10 @@ V.breakdown_spans.cases.forEach((c, i) => {
   assert.deepStrictEqual(ap.breakdownSpans(c.times, c.curve, c.bar), c.expect, `breakdownSpans case ${i}`);
   n++;
 });
+V.energy_target.cases.forEach((c, i) => {
+  assert.deepStrictEqual(ap.energyAtTarget(c.recent, c.songs), c.expect, `energyAtTarget case ${i}`);
+  n++;
+});
 V.merge_rank.cases.forEach((c, i) => {
   const r = sm.mergeRank({ eA: c.eA, eB: c.eB, keyScore: c.keyScore, aRap: c.aRap, bRap: c.bRap });
   assert.deepStrictEqual(r.map((x) => ({ combo: x.combo, score: x.score })), c.expect, `mergeRank case ${i}`);

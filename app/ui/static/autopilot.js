@@ -268,6 +268,21 @@ var autopilotCore = (function () {
     }
     return { ok: true, step, why: `energy ${cur} -> ${nxt}` };
   }
+  // "Let the song finish" gate (research/notes/dj-hidden-practices.md item 10); the same rule as
+  // app/music_brain/energy.at_target (golden vectors): out of the warm-up (or a low set), the last
+  // 3 measured levels within 1 of each other, the playing song within 1 of the recent peak. GUESS numbers.
+  const TARGET_SONGS = 3, TARGET_TOL = 1;
+  function energyAtTarget(recent, songs) {
+    const lv = (recent || []).filter((v) => v != null);
+    if (lv.length < TARGET_SONGS) return { ok: false, why: `only ${lv.length} measured songs` };
+    const cur = lv[lv.length - 1];
+    if (songs < WARMUP_SONGS && cur > LOW_ENERGY_SET_MAX) return { ok: false, why: "the set is still building" };
+    const last = lv.slice(-TARGET_SONGS), lo = Math.min(...last), hi = Math.max(...last);
+    if (hi - lo > TARGET_TOL) return { ok: false, why: `energy still moving (${lo}-${hi})` };
+    const peak = Math.max(...lv.slice(-PEAK_WINDOW));
+    if (peak - cur > TARGET_TOL) return { ok: false, why: `energy ${cur} under the recent peak ${peak}` };
+    return { ok: true, why: `energy holding at ${cur}` };
+  }
 
   // HYBRID window class by measured energy. Very low energy (<= 3) rides MID, not LONG:
   // an E2 song in a fading set ran 283 s with no exit (015929).
@@ -411,14 +426,22 @@ var autopilotCore = (function () {
     // steering toward the occasion's music: short bridge songs (user: 30-60 s each)
     bridge: { min: 30,  max: 60,  xf: 8,  label: "BRIDGE" },
   };
-  // o: {steering ("move"), famous, rem (famous song: seconds left from its entry),
-  //     mode, score, energy}
+  // o: {steering ("move"), famous, rem (famous / finish song: seconds left from its entry),
+  //     mode, score, energy, finish}
+  const FINISH_MAX_S = 360;        // = WINDOWS.long.max; GUESS
   function playWindowFor(o) {
     if (o.steering === "move") return WINDOWS.bridge;
     // A famous song plays in full (user; the USB002 set rides leavemealone for
     // 7 min): exit only in its last ~50 s, i.e. the outro.
     if (o.famous && o.rem > 90) return { min: Math.max(60, o.rem - 50), max: Math.max(70, o.rem - 6), xf: 24, label: "FULL·famous" };
     const weak = (o.score == null ? 50 : o.score) < 65;
+    // Let the song finish (dj-hidden-practices item 10): the set holds its energy target
+    // (o.finish, energyAtTarget), so this song plays to its outro like a famous one. Never in
+    // QUICK (the user asked for quick), never over a weak match's bail, never on a song with
+    // more than FINISH_MAX_S left (no 7-minute holds). The exit stays before the audible end.
+    if (o.finish && o.mode !== "quick" && !weak && o.rem > 90 && o.rem <= FINISH_MAX_S) {
+      return { min: Math.max(60, o.rem - 50), max: Math.max(70, o.rem - 6), xf: 24, label: "FULL·finish" };
+    }
     if (o.mode === "long") return WINDOWS.long;
     if (o.mode === "quick") return weak ? WINDOWS.bail : WINDOWS.quick;
     if (weak) return WINDOWS.bail;
@@ -569,7 +592,7 @@ var autopilotCore = (function () {
   const api = { prerenderTargets, readinessNeeds, aTempoAtEntry, deferBudgetS, deferDecision, orderByReadiness, DEFER_MAX_S, DEFER_MIN_LEAD_S, PREFER_READY_JUMP,
     emptyRetryMs, useLibraryFallback, rememberPairReject, pairRejected, awaitJob, keySafeRecipe, KEY_SAFE_MIN, energyStepOk, hybridWindowKey, highSpans, quantileLinear, median, exitPastHigh, learnedRecipe, vocalRecipe, stemBlendBars, stemBlendFader, phraseWaitS, introBars, FADER_PARK_BARS, homePlan, maskedGlideBars, maskedDropAt, HOME_DROP_PCT, LADDER_STEP_PCT,
     tempoLockableAt, recipeKind, decideRecipe, planSkipReason, WINDOWS, playWindowFor, exitBounds, exitPick, exitTiming, exitHighPush, audibleEnd, entryClamp, SILENT_FLOOR,
-    breakdownSpans, exitOutOfBreakdown, exitBreakdownPush };
+    breakdownSpans, exitOutOfBreakdown, exitBreakdownPush, energyAtTarget, FINISH_MAX_S };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   return api;
 })();
@@ -3131,9 +3154,17 @@ function createAutopilotEngine({ host, ai }) {
     // breakdowns (stem-moves.js) keep it from sounding long.
     const pd = host.decks && host.decks[activeDeck];
     const famous = !!(pd && pd.fame && pd.fame.famous && pd.buffer);
-    return autopilotCore.playWindowFor({ steering, famous, rem: famous ? autopilotCore.audibleEnd(pd.analysis, pd.buffer.duration) - (entryPos || 0) : 0,
+    // let the song finish: the set holds its energy target; never two songs in a row (GUESS: variety)
+    const idx = history.length;
+    const finish = !famous && !!(pd && pd.buffer) && host.ui.flag("ap-finish-toggle", true)
+      && (lastFinishIdx === idx || idx - lastFinishIdx >= 2) && autopilotCore.energyAtTarget(playedEnergies(), idx).ok;
+    const w = autopilotCore.playWindowFor({ steering, famous, finish,
+      rem: famous || finish ? autopilotCore.audibleEnd(pd.analysis, pd.buffer.duration) - (entryPos || 0) : 0,
       mode: setMode(), score, energy: currentEnergy });
+    if (w.label === "FULL·finish") lastFinishIdx = idx;
+    return w;
   }
+  let lastFinishIdx = -9;
 
   // ── live mashup ("A x B") ─────────────────────────────────────────────────
   // Before the transition, lay the NEXT track's vocal over one instrumental
@@ -3332,7 +3363,7 @@ function createAutopilotEngine({ host, ai }) {
     if (!d.playing) d.play(d._currentPosition() || 0, true);
     if (xfader) { xfader.value = cur.deck === "a" ? "-1" : "1"; ui.fire(xfader, "input"); }
     entryPos = Math.max(0, d._currentPosition() - (heard[cur.trackId] || 0));
-    currentEnergy = null;
+    currentEnergy = null; lastFinishIdx = -9;
     if (host.mod.beatLayer) host.mod.beatLayer.follow(cur.deck);
     if (host.mod.djMind) { host.mod.djMind.reset(); host.mod.djMind.follow(cur.deck); }
     const past = session.filter((x) => x.id !== cur.trackId);
@@ -3396,7 +3427,7 @@ function createAutopilotEngine({ host, ai }) {
       const da = host.decks && host.decks.a;
       if (da) da.play(0, true);
       entryPos = 0;
-      currentEnergy = null;
+      currentEnergy = null; lastFinishIdx = -9;
       if (host.mod.beatLayer) host.mod.beatLayer.follow("a");
       if (host.mod.djMind) { host.mod.djMind.reset(); host.mod.djMind.follow("a"); }
 

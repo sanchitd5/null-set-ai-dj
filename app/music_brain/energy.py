@@ -193,6 +193,32 @@ def next_ok(cur: int, nxt: int, relaxed: bool = False, force: bool = False,
     return {"ok": True, "step": step, "why": f"energy {cur} -> {nxt}"}
 
 
+# "Let the song finish" (research/notes/dj-hidden-practices.md item 10, "allow a full play-through when energy is
+# at target"): the set is at its target when it has left the warm-up (or is a low-energy set that never builds),
+# the last TARGET_SONGS measured levels sit within TARGET_TOL of each other and the playing song is within
+# TARGET_TOL of the recent peak (last PEAK_WINDOW). The console's autopilot.js energyAtTarget() mirrors it
+# (golden vectors in app/tests/fixtures/rule_vectors.json). TARGET_SONGS and TARGET_TOL are GUESSES.
+TARGET_SONGS = 3
+TARGET_TOL = 1
+
+
+def at_target(recent: Optional[list], songs: int) -> dict:
+    """{ok, why}: is the set holding its energy target with the playing song (recent[-1])?"""
+    lv = [v for v in (recent or []) if v is not None]
+    if len(lv) < TARGET_SONGS:
+        return {"ok": False, "why": f"only {len(lv)} measured songs"}
+    cur = lv[-1]
+    if songs < WARMUP_SONGS and cur > LOW_ENERGY_SET_MAX:
+        return {"ok": False, "why": "the set is still building"}
+    last = lv[-TARGET_SONGS:]
+    if max(last) - min(last) > TARGET_TOL:
+        return {"ok": False, "why": f"energy still moving ({min(last)}-{max(last)})"}
+    peak = max(lv[-PEAK_WINDOW:])
+    if peak - cur > TARGET_TOL:
+        return {"ok": False, "why": f"energy {cur} under the recent peak {peak}"}
+    return {"ok": True, "why": f"energy holding at {cur}"}
+
+
 def allowed_window(cur: int, relaxed: bool = False, songs: Optional[int] = None,
                    set_pos: Optional[float] = None, recent: Optional[list] = None,
                    reset: bool = False) -> tuple:

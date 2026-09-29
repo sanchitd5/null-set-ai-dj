@@ -30,4 +30,22 @@ let n = 0;
   // flat / short curves: no breakdowns
   assert.deepStrictEqual(ap.breakdownSpans([0, 1, 2, 3, 4], [0.5, 0.5, 0.5, 0.5, 0.5], bar), []); n++;
 }
+// ---- let the song finish: a FULL window only when the set holds its energy, never in QUICK -----------
+{
+  const base = { mode: "hybrid", score: 80, energy: 8, rem: 240, finish: true };
+  const w = ap.playWindowFor(base);
+  assert.strictEqual(w.label, "FULL·finish"); assert.strictEqual(w.min, 190); assert.strictEqual(w.max, 234); n++;
+  assert.notStrictEqual(ap.playWindowFor({ ...base, mode: "quick" }).label, "FULL·finish"); n++;          // user asked quick
+  assert.strictEqual(ap.playWindowFor({ ...base, score: 40 }).label, "QUICK·bail"); n++;                  // weak match bails
+  assert.notStrictEqual(ap.playWindowFor({ ...base, rem: ap.FINISH_MAX_S + 1 }).label, "FULL·finish"); n++; // too long left
+  assert.notStrictEqual(ap.playWindowFor({ ...base, rem: 80 }).label, "FULL·finish"); n++;                // almost over anyway
+  assert.notStrictEqual(ap.playWindowFor({ ...base, finish: false }).label, "FULL·finish"); n++;
+  assert.strictEqual(ap.playWindowFor({ ...base, steering: "move" }).label, "BRIDGE"); n++;               // steering wins
+  assert.strictEqual(ap.playWindowFor({ ...base, famous: true, rem: 300 }).label, "FULL·famous"); n++;
+  // the gate itself (full coverage in rule_vectors)
+  assert.strictEqual(ap.energyAtTarget([7, 8, 8], 6).ok, true); n++;
+  assert.strictEqual(ap.energyAtTarget([5, 6, 8], 6).ok, false); n++;     // still moving
+  assert.strictEqual(ap.energyAtTarget([8, 8, 8], 3).ok, false); n++;     // warm-up
+  assert.strictEqual(ap.energyAtTarget([3, 3, 3], 2).ok, true); n++;      // a low set never builds
+}
 console.log(`set level OK (${n})`);
