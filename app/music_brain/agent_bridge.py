@@ -122,21 +122,32 @@ def preview(
 
 
 def learn_set(source: str, tracklist: Optional[str] = None, download: bool = True, jobs: int = 2, ai: bool = True,
-              macros: bool = True) -> dict:
+              macros: bool = True, macros_only: bool = False) -> dict:
     """Study a DJ set (URL or file): stems, per-stem song matching, transition and
     vocal re-cut extraction; merges learned techniques into the store. Then (macros=True)
     imports the set's songs as library tracks and rebuilds the pair atlas incrementally,
     which writes studied-<set_id>-<n> + studied-set-<set_id>; offline, never downloads.
     That step never fails the learn: its outcome is the `macros` field
-    ({imported, skipped, written[], error})."""
-    from app.music_brain.set_learner import learn_set as _learn
-
+    ({imported, skipped, written[], error}).
+    macros_only: no set audio, no study; the tracklist alone becomes the macro set-<set_id>
+    (set_import.learn_tracklist_macro). Both end by exporting app/music_brain/knowledge/
+    (the `knowledge` field; nothing is committed)."""
     log = lambda m: print(m, file=sys.stderr, flush=True)  # noqa: E731
-    report = _learn(source, tracklist=tracklist, download=download, jobs=jobs, ai=ai, log=log)
-    if macros:
-        from app.music_brain.set_import import learn_macros
+    if macros_only:
+        from app.music_brain.set_import import learn_tracklist_macro
 
-        report["macros"] = learn_macros(report["set_id"], log=log)
+        report = learn_tracklist_macro(source, tracklist=tracklist, download=download, log=log)
+    else:
+        from app.music_brain.set_learner import learn_set as _learn
+
+        report = _learn(source, tracklist=tracklist, download=download, jobs=jobs, ai=ai, log=log)
+        if macros:
+            from app.music_brain.set_import import learn_macros
+
+            report["macros"] = learn_macros(report["set_id"], log=log)
+    from app.music_brain import knowledge
+
+    report["knowledge"] = knowledge.export_safe(log=log)
     return report
 
 
@@ -226,6 +237,10 @@ def _build_parser() -> argparse.ArgumentParser:
     p_learn.add_argument("--jobs", type=int, default=2, help="Demucs runs at once (default 2; each holds a model in memory).")
     p_learn.add_argument("--no-macros", action="store_true",
                          help="Skip the import-set + incremental atlas build that writes this set's studied macros.")
+    p_learn.add_argument("--macros-only", action="store_true",
+                         help="No set audio, no Demucs on the mix: find or download each tracklist song, register it, "
+                              "build the atlas and write the macro set-<set_id> in tracklist order. A later full "
+                              "learn of the same set writes studied-set-<set_id>; both macros coexist.")
 
     sub.add_parser("learned", help="List techniques learned from studied sets.")
     sub.add_parser("learn-status", help="Progress of running / recent set studies (human readable, no server needed).")
@@ -298,7 +313,10 @@ def main(argv: Optional[list[str]] = None) -> int:
             payload = list_recipes()
         elif args.command == "learn-set":
             payload = learn_set(args.source, tracklist=args.tracklist, download=not args.no_download, jobs=args.jobs, ai=not args.no_ai,
-                                macros=not args.no_macros)
+                                macros=not args.no_macros, macros_only=args.macros_only)
+            if args.macros_only and not payload.get("macro"):
+                print(json.dumps(payload, indent=2, default=str))
+                return 1                  # the macro was the whole job
         elif args.command == "hook-drop":
             payload = hook_drops(args.audio, args.title, top_n=args.top_n, render=args.render, ai=not args.no_ai)
         elif args.command == "source":

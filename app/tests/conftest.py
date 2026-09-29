@@ -22,6 +22,14 @@ def _private_session_log(tmp_path_factory, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_tracked_knowledge(tmp_path_factory, monkeypatch):
+    """Tests never seed from, or export into, the tracked app/music_brain/knowledge/."""
+    from app.music_brain import knowledge
+    monkeypatch.setattr(knowledge, "KNOWLEDGE_DIR", tmp_path_factory.mktemp("knowledge"))
+    knowledge._SEEN.clear()
+
+
+@pytest.fixture(autouse=True)
 def _private_learn_progress(tmp_path_factory, monkeypatch):
     """Tests never write into the real data/cache/learn_progress (the console panel reads it)."""
     from app.music_brain import learn_progress

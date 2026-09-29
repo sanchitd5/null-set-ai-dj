@@ -12,7 +12,20 @@ REPORT = {"set_id": SID, "set_path": "/x", "observations": [], "learned": {}}
 
 @pytest.fixture
 def learned(monkeypatch):
+    from app.music_brain import knowledge
+
+    exported = []
     monkeypatch.setattr(set_learner, "learn_set", lambda source, **kw: dict(REPORT))
+    monkeypatch.setattr(knowledge, "export_safe", lambda **kw: exported.append(1) or {"macros": 0})
+    return exported
+
+
+def test_learn_set_ends_with_the_knowledge_export(monkeypatch, learned):
+    monkeypatch.setattr(si, "learn_macros", lambda set_id, **kw: {"written": []})
+    monkeypatch.setattr(si, "learn_tracklist_macro", lambda source, **kw: {"set_id": SID, "macro": f"set-{SID}"})
+    assert ab.learn_set("set.mp3")["knowledge"] == {"macros": 0}
+    assert ab.learn_set("set.mp3", macros_only=True)["knowledge"] == {"macros": 0}
+    assert learned == [1, 1]
 
 
 @pytest.fixture
