@@ -11,6 +11,7 @@
   <link rel="stylesheet" href="/null-bot.css" />
   <link rel="stylesheet" href="/vibe.css" />
   <link rel="stylesheet" href="/anyma-show.css" />
+  <link rel="stylesheet" href="/toggle-drawer.css" />
   <script src="https://unpkg.com/wavesurfer.js@7/dist/wavesurfer.min.js"></script>
   <script src="https://unpkg.com/wavesurfer.js@7/dist/plugins/regions.min.js"></script>
 </head>
@@ -305,6 +306,8 @@
     <button class="hw-btn ai-action" data-ai-action="hold" title="Hold on: loop the vocal's last bar over the next 4 bars while the music plays on">HOLD VOX</button>
     <button class="hw-btn ai-action" data-ai-action="vocals" title="This song to its instrumental on the next line, or back to the full mix">VOCAL SWAP</button>
     <button class="hw-btn ai-action" data-ai-action="riff" title="Riff over rap: key-lock this song to the next one's tempo, loop its drop under the next song's rap (only when the pair fits)">RIFF × RAP</button>
+    <button class="hw-btn" id="ai-more-btn" type="button" title="Every other on-demand move: grouped, searchable">MORE ACTIONS ▾</button>
+    <aside id="ai-more-drawer" hidden></aside>
   </div>
 
   <section class="deck-panel deck-a" id="deck-a" data-deck="a">
@@ -823,6 +826,9 @@
       <button class="hw-btn accent-btn" id="ap-start-btn">▶ START SET</button>
       <button class="hw-btn" id="ap-start-current-btn" title="Start the set from the song playing now (or loaded on a deck): no download, no restart. The songs you've already played this session steer the suggestions">▶ FROM CURRENT</button>
       <button class="hw-btn" id="ap-stop-btn" disabled>■ STOP</button>
+      <button class="hw-btn" id="ap-moves-btn" type="button" title="All AI move toggles: search, groups, all on / off">AI MOVES <span id="ap-moves-count"></span></button>
+      <aside id="ap-drawer" hidden></aside>
+          <button class="hw-btn" id="ap-moves-btn" type="button" title="All AI move toggles: search, groups, all on / off">AI MOVES <span id="ap-moves-count"></span></button>
       <label class="hud-label" title="Synced drum machine: sparse fills, build rolls and breakdown kicks on the playing deck's beatgrid">
         <input type="checkbox" id="ap-drums-toggle" checked /> LIVE DRUMS
       </label>
@@ -1005,5 +1011,6 @@
 <script src="/beat-grid-ai.js"></script>
 <script src="/vibe-ui.js"></script>
 <script src="/marquee.js"></script>
+<script src="/toggle-drawer.js"></script>
 </body>
 </html>

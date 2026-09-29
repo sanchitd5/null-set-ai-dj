@@ -201,7 +201,7 @@ async function createEnv(opts) {
     const skip = new Set(opts.skip || []);
     for (const src of order) {
       const name = src.replace(/^\//, "");
-      if (skip.has(name) || name === "host-browser.js" || name === "learn-progress.js") { env.scripts.push({ name, skipped: true }); continue; }
+      if (skip.has(name) || name === "host-browser.js" || name === "learn-progress.js" || name === "toggle-drawer.js") { env.scripts.push({ name, skipped: true }); continue; }
       const file = path.join(staticDir, name);
       try {
         vm.runInThisContext(fs.readFileSync(file, "utf8"), { filename: file });
