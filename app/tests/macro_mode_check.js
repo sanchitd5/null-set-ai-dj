@@ -74,6 +74,15 @@ const studied = { count: 1, sets: ["oRb_81stwy8"], djs: ["Anyma"], techniques: {
   assert.strictEqual(mm.followCandidates({ sets: [set], follow: "", aId: "0".repeat(16) }).set, null, "not in a studied set: no auto follow");
   const chosen = mm.followCandidates({ sets: [set], follow: "oRb_81stwy8", aId: "0".repeat(16), max: 2 });
   assert.deepStrictEqual(chosen.list.map((c) => c.position), [1, 2], "a chosen set starts from its first song");
+  // AUTO MIX with a macro selected: the step whose A is playing; else say why (owner)
+  {
+    const m = { name: "chain-x", steps: [{ n: 1, a: "a", b: "b" }, { n: 2, a: "b", b: "c" }] };
+    assert.deepStrictEqual(mm.autoMixPick(m, 0, "b"), { i: 1, step: m.steps[1] }, "playing song in macro -> its step");
+    assert.deepStrictEqual(mm.autoMixPick(m, 1, "a"), { i: 0, step: m.steps[0] }, "behind the cursor -> searched from the start");
+    assert.ok(/not in chain-x; press PLAY MACRO/.test(mm.autoMixPick(m, 0, "z").why), "not in macro -> clear message");
+    assert.ok(/last song/.test(mm.autoMixPick(m, 0, "c").why), "last song -> nothing to mix into");
+    assert.strictEqual(mm.autoMixPick(null, 0, "a"), null, "no macro -> AUTO MIX keeps today's behaviour");
+  }
   // owner: Anyma "Atoma" (not in the set) -> the Anyma set's songs, not a pop mashup
   const anyma = { set_id: "oRb_81stwy8", dj: "Anyma", songs: [
     song(1, "Anyma - Eternity", id(1)), song(2, "Anyma - Syren", id(2)), song(3, "Argy - Aria", id(3)), song(4, "Afterlife - Intro", id(4))] };

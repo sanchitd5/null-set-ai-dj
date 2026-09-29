@@ -259,6 +259,17 @@
     for (let i = Math.max(0, cursor); i < steps.length; i++) if (steps[i].a === aId) return { i, step: steps[i] };
     return null;
   }
+  // AUTO MIX with a macro selected (owner): the step whose A is the playing song (from the cursor,
+  // then from the start). The playing song is never swapped out. -> {i, step} | {why} | null (no macro)
+  function autoMixPick(macro, cursor, aId) {
+    const steps = (macro && macro.steps) || [];
+    if (!steps.length) return null;
+    const hit = aId ? runNext(macro, cursor, aId) || runNext(macro, 0, aId) : null;
+    if (hit) return hit;
+    const name = macro.name || "the macro";
+    if (aId && steps[steps.length - 1].b === aId) return { why: `the playing song is the last song of ${name}: nothing left to mix into` };
+    return { why: `the playing song is not in ${name}; press PLAY MACRO to start it` };
+  }
   // PLAY MACRO: the next k songs of the macro (B of each step from the cursor), for pre-render
   function upcomingIds(macro, cursor, k = 2) {
     return ((macro && macro.steps) || []).slice(Math.max(0, cursor), Math.max(0, cursor) + k).map((s) => s.b);
@@ -313,7 +324,7 @@
 
   const core = { MACRO_PREFERENCE, COMBO_MIN_WORKS, COMBO_LABEL, FOLLOW_WINDOW, artistOf, studiedLabel, followCandidates, macroOrder, comboCandidates, macroCandidate,
                  macroRows, macroListLabel,
-                 macroPrefer, streakAfter, streakLabel, applyPlan, fireAt, stepGate, editStep, setToMacro, runNowCheck, forcedOf, stepForPair, runNext, upcomingIds,
+                 macroPrefer, streakAfter, streakLabel, applyPlan, fireAt, stepGate, editStep, setToMacro, runNowCheck, forcedOf, stepForPair, runNext, autoMixPick, upcomingIds,
                  createRuntime: create };   // node checks drive the runtime over a fake Host
   if (typeof module !== "undefined" && module.exports) module.exports = core;
 
@@ -597,6 +608,35 @@
       }
       say(`PLAY MACRO: ${loaded.name}, step ${loaded.steps[cursor].n} of ${loaded.steps.length} next`);
     }
+    // AUTO MIX / Shift+M with a macro selected: load the step's B on the other deck (normal load
+    // path), wait (bounded) for its stems, then perform the stored move like PLAY STEP.
+    // -> false when no macro is selected, so AUTO MIX keeps its own behaviour.
+    const STEM_WAIT_S = 90;
+    async function waitStems(deck, s) {
+      for (let t = 0; t < STEM_WAIT_S; t++) {
+        const dk = (host.decks || {})[deck];
+        if (dk && (dk.stems || dk.stemsReady)) return true;
+        say(`AUTO MIX: loading ${s.b_name || s.b} for step ${s.n} (stems rendering, ${STEM_WAIT_S - t}s max)`);
+        await new Promise((r) => host.clock.setTimeout(r, 1000));
+      }
+      return false;
+    }
+    async function autoMix() {
+      if (!loaded) return false;
+      const c0 = deckState();
+      const p = autoMixPick(loaded, cursor, c0.playing ? c0.aId : null);
+      if (!p) return false;
+      if (p.why) { say(`AUTO MIX: ${p.why}`, false); return true; }
+      const s = p.step;
+      cursor = p.i; renderMacro();
+      if (c0.bId !== s.b) {
+        say(`AUTO MIX: loading ${s.b_name || s.b} for step ${s.n}`);
+        try { await ensureLoaded(c0.bDeck, s.b, s.b_name); } catch (e) { say(`AUTO MIX: ${e.message}`, false); return true; }
+      }
+      if (!(await waitStems(c0.bDeck, s))) console.info(`macro: AUTO MIX step ${s.n}: stems for ${s.b_name} not ready after ${STEM_WAIT_S}s`);
+      await playStep(s, "AUTO MIX");
+      return true;
+    }
     async function pairStep() {
       const c = deckState();
       if (!c.aId || !c.bId) return null;
@@ -667,7 +707,7 @@
     }
 
     const ACTIONS = {
-      "macro-step": () => playStep(loaded && loaded.steps[cursor], "PLAY STEP"),
+      "macro-step": async () => (await autoMix()) || playStep(loaded && loaded.steps[cursor], "PLAY STEP"),
       "macro-transition": async () => { const s = await pairStep(); return s ? playStep(s, "PLAY THIS TRANSITION") : say("PLAY THIS TRANSITION: the atlas has no stored transition for the loaded pair", false); },
       "plan-picks": () => planFromPicks(),
       "macro-play": () => playMacro(),
@@ -704,7 +744,7 @@
     function upcoming() {
       return running && loaded ? upcomingIds(loaded, cursor, 2).map((id) => ({ track_id: id, bpm: null })) : [];
     }
-    return { core, firstCandidates, defaultPlan, landed, partners, planFor, loadMacro, playStep, playMacro, upcoming, saveSet, run, ACTIONS,
+    return { core, firstCandidates, defaultPlan, landed, partners, planFor, loadMacro, playStep, playMacro, autoMix, upcoming, saveSet, run, ACTIONS,
              get running() { return running; },
              get stats() { return Object.assign({ streak: streak.n }, stats); }, get streak() { return streak; }, get loaded() { return loaded; } };
   }
