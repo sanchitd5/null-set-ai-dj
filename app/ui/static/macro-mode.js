@@ -219,6 +219,36 @@
     return { ok: true, recipe, why };
   }
 
+  // The FORCED plan a stored move hands the autopilot (autopilot.js scheduleTransition books
+  // it as stored: recipe, A's exit, B's entry, the merge's hold bars and combo; the gates may
+  // only refuse it). s: a macro step or an atlas plan; o: {source, macro, n, a, b, a_name, b_name}
+  function forcedOf(s, o = {}) {
+    if (!s || !s.recipe) return null;
+    const num = (v) => (Number.isFinite(v) ? v : null);
+    return { source: o.source || "macro", macro: o.macro || null, n: o.n != null ? o.n : s.n != null ? s.n : null,
+             a: o.a || s.a || null, b: o.b || s.b || null, a_name: s.a_name || o.a_name || null, b_name: s.b_name || o.b_name || null,
+             recipe: s.recipe, a_time: num(s.a_time), b_time: num(s.b_time), merge: s.merge || null };
+  }
+  // The stored step for the pair A -> B in the known macros (studied macros first), or null:
+  // a FOLLOW SET pick / studied combo performs the move the studied set made.
+  function stepForPair(macros, aId, bId) {
+    for (const m of macros || []) {
+      const s = (m.steps || []).find((x) => x.a === aId && x.b === bId);
+      if (s) return { macro: m.name, step: s };
+    }
+    return null;
+  }
+  // PLAY MACRO: the step to perform after A (the first step at or after the cursor whose A is
+  // playing, so a skipped or repeated step realigns), or null (the macro is done / off track).
+  function runNext(macro, cursor, aId) {
+    const steps = (macro && macro.steps) || [];
+    for (let i = Math.max(0, cursor); i < steps.length; i++) if (steps[i].a === aId) return { i, step: steps[i] };
+    return null;
+  }
+  // PLAY MACRO: the next k songs of the macro (B of each step from the cursor), for pre-render
+  function upcomingIds(macro, cursor, k = 2) {
+    return ((macro && macro.steps) || []).slice(Math.max(0, cursor), Math.max(0, cursor) + k).map((s) => s.b);
+  }
   // Edit one step (recipe and / or points); the server saves the result as a new version.
   function editStep(macro, n, patch) {
     const m = JSON.parse(JSON.stringify(macro));
@@ -254,7 +284,7 @@
   }
 
   const core = { MACRO_PREFERENCE, COMBO_MIN_WORKS, COMBO_LABEL, FOLLOW_WINDOW, artistOf, studiedLabel, followCandidates, macroOrder, comboCandidates, macroCandidate,
-                 macroPrefer, streakAfter, streakLabel, applyPlan, fireAt, stepGate, editStep, setToMacro, runNowCheck,
+                 macroPrefer, streakAfter, streakLabel, applyPlan, fireAt, stepGate, editStep, setToMacro, runNowCheck, forcedOf, stepForPair, runNext, upcomingIds,
                  createRuntime: create };   // node checks drive the runtime over a fake Host
   if (typeof module !== "undefined" && module.exports) module.exports = core;
 
@@ -268,6 +298,7 @@
     let cursor = 0;                      // its next step index
     let streak = { n: 0, names: [] };
     let armed = null;                    // a step the user armed for the autopilot's next booking
+    let running = false;                 // PLAY MACRO: the autopilot performs the loaded macro step after step
     const played = [];                   // transitions this set: [{a, b, a_name, b_name, recipe, a_time, b_time}]
     const stats = { macroSeen: 0, macroTaken: 0, comboTried: 0, comboPicked: 0, atlasPlan: 0, maxStreak: 0, followTried: 0 };
     let studiedSets = null;              // GET /api/studied/sets (FOLLOW SET), loaded once per refreshList
@@ -322,6 +353,20 @@
         armed = null;
         return out;
       }
+      // 0b) PLAY MACRO: the macro's own next step, every booking, until it ends
+      if (running && loaded) {
+        const nx = runNext(loaded, cursor, aId);
+        if (nx) {
+          cursor = nx.i;
+          out.push(mk(nx.step.b, nx.step.b_name, { keep: true, _macro: { name: loaded.name, step: nx.step, run: true } }));
+          step("macro", { decision: `PLAY MACRO step ${nx.step.n}`, why: `${nx.step.recipe} into ${nx.step.b_name}` });
+          renderMacro();
+          return out;
+        }
+        running = false;
+        say(`PLAY MACRO: ${loaded.name} ${cursor >= loaded.steps.length ? "done" : "stopped: the playing song is not in the macro"}; the autopilot carries on`);
+        step("macro", { decision: "PLAY MACRO end", why: `cursor ${cursor}/${loaded.steps.length}` });
+      }
       // 1) a known macro step (MACRO MODE: always; else with probability MACRO_PREFERENCE)
       const pool = (loaded ? [loaded] : []).concat(macros.filter((m) => !loaded || m.name !== loaded.name));
       // offline part of "still valid"; the autopilot's evaluateCandidate re-runs every live gate
@@ -371,13 +416,22 @@
       return out;
     }
     // evaluateCandidate: the atlas / macro plan as the default plan (gates re-validate it)
+    // A macro step, a FOLLOW SET pick or a studied combo is a stored move: the plan goes out
+    // FORCED (cand.forced), so scheduleTransition books exactly it instead of re-deciding.
     function defaultPlan(aId, cand, match) {
-      const st = cand && cand._macro && cand._macro.step;
-      const plan = st ? { recipe: st.recipe, a_time: st.a_time, b_time: st.b_time, merge: st.merge || null } : planFor(aId, cand && cand.track_id);
+      const bId = cand && cand.track_id;
+      const src = !cand ? null : cand._macro ? "macro" : cand._follow ? "follow set" : cand._combo && cand._combo.studied ? "studied combo" : null;
+      const ps = src && src !== "macro" ? stepForPair(macros.concat(loaded ? [loaded] : []), aId, bId) : null;
+      const st = (cand && cand._macro && cand._macro.step) || (ps && ps.step);
+      const plan = st ? { recipe: st.recipe, a_time: st.a_time, b_time: st.b_time, merge: st.merge || null } : planFor(aId, bId);
       const r = applyPlan(match, plan);
+      if (src && plan && plan.recipe && r.cand) {
+        r.cand.forced = forcedOf(st || plan, { source: src, macro: (cand._macro && cand._macro.name) || (ps && ps.macro), n: st ? st.n : null,
+          a: aId, b: bId, b_name: cand.name });
+      }
       if (plan) {
         stats.atlasPlan++;
-        const line = `atlas: plan ${plan.recipe} exit ${Math.round(plan.a_time || 0)} s entry ${Math.round(plan.b_time || 0)} s${st ? ` (macro ${cand._macro.name} step ${st.n})` : ""}`;
+        const line = `atlas: plan ${plan.recipe} exit ${Math.round(plan.a_time || 0)} s entry ${Math.round(plan.b_time || 0)} s${st ? ` (macro ${(cand._macro && cand._macro.name) || (ps && ps.macro)} step ${st.n})` : ""}${r.cand && r.cand.forced ? ", forced" : ""}`;
         console.info(line);
         step("atlas", { decision: "plan", why: line });
       }
@@ -407,9 +461,9 @@
       if (!el) return;
       if (!loaded) { el.innerHTML = `<li class="macro-empty">no macro loaded</li>`; return; }
       el.innerHTML = loaded.steps.map((s, i) => `<li data-n="${s.n}" class="${i === cursor ? "macro-next" : ""}">` +
-        `<b>${s.n}.</b> ${esc(s.b_name || s.b)} <span class="macro-rec">${esc(s.recipe)}</span>` +
-        ` <span class="macro-pts">out ${fmt(s.a_time)} / in ${fmt(s.b_time)}</span>` +
-        (s.merge ? ` <span class="macro-merge">hold ${esc(s.merge.hold_bars)} bars, ${esc((s.merge.phases || []).length)} phases</span>` : "") +
+        `<b>${s.n}.</b> ${esc(s.a_name || s.a)} → ${esc(s.b_name || s.b)} <span class="macro-rec">${esc(s.recipe)}</span>` +
+        ` <span class="macro-pts">exit ${fmt(s.a_time)} / entry ${fmt(s.b_time)}</span>` +
+        (s.merge ? ` <span class="macro-merge">hold ${esc(s.merge.hold_bars)} bars${s.merge.phases && s.merge.phases.handover ? `, handover ${esc(s.merge.phases.handover.bars)} bars` : ""}</span>` : "") +
         `</li>`).join("");
     }
     const fmt = (t) => (Number.isFinite(t) ? `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, "0")}` : "?");
@@ -469,12 +523,46 @@
       const d = c.d, pos = d._currentPosition ? d._currentPosition() : 0;
       const at = fireAt({ nowPos: pos, aTime: s.a_time, phrases: d.analysis && d.analysis.phrase_boundaries_8bar, bar: 240 / (d.bpm || 128) });
       if (c.o && Number.isFinite(s.b_time) && c.o.seek) c.o.seek(s.b_time);
-      const act = /mashup/i.test(g.recipe) ? "mashup" : /riff/i.test(g.recipe) ? "riff" : "mix";
-      const lead = Math.max(0, (at - pos) / (d._playbackRate ? d._playbackRate() : 1) - 240 / (d.bpm || 128) * 8);
-      host.clock.setTimeout(() => { const aa = host.mod.aiActions; if (aa && aa[act]) aa[act](); }, lead * 1000);
-      say(`${label}: step ${s.n} ${g.recipe} into ${s.b_name} at ${fmt(at)}${g.why ? ` (${g.why})` : ""}`);
+      // the stored move itself (autopilot performNow: stored recipe, exit, entry, merge), not a generic mix
+      const perf = host.mod.autopilot && host.mod.autopilot.performNow;
+      if (!perf) return say(`${label}: autopilot not loaded`, false);
+      const rate = d._playbackRate ? d._playbackRate() : 1;
+      const r = perf({ out: c.aDeck, inn: c.bDeck, aId: c.aId, bId: s.b, aT: at,
+        t0: ((host.audio && host.audio.currentTime) || 0) + Math.max(0, at - pos) / rate,
+        forced: forcedOf(s, { source: "macro", macro: loaded && loaded.name, a: c.aId, b: s.b }) });
+      if (!r.ok) return say(`${label}: ${r.why}`, false);
+      console.info(r.line);
+      host.log.step("macro", { phase: "user", decision: "perform", why: r.line });
+      if (host.bus && host.bus.emit) host.bus.emit("ai-activity", { kind: "macro", deck: c.aDeck, label: `MACRO ${s.n} · ${r.ran}`, why: r.line });
+      say(`${label}: step ${s.n} ${r.ran} into ${s.b_name} at ${fmt(at)}${r.refused ? ` (refused ${s.recipe}: ${r.refused})` : ""}`, !r.refused);
       cursor = Math.max(cursor, (loaded ? loaded.steps.indexOf(s) : -1) + 1);
       renderMacro();
+    }
+    // PLAY MACRO: the autopilot performs the loaded macro unattended, step after step (each
+    // booking takes the next step, forced); PLAY STEP / SKIP / REPEAT still work. Again: stop.
+    async function playMacro() {
+      const btn = ui.el("macro-play");
+      if (running) { running = false; if (btn) btn.textContent = "PLAY MACRO"; return say("PLAY MACRO: stopped (the autopilot carries on)"); }
+      if (!loaded || !loaded.steps.length) return say("PLAY MACRO: load a macro first", false);
+      let c = deckState();
+      const nx = c.playing ? runNext(loaded, cursor, c.aId) || runNext(loaded, 0, c.aId) : null;
+      if (c.playing && !nx) return say(`PLAY MACRO: the playing song is not an A of ${loaded.name}; play ${loaded.steps[cursor] ? loaded.steps[cursor].a_name : "its first song"} first`, false);
+      if (nx) cursor = nx.i;
+      else {
+        const s = loaded.steps[Math.min(cursor, loaded.steps.length - 1)];
+        try { await ensureLoaded(c.aDeck, s.a, s.a_name); } catch (e) { return say(`PLAY MACRO: ${e.message}`, false); }
+        cursor = loaded.steps.indexOf(s);
+      }
+      running = true;
+      if (btn) btn.textContent = "STOP MACRO";
+      renderMacro();
+      host.log.step("macro", { phase: "user", decision: "PLAY MACRO", why: `${loaded.name} from step ${loaded.steps[cursor].n}` });
+      const ap = host.mod.autopilotState;
+      if (!(ap && ap.active)) {
+        const start = ui.el("ap-start-btn");
+        if (start) start.click();
+      }
+      say(`PLAY MACRO: ${loaded.name}, step ${loaded.steps[cursor].n} of ${loaded.steps.length} next`);
     }
     async function pairStep() {
       const c = deckState();
@@ -549,6 +637,7 @@
       "macro-step": () => playStep(loaded && loaded.steps[cursor], "PLAY STEP"),
       "macro-transition": async () => { const s = await pairStep(); return s ? playStep(s, "PLAY THIS TRANSITION") : say("PLAY THIS TRANSITION: the atlas has no stored transition for the loaded pair", false); },
       "plan-picks": () => planFromPicks(),
+      "macro-play": () => playMacro(),
     };
     const run = (id) => { if (ACTIONS[id]) return ACTIONS[id](); return undefined; };
     if (root.aiActions && typeof root.aiActions.register === "function") for (const id of Object.keys(ACTIONS)) root.aiActions.register(id, ACTIONS[id]);
@@ -559,6 +648,7 @@
     on("macro-select", "change", (e) => loadMacro(e.target.value).catch((x) => say(x.message, false)));
     on("macro-save", "click", saveSet);
     on("macro-next", "click", () => ACTIONS["macro-step"]());
+    on("macro-play", "click", () => ACTIONS["macro-play"]());
     on("macro-skip", "click", () => { if (loaded) { cursor = Math.min(loaded.steps.length, cursor + 1); renderMacro(); } });
     on("macro-repeat", "click", () => { if (loaded) { cursor = Math.max(0, cursor - 1); renderMacro(); } });
     on("macro-edit", "click", () => {
@@ -577,7 +667,12 @@
     refreshList();
     renderMacro();
 
-    return { core, firstCandidates, defaultPlan, landed, partners, planFor, loadMacro, playStep, saveSet, run, ACTIONS,
+    // PLAY MACRO: the next songs, for the autopilot's pre-render (their stems early)
+    function upcoming() {
+      return running && loaded ? upcomingIds(loaded, cursor, 2).map((id) => ({ track_id: id, bpm: null })) : [];
+    }
+    return { core, firstCandidates, defaultPlan, landed, partners, planFor, loadMacro, playStep, playMacro, upcoming, saveSet, run, ACTIONS,
+             get running() { return running; },
              get stats() { return Object.assign({ streak: streak.n }, stats); }, get streak() { return streak; }, get loaded() { return loaded; } };
   }
   if (root.Engine) root.Engine.mount("macroMode", create);

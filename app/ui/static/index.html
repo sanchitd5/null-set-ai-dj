@@ -943,12 +943,13 @@
 
   <!-- MACROS + COMPATIBLE (macro-mode.js): replayable sets from the pair atlas, played by the user step by step -->
   <details class="macro-panel" id="macro-panel">
-    <summary class="hud-label" title="Saved macros (data/cache/macros): pick one, then PLAY STEP (Shift+M) fires its next transition at the stored point with the autopilot's gates">MACROS <span id="macro-status"></span></summary>
+    <summary class="hud-label" title="Saved macros (data/cache/macros): pick one, then PLAY STEP (Shift+M) performs its next move (stored recipe, exit, entry, hold) with the autopilot's gates, or PLAY MACRO runs them all">MACROS <span id="macro-status"></span></summary>
     <div class="macro-body">
       <select id="macro-select" aria-label="Macros"><option value="">MACROS…</option></select>
       <input type="text" id="macro-name" placeholder="name for SAVE MACRO" autocomplete="off" />
       <button class="hw-btn" id="macro-save" title="Save the transitions played this set as a macro">SAVE MACRO</button>
       <button class="hw-btn" id="macro-next" title="Play the highlighted step (Shift+M)">PLAY STEP</button>
+      <button class="hw-btn" id="macro-play" title="The autopilot performs the whole macro, step after step (click again to stop)">PLAY MACRO</button>
       <button class="hw-btn" id="macro-skip" title="Skip the highlighted step">SKIP</button>
       <button class="hw-btn" id="macro-repeat" title="Back one step (repeat it)">REPEAT</button>
       <ol class="macro-steps" id="macro-steps"></ol>
