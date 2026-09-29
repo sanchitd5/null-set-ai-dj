@@ -2714,7 +2714,7 @@ function createAutopilotEngine({ host, ai }) {
     // pool below) decides only when none of them passes the gates.
     if (host.mod.macroMode && !leadDue()) {
       const st = host.state || {}, other = activeDeck === "a" ? st.trackB : st.trackA;
-      const first = await host.mod.macroMode.firstCandidates(currentId, { played: playedIds, recent: history, loadedId: other && other !== currentId ? other : null });
+      const first = await host.mod.macroMode.firstCandidates(currentId, { played: playedIds, recent: history, aName: history[history.length - 1] || "", aStyle: currentGenre || "", loadedId: other && other !== currentId ? other : null });
       for (let c of first) {
         if (!active || gen !== prepGen) return;
         if (c._download) {        // FOLLOW SET: a studied set's song the library lacks, via the normal suggest -> download path

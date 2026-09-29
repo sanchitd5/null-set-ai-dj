@@ -82,8 +82,22 @@
     const none = { set: null, pos: 0, list: [], skipped: [] };
     const sets = o.sets || [];
     if (o.follow === "none") return none;
-    const set = o.follow ? sets.find((s) => s.set_id === o.follow)
+    // auto: the set holding the playing song; else (owner: Anyma "Atoma" is not in the
+    // studied Anyma set) a set by the playing song's artist; else one whose style matches.
+    const art = o.aName ? artistOf(o.aName) : "";
+    const style = String(o.aStyle || "").toLowerCase().trim();
+    let by = o.follow ? "chosen" : "song";
+    let set = o.follow ? sets.find((s) => s.set_id === o.follow)
       : sets.find((s) => (s.songs || []).some((x) => x.track_id && x.track_id === o.aId));
+    if (!set && !o.follow && art) {
+      set = sets.find((s) => artistOf(s.dj || "") === art
+        || (s.songs || []).some((x) => x.status !== "id" && artistOf(x.title) === art));
+      by = "artist";
+    }
+    if (!set && !o.follow && style) {
+      set = sets.find((s) => String(s.style || "").toLowerCase().trim() === style);
+      by = "style";
+    }
     if (!set) return none;
     const W = o.window == null ? FOLLOW_WINDOW : o.window;
     const songs = (set.songs || []).filter((x) => x.status !== "id");
@@ -119,7 +133,7 @@
                   download: x.track_id ? null : { artist: parts.length > 1 ? parts[0] : "", title: parts.length > 1 ? parts.slice(1).join(" - ") : x.title,
                                                   search_query: `ytmsearch:${x.title}` } });
     }
-    return { set, pos: k, list: list.slice(0, o.max || 8), skipped };
+    return { set, pos: k, by: here ? "song" : by, list: list.slice(0, o.max || 8), skipped };
   }
 
   // Macros the tab keeps in memory (the first `n`): studied macros first, then the server order.
@@ -401,9 +415,11 @@
       // 1b) FOLLOW SET: a studied set's songs around the playing one (auto: the set it belongs to)
       {
         const sel = ui.el("ap-follow-set");
-        const fc = followCandidates({ sets: await followSets(), follow: sel ? sel.value : "", aId, played: o.played, recent: o.recent });
+        const fc = followCandidates({ sets: await followSets(), follow: sel ? sel.value : "", aId, aName: o.aName, aStyle: o.aStyle, played: o.played, recent: o.recent });
         if (fc.set) {
           stats.followTried++;
+          const fl = `follow: set ${fc.set.set_id} by ${fc.by}${fc.by === "artist" ? ` (${artistOf(o.aName || "")})` : fc.by === "style" ? ` (${o.aStyle})` : ""}`;
+          console.info(fl); step("studied", { decision: "follow", why: fl });
           for (const c of fc.list) {
             if (c.track_id && out.some((x) => x.track_id === c.track_id)) continue;
             out.push(mk(c.track_id, c.name, { _follow: { set_id: fc.set.set_id, dj: fc.set.dj, position: c.position }, _download: c.download }));

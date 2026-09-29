@@ -433,7 +433,9 @@ _USER_TEMPLATE = (
     "Every suggestion must be genre_hop 0 or 1. Genre TRANSITIONS, it never jumps: to change genre, "
     "move ONE step per song through a crossover song that belongs to both worlds (e.g. Urdu pop -> "
     "Punjabi pop -> Punjabi hip-hop -> hip-hop; melodic house -> organic house -> afro house -> afrobeats), "
-    "so each song shares its genre with the one before it. This holds even when heading to a DESTINATION.\n\n"
+    "so each song shares its genre with the one before it. This holds even when heading to a DESTINATION.\n"
+    "SCENE: when the recent songs share one scene (e.g. melodic techno / Afterlife), stay in that scene; "
+    "no jump to pop, a mashup, a bootleg or an \"A x B\" MashMIX unless the energy arc or the occasion asks for it.\n\n"
     "Suggest {n} tracks. Prioritise: vibe continuity → harmonic compatibility → energy arc for {arc_phase} → diversity.\n"
     "Reply ONLY with the JSON object, compact (no line breaks or indentation), only the fields "
     "shown. Keep every reason under 8 words."
@@ -653,6 +655,24 @@ def _parroted(data: dict, title: str) -> bool:
 from app.music_brain.genre import genre_families as _genre_families  # noqa: E402
 from app.music_brain.genre import family_jump as _family_jump  # noqa: E402
 from app.music_brain.genre import MAX_ERA_GAP, era_gap  # noqa: E402
+from app.music_brain.genre import genre_scenes as _genre_scenes  # noqa: E402
+
+# Scene continuity (owner: Anyma "Atoma" went to "EVIL x YOU (bjork X Melanie
+# Martinez MashMIX)"). A mashup / bootleg / "A x B" title inside a coherent
+# non-open-format scene is scored as a genre jump (bounded: it stays a last resort).
+_MASHUP_TITLE = re.compile(r"mash\s*-?\s*(mix|up)|\bbootleg\b|\S\s+x\s+\S", re.IGNORECASE)
+_OPEN_FORMAT_SCENES = {"pop", "dance", "rap", "hip hop", "hip-hop"}
+MASHUP_SCENE_HOP = 2.0
+
+
+def mashup_title(title: str) -> bool:
+    return bool(_MASHUP_TITLE.search(str(title or "")))
+
+
+def scene_of(genre) -> str:
+    """The playing song's scene name when it is a coherent, non-open-format one, else ""."""
+    sc = _genre_scenes(genre)
+    return "" if not sc or sc & _OPEN_FORMAT_SCENES else " / ".join(sorted(sc))
 
 
 def _filter_suggestions(
@@ -716,6 +736,10 @@ def _filter_suggestions(
         hop = _num(s.get("genre_hop"))
         if _family_jump(cur_genre, s.get("genre")):
             hop = max(hop or 0.0, 2.0)
+        scene = scene_of(cur_genre)
+        if scene and mashup_title(s["title"]):
+            hop = max(hop or 0.0, MASHUP_SCENE_HOP)
+            print(f"[suggest] scene: {scene} kept (mashup {label[:60]!r} scored as a jump)", flush=True)
         # Era continuity (user: Aqua "Barbie Girl" -> Bicep "Glue" broke the
         # vibe). Two decades apart counts as a jump of that size, in the same
         # bucket as genre jumps, so the closest one survives if nothing else does.

@@ -74,6 +74,21 @@ const studied = { count: 1, sets: ["oRb_81stwy8"], djs: ["Anyma"], techniques: {
   assert.strictEqual(mm.followCandidates({ sets: [set], follow: "", aId: "0".repeat(16) }).set, null, "not in a studied set: no auto follow");
   const chosen = mm.followCandidates({ sets: [set], follow: "oRb_81stwy8", aId: "0".repeat(16), max: 2 });
   assert.deepStrictEqual(chosen.list.map((c) => c.position), [1, 2], "a chosen set starts from its first song");
+  // owner: Anyma "Atoma" (not in the set) -> the Anyma set's songs, not a pop mashup
+  const anyma = { set_id: "oRb_81stwy8", dj: "Anyma", songs: [
+    song(1, "Anyma - Eternity", id(1)), song(2, "Anyma - Syren", id(2)), song(3, "Argy - Aria", id(3)), song(4, "Afterlife - Intro", id(4))] };
+  const pop = { set_id: "popset", dj: "Pop DJ", songs: [song(1, "Dua Lipa - Levitate", id(7))] };
+  const art = mm.followCandidates({ sets: [pop, anyma], follow: "", aId: "0".repeat(16), aName: "Anyma - Atoma [Visualizer]", played: [], recent: ["Anyma - Atoma [Visualizer]"] });
+  assert.strictEqual(art.set.set_id, "oRb_81stwy8", "auto by artist");
+  assert.strictEqual(art.by, "artist");
+  assert.deepStrictEqual(art.list.map((c) => c.position), [3, 4], "artist spacing still enforced: the set's other artists");
+  assert.ok(art.skipped.some((s) => s.position === 1 && /artist spacing/.test(s.why)));
+  const popA = mm.followCandidates({ sets: [pop, anyma], follow: "", aId: id(7), aName: "Dua Lipa - Levitate", played: [], recent: [] });
+  assert.strictEqual(popA.set.set_id, "popset", "a pop set is unaffected");
+  assert.strictEqual(popA.by, "song");
+  assert.strictEqual(mm.followCandidates({ sets: [pop, anyma], follow: "", aId: "0".repeat(16), aName: "Nobody - Song" }).set, null, "no artist, no style: no follow");
+  const sty = mm.followCandidates({ sets: [Object.assign({ style: "Melodic Techno" }, anyma)], follow: "", aId: "0".repeat(16), aName: "Tale Of Us - Nova", aStyle: "melodic techno" });
+  assert.strictEqual(sty.by, "style", "style match when a set carries one");
 }
 
 // 2) macro preference: ~80 % of valid steps over many seeded draws; an invalid step is never taken
