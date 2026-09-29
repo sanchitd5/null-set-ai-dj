@@ -436,7 +436,74 @@ var autopilotCore = (function () {
     const ex = exitPastHigh(o.t, 16 * 240 / o.bpm, spans, o.phraseS, o.trackEnd);
     return { t: ex.moved ? ex.t : o.t, moved: ex.moved };
   }
-  const api = { emptyRetryMs, useLibraryFallback, rememberPairReject, pairRejected, awaitJob, keySafeRecipe, KEY_SAFE_MIN, energyStepOk, hybridWindowKey, highSpans, quantileLinear, median, exitPastHigh, learnedRecipe, vocalRecipe, stemBlendBars, stemBlendFader, phraseWaitS, introBars, FADER_PARK_BARS, homePlan, maskedGlideBars, maskedDropAt, HOME_DROP_PCT, LADDER_STEP_PCT,
+  // ---- pre-render readiness (next song's stems + key-locked tempo stems made BEFORE the booking) ------
+  // Measured on 25 real transitions (data/cache/sessions): the booking follows the deck load by a
+  // median 6 s, the fire comes a median 206 s later, and 9 of 25 songs had no stems on the deck at the
+  // booking (they landed 38-159 s after the load), so the merge was refused for a state that would
+  // have been fine 1-2 minutes on. The merge gate therefore WAITS (bounded) instead of deciding at once.
+  const READY_MIN_GAP = 0.02;          // below 2 % the pitched mix locks; above it key-locked stems are needed
+  const DEFER_MAX_S = 100;             // never hold a booking longer (the search watchdog fires at 150 s)
+  const DEFER_MIN_LEAD_S = 45;         // the booking needs this long before the earliest exit (preplan, plan, 15 s floor)
+  const PREFER_READY_JUMP = 1;         // a ready candidate may pass at most this many not-ready ones (taste still wins)
+  const roundBpm = (b) => Math.round(b / 0.5) * 0.5;
+  // Tempi a candidate may have to play at, so its key-locked sets are rendered ahead: the tempo A has
+  // now and A's native tempo (where an easing-home deck ends up), each folded to B by half / double
+  // time, kept when the gap is inside the key-lock cap and past the pitch-only range.
+  // o: {aEff, aNative, bBpm, lim} -> [bpm, ...] (0.5 BPM steps, unique)
+  function prerenderTargets(o) {
+    if (!(o.bBpm > 0)) return [];
+    const out = [];
+    for (const a of [o.aEff, o.aNative]) {
+      if (!(a > 0)) continue;
+      const m = [1, 2, 0.5].reduce((b, x) => (Math.abs(a / (o.bBpm * x) - 1) < Math.abs(a / (o.bBpm * b) - 1) ? x : b));
+      const gap = Math.abs(a / (o.bBpm * m) - 1);
+      if (gap > READY_MIN_GAP && gap <= o.lim) {
+        const t = roundBpm(a / m);
+        if (!out.includes(t)) out.push(t);
+      }
+    }
+    return out;
+  }
+  // What a merge-capable booking still waits for. o: {aStems, bStems, aEff, bBpm, tempoStemsBpm, lim, keyScore}
+  // -> {needs: ["stems" | "tempo stems"], skip: why waiting is pointless | null}. Waiting is pointless
+  // when the merge cannot happen anyway (A has no stems, keys clash, the tempo gap is past the cap).
+  function readinessNeeds(o) {
+    if (!o.aStems) return { needs: [], skip: "A has no stems" };
+    if (o.keyScore != null && o.keyScore < KEY_SAFE_MIN) return { needs: [], skip: `keys clash (camelot ${o.keyScore})` };
+    if (!(o.aEff > 0) || !(o.bBpm > 0)) return { needs: [], skip: "tempo unknown" };
+    const gap = Math.abs(o.aEff / o.bBpm - 1);
+    if (gap > o.lim) return { needs: [], skip: `gap ${(gap * 100).toFixed(1)} % over the cap` };
+    const needs = [];
+    if (!o.bStems) needs.push("stems");
+    if (gap > READY_MIN_GAP && !(o.tempoStemsBpm && Math.abs(o.tempoStemsBpm / o.aEff - 1) < 0.01)) needs.push("tempo stems");
+    return { needs, skip: null };
+  }
+  // Seconds the booking may wait: until the earliest exit minus the lead the plan needs, at most DEFER_MAX_S.
+  // o: {nowPos, exitLo (track s), minLeadS?, maxS?}
+  function deferBudgetS(o) {
+    const lead = o.minLeadS == null ? DEFER_MIN_LEAD_S : o.minLeadS, max = o.maxS == null ? DEFER_MAX_S : o.maxS;
+    return Math.max(0, Math.min(max, o.exitLo - o.nowPos - lead));
+  }
+  // o: {needs, waitedS, budgetS} -> {wait, why}. `why` is the line the log and the sim read.
+  function deferDecision(o) {
+    if (!o.needs.length) return { wait: false, why: "ready" };
+    const what = o.needs.join(" and ");
+    if (o.waitedS >= o.budgetS) return { wait: false, why: `gave up after ${o.waitedS.toFixed(0)} s waiting for ${what}` };
+    return { wait: true, why: `waiting for ${what}` };
+  }
+  // Prefer candidates whose stems and tempo sets are already made, bounded: a ready one may move ahead of at
+  // most `maxJump` not-ready ones, so the AI's own order still decides between candidates that differ.
+  function orderByReadiness(pool, isReady, maxJump = PREFER_READY_JUMP) {
+    const out = pool.slice();
+    for (let i = 1; i < out.length; i++) {
+      if (!isReady(out[i])) continue;
+      let j = i, jumped = 0;
+      while (j > 0 && jumped < maxJump && !isReady(out[j - 1])) { [out[j - 1], out[j]] = [out[j], out[j - 1]]; j--; jumped++; }
+    }
+    return out;
+  }
+  const api = { prerenderTargets, readinessNeeds, deferBudgetS, deferDecision, orderByReadiness, DEFER_MAX_S, DEFER_MIN_LEAD_S, PREFER_READY_JUMP,
+    emptyRetryMs, useLibraryFallback, rememberPairReject, pairRejected, awaitJob, keySafeRecipe, KEY_SAFE_MIN, energyStepOk, hybridWindowKey, highSpans, quantileLinear, median, exitPastHigh, learnedRecipe, vocalRecipe, stemBlendBars, stemBlendFader, phraseWaitS, introBars, FADER_PARK_BARS, homePlan, maskedGlideBars, maskedDropAt, HOME_DROP_PCT, LADDER_STEP_PCT,
     tempoLockableAt, recipeKind, decideRecipe, planSkipReason, WINDOWS, playWindowFor, exitBounds, exitPick, exitTiming, exitHighPush, audibleEnd, entryClamp, SILENT_FLOOR };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   return api;
