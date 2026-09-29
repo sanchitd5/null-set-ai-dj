@@ -626,6 +626,67 @@ def _queue_stems_impl(track_id: str, urgent: bool = True) -> bool:
         return True
 
 
+def _dequeue_stems_impl(track_id: str) -> bool:
+    """Drop a separation that is queued but not started. True when one was removed."""
+    with _stem_cv:
+        removed = False
+        for q in (_stem_queue, _stem_backlog):
+            if track_id in q:
+                q.remove(track_id)
+                removed = True
+        return removed
+
+
+class PrerenderItem(BaseModel):
+    track_id: str = Field(max_length=64)
+    bpms: List[float] = Field(default_factory=list, max_length=4)
+
+
+class PrerenderRequest(BaseModel):
+    items: List[PrerenderItem] = Field(default_factory=list, max_length=8)
+
+
+def _prerender_loop() -> None:
+    from app.ui import prerender
+
+    while True:
+        try:
+            prerender.current().step()
+        except Exception as exc:                 # never kills the worker
+            print(f"[prerender] {type(exc).__name__}: {exc}", flush=True)
+        time.sleep(1.0)
+
+
+def _start_prerender_worker() -> None:
+    if getattr(_host(), "threaded", True) and not getattr(_prerender_loop, "started", False):
+        _prerender_loop.started = True
+        threading.Thread(target=_prerender_loop, daemon=True, name="prerender").start()
+
+
+@app.post("/api/prerender")
+def post_prerender(req: PrerenderRequest):
+    """The ranked next-song candidates (best first) and the tempi they may have to play at. The server
+    makes their stems and key-locked tempo sets ahead of the booking, one heavy job at a time, and
+    drops the queued work of any candidate that is no longer listed. Answers each one's readiness."""
+    from app.ui import prerender
+
+    items = [{"track_id": i.track_id, "bpms": i.bpms} for i in req.items if i.track_id in _tracks]
+    sched = prerender.current()
+    status = sched.set_items(items)
+    sched.step()
+    _start_prerender_worker()
+    return {"items": status, "stats": sched.stats()}
+
+
+@app.get("/api/prerender")
+def get_prerender():
+    from app.ui import prerender
+
+    sched = prerender.current()
+    sched.step()
+    return {"items": sched.status(), "stats": sched.stats()}
+
+
 @app.on_event("startup")
 def _backfill_stems() -> None:
     """Every library track gets its stems separated ahead of time, in the
@@ -792,7 +853,7 @@ def get_track_stems(track_id: str, separate: bool = False, bpm: Optional[float] 
             r = keylock.ensure_tempo(stem_service.file_hash(_track_path(track_id)), stems, native, bpm)
             if r["state"].startswith("error"):
                 raise HTTPException(status_code=422, detail=r["state"])
-            if r["state"] != "done":
+            if r["state"] != "done" or not _host().tempo_gate(r["key"]):
                 return {"stems": None, "pending": True, "bpm": r["bpm"]}
             return {"stems": {n: f"/api/riff/{r['key']}/{n}" for n in STEM_NAMES}, "pending": False,
                     "bpm": r["bpm"], "ratio": r["ratio"], "native_bpm": native}
