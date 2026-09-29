@@ -47,7 +47,7 @@ def test_blocked_everywhere_trips_then_fails_fast_then_heals(monkeypatch):
     assert g.status()["strikes"] == 2 and e2.value.until - (now + g.BASE_COOLDOWN_S + 1) == pytest.approx(2 * g.BASE_COOLDOWN_S, abs=5)
     monkeypatch.setattr(g.time, "time", lambda: now + 10 * g.BASE_COOLDOWN_S)
     assert g.call(lambda extra: "back") == "back"         # probe succeeds: healed
-    assert g.status() == {"cooling": False, "until": None, "strikes": 0, "last_error": None}
+    assert g.status() == {"cooling": False, "until": None, "strikes": 0, "last_error": None, "disabled": False}
 
 
 def test_backoff_is_capped():
