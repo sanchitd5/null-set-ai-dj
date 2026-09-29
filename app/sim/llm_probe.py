@@ -32,8 +32,13 @@ class Endpoint:
     base_url: str
     model: str
 
+    @property
+    def label(self) -> str:
+        """How the baseline names the model that wrote it: "omni-text", "mlx-text" ..."""
+        return f"{self.backend}-text"
+
     def as_meta(self) -> dict:
-        return {"backend": self.backend, "base_url": self.base_url, "model": self.model}
+        return {"backend": self.backend, "base_url": self.base_url, "model": self.model, "label": self.label}
 
 
 def _models(base_url: str, opener, timeout: float = 3.0) -> list:
@@ -71,11 +76,20 @@ def resolve(opener=None, env=None, publish: bool = True) -> Endpoint:
     omni = f"http://127.0.0.1:{env.get('OMNI_PORT', '8901')}/v1"
     ollama = f"{env.get('OLLAMA_URL', 'http://localhost:11434').rstrip('/')}/v1"
     want = env.get("AUTOPILOT_MODEL") or None
+    from app.ui import live_ear
+
+    # the Omni server also lists the text model (unloaded): ask for the Omni model by name, never "the first"
+    omni_model = env.get("OMNI_MODEL") or live_ear.LOCAL_MODEL
     candidates = []
     if env.get("OLLAMA_BASE_URL"):
         candidates.append(("env", env["OLLAMA_BASE_URL"], want))
-    candidates += [("mlx", mlx, env.get("MLX_MODEL") or want), ("omni", omni, env.get("OMNI_MODEL") or want),
+    candidates += [("mlx", mlx, env.get("MLX_MODEL") or want), ("omni", omni, omni_model),
                    ("ollama", ollama, env.get("OLLAMA_MODEL") or want)]
+    pin = (env.get("SIM_LLM") or "").lower()          # SIM_LLM=omni|mlx|ollama: a whole panel on one backend
+    if pin:
+        candidates = [c for c in candidates if c[0] == pin]
+        if not candidates:
+            raise LLMDown(f"SIM_LLM={pin!r} is not one of env, mlx, omni, ollama")
     tried = []
     for backend, base, model in candidates:
         try:

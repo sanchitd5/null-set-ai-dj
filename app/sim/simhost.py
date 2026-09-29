@@ -44,7 +44,7 @@ class SimHost(Host):
 
     @property
     def synthetic(self) -> bool:
-        return self.w.mode != "live"
+        return True                      # every mode: the console runs on graph data, not decoded audio
 
     # ---- YouTube ------------------------------------------------------------------
     def search_songs(self, query, limit=8):

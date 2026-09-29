@@ -112,7 +112,6 @@ class World:
 
         self.prompt_flags: Counter = Counter()   # what the prompts the model saw contained (set memory, energy notes)
         self.fatal: Optional[WorldError] = None     # set when a needed dependency is missing: the run stops
-        self._live_curves: dict = {}
         self.seed_track: Optional[dict] = None
         self.steps: list = []                # song_log steps captured with virtual time
         self.touched: dict = {}              # hash -> name of every pool entry this run used (record)
@@ -132,7 +131,7 @@ class World:
 
         self._raws = self._library_raws()
         # retries are a rule, not a race against a wall clock
-        self.engine = engine.Engine(SimHost(self), SimAI(self), engine.EngineConfig(suggest_budget_s=1e9))
+        self.engine = engine.Engine(SimHost(self), SimAI(self), engine.EngineConfig(suggest_budget_s=1e9, verify_timeout_s=120.0))
         engine.use(self.engine)
         # a fresh run never sees a song lookup cached by an earlier one
         svc._verify_cache.clear()
@@ -203,20 +202,6 @@ class World:
             write_wav(tagged, x[:, 0].astype(np.float64), sr, {"stem": name, "keylock": key})
         return tagged
 
-    def live_curves(self, tid: str):
-        """live mode: stem curves of a song separated in this run (computed once, kept)."""
-        from app.sim.pool import stem_curves
-        from app.ui import server
-
-        if tid in self._live_curves:
-            return self._live_curves[tid]
-        paths = server._stem_cache.get(tid)
-        try:
-            self._live_curves[tid] = stem_curves(paths) if paths else None
-        except Exception:
-            self._live_curves[tid] = None
-        return self._live_curves[tid]
-
     def pick_seed(self, rng) -> str:
         """The seeded random seed track, as the seed URL the console's START box takes
         ("ytmsearch:Artist - Title": the same download route a user's seed goes through).
@@ -230,60 +215,11 @@ class World:
             raise WorldError(f"the source library {self.library.data} has no usable tracks")
         t = lib[rng.randrange(len(lib))]
         self.seed_track = {"hash": t.hash, "name": t.name}
-        if self.mode == "live":
-            self._copy_seed_caches(t)
         return self._seed_url(t.name)
 
     @staticmethod
     def _seed_url(name: str) -> str:
         return f"ytmsearch:{name}"
-
-    def _copy_seed_caches(self, t) -> None:
-        """live: the seed's own analysis / vibe / energy / stems are reused from the source
-        library (same code produced them; saves a Demucs run). Read-only on DATA_DIR."""
-        a = self.run_cache / "analysis"
-        a.mkdir(parents=True, exist_ok=True)
-        for suffix in ("v5.json", "vibe.json", "energy.json"):
-            src = self.library.cache / "analysis" / f"{t.hash}.{suffix}"
-            if src.exists():
-                shutil.copy2(src, a / src.name)
-        for model in ("htdemucs_ft", "htdemucs"):
-            src = self.library.cache / "stems" / f"{t.hash}_{model}"
-            dst = self.run_cache / "stems" / src.name
-            if src.is_dir() and not dst.exists():
-                dst.parent.mkdir(parents=True, exist_ok=True)
-                dst.symlink_to(src, target_is_directory=True)
-
-    def export_live(self, pool: Pool) -> list:
-        """live + record: freeze every song this run analysed into the pool (the fixture's data)."""
-        from app.music_brain.analyzer import _file_hash
-        from app.sim.pool import assemble_entry
-        from app.ui import server
-
-        done = []
-        for tid, path in sorted(server._tracks.items()):
-            h = _file_hash(path)
-            if pool.has(h):
-                self.touched[h] = server._track_names.get(tid, "")
-                continue
-            ad = self.run_cache / "analysis"
-            try:
-                a = json.loads((ad / f"{h}.v5.json").read_text(encoding="utf-8"))
-                v = json.loads((ad / f"{h}.vibe.json").read_text(encoding="utf-8"))
-                e = json.loads((ad / f"{h}.energy.json").read_text(encoding="utf-8"))
-            except (OSError, ValueError):
-                continue
-            stems = server._stem_cache.get(tid)
-            try:
-                drops = server._safe_hook_drops(tid)
-            except Exception:
-                drops = []
-            entry = assemble_entry(h, server._track_names.get(tid, path.stem), a, v, e, stems, "live", hook_drops=drops)
-            pool.save(h, entry)
-            self.touched[h] = entry["name"]
-            self.fx["downloads"].setdefault("_hash_of", {})[tid] = h
-            done.append(h)
-        return done
 
     # ---- events ---------------------------------------------------------------------
     def set_time(self, t: float) -> None:
@@ -474,7 +410,7 @@ class World:
         return best if best_s >= 0.5 else None
 
     def _catalog_names(self) -> dict:
-        if self.mode == "library" and self.library is not None:
+        if self.mode in ("library", "live") and self.library is not None:
             return {t.hash: t.name for t in self.library.tracks()}
         return dict(self.pool.names())
 
@@ -491,6 +427,9 @@ class World:
         if self.mode == "library":
             m = self._lib_match(query)
             res = [{"title": m[1], "url": f"sim://{m[0]}", "duration": 0}] if m else []
+        elif self._lib_match(query) is not None:            # live: a song the library has costs no network
+            m = self._lib_match(query)
+            res = [{"title": m[1], "url": f"sim://{m[0]}", "duration": 0}]
         else:
             self._throttle()
             res = self._recorded_call(self.fx["search"], query, lambda: real(query, limit))
@@ -506,10 +445,14 @@ class World:
                 if isinstance(v, dict) and "error" in v:
                     raise RuntimeError(v["error"])
                 return v
-            self.misses.append({"what": "verify", "key": key})
+            # A lookup the recording never finished (the live app's VERIFY_TIMEOUT_S is wall-clock: slow or queued
+            # lookups are cancelled and the pick kept as "unknown") is unknown again, exactly as it was live.
+            self.drift.append({"what": "verify", "key": key})
             return None if self._lib_match(f"{artist} {title}") is None else True
         if self.mode == "library":
             res = self._lib_match(f"{artist} {title}") is not None
+        elif self._lib_match(f"{artist} {title}") is not None:      # in the library: real by definition
+            res = True
         else:
             self._throttle()
             res = self._recorded_call(self.fx["verify"], key, lambda: real(artist, title))
@@ -567,18 +510,14 @@ class World:
     def download_to_dir(self, url: str, output_dir: Path, progress, real):
         """Same contract as download_service.download_to_dir: files written into output_dir."""
         output_dir = Path(output_dir)
-        if self.mode == "live" and self.downloads >= self.caps.max_downloads:      # the cap protects YouTube, not a fixture
-            raise WorldError(f"download cap reached ({self.caps.max_downloads} per run)")
+        # the console is driven by the song's GRAPH data (analysis, energy, stem envelopes), never by decoded
+        # audio: what it loads is synthesised from the pool entry (synth.py). A song the library has is served
+        # from its cached analysis / stems; one it has not is downloaded for real and only analysed (no Demucs).
+        m = None
         if self.mode == "live":
-            self._throttle()
-            paths = self._recorded_call(self.fx["downloads"], url, lambda: real(url, output_dir, progress))
-            self.downloads += len(paths)
-            if self.record:
-                from app.music_brain.analyzer import _file_hash
-
-                self.fx["downloads"][url] = [{"name": p.stem, "hash": _file_hash(p), "suffix": p.suffix} for p in paths]
-            return paths
-        # replay / library: the song's audio is synthesised from its frozen energy curves (synth.py)
+            m = self._library_hit(url)
+            if m is None:
+                return self._download_and_analyse(url, output_dir, progress, real)
         if self.mode == "replay" and url in self.fx["downloads"]:
             found = self.fx["downloads"][url]
             if isinstance(found, dict) and "error" in found:       # the download failed when it was recorded
@@ -586,12 +525,8 @@ class World:
         else:
             if self.mode == "replay":
                 self.misses.append({"what": "download", "key": url})
-            if url.startswith("sim://"):
-                h = url[len("sim://"):]
-                nm = self._catalog_names().get(h)
-                m = (h, nm) if nm else None
-            else:
-                m = self._lib_match(re.sub(r"^\w*search\d*:", "", url))
+            if m is None:
+                m = self._library_hit(url)
             if not m:
                 raise WorldError(f"nothing downloadable for {url!r}")
             found = [{"name": m[1], "hash": m[0], "suffix": ".wav"}]
@@ -607,10 +542,66 @@ class World:
             p = output_dir / f"{f['name']}.wav"
             shutil.copyfile(files["mix"], p)
             paths.append(p)
-            self.downloads += 1
-        if self.record and self.mode == "library":
+        if self.record and self.mode in ("library", "live"):
             self.fx["downloads"][url] = found
+        for f in found:
+            self.touched[f["hash"]] = f["name"]
         return paths
+
+    def _library_hit(self, url: str):
+        """(hash, name) of the library song a download url stands for, else None."""
+        if url.startswith("sim://"):
+            h = url[len("sim://"):]
+            nm = self._catalog_names().get(h)
+            return (h, nm) if nm else None
+        return self._lib_match(re.sub(r"^\w*search\d*:", "", url))
+
+    def _download_and_analyse(self, url: str, output_dir: Path, progress, real):
+        """live, a song the library does not have: the real YouTube download, then only what the console's graph
+        needs (analysis, vibe, energy: librosa, seconds). No Demucs: the entry has no stem lanes (`stems` None), the
+        console sees a track whose separation has not finished. The audio it is handed is synthesised from the entry."""
+        from app.music_brain import analyzer, energy as en, vibe
+        from app.music_brain.analyzer import _file_hash
+        from app.sim.pool import assemble_entry
+        from app.sim.synth import synth_track
+
+        self._throttle()
+
+        def fetch():
+            if self.downloads >= self.caps.max_downloads:          # the cap protects YouTube (library songs cost none)
+                raise RuntimeError(f"download cap reached ({self.caps.max_downloads} YouTube downloads per run)")
+            return real(url, output_dir, progress)
+
+        paths = self._recorded_call(self.fx["downloads"], url, fetch)
+        out, found = [], []
+        for p in paths:
+            h = _file_hash(p)
+            entry = self.pool.load(h)
+            if entry is None:
+                try:
+                    a = analyzer.analyze(p)
+                    ad = self.run_cache / "analysis"
+                    vibe.analyze_vibe(p)
+                    en.measure(p, float(a.bpm or 0))
+                    entry = assemble_entry(h, p.stem, json.loads((ad / f"{h}.v5.json").read_text(encoding="utf-8")),
+                                           json.loads((ad / f"{h}.vibe.json").read_text(encoding="utf-8")),
+                                           json.loads((ad / f"{h}.energy.json").read_text(encoding="utf-8")), None, "live")
+                except Exception as exc:
+                    raise RuntimeError(f"analysis failed for {p.name}: {exc}") from exc
+                self.pool.save(h, entry)
+                entry = self.pool.load(h)                    # from disk: the same rounded numbers a replay reads
+            files = self._synth.get(h) or self._synth.setdefault(h, synth_track(entry, self.run_cache / "synth" / h, name="mix"))
+            q = Path(output_dir) / f"{p.stem}.wav"
+            shutil.copyfile(files["mix"], q)
+            if q != p:
+                p.unlink(missing_ok=True)
+            out.append(q)
+            found.append({"name": p.stem, "hash": h, "suffix": ".wav"})
+            self.downloads += 1
+            self.touched[h] = p.stem
+        if self.record:
+            self.fx["downloads"][url] = found
+        return out
 
     # ---- stems / registration -------------------------------------------------------------
     def queue_stems(self, track_id: str) -> bool:
@@ -622,15 +613,15 @@ class World:
         if path is None:
             return False
         tag = read_tag(Path(path))
-        if not tag or not tag.get("hash"):    # a real file (live)
-            return self._register_live(track_id, path)
+        if not tag or not tag.get("hash"):
+            raise WorldError(f"{Path(path).name}: real audio reached the console (the sim serves synthesised audio only)")
         entry = self.entry_for(tag["hash"])
         self._install_entry(track_id, path, entry)
         return True
 
     def entry_for(self, h: str) -> dict:
         entry = self.pool.load(h)
-        if entry is None and self.mode == "library" and self.library is not None:
+        if entry is None and self.mode in ("library", "live") and self.library is not None:
             t = self.library.by_hash(h)
             if t is not None:
                 self.library.build_entry(t, self.pool, self.run_cache)
@@ -653,22 +644,6 @@ class World:
             server._stem_cache[track_id] = dict(files["stems"])
         self._tracks[track_id] = entry
         self.touched[h] = entry.get("name", "")
-
-    def _register_live(self, track_id: str, path: Path) -> bool:
-        """live: real Demucs (synchronous, the run waits for it) then read the curves back."""
-        from app.music_brain import stem_service
-        from app.ui import server
-
-        try:
-            res = stem_service.separate(path)
-        except Exception as exc:
-            raise WorldError(f"stem separation failed for {path.name}: {exc}") from exc
-        server._stem_cache[track_id] = dict(res.stems)
-        try:
-            server._cached_vocal_regions(track_id)
-        except Exception:
-            pass
-        return True
 
     # ---- energy ------------------------------------------------------------------------
     def _library_raws(self) -> list:

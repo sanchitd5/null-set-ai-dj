@@ -32,6 +32,7 @@ from typing import Optional
 class EngineConfig:
     """Knobs the composition root may set. None keeps the module's own default."""
     suggest_budget_s: Optional[float] = None      # wall-clock budget of one suggest call (corrective retries)
+    verify_timeout_s: Optional[float] = None      # wall-clock wait for one call's YouTube lookups (slower = unknown, kept)
 
 
 class AIBackend:
@@ -178,6 +179,10 @@ class Engine:
 
         with using(self):
             return svc.suggest_next_tracks(*args, **kw)
+
+    def verify_timeout_s(self, default: float) -> float:
+        b = self.config.verify_timeout_s
+        return default if b is None else b
 
     def suggest_budget_s(self, default: float) -> float:
         b = self.config.suggest_budget_s

@@ -96,6 +96,7 @@ def run_panel(panel: list, out: Path, jobs: int = 4) -> dict:
     reports = {e["name"]: r for e, r in zip(panel, results)}
     suite = {"version": 2, "score_direction": "lower is better", "aggregate": aggregate(reports),
              "runs": {n: {"score": r["score"], "metrics": r["metrics"], "worst": r["worst"][:3], "fixture_source": (r.get("meta") or {}).get("fixture_source"),
+                          "llm_endpoint": (r.get("meta") or {}).get("llm_endpoint"),
                           "llm": (r.get("meta") or {}).get("llm"),
                           "triggered": (r.get("features") or {}).get("triggered") or []} for n, r in sorted(reports.items())}}
     return suite
@@ -212,6 +213,12 @@ def main(argv=None) -> int:
                   "(--record-panel; --allow-stub writes a provisional baseline)", file=sys.stderr)
             return 5
         suite["fixture_sources"] = sources
+        eps = [r.get("llm_endpoint") or {} for r in suite["runs"].values()]
+        suite["llm_labels"] = sorted({e.get("label") or "?" for e in eps})        # e.g. ["omni-text"]
+        suite["llm_models"] = sorted({e.get("model") or "?" for e in eps})
+        if len(suite["llm_models"]) > 1 and not a.allow_stub:
+            print(f"refusing to write baseline.json: the panel mixes models {suite['llm_models']}", file=sys.stderr)
+            return 5
         BASELINE.write_text(json.dumps(suite, indent=1, sort_keys=True) + "\n", encoding="utf-8")
         print(f"baseline written: {BASELINE}")
         return 0
