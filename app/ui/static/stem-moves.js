@@ -94,6 +94,23 @@
   // moves: 8 bars, 4 in a short window.
   // true when the measured intro stem really plays (unmeasured energy: cannot judge, ok)
   function introAudible(intro, energy) { return !!intro && (!energy || (energy[intro] || 0) >= INTRO_MIN_RMS); }
+  // Loudness + EQ gate for the intro stem, on top of the silence check. The intro plays
+  // at INTRO_LEVEL under A's full mix: if its measured level sits more than
+  // INTRO_MAX_UNDER_DB below A's mix over the same window it is inaudible (a stem
+  // -26 dB under the mix booked a silent-sounding entry), and a drums-only intro with
+  // B's low EQ cut has no kick, only hats. -> {ok, why}
+  // c: {intro, energy (B per stem), outEnergy (A per stem, same window) | null, lowCut}
+  const INTRO_MAX_UNDER_DB = 20;
+  const mixRms = (e) => (e ? Math.sqrt(STEMS.reduce((s, n) => s + (e[n] || 0) ** 2, 0)) : 0);
+  function introGate(c) {
+    if (!introAudible(c.intro, c.energy)) return { ok: false, why: "no audible intro stem on B" };
+    if (c.intro === "drums" && c.lowCut) return { ok: false, why: "drums-only intro while the low EQ is cut (no kick)" };
+    const out = mixRms(c.outEnergy), lvl = c.energy ? (c.energy[c.intro] || 0) * (INTRO_LEVEL[c.intro] || 0.8) : 0;
+    if (out > 0 && c.energy && lvl < out * Math.pow(10, -INTRO_MAX_UNDER_DB / 20)) {
+      return { ok: false, why: `intro ${c.intro} ${(20 * Math.log10(Math.max(lvl, 1e-9) / out)).toFixed(0)} dB under A's mix (max -${INTRO_MAX_UNDER_DB})` };
+    }
+    return { ok: true, why: "" };
+  }
   function introBars(bars) { return bars >= 16 ? 8 : Math.max(2, bars / 2); }
 
   // ---- loudness floor (user: "when crossfading it shouldn't mute stems where
@@ -655,7 +672,7 @@
     const au = masterAudibility(Object.assign({ events: plan.events, fader, dir: 1, span, eOut: e.aOut, eIn: e.aIn, minRun }, extra));
     return au.ok ? lv : au;
   }
-  const core = { gates, keepsVibe, breakdownVocalOk, introAudible, mergeCombos, mergeRank, mergeLabel, mergeTransitionPlan, mergeWithEar, keepOneStem, hookDropEvents, hookDropDue, HOOK_OTHER, BREAKDOWN, breakdownFits, handoffFits, vocalShare, stemBlendPlan, STEM_BLEND_KINDS, remixEvents, remixPick, stemBridgePlan, mashupTransitionPlan,
+  const core = { gates, keepsVibe, breakdownVocalOk, introAudible, introGate, INTRO_MAX_UNDER_DB, mergeCombos, mergeRank, mergeLabel, mergeTransitionPlan, mergeWithEar, keepOneStem, hookDropEvents, hookDropDue, HOOK_OTHER, BREAKDOWN, breakdownFits, handoffFits, vocalShare, stemBlendPlan, STEM_BLEND_KINDS, remixEvents, remixPick, stemBridgePlan, mashupTransitionPlan,
                  pickIntro, introBars, INTRO_LEVEL, levelCheck, gainsAt, faderAt, fitStemBlend, breakdownEvents,
                  masterAudibility, audibleRms, mergeFader, rawFader, deckFaderGains, mergeBooking, onTime, AUDIBLE_HZ, SILENCE_DB,
                  LEVEL_FLOOR_DB, AUDIBLE_GAIN, FADER_PARK_BARS, TYPICAL_SHARE, DIP_ALLOWED };
@@ -779,6 +796,11 @@
     return true;
   }
 
+  // Is deck `id`'s low EQ knob cut (dB slider at or under -12)? Unknown knob: not cut.
+  function lowCutOf(id) {
+    const el = ui.query(`.eq-knob[data-deck="${id}"][data-band="low"]`);
+    return !!el && Number(el.value) <= -12;
+  }
   // out/inn: deck ids. t0: audio time the blend starts; totalS: its length (s).
   // EQ transition with stems on only one side (or a stem blend the floor
   // refused): still never B's full mix through the fader, still one singer.
@@ -801,8 +823,10 @@
       const introE = meanOver(stemEnergyBars(inn, pB, barB, 4), 0, 4);
       let intro = pickIntro({ keyClash: camelotClash(out, inn), aSings, bSings, energy: introE });
       if (intro === "vocals" && aSings) intro = "other";
-      if (!introAudible(intro, introE)) {          // nothing of B plays there: A stays the full mix, no silent intro
-        console.info(`stem intro ${innId} skipped: no audible intro stem on B`);
+      const gate = introGate({ intro, energy: introE, lowCut: lowCutOf(innId),
+        outEnergy: meanOver(stemEnergyBars(out, pA, 240 / (out.bpm || 128), 4), 0, 4) });
+      if (!gate.ok) {                              // A stays the full mix: no silent, quiet or kickless intro
+        console.info(`stem intro ${innId} skipped: ${gate.why}`);
         return false;
       }
       cancel(innId);
@@ -844,7 +868,9 @@
       const introE = meanOver(stemEnergyBars(inn, pB, barB, 4), 0, 4);
       intro = pickIntro({ keyClash: camelotClash(out, inn), aSings: true, bSings: false, energy: introE });
       if (intro === "vocals") intro = "other";
-      if (!introAudible(intro, introE)) intro = null;     // B has nothing audible there: no silent intro
+      const gate = introGate({ intro, energy: introE, lowCut: lowCutOf(innId),
+        outEnergy: meanOver(stemEnergyBars(out, out._positionAt ? out._positionAt(t0) : out._currentPosition(), 240 / (out.bpm || 128), 4), 0, 4) });
+      if (!gate.ok) { console.info(`stem intro ${innId} skipped: ${gate.why}`); intro = null; }
     }
     if (intro) {
       inn.stemMix({ drums: 0, bass: 0, vocals: 0, other: 0 }, t0, minStemRamp("stem", bar, false, inn));

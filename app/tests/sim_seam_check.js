@@ -138,4 +138,13 @@ assert.strictEqual(core.playWindowFor({ mode: "long", score: 80, steering: "move
   // no analysis: nothing to push past
   assert.deepStrictEqual(core.exitHighPush({ t: 100, phraseS, bpm: 128, trackEnd: 300 }), { t: 100, moved: 0 });
 }
+// plan LLM skip (fix2-A): only when stems on both decks + beat lock + no peak moves
+{
+  const why = core.planSkipReason({ stemsBoth: true, lockBeat: true, peakOn: false });
+  assert.ok(/rule-decided/.test(why));
+  assert.strictEqual(core.planSkipReason({ stemsBoth: true, lockBeat: true, peakOn: true }), null);
+  assert.strictEqual(core.planSkipReason({ stemsBoth: false, lockBeat: true, peakOn: false }), null);
+  assert.strictEqual(core.planSkipReason({ stemsBoth: true, lockBeat: false, peakOn: false }), null);
+  assert.strictEqual(core.planSkipReason(null), null);
+}
 console.log("sim seam checks ok");
