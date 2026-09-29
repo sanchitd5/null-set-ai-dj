@@ -45,6 +45,10 @@ CATALOG = {
     "remix_bass_out": ("in-song", "stem remix: bass out"),
     "strip_rebuild": ("in-song", "strip & rebuild (breakdown)"),
     "hook_drop": ("in-song", "hook drop: acapella on the emotional line, then the drop"),
+    "learned_vocal_loop": ("in-song", "learned move: one vocal line looped on the beat grid (chant / stutter)"),
+    "learned_vocal_resequence": ("in-song", "learned move: the phrase's vocal lines re-cut in a new order over the same beat"),
+    "learned_vocal_chop": ("in-song", "learned move: short vocal chops re-triggered on the 1/8 or 1/16 grid"),
+    "learned_loop_extend": ("in-song", "learned move: a break / intro extended by looping its last 16 beats (cap 32), or the wait filler"),
     "mashup_break": ("in-song", "remix inside a mashup"),
     "auto_sampler": ("in-song", "sampler / one-shot hits on drops"),
     "dj_mind": ("in-song", "DJ mind decisions (fakeout, beat boost, stutter, filter build, hold loop ...)"),
@@ -78,6 +82,7 @@ REQUIRED = {
     "remix moves": ("remix_synth_hold", "remix_acapella", "remix_vocal_hold", "remix_bass_out", "strip_rebuild"),
     "drum breaks": ("remix_drum_break",),
     "hook drops": ("hook_drop",),
+    "learned moves": ("learned_vocal_loop", "learned_vocal_resequence", "learned_vocal_chop", "learned_loop_extend"),
     "tempo stems": ("tempo_stems", "tempo_home"),
     "live ear": ("live_ear", "silent_ear"),
     "dj mind": ("dj_mind",),
@@ -166,6 +171,46 @@ class _F:
         return d
 
 
+LEARNED_MOVES = ("vocal_loop", "vocal_resequence", "vocal_chop", "loop_extend")
+GRID_TOL_S = 0.02             # a learned move's start sits on its beat / bar grid this closely
+WINDOW_DEAD_AIR_S = 1.0       # dead air / two singers a move may introduce (same slack as a transition)
+
+
+def learned_moves_report(js: dict, F: dict) -> dict:
+    """The in-song learned moves (learned-moves.js): per kind the moves fired, the gates that refused it, and
+    per-move checks against the audible graph of its own window: on the beat grid, inside its hard cap, no other
+    singer on the master (vocal clash), no dead air, one sub-bass owner. Informational metrics are summed."""
+    windows = ((js.get("audible") or {}).get("learned")) or []
+    fired = {k: 0 for k in LEARNED_MOVES}
+    metrics = {"dead_air_s": 0.0, "sub_overlap_s": 0.0, "vocal_clash_s": 0.0}
+    for w in windows:
+        kind = w.get("move")
+        if kind not in fired:
+            continue
+        fired[kind] += 1
+        f = F[f"learned_{kind}"]
+        f.instances.append(round(w.get("t0") or 0, 1))
+        dead, sub, vox = w.get("dead_air_s") or 0, w.get("bass_overlap_s") or 0, w.get("vocal_clash_s") or 0
+        metrics["dead_air_s"] += dead
+        metrics["sub_overlap_s"] += sub
+        metrics["vocal_clash_s"] += vox
+        f.check("on_beat_grid", (w.get("grid_err_s") if w.get("grid_err_s") is not None else 0) <= GRID_TOL_S)
+        f.check("within_cap", (w.get("beats") or 0) <= (w.get("cap_beats") or 0))
+        f.check("no_dead_air", dead <= WINDOW_DEAD_AIR_S)
+        f.check("one_sub_bass_owner", sub <= 1.0)
+        if kind != "loop_extend":
+            f.check("vocal_not_doubled", vox <= WINDOW_DEAD_AIR_S)
+        if dead > WINDOW_DEAD_AIR_S:
+            f.risks["dead_air"] += 1
+        if sub > 2.0:
+            f.risks["two_sub_bass_owners"] += 1
+        if vox > 2.0:
+            f.risks["two_singers"] += 1
+    return {"fired": fired, "refused": {k: dict(sorted(F[f"learned_{k}"].refused.items())) for k in LEARNED_MOVES},
+            "dead_air_introduced_s": round(metrics["dead_air_s"], 2), "sub_overlap_s": round(metrics["sub_overlap_s"], 2),
+            "vocal_clash_s": round(metrics["vocal_clash_s"], 2)}
+
+
 def _phrase_err(entry: Optional[dict], pos: Optional[float]) -> Optional[float]:
     """Distance (s) from a song position to the nearest 8-bar phrase line of that song."""
     if not entry or pos is None:
@@ -223,6 +268,9 @@ def feature_table(js: dict, world, run: dict) -> dict:
         m = re.match(r"^learned pick: none - (.*)", t)
         if m:
             F["learned_technique"].refused[_bucket(m.group(1))] += 1
+        m = re.match(r"^learned move (vocal_loop|vocal_resequence|vocal_chop|loop_extend) skipped: (\w+)", t)
+        if m:
+            F[f"learned_{m.group(1)}"].refused[m.group(2)] += 1        # the gate that failed (learned-moves.js)
         m = re.match(r"^remix (\w): (\w+) skipped", t)
         if m:
             F.get(f"remix_{m.group(2)}", F["remix_synth_hold"]).refused["skipped"] += 1
@@ -279,6 +327,8 @@ def feature_table(js: dict, world, run: dict) -> dict:
             F["strip_rebuild"].executed += 1
         elif label.startswith("HOOK DROP"):
             F["hook_drop"].executed += 1
+        elif label.startswith("LEARNED MOVE") and d.get("move") in LEARNED_MOVES:
+            F[f"learned_{d['move']}"].executed += 1
         elif label.startswith("REMIX · MASHUP BREAK"):
             F["mashup_break"].executed += 1
         elif label.startswith("REMIX ·"):
@@ -295,6 +345,8 @@ def feature_table(js: dict, world, run: dict) -> dict:
             pass                                   # counted from the console line
     for act, n in actions.items():
         F["dj_mind"].details.append(f"{act} x{n}")
+
+    learned = learned_moves_report(js, F)
 
     # ---- transitions: which move ran, and how it held up ----------------------------------------------------
     for tr in trans:
@@ -410,7 +462,8 @@ def feature_table(js: dict, world, run: dict) -> dict:
     table = {k: F[k].out() for k in CATALOG}
     never = sorted(k for k, v in table.items() if v["triggered"] == 0)
     return {"table": table, "never_triggered": never, "triggered": sorted(k for k in table if table[k]["triggered"]),
-            "cookbook": {"viable": sorted(probe["viable"]), "top1": sorted(probe["top1"]), "total": probe["total"]}}
+            "cookbook": {"viable": sorted(probe["viable"]), "top1": sorted(probe["top1"]), "total": probe["total"]},
+            "learned_moves": learned}
 
 
 def recipe_probe(run: dict, by_name: dict) -> dict:
