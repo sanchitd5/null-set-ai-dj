@@ -454,12 +454,20 @@ var autopilotCore = (function () {
       const safe = keySafeRecipe(recipe, o.keyScore);
       if (safe !== recipe) { keyRewrite = { from: recipe, to: safe }; recipe = safe; blend = null; vocalShort = false; }
     }
+    // Punjabi scene profile (scene-profile.js, o.profile = {level, fallback}): the Echo Out a
+    // key rewrite or a missing tempo lock would book is a Quick Cut on the line, and a Quick Cut
+    // is kept (the scene's main move; note s7, GUESS). No profile: nothing below changes.
+    let profileCut = false;
+    if (o.profile && recipe === "Echo Out" && (keyRewrite || !lockS.beat)) { recipe = o.profile.fallback || "Quick Cut"; profileCut = true; }
+    const keepCut = !!o.profile && recipe === "Quick Cut";
     // Never a hard cut (user): a cut the matcher or the AI plan proposed is a 4-bar Bass Swap.
     let cutRewrite = false;
-    if (/\bcut\b/i.test(String(recipe || ""))) { recipe = "Bass Swap"; vocalShort = true; cutRewrite = true; }
+    if (!keepCut && /\bcut\b/i.test(String(recipe || ""))) { recipe = "Bass Swap"; vocalShort = true; cutRewrite = true; }
     // Mashup -> transition beats every other move when the pair fits (user)
     if (lockS.beat && stemsBoth && o.mashupFits && o.mashupFits()) recipe = "Mashup → Transition";
-    return { recipe, blend, dropLayer, blendClean, vocalShort, vocalCut, vocalRule, oneSong, stemsBoth, lockS, keyRewrite, cutRewrite };
+    const out = { recipe, blend, dropLayer, blendClean, vocalShort, vocalCut, vocalRule, oneSong, stemsBoth, lockS, keyRewrite, cutRewrite };
+    if (o.profile) { out.profileCut = profileCut; out.quickCut = recipe === "Quick Cut"; }
+    return out;
   }
   // Would the plan LLM call change what plays? With stems on both decks and a beat lock,
   // decideRecipe forces the recipe, the blend plan owns the exit, LAYER is rule-gated,
@@ -486,6 +494,8 @@ var autopilotCore = (function () {
   const FINISH_MAX_S = 360;        // = WINDOWS.long.max; GUESS
   function playWindowFor(o) {
     if (o.steering === "move") return WINDOWS.bridge;
+    // Punjabi scene profile, full level: 45-90 s snippets (scene-profile.js playWindow; note s7, GUESS)
+    if (o.profileWindow) return o.profileWindow;
     // A famous song plays in full (user; the USB002 set rides leavemealone for
     // 7 min): exit only in its last ~50 s, i.e. the outro.
     if (o.famous && o.rem > 90) return { min: Math.max(60, o.rem - 50), max: Math.max(70, o.rem - 6), xf: 24, label: "FULL·famous" };
@@ -1155,6 +1165,9 @@ function createAutopilotEngine({ host, ai }) {
     clearRun();
     xT0 = Number.isFinite(t0Audio) ? t0Audio : audioCtx.currentTime;
     let kind = recipeKind(recipe);    // "echo" when a drums-host mashup on clashing keys is refused at the line
+    // a Quick Cut booked under the Punjabi scene profile really cuts (every other cut runs as a bass swap)
+    if (recipe === "Quick Cut" && bookedProfileCut) kind = "profile-cut";
+    bookedProfileCut = false;
     const scale = xfDuration >= 16 ? 1 : 0.5;
     const bar = barMs(out) * scale;
     const beat = bar / 4;
@@ -1231,7 +1244,7 @@ function createAutopilotEngine({ host, ai }) {
     {
       const sm1 = host.mod.stemMoves, od1 = host.decks && host.decks[out], id1 = host.decks && host.decks[inn];
       const mt = sm1 && od1 && id1 ? mashupFits(od1, id1, xT0) : null;
-      if (mt && kind !== "double") {
+      if (mt && kind !== "double" && kind !== "profile-cut") {
         ["low", "mid", "high"].forEach((b) => { setRange(eqEl(out, b), 0); setRange(eqEl(inn, b), 0); });
         const secs = sm1.mashupTransition(out, inn, xT0, mt.entry, mt.M, MASHUP_VOX, mt.why, mt.variant || null);
         if (secs > 0) {
@@ -1320,6 +1333,12 @@ function createAutopilotEngine({ host, ai }) {
 
     let total;
     switch (kind) {
+      case "profile-cut": // [[Quick Cut]] (Punjabi scene profile only; recipeKind never returns it): A out and B in on the line, B's lows open on
+        // the same downbeat, so one record owns the sub at every moment; no overlap, no stem handoff
+        setAt(lowIn, 0);
+        rampParam(xfEl, fromXf, toXf, 12);
+        return bar;
+
       case "bass": // [[Bass Swap]]: B rises with no lows, one-downbeat bass swap at bar 4
         rampParam(xfEl, fromXf, 0, 4 * bar);
         bassSwapAt(4);
@@ -1516,6 +1535,23 @@ function createAutopilotEngine({ host, ai }) {
   let scheduledFireAt = null; // track time of the booked transition on the playing deck
   let preplanFor = null;      // song name while the silent ear pre-plans (read by vibe-ui.js)
   let bookedRecipe = null;    // recipe the booked transition will play (read by vibe-ui.js)
+  // Punjabi scene profile (scene-profile.js). profileNext: genre of the song being evaluated /
+  // booked as B; bookedProfileCut: the booked Quick Cut is the profile's (executeTransition cuts it).
+  let profileNext = "", bookedProfileCut = false;
+  const sceneProfile = () => host.mod.sceneProfile || null;
+  function punjabiMode() {
+    const sp = sceneProfile(), el = ui.el("ap-punjabi-profile");
+    return sp ? sp.normalizeMode(el ? el.value : sp.DEFAULT_MODE) : "off";
+  }
+  function profileLevel() {
+    const sp = sceneProfile();
+    return sp ? sp.level(punjabiMode(), currentGenre, profileNext) : null;
+  }
+  // the toggle's state line: mode, and "Punjabi profile active" when a transition used it
+  function showProfile(lvl) {
+    const el = ui.el("ap-punjabi-state"), sp = sceneProfile();
+    if (el && sp) el.textContent = sp.statusLabel(punjabiMode(), lvl);
+  }
   let pendingSugs = [];       // suggestions whose downloads are in flight
   let aiPicking = false;
 
@@ -1676,7 +1712,7 @@ function createAutopilotEngine({ host, ai }) {
     const data = await ai.suggest({ set_id: setId, track_id: trackId, occasion: occasionWithBridge(opts), ...leadFields(opts), history: history.slice(-30), avoid: avoid.slice(-6), queue: queueNames(), set_position: setPos, set_mode: setMode(), relaxed: !!host.session.relaxed, energy_note: energyNote, energy_hook: energyHook, energy_history: playedEnergies(), lookahead: !!opts.lookAhead,
         variety_run: varietyRun().run, variety_genre: varietyRun().genre,
         tempo_target: bridgeTarget(opts.lookAhead), tempo_note: bridgeNote(opts.lookAhead) || null,
-        elapsed_seconds: setStartedAt ? (host.clock.now() - setStartedAt) / 1000 : null });
+        elapsed_seconds: setStartedAt ? (host.clock.now() - setStartedAt) / 1000 : null, punjabi_profile: punjabiMode() });
     // OCCASION FIRST: the AI says the playing song is outside the occasion's
     // music ("punjabi wedding" while Fred again.. plays) -> steer, even across
     // a tempo gap (Echo Out), instead of holding out for a beat-matchable pick.
@@ -1708,7 +1744,8 @@ function createAutopilotEngine({ host, ai }) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       // no_cuts: the matcher never hands the autopilot a Hard Cut / Quick Cut (user rule)
-      body: JSON.stringify({ track_a_id: aId, track_b_id: bId, top_n: 1, no_cuts: true }),
+      // punjabi_profile: the server resolves the pair's scene from the songs' genres (scene_profile.py)
+      body: JSON.stringify({ track_a_id: aId, track_b_id: bId, top_n: 1, no_cuts: true, punjabi_profile: punjabiMode() }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || res.statusText);
@@ -2192,6 +2229,7 @@ function createAutopilotEngine({ host, ai }) {
     if (!active || !cand) return false;
     const nextId = cand.track_id;
     const nextName = cand.name;
+    profileNext = (cand.suggestion && cand.suggestion.genre) || cand.genre || "";
     if (!tempoLockable(cand)) {
       // Far tempo: climb there on a BRIDGE PATH instead of one Echo Out; the
       // jump (budget / last round) stays the fallback.
@@ -2661,7 +2699,7 @@ function createAutopilotEngine({ host, ai }) {
     try {
       // genre: the server only offers library songs known to share the playing
       // song's scene (tempo + key alone paired Barbie Girl with Bicep "Glue")
-      const res = await fetch(`/api/library/lockable?bpm=${aEff.toFixed(2)}&key=${encodeURIComponent(key)}&exclude=${encodeURIComponent(exclude)}&max_gap=${lockLimit()}&genre=${encodeURIComponent(currentGenre || "")}&era=${encodeURIComponent(currentEra || "")}`);
+      const res = await fetch(`/api/library/lockable?bpm=${aEff.toFixed(2)}&key=${encodeURIComponent(key)}&exclude=${encodeURIComponent(exclude)}&max_gap=${lockLimit()}&genre=${encodeURIComponent(currentGenre || "")}&era=${encodeURIComponent(currentEra || "")}&punjabi_profile=${encodeURIComponent(punjabiMode())}`);
       const lib = (await res.json()).tracks || [];
       for (const t of lib) {
         if (!active || gen !== prepGen) return false;
@@ -2924,11 +2962,22 @@ function createAutopilotEngine({ host, ai }) {
     })();
     // The whole recipe decision is autopilotCore.decideRecipe (pure, node-checked; the
     // virtual set in app/sim drives the same function).
-    const dec = autopilotCore.decideRecipe({
+    const profLvl = forced ? null : profileLevel();   // a forced (stored) move is performed as stored
+    const decIn = {
       recipe, blend, layer: !!layer, aStems, bStems, aEff: aEffS, bBpm: sdS && sdS.bpm,
       tempoStemsBpm: sdS && sdS.tempoStems && sdS.tempoStems.bpm, keyScore: keyScoreS,
       mashupFits: () => !!(odS && sdS && mashupFits(odS, sdS)),
-    }, host.mod.tempoRule);
+    };
+    if (profLvl) decIn.profile = { level: profLvl, fallback: sceneProfile().PUNJABI_PROFILE.fallback_recipe };
+    const dec = autopilotCore.decideRecipe(decIn, host.mod.tempoRule);
+    bookedProfileCut = !!(profLvl && dec.quickCut);
+    showProfile(profLvl);
+    if (profLvl) {
+      const why = `${sceneProfile().statusLabel(punjabiMode(), profLvl)}: ${currentGenre || "?"} -> ${profileNext || "?"}` +
+        `${dec.profileCut ? ", Quick Cut instead of Echo Out" : dec.quickCut ? ", Quick Cut kept" : ""}`;
+      console.info("transition profile:", why);
+      host.log.step("scene_profile", { deck: activeDeck, decision: profLvl, why });
+    }
     const lockS = dec.lockS;
     if (candidate.plannedFit && candidate.plannedFit.smooth !== lockS.smooth) {
       console.info("transition plan-fit:", `live state changed since pick (${candidate.plannedFit.why} -> ${lockS.why})`);
@@ -3271,6 +3320,7 @@ function createAutopilotEngine({ host, ai }) {
         jumpPending = false;
         if (steering === "move") steerStep++;
         scheduledNext = null;
+        profileNext = "";
         heldPool = [];
         activeDeck = stagingDeck();
         currentTrackId = nextId;
@@ -3316,7 +3366,8 @@ function createAutopilotEngine({ host, ai }) {
     const idx = history.length;
     const finish = !famous && !!(pd && pd.buffer) && host.ui.flag("ap-finish-toggle", true)
       && (lastFinishIdx === idx || idx - lastFinishIdx >= 2) && autopilotCore.energyAtTarget(playedEnergies(), idx).ok;
-    const w = autopilotCore.playWindowFor({ steering, famous, finish,
+    const sp = sceneProfile(), profileWindow = sp ? sp.playWindow(profileLevel(), steering) : null;
+    const w = autopilotCore.playWindowFor({ steering, famous, finish, profileWindow,
       rem: famous || finish ? autopilotCore.audibleEnd(pd.analysis, pd.buffer.duration) - (entryPos || 0) : 0,
       mode: setMode(), score, energy: currentEnergy });
     if (w.label === "FULL·finish") lastFinishIdx = idx;

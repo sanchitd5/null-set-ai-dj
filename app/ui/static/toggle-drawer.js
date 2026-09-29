@@ -24,6 +24,8 @@
     "ap-ai-toggle": "AI", "ap-ear-toggle": "AI",
   };
   const LEARNED_PARENT = "ap-learned-toggle";
+  // multi-way settings (a <select> in a label) the drawer moves and persists like a checkbox
+  const SELECT_IDS = ["ap-punjabi-profile"];
   // AI ACTIONS: the ones kept on the bar; the rest go under MORE ACTIONS
   const FAV_ACTIONS = ["mix", "merge_hold", "mashup", "riff"];
   const ACTION_GROUP = { mix: "TRANSITIONS", merge_hold: "TRANSITIONS", mashup: "TRANSITIONS", riff: "TRANSITIONS",
@@ -59,7 +61,7 @@
   // state {id: checked} -> {group: {on, total}}
   function counts(groups, state) {
     const out = {};
-    for (const g of groups) out[g.name] = { on: g.items.filter((it) => !!state[it.id]).length, total: g.items.length };
+    for (const g of groups) out[g.name] = { on: g.items.filter((it) => isOn(it.id, state[it.id])).length, total: g.items.length };
     return out;
   }
   const greyed = (it, state) => !!(it.parent && state[it.parent] === false);
@@ -68,18 +70,23 @@
     if (!raw) return {};
     try {
       const o = JSON.parse(raw), out = {};
-      if (o && typeof o === "object") for (const [k, v] of Object.entries(o)) if (typeof v === "boolean") out[k] = v;
+      if (o && typeof o === "object") for (const [k, v] of Object.entries(o))
+        if (typeof v === "boolean" || (typeof v === "string" && SELECT_IDS.includes(k) && v.length <= 40)) out[k] = v;
       return out;
     } catch (e) { return {}; }
   }
-  const withSaved = (saved, id, checked) => Object.assign({}, saved, { [id]: !!checked });
+  // a known multi-way setting keeps its string value; every other toggle is a boolean
+  const withSaved = (saved, id, checked) => Object.assign({}, saved,
+    { [id]: SELECT_IDS.includes(id) && typeof checked === "string" ? checked : !!checked });
+  // "on" for the group counts: a select is on unless it reads "off"
+  const isOn = (id, v) => (SELECT_IDS.includes(id) ? v != null && v !== "off" : !!v);
   // which toggles to flip on restore: only saved ids that exist and differ -> [[id, checked]]
   function restorePlan(saved, current) {
     return Object.keys(saved).filter((id) => id in current && current[id] !== saved[id]).map((id) => [id, saved[id]]);
   }
   const splitActions = (ids) => ({ bar: ids.filter((id) => FAV_ACTIONS.includes(id)), more: ids.filter((id) => !FAV_ACTIONS.includes(id)) });
 
-  const core = { STORE_KEY, GROUP_ORDER, DEFAULT_GROUP, FAV_ACTIONS, classify, actionGroup, groupItems, matches, filterItems,
+  const core = { STORE_KEY, GROUP_ORDER, DEFAULT_GROUP, FAV_ACTIONS, SELECT_IDS, isOn, classify, actionGroup, groupItems, matches, filterItems,
     counts, greyed, parseSaved, withSaved, restorePlan, splitActions };
   if (typeof module !== "undefined" && module.exports) module.exports = core;
 
@@ -141,7 +148,12 @@
     const items = new Map();       // id -> {id, label, title, group, parent, el (label), input}
     const secs = new Map();
     let saved = load();
-    const state = () => { const o = {}; for (const it of items.values()) o[it.id] = !!it.input.checked; return o; };
+    // a checkbox reads checked; a known select (SELECT_IDS) reads its value
+    const isSel = (el) => SELECT_IDS.includes(el.id);
+    const valueOf = (el) => (isSel(el) ? el.value : !!el.checked);
+    const setValue = (el, v) => { if (isSel(el)) el.value = v; else el.checked = v; };
+    const selectIn = (label) => SELECT_IDS.map((id) => label.querySelector("#" + id)).find(Boolean) || null;
+    const state = () => { const o = {}; for (const it of items.values()) o[it.id] = valueOf(it.input); return o; };
 
     function sectionFor(name) {
       if (secs.has(name)) return secs.get(name);
@@ -150,7 +162,7 @@
         const b = mk("button", "hw-btn td-all", lab);
         b.type = "button";
         b.addEventListener("click", () => {
-          for (const it of items.values()) if (it.group === name && it.input.checked !== v) {
+          for (const it of items.values()) if (it.group === name && !isSel(it.input) && it.input.checked !== v) {
             it.input.checked = v; it.input.dispatchEvent(new Event("change", { bubbles: true }));
           }
         });
@@ -163,7 +175,7 @@
       return s;
     }
     function collect(label) {
-      const input = label.matches("input[type=checkbox]") ? label : label.querySelector("input[type=checkbox]");
+      const input = label.matches("input[type=checkbox]") ? label : label.querySelector("input[type=checkbox]") || selectIn(label);
       if (!input || !input.id || items.has(input.id)) return;
       const host = label.matches("input") ? (input.closest("label") || input) : label;
       const kindsSpan = host.closest && host.closest(".ap-learned-kinds");
@@ -179,9 +191,9 @@
       if (it.id === "ap-drums-toggle") { const lvl = doc.getElementById("ap-drums-level"); if (lvl) { lvl.classList.add("td-level"); host.after(lvl); } }
       it.row = r;
       sectionFor(group).rows.append(r);
-      input.addEventListener("change", () => { saved = withSaved(saved, it.id, input.checked); save(saved); paint(); });
+      input.addEventListener("change", () => { saved = withSaved(saved, it.id, valueOf(input)); save(saved); paint(); });
       // restore this toggle if the user saved one (a change event so listeners follow)
-      if (it.id in saved && input.checked !== saved[it.id]) { input.checked = saved[it.id]; input.dispatchEvent(new Event("change", { bubbles: true })); }
+      if (it.id in saved && valueOf(input) !== saved[it.id]) { setValue(input, saved[it.id]); input.dispatchEvent(new Event("change", { bubbles: true })); }
       if (kindsSpan && !kindsSpan.querySelector("input")) kindsSpan.hidden = true;   // the kinds all moved out
     }
     function paint() {
@@ -210,7 +222,7 @@
     const scan = () => {
       if (obs) obs.disconnect();   // our own moves must not re-trigger the observer (a loop freezes the page)
       try {
-        row.querySelectorAll("label").forEach((l) => { if (l.querySelector("input[type=checkbox]")) collect(l); });
+        row.querySelectorAll("label").forEach((l) => { if (l.querySelector("input[type=checkbox]") || selectIn(l)) collect(l); });
         doc.querySelectorAll("[data-ai-toggle]").forEach(collect);
         paint();
       } finally { if (obs) obs.observe(row, { childList: true, subtree: true }); }
