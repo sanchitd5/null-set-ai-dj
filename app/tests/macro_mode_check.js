@@ -237,6 +237,20 @@ function mulberry(seed) { return () => { seed = (seed + 0x6D2B79F5) >>> 0; let t
     assert.deepStrictEqual(mm.macroRows(null), []);
     assert.strictEqual(mm.macroListLabel({ name: macro.name, songs: 8, steps: 7 }), "chain-2-jon-hopkins---open · 8 songs · 7 transitions");
     assert.strictEqual(mm.macroListLabel({ name: "x", songs: 2 }), "x · 2 songs · 1 transition");
+    // owner: "macros should have proper names": title shown, grouped by kind
+    assert.strictEqual(mm.macroListLabel({ name: "chain-1-x", title: "Jon Hopkins → Chemicals · 8 songs", songs: 8, steps: 7 }),
+      "Jon Hopkins → Chemicals · 8 songs · 7 transitions");
+    const groups = mm.macroGroups([
+      { name: "combo-b", title: "B", kind: "combo" }, { name: "chain-10-x", title: "C10" },
+      { name: "chain-2-x", title: "C2" }, { name: "studied-a-3", title: "S3", kind: "studied" },
+      { name: "studied-set-a", title: "Set A", kind: "studied" }, { name: "my-set", title: "Mine", created: 5 },
+      { name: "combo-a", title: "A", kind: "combo" }]);
+    assert.deepStrictEqual(groups.map((g) => g.label), ["STUDIED SETS", "CHAINS", "COMBOS", "YOUR MACROS"], "empty groups dropped");
+    assert.deepStrictEqual(groups[0].items.map((m) => m.name), ["studied-set-a", "studied-a-3"], "whole sets first");
+    assert.deepStrictEqual(groups[1].items.map((m) => m.name), ["chain-2-x", "chain-10-x"], "chains numeric");
+    assert.deepStrictEqual(groups[2].items.map((m) => m.title), ["A", "B"], "combos by title");
+    assert.strictEqual(mm.setToMacro("x", [{ a: SEVEN, b: LANE8 }], "My Set").title, "My Set");
+    assert.ok(!("title" in mm.setToMacro("x", [{ a: SEVEN, b: LANE8 }])));
   }
   console.log("macro mode OK");
 })().catch((e) => { console.error(e); process.exit(1); });

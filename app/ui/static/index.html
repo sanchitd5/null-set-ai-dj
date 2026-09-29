@@ -947,7 +947,7 @@
     <summary class="hud-label" title="Saved macros (data/cache/macros): pick one, then PLAY STEP (Shift+M) performs its next move (stored recipe, exit, entry, hold) with the autopilot's gates, or PLAY MACRO runs them all">MACROS <span id="macro-status"></span></summary>
     <div class="macro-body">
       <select id="macro-select" aria-label="Macros"><option value="">MACROS…</option></select>
-      <input type="text" id="macro-name" placeholder="name for SAVE MACRO" autocomplete="off" />
+      <input type="text" id="macro-name" placeholder="title for SAVE MACRO" title="The dropdown shows this title; the file name (slug) is derived from it" autocomplete="off" />
       <button class="hw-btn" id="macro-save" title="Save the transitions played this set as a macro">SAVE MACRO</button>
       <button class="hw-btn" id="macro-next" title="Play the highlighted step (Shift+M)">PLAY STEP</button>
       <button class="hw-btn" id="macro-play" title="The autopilot performs the whole macro, step after step (click again to stop)">PLAY MACRO</button>

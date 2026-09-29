@@ -287,11 +287,12 @@
 
   // The console's current set as a macro: the played transitions [{a, b, a_name, b_name,
   // recipe, a_time, b_time}] in order. Chained A->B->C, else throws.
-  function setToMacro(name, transitions) {
+  // title: what the dropdown shows (the owner types it); the server slugs name into the id
+  function setToMacro(name, transitions, title) {
     const steps = (transitions || []).filter((t) => t && t.a && t.b).map((t, i) => Object.assign({ n: i + 1 }, t));
     if (!steps.length) throw new Error("no transitions in this set yet");
     for (let i = 1; i < steps.length; i++) if (steps[i].a !== steps[i - 1].b) throw new Error(`step ${i + 1} does not start where step ${i} ended`);
-    return { name, source: "console", steps };
+    return Object.assign({ name, source: "console", steps }, title ? { title: String(title) } : {});
   }
 
   // AI ACTIONS run-now entries (owner add-on contract): refusal on unsafe state, else ok.
@@ -319,11 +320,38 @@
   }
   function macroListLabel(m) {
     const songs = Number(m && m.songs) || 0, steps = Number.isFinite(Number(m && m.steps)) ? Number(m.steps) : Math.max(0, songs - 1);
-    return `${m && m.name} · ${songs} song${songs === 1 ? "" : "s"} · ${steps} transition${steps === 1 ? "" : "s"}`;
+    const tr = `${steps} transition${steps === 1 ? "" : "s"}`;
+    // a title already names its song count where it matters (chains, studied sets)
+    if (m && m.title) return `${m.title} · ${tr}`;
+    return `${m && m.name} · ${songs} song${songs === 1 ? "" : "s"} · ${tr}`;
+  }
+  // MACRO dropdown (owner: "macros should have proper names"): titles grouped by kind, the slug
+  // stays the value (and the tooltip). Kind comes from GET /api/macros (macros.kind_of); older
+  // rows without one are sorted by slug prefix. -> [{kind, label, items}] (empty groups dropped)
+  const MACRO_GROUPS = [["studied", "STUDIED SETS"], ["chain", "CHAINS"], ["combo", "COMBOS"], ["yours", "YOUR MACROS"]];
+  function macroKind(m) {
+    if (m && m.kind) return m.kind;
+    const n = String((m && m.name) || ""), src = String((m && m.source) || "");
+    if (n.startsWith("studied-")) return "studied";
+    if (n.startsWith("chain-")) return "chain";
+    if (n.startsWith("combo-") || src.startsWith("atlas")) return "combo";
+    return "yours";
+  }
+  function macroGroups(list) {
+    const title = (m) => String(m.title || m.name || "");
+    const order = {
+      studied: (x, y) => (/^studied-set-/.test(y.name) - /^studied-set-/.test(x.name)) || title(x).localeCompare(title(y)),
+      chain: (x, y) => String(x.name).localeCompare(String(y.name), undefined, { numeric: true }),
+      combo: (x, y) => title(x).localeCompare(title(y)),
+      yours: (x, y) => (y.created || 0) - (x.created || 0),
+    };
+    return MACRO_GROUPS.map(([kind, label]) => ({
+      kind, label, items: (list || []).filter((m) => m && m.name && macroKind(m) === kind).sort(order[kind]),
+    })).filter((g) => g.items.length);
   }
 
   const core = { MACRO_PREFERENCE, COMBO_MIN_WORKS, COMBO_LABEL, FOLLOW_WINDOW, artistOf, studiedLabel, followCandidates, macroOrder, comboCandidates, macroCandidate,
-                 macroRows, macroListLabel,
+                 macroRows, macroListLabel, macroGroups,
                  macroPrefer, streakAfter, streakLabel, applyPlan, fireAt, stepGate, editStep, setToMacro, runNowCheck, forcedOf, stepForPair, runNext, autoMixPick, upcomingIds,
                  createRuntime: create };   // node checks drive the runtime over a fake Host
   if (typeof module !== "undefined" && module.exports) module.exports = core;
@@ -516,7 +544,9 @@
       const sel = ui.el("macro-select");
       try {
         const list = (await getJSON("/api/macros")).macros || [];
-        if (sel) sel.innerHTML = `<option value="">MACROS…</option>` + list.map((m) => `<option value="${esc(m.name)}">${esc(macroListLabel(m))}</option>`).join("");
+        if (sel) sel.innerHTML = `<option value="">MACROS…</option>` + macroGroups(list).map((g) => `<optgroup label="${esc(g.label)}">`
+          + g.items.map((m) => `<option value="${esc(m.name)}" title="${esc(m.name)}">${esc(macroListLabel(m))}</option>`).join("")
+          + `</optgroup>`).join("");
         macros = [];
         for (const m of macroOrder(list, 20)) { try { macros.push((await getJSON(`/api/macros/${encodeURIComponent(m.name)}`)).macro); } catch (e) { /* skip */ } }
       } catch (e) { say(`macros: ${e.message}`, false); }
@@ -527,7 +557,7 @@
       loaded = d.macro; cursor = 0;
       const bad = (d.validation || []).filter((v) => !v.ok);
       renderMacro();
-      say(`macro ${macroListLabel({ name: loaded.name, songs: (loaded.tracks || []).length, steps: loaded.steps.length })}${bad.length ? `; ${bad.length} need a fallback (${bad[0].issues[0]})` : ""}`, !bad.length);
+      say(`macro ${macroListLabel({ name: loaded.name, title: loaded.title, songs: (loaded.tracks || []).length, steps: loaded.steps.length })}${bad.length ? `; ${bad.length} need a fallback (${bad[0].issues[0]})` : ""}`, !bad.length);
     }
     function deckState() {
       const ap = host.mod.autopilotState, decks = host.decks || {}, st = host.state || {};
@@ -648,9 +678,9 @@
       const nameEl = ui.el("macro-name");
       const name = (nameEl && nameEl.value.trim()) || `set-${new Date(host.clock.now()).toISOString().slice(0, 16).replace(/[:T]/g, "-")}`;
       try {
-        const m = setToMacro(name, played);
+        const m = setToMacro(name, played, nameEl && nameEl.value.trim());
         const d = await getJSON("/api/macros", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ macro: m }) });
-        say(`saved macro ${d.macro.name} (${d.macro.steps.length} transitions)`);
+        say(`saved macro ${d.macro.title || d.macro.name} as ${d.macro.name} (${d.macro.steps.length} transitions)`);
         refreshList();
       } catch (e) { say(`SAVE MACRO: ${e.message}`, false); }
     }
