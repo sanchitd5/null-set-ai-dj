@@ -52,6 +52,12 @@ never-triggered). Other files: `events.jsonl` (server session log), `console.jso
 (dead air, bass overlap, vocal clash, unlocked overlap, stretch, from the audio graph + real stem
 energy), `net.jsonl`, `status.jsonl`, `ui_states.json`, `songs/*/steps.jsonl`.
 
+Informational metrics (never in the score): `merged_play_share` (transitions that ran a measured
+merge -> hold -> handover), `classic_merge_share` (the fixed 16 / 32 bar merge ran instead),
+`hold_seconds_mean` / `hold_seconds_max`, and `merge_refusals` (histogram of the gate that stopped a
+merge: stems, tempo, key, room, unclean, sub_owner, level, vocal_clash, ...). They are read from the
+console lines `merge gate: ...` and `merge phases: {...}` (`runlog._merge_facts`).
+
 ## Baseline, the gates and the improvement loop
 
 `baseline.json` is the committed suite result (seeds 1-5, long and quick). `suite --check` exits 1

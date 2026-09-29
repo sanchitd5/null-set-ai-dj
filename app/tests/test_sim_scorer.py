@@ -146,3 +146,33 @@ def test_suite_aggregate_and_check():
     reasons = suite.check(worse, base)
     assert any("mean score" in r for r in reasons) and any("key_clash_blends" in r for r in reasons)
     assert base["aggregate"]["recipes"] == {"Long Blend": 4}
+
+
+def test_merge_hold_metrics_are_informational():
+    """merged_play_share / hold seconds / refusal histogram report, but never move the score."""
+    plain = _score(_run([_t(1), _t(2), _t(3), _t(4)]))
+    held = _run([_t(1, merge_outcome="hold", hold_s=30.0, hold_bars=14), _t(2, merge_outcome="hold", hold_s=14.0, hold_bars=6),
+                 _t(3, merge_outcome="refused", merge_gate="key"), _t(4, merge_outcome="classic", merge_gate="unclean")])
+    r = _score(held)
+    m = r["metrics"]
+    assert r["score"] == plain["score"]
+    assert m["merged_play_share"] == 0.5 and m["classic_merge_share"] == 0.25
+    assert m["hold_seconds_mean"] == 22.0 and m["hold_seconds_max"] == 30.0
+    assert m["merge_refusals"] == {"key": 1, "unclean": 1}
+    assert _score(_run([_t(1)]))["metrics"]["merged_play_share"] == 0.0
+
+
+def test_merge_facts_read_the_console_lines():
+    from app.sim import runlog
+
+    gate = "merge gate: key: camelot 0.5 < 0.8"
+    phases = 'merge phases: {"merge_start": {"bars": 2}, "hold": {"bars": 14, "phrases": 2, "seconds": 28.0}, "handover": {"bars": 8}}'
+    held = runlog._merge_facts([gate, phases], "Stem Merge")
+    assert held["merge_outcome"] == "hold" and held["hold_s"] == 28.0 and held["hold_bars"] == 14 and held["merge_gate"] == ""
+    refused = runlog._merge_facts([gate], "Echo Out")
+    assert refused["merge_outcome"] == "refused" and refused["merge_gate"] == "key"
+    classic = runlog._merge_facts(["merge gate: unclean: no clean hold: 8 bars unclean (drums); classic merge"], "Stem Merge")
+    assert classic["merge_outcome"] == "classic" and classic["merge_gate"] == "unclean"
+    # the classic merge was booked but another move ran: refused, not classic
+    assert runlog._merge_facts(["merge gate: unclean: x; classic merge"], "Echo Out")["merge_outcome"] == "refused"
+    assert runlog._merge_facts(["transition recipe: Echo Out"], "Long Blend")["merge_outcome"] == "n/a"

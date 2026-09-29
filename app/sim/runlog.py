@@ -13,6 +13,7 @@ takes and the feature table (features.py) reports. It reads evidence; it decides
 """
 from __future__ import annotations
 
+import json
 import re
 from typing import Optional
 
@@ -100,7 +101,9 @@ def build_run(js: dict, world, meta: dict) -> dict:
         pct = (w.get("rate_max_pct") or {}).get(inp, 0.0)
         mind = [st for st in steps if st.get("kind") == "mind_plan" and prev_end - 0.001 <= st["t"] - 1_790_000_000.0 <= s["t"] + 0.5]
         parsed = any(((st.get("result") or {}).get("parsed") is True) for st in mind)
+        merge = _merge_facts(lines, executed)
         transitions.append({
+            **merge,
             "i": i + 1, "from": d["from"], "to": d["to"], "from_id": d["from"], "to_id": d["to"],
             "from_bpm": round(a["bpm"], 2), "to_bpm": round(b["bpm"], 2), "from_key": a["key"], "to_key": b["key"],
             "key_score": key_console, "key_kb": key_kb,
@@ -146,6 +149,34 @@ def build_run(js: dict, world, meta: dict) -> dict:
                      "misses": sorted(world.misses, key=lambda m: (m["what"], m["key"]))[:20]},
             "songs": songs, "transitions": transitions, "preps": preps, "rejects": rejects, "counters": counters,
             "audible": {"set": js["audible"].get("set")}}
+
+
+_MERGE_GATE = re.compile(r"merge gate: (\w+): (.*?)(; classic merge)?$")
+_MERGE_PHASES = re.compile(r"merge phases: (\{.*\})")
+
+
+def _merge_facts(lines: list, executed: Optional[str]) -> dict:
+    """MERGE -> HOLD -> TRANSITION evidence for one transition (informational, never scored).
+
+    Read from the console's own lines (the sim has no browser step log): `merge gate: <gate>: <why>`
+    (autopilot.js mergeGateLog: the gate that refused the hold plan, `; classic merge` when the fixed
+    16 / 32 bar merge ran instead) from booking on, and `merge phases: {json}` when a measured
+    merge -> hold -> handover fires. outcome: hold = a measured hold ran, classic = the fixed merge
+    ran, refused = a gate stopped every merge, n/a = the transition never tried one."""
+    gates = [m for m in (_MERGE_GATE.search(x) for x in lines) if m]
+    phases = next((json.loads(m.group(1)) for m in (_MERGE_PHASES.search(x) for x in lines) if m), None)
+    last = gates[-1] if gates else None
+    if phases:
+        outcome = "hold"
+    elif executed == "Stem Merge" and last is not None and last.group(3):
+        outcome = "classic"
+    elif last is not None:
+        outcome = "refused"
+    else:
+        outcome = "n/a"
+    hold = (phases or {}).get("hold") or {}
+    return {"merge_outcome": outcome, "merge_gate": last.group(1) if last and outcome != "hold" else "",
+            "hold_s": float(hold.get("seconds") or 0.0), "hold_bars": int(hold.get("bars") or 0)}
 
 
 def llm_summary(calls: list) -> dict:

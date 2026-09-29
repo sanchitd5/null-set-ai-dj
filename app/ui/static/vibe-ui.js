@@ -89,7 +89,13 @@
   function mergePlayhead(plan, posA, barA) {
     if (!plan || !(plan.M > 0) || !Number.isFinite(plan.aT) || !Number.isFinite(posA) || !(barA > 0)) return null;
     const bars = (posA - plan.aT) / barA, total = plan.M + 8;
-    return { bars, frac: Math.max(0, Math.min(1, bars / total)), live: bars >= 0 && bars <= total };
+    return { bars, frac: Math.max(0, Math.min(1, bars / total)), live: bars >= 0 && bars <= total, phase: mergePhase(plan, bars) };
+  }
+  // MERGE -> HOLD -> TRANSITION phase at `bars` since the merge start (plan.phases from
+  // stem-moves holdPlan; a classic fixed merge has the same 2 / M / M + 8 lines).
+  function mergePhase(plan, bars) {
+    if (!plan || !(plan.M > 0) || !Number.isFinite(bars) || bars < 0 || bars > plan.M + 8) return null;
+    return bars < 2 ? "merge" : bars < plan.M ? "hold" : "handover";
   }
 
   function lastLE(arr, t) {           // index of the last value <= t, -1 when none
@@ -221,7 +227,7 @@
   }
 
   const core = {
-    STEMS, aiState, countdown, fmtSecs, mergeLanes, mergePlayhead, phraseAt, harmony, energyChips,
+    STEMS, aiState, countdown, fmtSecs, mergeLanes, mergePlayhead, mergePhase, phraseAt, harmony, energyChips,
     trailPush, stemLevels, nextHook, nextCue, pruneCues, feedEntry, feedPush, feedPrune,
     FEED_TTL_MS, FEED_MAX, FEED_DEDUPE_MS,
   };
@@ -430,9 +436,12 @@
     const recipe = (nx && nx.recipe) || "";
     put(el.recipe, "text", `${nx && nx.name ? nx.name : "next song"}${recipe ? ` · ${recipe}` : ""}${lanes && lanes.label ? ` · ${lanes.label}` : ""}`);
     put(el.planned, "hidden", !(lanes && lanes.preplanned));
-    put(el.why, "text", lanes ? `${lanes.heard ? `ear ${lanes.earScore != null ? `${lanes.earScore}/10` : "heard"}` : "unheard"}${lanes.why ? ` · ${lanes.why}` : ""}` : "");
+    const whyText = lanes ? `${lanes.heard ? `ear ${lanes.earScore != null ? `${lanes.earScore}/10` : "heard"}` : "unheard"}${lanes.why ? ` · ${lanes.why}` : ""}` : "";
+    put(el.why, "text", whyText);
     if (lanes && out) {
       const ph = mergePlayhead(plan, posOf(out), 240 / (out.bpm || 128));
+      // MERGE -> HOLD -> HANDOVER: the phase the merge is in, with the planned hold length
+      if (ph && ph.phase) put(el.why, "text", `${ph.phase.toUpperCase()}${plan.phases ? ` (hold ${plan.phases.hold.bars} bars)` : ""} · ${whyText}`);
       put(el.head, "hidden", !ph);
       if (ph) put(el.head, "--vb-p", ph.frac.toFixed(3));
       put(el.fill, "--vb-p", ph ? ph.frac.toFixed(3) : "0");

@@ -220,6 +220,15 @@ def score_run(run: dict, artists_of: Optional[Callable[[str], set]] = None, iden
         "replay_misses": run["meta"].get("replay_misses", 0), "replay_drift": run["meta"].get("replay_drift", 0), "http_errors": counters.get("http_errors", 0),
         "download_failures": counters.get("download_failures", 0),
     }
+    # MERGE -> HOLD -> TRANSITION, informational only (not in the score): how many transitions ran a
+    # measured merge + hold, how long the holds were, and which gate refused the rest.
+    held = [t for t in trans if t.get("merge_outcome") == "hold"]
+    m["merged_play_share"] = round(len(held) / n_t, 3) if n_t else 0.0
+    m["classic_merge_share"] = round(sum(1 for t in trans if t.get("merge_outcome") == "classic") / n_t, 3) if n_t else 0.0
+    m["hold_seconds_mean"] = round(sum(t["hold_s"] for t in held) / len(held), 1) if held else 0.0
+    m["hold_seconds_max"] = round(max((t["hold_s"] for t in held), default=0.0), 1)
+    m["merge_refusals"] = dict(sorted(Counter(t["merge_gate"] for t in trans
+                                              if t.get("merge_outcome") in ("classic", "refused") and t.get("merge_gate")).items()))
     long_over = sum(max(0.0, s - MAX_SONG_S) / 60.0 for s in secs)
     pen = {
         "transitions": round(sum(r[0] for r in rows), 3),
