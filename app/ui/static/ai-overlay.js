@@ -182,7 +182,7 @@
         stemRow = { el };
       }
       stemRow.el.querySelector(".ai-label").textContent =
-        `Separating the library in the background${st.llm_busy && !st.urgent.length ? " (paused: LLM working)" : ""}`;
+        `Separating the library in the background${st.llm_busy && !st.urgent.length && st.wait_note ? ` (${st.wait_note})` : ""}`;
       stemRow.el.querySelector(".ai-time").textContent = `${left} left`;
     } catch (e) { /* server restarting */ }
   }

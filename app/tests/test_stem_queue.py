@@ -81,3 +81,16 @@ def test_persistent_worker_separates_two_songs_pipelined(tmp_path):
         assert set(r["stems"]) == {"drums", "bass", "vocals", "other"}
         info = sf.info(r["stems"]["vocals"])
         assert info.samplerate == 44100 and info.duration > 30
+
+
+def test_wait_note_names_what_the_ai_is_doing(monkeypatch):
+    """Owner read "(paused: LLM working)" as "the LLM is paused": the note says the STEMS wait."""
+    from app.ui import llm_gate
+
+    g = llm_gate.PriorityGate()
+    monkeypatch.setattr(llm_gate, "gate", g)
+    assert srv._stem_wait_note() == ""
+    with g.slot(llm_gate.SUGGEST):
+        note = srv._stem_wait_note()
+    assert note == "stems wait for the AI (suggest)" and "paused" not in note
+    assert srv._stem_wait_note() == ""          # released: nothing left over

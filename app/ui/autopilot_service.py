@@ -440,9 +440,12 @@ _USER_TEMPLATE = (
 )
 # Lines that say "none" cost prompt tokens on every call for nothing: omitted when empty.
 _FAVOURITE_LINE = (
-    "The listener's FAVOURITE artists (they come back to them set after set): {favourite_artists}. "
-    "Their songs are WELCOME when they fit the vibe and the artist has not played in the last 2 songs - "
-    "never avoid them for having been heard in earlier sets. Every suggestion must be by a DIFFERENT artist.\n"
+    # Worded as an exemption, not an invitation: "WELCOME" + the list made the single Omni
+    # model lead with Fred again.. (and invent Fred songs) in most rounds (2026-09-29 logs).
+    "The listener's FAVOURITE artists: {favourite_artists}. Do not avoid a song of theirs just "
+    "because an earlier set played it. They follow the same artist-spacing rule as everyone "
+    "else, and at most ONE suggestion may be by a favourite artist. Every suggestion must be by "
+    "a DIFFERENT artist.\n"
 )
 _EARLIER_LINE = (
     "Played in the listener's EARLIER sets - they have heard these recently, so prefer fresh "
@@ -1008,7 +1011,9 @@ def artist_spacing(picks: list, recent: list) -> list:
     ARTIST_MAX_IN_WINDOW in the last ARTIST_WINDOW, one pick per artist. Never empty
     when picks exist: if everything breaks the rule, the least-repeated pick is kept."""
     recent = [r for r in (recent or []) if r][-ARTIST_WINDOW:]
-    known = frozenset().union(*[_artists_of(r) for r in recent]) if recent else frozenset()
+    # the picks' own artists are "known" too: "Fred again.. - Delilah" after
+    # "Atlantic Records - ..., Fred again..-Sexy Magic" (session 2026-09-29_191658)
+    known = frozenset().union(*[_artists_of(r) for r in recent], *[_artists_of(p) for p in (picks or [])])
     near = set().union(*[_artists_of(r, known) for r in recent[-ARTIST_GAP_SONGS:]]) if recent else set()
     counts: dict = {}
     for r in recent:
@@ -1032,6 +1037,25 @@ def artist_spacing(picks: list, recent: list) -> list:
     best = min(open_, key=lambda x: sum(counts.get(a, 0) for a in _artists_of(x, known)))
     print(f"WARNING [suggest] every pick repeats a recent artist; kept {best.get('artist', '')} - {best.get('title', '')}", flush=True)
     return [best]
+
+
+def spacing_block(name: str, recent: list, relax: bool = False):
+    """One display name against the recent songs: the reason it may not play next, else
+    None. Twin of artist-spacing.js:spacingBlock (parity: tests/artist_spacing_cases.json).
+    relax (the last round) drops the window cap, never the gap."""
+    recent = [r for r in (recent or []) if r][-ARTIST_WINDOW:]
+    known = frozenset().union(*[_artists_of(r) for r in recent], _artists_of(name))
+    mine = _artists_of(name, known)
+    near = set().union(*[_artists_of(r, known) for r in recent[-ARTIST_GAP_SONGS:]]) if recent else set()
+    if mine & near:
+        return "gap"
+    counts: dict = {}
+    for r in recent:
+        for a in _artists_of(r, known):
+            counts[a] = counts.get(a, 0) + 1
+    if not relax and any(counts.get(a, 0) >= ARTIST_MAX_IN_WINDOW for a in mine):
+        return "window"
+    return None
 
 
 def _chat_call(system, user, temperature, timeout, model, max_tokens) -> str:

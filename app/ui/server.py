@@ -545,6 +545,16 @@ def _llm_busy() -> bool:
     return bool(snap["in_flight"] or snap["queued"] or snap.get("live"))
 
 
+def _stem_wait_note() -> str:
+    """Why the background stem backfill is waiting, in the owner's words: the STEMS wait
+    for the AI, the AI is not paused ("llm shows llm paused" was read the other way round)."""
+    from app.ui.llm_gate import gate
+
+    snap = gate.snapshot()
+    doing = "live ear" if snap.get("live") else snap["in_flight"] or (snap["queued"][0] if snap["queued"] else "")
+    return f"stems wait for the AI ({doing})" if doing else ""
+
+
 STEM_IN_FLIGHT = 2        # one separating, one decoding ahead (stem_worker pipeline)
 MAX_BACKFILL_S = 12 * 60  # longer files are albums / mixes: separated only if a deck asks
 
@@ -851,7 +861,7 @@ def get_library_lockable(bpm: float, key: str = "", exclude: str = "", limit: in
 def get_stems_status():
     with _stem_cv:
         return {"busy": _stem_busy, "urgent": list(_stem_queue), "backlog": len(_stem_backlog),
-                "llm_busy": _llm_busy(), **_stem_done}
+                "llm_busy": _llm_busy(), "wait_note": _stem_wait_note(), **_stem_done}
 
 
 @app.get("/api/tracks/{track_id}/vocals")
