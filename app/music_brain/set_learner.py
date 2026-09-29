@@ -198,6 +198,37 @@ def fetch_set(source: str) -> Tuple[Path, str, str]:
     return path, str(info["id"]), info.get("description") or ""
 
 
+def set_info(source: str) -> Tuple[str, str, str]:
+    """-> (set id, title, description) WITHOUT the set audio (learn-set --macros-only).
+    A cached info.json answers first; a URL is read as metadata only (yt-dlp, no download);
+    a local file is its own id (like fetch_set) and file name."""
+    if not _is_url(source):
+        p = Path(source).expanduser().resolve()
+        return hashlib.sha256(str(p).encode()).hexdigest()[:12], p.stem, ""
+    m = re.search(r"(?:v=|youtu\.be/|shorts/|live/)([\w-]{11})", source)
+    if m:
+        try:
+            d = json.loads((SETS_DIR / f"{m.group(1)}.info.json").read_text(encoding="utf-8"))
+            return m.group(1), str(d.get("title") or m.group(1)), str(d.get("description") or "")
+        except (OSError, ValueError, AttributeError):
+            pass
+    import yt_dlp
+
+    from app.music_brain import yt_guard
+
+    def run(extra: dict) -> dict:
+        with yt_dlp.YoutubeDL(_ydl(SETS_DIR, "%(id)s.%(ext)s") | extra) as ydl:
+            return ydl.extract_info(source, download=False) or {}
+    info = yt_guard.call(run)
+    sid = str(info.get("id") or "")
+    if not re.fullmatch(r"[\w-]{1,64}", sid):
+        raise ValueError(f"unusable video id {sid!r} for {source}")
+    SETS_DIR.mkdir(parents=True, exist_ok=True)
+    (SETS_DIR / f"{sid}.info.json").write_text(json.dumps(
+        {"title": info.get("title"), "description": info.get("description") or ""}, ensure_ascii=False), encoding="utf-8")
+    return sid, str(info.get("title") or sid), info.get("description") or ""
+
+
 def _fold(s: str) -> str:
     """Lowercase, accents off: a tracklist's 'Quiéreme' is YouTube's 'Quiereme' and
     yt-dlp's restricted file name 'Quiereme.mp3'."""
