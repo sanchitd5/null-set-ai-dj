@@ -821,18 +821,59 @@ function createAutopilotEngine({ host, ai }) {
     for (const n of ["drums", "bass", "vocals", "other"]) m[n] = e[n].reduce((a, b) => a + b, 0) / (e[n].length || 1);
     return m;
   }
-  // Plan the merge for A -> B at A's song time aT: algorithm first, then the
-  // silent ear re-ranks the top 3 in the background (offline clips, nothing
-  // plays) before the transition fires. Stored on B's deck as _mergePlan.
-  function planMerge(aId, bId, od, idk, aT) {
-    const mf = mergeFits(od, idk), sm = host.mod.stemMoves;
-    if (!mf || !sm || !sm.core.mergeRank) return null;
+  // MERGE -> HOLD -> TRANSITION (user: "best transition is when tracks merge and play"):
+  // the preferred plan whenever the gates pass. stem-moves core.holdPlan picks the hold
+  // (whole 8-bar phrases, measured stems + voices) and checks tempo, key >= 0.8, room,
+  // clean stems, one sub-bass owner and the level floor. -> {plan} | {gate, why, tried}.
+  // bFallback: B's start when the vocal-entry fetch has not landed (measured stems decide).
+  function planHold(od, idk, aT, bFallback, sm) {
+    const no = (gate, why) => ({ gate, why, tried: [] });
+    if (!sm.core.holdPlan) return no("module", "no holdPlan");
+    if (!od.stemsReady || !idk.stems || !od.bpm || !idk.bpm) return no("stems", "stems not ready on both decks");
+    const ve = idk._vocalEntry, entry = ve && ve.entry != null ? ve.entry : bFallback;
+    if (entry == null) return no("entry", "no entry line for B");
+    const aEff = od.bpm * od._playbackRate(), gap = Math.abs(aEff / idk.bpm - 1);
+    if (gap > keyLockLim() || (gap > 0.02 && !(idk.tempoStems && Math.abs(idk.tempoStems.bpm / aEff - 1) < 0.01))) {
+      return no("tempo", `gap ${(gap * 100).toFixed(1)} % not lockable within ${(keyLockLim() * 100).toFixed(0)} %`);
+    }
+    const barA = 240 / od.bpm, barB = 240 / idk.bpm, barS = 240 / aEff;
+    const roomBars = od.buffer ? (od.buffer.duration - aT) / barA : 0;
+    const n = Math.max(1, Math.min(sm.core.HOLD_MAX_PHRASES, Math.floor((roomBars - 10) / 8))) * 8 + 10;
     const cs = host.mod.djMind && host.mod.djMind.core && host.mod.djMind.core.camelotScore;
     const ka = od.analysis && od.analysis.key && od.analysis.key.camelot, kb = idk.analysis && idk.analysis.key && idk.analysis.key.camelot;
-    const ranked = sm.core.mergeRank({ eA: stemMeans(od, aT, mf.M), eB: stemMeans(idk, mf.entry, mf.M),
-      keyScore: cs && ka && kb ? cs(ka, kb) : null, bRap: mf.rap });
-    if (!ranked.length) return null;
-    const plan = { ...mf, ranked, pick: ranked[0], aT, heard: false };
+    const eA = sm.stemEnergyBars(od, aT, barA, n), eB = sm.stemEnergyBars(idk, entry, barB, n);
+    const hp = sm.core.holdPlan({
+      gap, keyScore: cs && ka && kb ? cs(ka, kb) : null, roomBars, barS, aT, bT: entry, barA, barB, bRap: !!(ve && ve.rap), eA, eB,
+      aVox: od.analysis && od.analysis.vocal_active_regions, bVox: idk.analysis && idk.analysis.vocal_active_regions,
+      aud: (() => { const aA = sm.stemEnergyBars(od, aT, barA, n, "audible"), aB = sm.stemEnergyBars(idk, entry, barB, n, "audible"); return aA && aB ? { aA, aB } : null; })(),
+    });
+    if (!hp.ok) return hp;
+    return { plan: { entry, M: hp.M, rap: !!(ve && ve.rap), gap, ranked: hp.ranked, pick: hp.pick, aT, heard: false, hold: hp, phases: hp.phases, holdE: { eA, eB },
+                     baseM: (mergeFits(od, idk) || {}).M || null } };
+  }
+  // Plan the merge for A -> B at A's song time aT: the hold plan first; when a gate refuses
+  // it (the reason is logged for the sim), the classic fixed-length merge below; then the
+  // silent ear re-ranks the top 3 in the background (offline clips, nothing plays) before
+  // the transition fires. Stored on B's deck as _mergePlan.
+  function planMerge(aId, bId, od, idk, aT, bFallback = null) {
+    const sm = host.mod.stemMoves;
+    if (!sm || !sm.core.mergeRank) return null;
+    const hd = planHold(od, idk, aT, bFallback, sm);
+    let plan = hd.plan || null;
+    if (!plan) {
+      const mf = mergeFits(od, idk);
+      console.info("merge gate:", `${hd.gate}: ${hd.why}${mf ? "; classic merge" : ""}`);
+      host.log.step("merge_gate", { deck: activeDeck, decision: mf ? "classic merge" : "refused", why: `${hd.gate}: ${hd.why}`, result: { gate: hd.gate, tried: hd.tried || [] } });
+      if (!mf) return null;
+      const cs = host.mod.djMind && host.mod.djMind.core && host.mod.djMind.core.camelotScore;
+      const ka = od.analysis && od.analysis.key && od.analysis.key.camelot, kb = idk.analysis && idk.analysis.key && idk.analysis.key.camelot;
+      const ranked = sm.core.mergeRank({ eA: stemMeans(od, aT, mf.M), eB: stemMeans(idk, mf.entry, mf.M),
+        keyScore: cs && ka && kb ? cs(ka, kb) : null, bRap: mf.rap });
+      if (!ranked.length) { host.log.step("merge_gate", { deck: activeDeck, decision: "refused", why: "no_combo: no stem combination plays", result: { gate: "no_combo", tried: [] } }); return null; }
+      plan = { ...mf, ranked, pick: ranked[0], aT, heard: false };
+    }
+    const mf = plan;
+    const ranked = plan.ranked;
     idk._mergePlan = plan;
     if (idk._mergeCtl) idk._mergeCtl.abort();          // flush the audition for the previous booking
     const ctl = idk._mergeCtl = new AbortController();
@@ -848,6 +889,11 @@ function createAutopilotEngine({ host, ai }) {
       .then((res) => {
         if (!res || !res.ear || idk._mergePlan !== plan) return;
         plan.ranked = sm.core.mergeWithEar(plan.ranked, res.results);
+        // the ear may not pick a combo whose stems stop playing inside the hold
+        if (plan.holdE) {
+          const clean = plan.ranked.filter((r) => !sm.core.holdUnclean(r.combo, plan.holdE.eA, plan.holdE.eB, plan.M / 8));
+          if (clean.length) plan.ranked = clean;
+        }
         plan.pick = plan.ranked[0];
         plan.heard = true;
         console.info("merge (silent ear):", plan.ranked.slice(0, 3).map((r) => `${r.label} ${r.score}${r.ear ? ` ear ${r.ear.score}` : ""}`).join(" | "));
@@ -915,10 +961,26 @@ function createAutopilotEngine({ host, ai }) {
       const mp = idM && idM._mergePlan;
       if (recipe === "Stem Merge" && smM && smM.mergeTransition && mp && odM) {
         ["low", "mid", "high"].forEach((b) => { setRange(eqEl(out, b), 0); setRange(eqEl(inn, b), 0); });
-        const secs = smM.mergeTransition(out, inn, xT0, mp.entry, mp.M, mp.pick, undefined, mp.ranked);
+        const hp = mp.hold ? mp.phases : null;
+        const ph = hp ? `merge ${mp.pick.label}; hold ${hp.hold.bars} bars (${hp.hold.phrases} phrases, ${hp.hold.seconds} s); ` +
+          `handover at bar ${mp.M}, ${hp.handover.bars} bars, vocal overlap ${hp.handover.vocal_overlap}` : undefined;
+        let M = mp.M, phases = hp;
+        let secs = smM.mergeTransition(out, inn, xT0, mp.entry, M, mp.pick, ph, mp.ranked);
+        if (!(secs > 0) && mp.hold && mp.baseM && mp.baseM !== mp.M) {
+          // the measured hold failed the level gate at fire time: the classic fixed-length merge, never a worse move
+          M = mp.baseM; phases = null;
+          host.log.step("merge_gate", { deck: out, decision: "classic merge", why: `level: hold of ${mp.M} bars refused at fire time`, result: { gate: "level", tried: [] } });
+          secs = smM.mergeTransition(out, inn, xT0, mp.entry, M, mp.pick, undefined, undefined);
+        }
         if (secs > 0) {
-          runMergeFader(smM, mp.M, 240 / (odM.bpm || 128) / odM._playbackRate());
+          runMergeFader(smM, M, 240 / (odM.bpm || 128) / odM._playbackRate());
           executedMove = "Stem Merge";
+          if (phases) {
+            const barS = 240 / (odM.bpm || 128) / odM._playbackRate();
+            host.log.step("merge_start", { deck: out, decision: "merge_start", why: phases.merge_start.combo, result: { ...phases.merge_start, seconds: Math.round(phases.merge_start.bars * barS * 10) / 10 } });
+            host.log.step("hold", { deck: out, decision: "hold", why: `${phases.hold.phrases} phrases together`, result: phases.hold });
+            host.log.step("handover", { deck: out, decision: "handover", why: "sub-bass and kick change hands on the line", result: phases.handover });
+          }
           return secs * 1000;
         }
       }
@@ -2493,11 +2555,16 @@ function createAutopilotEngine({ host, ai }) {
     // Song merge beats the plain mashup (it is its generalization) when a combo fits;
     // never over LAYER / PEAK. The mashup stays the fallback if the merge is refused.
     if (!preplanned && lockS.beat && !layer && !peakT && mergesOn() && stemsBoth && odS && sdS) {
-      const mp = planMerge(currentId, nextId, odS, sdS, effectiveATime);
+      const mp = planMerge(currentId, nextId, odS, sdS, effectiveATime, bTime);
       if (mp) {
-        recipe = "Stem Merge";
-        console.info("transition recipe:", `Stem Merge: ${mp.pick.label} (${mp.pick.reasons.join(", ")}), ${mp.M} bars`);
+        recipe = "Stem Merge";   // merge -> hold -> transition beats the matcher's / learned pick when its gates pass
+        console.info("transition recipe:", `Stem Merge: ${mp.pick.label} (${mp.pick.reasons.join(", ")}), ${mp.M} bars` +
+          (mp.phases ? `, hold ${mp.phases.hold.bars} bars (${mp.phases.hold.phrases} phrases)` : ", fixed length"));
       }
+    } else if (!preplanned && !layer && !peakT) {
+      // merge was not even tried: the gate that stopped it (counted by the sim)
+      const gate = !mergesOn() ? "off" : !stemsBoth ? "stems" : !lockS.beat ? "tempo" : "no_deck";
+      host.log.step("merge_gate", { deck: activeDeck, decision: "refused", why: `${gate}: not attempted`, result: { gate, tried: [] } });
     }
 
     bookedRecipe = recipe;

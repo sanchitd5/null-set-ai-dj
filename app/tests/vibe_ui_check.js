@@ -42,6 +42,12 @@ assert.strictEqual(v.mergePlayhead(plan, 200 - bar, bar).frac, 0);
 assert.strictEqual(v.mergePlayhead(plan, 200 + 8 * bar, bar).frac, 0.5);
 assert.strictEqual(v.mergePlayhead(plan, 200 + 8 * bar, bar).live, true);
 assert.strictEqual(v.mergePlayhead(plan, 200 + 40 * bar, bar).frac, 1);
+// phase: merge (0..2 bars), hold (2..M), handover (M..M+8), none outside
+assert.strictEqual(v.mergePlayhead(plan, 200 + 1 * bar, bar).phase, "merge");
+assert.strictEqual(v.mergePlayhead(plan, 200 + 4 * bar, bar).phase, "hold");
+assert.strictEqual(v.mergePlayhead(plan, 200 + 8 * bar, bar).phase, "handover");
+assert.strictEqual(v.mergePlayhead(plan, 200 - bar, bar).phase, null);
+assert.strictEqual(v.mergePlayhead(plan, 200 + 40 * bar, bar).phase, null);
 
 // -- bar / phrase counter
 const dbs = Array.from({ length: 40 }, (_, i) => 1 + i * 2);          // a bar every 2 s from 1 s
