@@ -77,12 +77,12 @@ class StubLLM:
         cur_bpm = float(bm.group(1)) if bm else 0.0
         cur_key = bm.group(2) if bm else ""
         cur_lvl = int(em.group(1)) if em else 5
-        around = {s.strip().lower() for s in (am.group(1).split(",") if am else [])}
+        around = (am.group(1) if am else "").lower()      # "last played: A, B | queued next: C | rejected: D"
         n = int(ctx.get("n_picks") or 5)
         scored = []
         for c in self.catalog:
             low = c["name"].lower()
-            if title and title.lower() in low or any(a and a in low for a in around) or low in self.said:
+            if title and title.lower() in low or low in around or low in self.said:
                 continue
             gap = _tempo_gap(cur_bpm, float(c.get("bpm") or 0))
             try:

@@ -17,6 +17,7 @@ const LATENCY = [
   [/^\/api\/merge\/audition/, 0.5], [/^\/api\/audio\/tracks/, 1.0], [/^\/api\/tracks\/[^/]+\/stems\/[a-z]+/, 0.4],
   [/^\/api\/tracks\/[^/]+\/analysis/, 0.2], [/^\/api\/live\/ear/, 1.5], [/^\/api\/search/, 1],
 ];
+const DOWNLOAD_S = 25;      // a download job's modelled duration (yt-dlp + analysis), seconds
 function latencyFor(path) { for (const [re, s] of LATENCY) if (re.test(path)) return s; return 0.05; }
 
 class Net {
@@ -27,7 +28,28 @@ class Net {
     this.log = [];
     this.marks = { transitionEnd: 0 };
     this.sessionEvents = [];              // what the console told the server about the set, virtual time
+    this.jobStart = {};
     clock.pendingNet = () => this.inflight;
+  }
+  // Background jobs run to completion inside the request in the sim (so their result never depends on
+  // how fast a thread ran). The console polls them as it does live: a download job that the server
+  // finished at once is reported "running" until its modelled download time has passed.
+  _model(method, path, r, issuedAt) {
+    try {
+      if (method === "POST" && path.startsWith("/api/download/jobs")) {
+        const j = JSON.parse(r.body.toString("utf8"));
+        if (j.job_id) this.jobStart[j.job_id] = issuedAt;
+      } else if (method === "GET") {
+        const m = /^\/api\/download\/jobs\/([0-9a-f]+)/.exec(path);
+        const start = m && this.jobStart[m[1]];
+        if (start !== undefined && this.clock.now - start < DOWNLOAD_S) {
+          const j = JSON.parse(r.body.toString("utf8"));
+          if (j.state === "done" || j.state === "error") {
+            r.body = Buffer.from(JSON.stringify({ ...j, state: "running", stage: "downloading", percent: Math.round(Math.min(99, ((this.clock.now - start) / DOWNLOAD_S) * 100)), tracks: [], error: null }));
+          }
+        }
+      }
+    } catch (e) { /* not a job body */ }
   }
   _request(method, path, headers, body) {
     return new Promise((resolve, reject) => {
@@ -73,6 +95,7 @@ class Net {
       this.log.push({ t: +issuedAt.toFixed(3), method, path: path.slice(0, 160), status: r.status, latency: lat, bytes: r.body.length });
       const respond = () => {
         if (signal && signal.aborted) return done.reject(abortError());
+        this._model(method, path, r, issuedAt);
         done.resolve(makeResponse(r, url));
       };
       if (lat > 0) this.clock.setTimeout(respond, lat * 1000); else respond();

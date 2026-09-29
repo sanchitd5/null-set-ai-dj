@@ -41,6 +41,10 @@ def write_outputs(out: Path, world, js: dict, run: dict, report: dict) -> None:
     (out / "events.jsonl").write_text("".join(json.dumps(e, ensure_ascii=False, sort_keys=True) + "\n" for e in world.events), encoding="utf-8")
     (out / "console.jsonl").write_text("".join(json.dumps(c, ensure_ascii=False, sort_keys=True) + "\n" for c in js["console"]), encoding="utf-8")
     (out / "audible.json").write_text(json.dumps(js["audible"], sort_keys=True), encoding="utf-8")
+    (out / "net.jsonl").write_text("".join(json.dumps(n, sort_keys=True) + "\n" for n in js["net"]), encoding="utf-8")
+    (out / "status.jsonl").write_text("".join(json.dumps(s, sort_keys=True) + "\n" for s in (js.get("status_log") or [])), encoding="utf-8")
+    (out / "ui_states.json").write_text(json.dumps({"ui": js.get("ui_states"), "supermoves": js.get("supermoves"), "errors": js["errors"],
+                                                    "dom_misses": js.get("dom_misses")}, sort_keys=True), encoding="utf-8")
     by_track: dict = {}
     for st in world.steps:
         by_track.setdefault(st["track_id"], []).append(st)

@@ -305,11 +305,15 @@ def feature_table(js: dict, world, run: dict) -> dict:
     F["mashup_layer"].executed += sum(1 for n in net if n["path"].startswith("/api/mashup/plan") and n.get("status") == 200)
 
     status = js.get("status_log") or []
-    labels = Counter()
+    labels, last_label = Counter(), None
     for st in status:
         m = re.search(r"\| (LONG|MID|QUICK·bail|QUICK|BRIDGE|FULL·famous) ", st["text"])
-        if m:
+        if m and m.group(1) != last_label:          # count each window once (the status line repeats every second)
             labels[m.group(1)] += 1
+        if m:
+            last_label = m.group(1)
+        elif st["text"].startswith("Next:"):
+            last_label = None
     for lab, n in labels.items():
         F["set_mode_windows"].executed += n
         F["set_mode_windows"].details.append(f"{lab} x{n}")

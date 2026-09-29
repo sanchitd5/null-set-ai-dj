@@ -139,6 +139,7 @@ class World:
             self._install_synth_stems(server)
         from app.ui import song_log
 
+        self._install_inline_jobs(server)
         self._patch(song_log, "step", self._song_step)
         self._patch(song_log, "on_session_event", lambda *a, **k: None)
         # a fresh run never sees a song lookup cached by an earlier one
@@ -150,6 +151,19 @@ class World:
         server._pair_cache.clear()
         self._orig = {"file_hash": orig_hash}
         self._seed_shared_files()
+
+    def _install_inline_jobs(self, server) -> None:
+        """Background jobs (download jobs, the silent ear's preplan / audition) run inline, in the request
+        that starts them: their result then never depends on thread timing. The console's polling and the
+        modelled download time are the transport's job (js/net.js)."""
+        from app.ui import download_jobs
+
+        class Inline:
+            def submit(self, fn, *args, **kw):
+                fn(*args, **kw)
+
+        self._patch(download_jobs, "_executor", Inline())
+        self._patch(server._ear_jobs, "_pool", Inline())
 
     def _seed_shared_files(self) -> None:
         """The frozen learned_techniques.json (fixtures/_shared) goes into the run's private cache:
