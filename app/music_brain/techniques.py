@@ -377,13 +377,15 @@ LEARNED_RECIPE = {
     "learned:bass_swap": "Bass Swap",
     "learned:stem_intro": "Long Blend",        # stem-moves eqIntro: B's intro stem under A, bass on the swap line
     "learned:acapella_over": "Mashup → Transition",
-    # the owner's no-cuts rule: the console never plays a Hard Cut / Quick Cut, it runs a cut as a bass swap on the audio clock
-    "learned:hard_cut": "Bass Swap",
 }
+
+# The owner's rule: a hard cut is worse than any blend and is never preferred. It has no console
+# recipe on purpose, and learned_pick refuses it even if a mapping is added later.
+NEVER_PLAY = {"learned:hard_cut"}
 
 
 LEARNED_MIN_KEY = 0.6   # = autopilot.js KEY_SAFE_MIN: the KB's worst legal move is -2 hours (0.6); 0.3 and 0 are rewritten
-_KEY_SENSITIVE = {"learned:bass_swap", "learned:stem_intro", "learned:hard_cut"}   # both layer tonal stems / full mixes
+_KEY_SENSITIVE = {"learned:bass_swap", "learned:stem_intro"}   # both layer tonal stems / full mixes
 
 
 def learned_pick(ranked: List[dict], store: Optional[Dict[str, dict]] = None,
@@ -398,7 +400,7 @@ def learned_pick(ranked: List[dict], store: Optional[Dict[str, dict]] = None,
     best = None
     for r in ranked:
         rec = LEARNED_RECIPE.get(r["name"])
-        if not (rec and r["fits"] and r.get("live")):
+        if r["name"] in NEVER_PLAY or not (rec and r["fits"] and r.get("live")):
             continue
         if key_score is not None and key_score < LEARNED_MIN_KEY and r["name"] in _KEY_SENSITIVE:
             continue
