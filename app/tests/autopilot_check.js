@@ -187,3 +187,23 @@ console.log("autopilot core ok");
   assert.ok(pairRejected(m, "a", "c", true) && pairRejected(m, "a", "c", false));
   console.log("empty backoff + pair rejects ok");
 }
+
+// silent tail: plan against the audible end, never start in the last minute
+{
+  const autopilotCore = require("../ui/static/autopilot.js");
+  const { audibleEnd, entryClamp } = autopilotCore;
+  const times = Array.from({ length: 268 }, (_, i) => i);
+  const loud = times.map(() => 0.5);
+  const tail = loud.concat(new Array(10).fill(0));
+  const tailTimes = Array.from({ length: 278 }, (_, i) => i);
+  assert.strictEqual(audibleEnd({ energy_times: tailTimes, energy_curve: tail }, 278), 268);   // BICEP
+  assert.strictEqual(audibleEnd({ energy_times: times, energy_curve: loud }, 268.4), 268.4);   // no tail
+  assert.strictEqual(audibleEnd(null, 200), 200);
+  assert.strictEqual(audibleEnd({ energy_times: [], energy_curve: [] }, 200), 200);
+  assert.strictEqual(audibleEnd({ energy_times: [0, 1], energy_curve: [0, 0] }, 200), 200);    // all quiet: no evidence
+  assert.strictEqual(entryClamp(199.06, 208), 148);                                            // Sabrina
+  assert.strictEqual(entryClamp(30, 208), 30);
+  assert.strictEqual(entryClamp(30, 40), 30);                                                  // short file untouched
+  const b = autopilotCore.exitBounds({ w: { min: 60, max: 300, xf: 24 }, entryPos: 0, trackDur: audibleEnd({ energy_times: tailTimes, energy_curve: tail }, 278) });
+  assert.ok(b.trackEnd <= 268 - 24 - 2 + 1e-9);
+}

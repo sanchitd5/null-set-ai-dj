@@ -368,6 +368,27 @@ var autopilotCore = (function () {
     const trackEnd = o.trackDur - o.w.xf - 2;
     return { trackEnd, lo: Math.min(o.entryPos + o.w.min, trackEnd), hi: Math.min(o.entryPos + o.w.max, trackEnd) };
   }
+  // Where a file stops being audible: the end of its last energy frame above
+  // SILENT_FLOOR (normalized RMS, 1 s hop), never past the buffer. A trailing
+  // silence under SILENT_TAIL_MIN_S is left alone. Unknown analysis -> dur.
+  // A 10 s silent tail on BICEP and leavemealone's -180 dB last second came from
+  // planning against the raw buffer length.
+  const SILENT_FLOOR = 0.01, SILENT_TAIL_MIN_S = 2, END_ROOM_S = 60;
+  function audibleEnd(analysis, dur) {
+    const tt = analysis && analysis.energy_times, cv = analysis && analysis.energy_curve;
+    if (!(dur > 0) || !tt || !cv || !tt.length || tt.length !== cv.length) return dur;
+    let i = cv.length - 1;
+    while (i >= 0 && !(cv[i] > SILENT_FLOOR)) i--;
+    if (i < 0) return dur;                       // all quiet: no evidence, keep dur
+    const hop = tt.length > 1 ? tt[1] - tt[0] : 1;
+    const end = Math.min(dur, tt[i] + hop);
+    return dur - end >= SILENT_TAIL_MIN_S ? end : dur;
+  }
+  // A song must not be started in its last END_ROOM_S seconds (Sabrina loaded at
+  // 199 s of 208): pull the start back so there is room to play.
+  function entryClamp(t, endS) {
+    return endS > END_ROOM_S && t > endS - END_ROOM_S ? endS - END_ROOM_S : t;
+  }
   // (exitPick below, then exitTiming, exitHighPush)
   // The planned exit inside the window: a blend / layer point wins, else the
   // matcher's point clamped into the window, never before the song's first drop.
@@ -399,7 +420,7 @@ var autopilotCore = (function () {
     return { t: ex.moved ? ex.t : o.t, moved: ex.moved };
   }
   const api = { emptyRetryMs, useLibraryFallback, rememberPairReject, pairRejected, awaitJob, keySafeRecipe, KEY_SAFE_MIN, energyStepOk, hybridWindowKey, highSpans, quantileLinear, median, exitPastHigh, learnedRecipe, vocalRecipe, stemBlendBars, stemBlendFader, phraseWaitS, introBars, FADER_PARK_BARS, homePlan, maskedGlideBars, maskedDropAt, HOME_DROP_PCT, LADDER_STEP_PCT,
-    tempoLockableAt, recipeKind, decideRecipe, WINDOWS, playWindowFor, exitBounds, exitPick, exitTiming, exitHighPush };
+    tempoLockableAt, recipeKind, decideRecipe, WINDOWS, playWindowFor, exitBounds, exitPick, exitTiming, exitHighPush, audibleEnd, entryClamp, SILENT_FLOOR };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   return api;
 })();
@@ -1883,7 +1904,7 @@ function createAutopilotEngine({ host, ai }) {
   function exitWindow(score) {
     const w = playWindow(score);
     const od = host.decks && host.decks[activeDeck];
-    const trackEnd = (od && od.buffer ? od.buffer.duration : Infinity) - w.xf - 2;
+    const trackEnd = (od && od.buffer ? autopilotCore.audibleEnd(od.analysis, od.buffer.duration) : Infinity) - w.xf - 2;
     return { lo: Math.min(entryPos + w.min, trackEnd), hi: Math.min(entryPos + w.max, trackEnd) };
   }
 
@@ -2374,7 +2395,7 @@ function createAutopilotEngine({ host, ai }) {
     const w = playWindow(score);
     const nowPos = deckPosition(activeDeck);
     const od = host.decks && host.decks[activeDeck];
-    const { trackEnd, lo, hi } = autopilotCore.exitBounds({ w, entryPos, trackDur: od && od.buffer ? od.buffer.duration : Infinity });
+    const { trackEnd, lo, hi } = autopilotCore.exitBounds({ w, entryPos, trackDur: od && od.buffer ? autopilotCore.audibleEnd(od.analysis, od.buffer.duration) : Infinity });
     let exitAt = autopilotCore.exitPick({ lo, hi, trackEnd, layerStart: layer ? layer.start : null, hasBlend: !!blend,
       blendExit: blend && blend.exit, candidateATime: candidate.a_time, minExit });
     // PEAK mode (dj-mind.js peakTransition): tempo-locked pairs only, land B's
@@ -2565,6 +2586,7 @@ function createAutopilotEngine({ host, ai }) {
       }
       const leadS = Math.max(0.05, (fireAt - deckPosition(activeDeck)) / rateA);
       const t0 = audioCtx.currentTime + leadS;
+      if (sd && sd.buffer) bTime = autopilotCore.entryClamp(bTime, autopilotCore.audibleEnd(sd.analysis, sd.buffer.duration));
       if (sd) sd.play(bTime, false, t0);
       // LAYER: B "arrives" at the bass hand-off; its play window counts from there
       const nextEntry = layer ? layer.b_swap : bTime;
@@ -2671,7 +2693,7 @@ function createAutopilotEngine({ host, ai }) {
     // breakdowns (stem-moves.js) keep it from sounding long.
     const pd = host.decks && host.decks[activeDeck];
     const famous = !!(pd && pd.fame && pd.fame.famous && pd.buffer);
-    return autopilotCore.playWindowFor({ steering, famous, rem: famous ? pd.buffer.duration - (entryPos || 0) : 0,
+    return autopilotCore.playWindowFor({ steering, famous, rem: famous ? autopilotCore.audibleEnd(pd.analysis, pd.buffer.duration) - (entryPos || 0) : 0,
       mode: setMode(), score, energy: currentEnergy });
   }
 
@@ -2705,7 +2727,7 @@ function createAutopilotEngine({ host, ai }) {
     const aEff = od.bpm * od._playbackRate(), gap = Math.abs(aEff / sd.bpm - 1);
     if (gap > keyLockLim() || (gap > 0.02 && !(sd.tempoStems && Math.abs(sd.tempoStems.bpm / aEff - 1) < 0.01))) return null;
     const w = playWindow(candidate.score || 50);
-    const trackEnd = (od.buffer ? od.buffer.duration : Infinity) - w.xf - 2;
+    const trackEnd = (od.buffer ? autopilotCore.audibleEnd(od.analysis, od.buffer.duration) : Infinity) - w.xf - 2;
     const lo = Math.min(entryPos + w.min, trackEnd), hi = Math.min(entryPos + w.max, trackEnd);
     try {
       const r = await fetch("/api/transition/preplan", { method: "POST", headers: { "Content-Type": "application/json" },
