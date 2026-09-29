@@ -25,6 +25,15 @@ assert.ok(c.readinessNeeds({ ...base, bStems: false, keyScore: 0.3 }).skip.inclu
 assert.ok(c.readinessNeeds({ ...base, bStems: false, bBpm: 100 }).skip.includes("over the cap"));
 assert.strictEqual(c.readinessNeeds({ ...base, bStems: false, keyScore: null }).needs[0], "stems");           // unknown key: wait, the merge gate decides
 
+// -- A still easing home: wait for it (the tempo stems are for A's HOME tempo), never chase the moving tempo
+assert.deepStrictEqual(c.readinessNeeds({ ...base, aSettled: false }).needs, ["A's tempo home"]);
+assert.deepStrictEqual(c.readinessNeeds({ ...base, aSettled: true }).needs, []);
+assert.deepStrictEqual(c.readinessNeeds({ ...base, bBpm: 120, aSettled: false }).needs, ["tempo stems", "A's tempo home"]);
+assert.deepStrictEqual(c.aTempoAtEntry({ bpm: 124, rate: 1.03, pitchPct: 3 }), { bpm: 124, settled: false });       // easing: its own tempo
+assert.deepStrictEqual(c.aTempoAtEntry({ bpm: 124, rate: 1.0004, pitchPct: 0.04 }), { bpm: 124 * 1.0004, settled: true });
+assert.deepStrictEqual(c.aTempoAtEntry({ bpm: 124, rate: 0.97, pitchPct: -3 }), { bpm: 124, settled: false });
+assert.deepStrictEqual(c.aTempoAtEntry({ bpm: 124, rate: 1 }), { bpm: 124, settled: true });
+
 // -- bounded wait: to the earliest exit minus the lead the plan needs, never past the cap
 assert.strictEqual(c.deferBudgetS({ nowPos: 20, exitLo: 200 }), 100);                                         // 135 s room, capped
 assert.strictEqual(c.deferBudgetS({ nowPos: 20, exitLo: 100 }), 35);                                          // 80 - 45
