@@ -82,6 +82,9 @@ def plan(cache_dir: Path, set_id: str) -> List[dict]:
         row = {"position": i + 1, "title": title, "path": t.get("path"), "action": "skip", "id": None, "why": _why_skip(t)}
         rows.append(row)
         if row["why"]:
+            lib = None if row["why"].startswith("ID") else res.find(title)
+            if lib:                                         # the set's file is unusable, the library has the song
+                row.update(action="reuse", id=lib, why=f"library copy of the same recording: {names.get(lib)} ({row['why']})")
             continue
         cid = content_id(Path(t["path"]))
         if cid in seen:                                     # listed twice in the set
