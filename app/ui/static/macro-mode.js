@@ -70,6 +70,58 @@
     return { list, skipped };
   }
 
+  // FOLLOW SET: a studied set's songs as the first suggestions (GET /api/studied/sets rows).
+  // o: {sets, follow ("" auto: the set the playing song is in | "none" | a set id), aId,
+  //     played (ids), recent (names), window (positions around the playing one), max}
+  // -> {set, pos, list: [{track_id, name, position, near, download}], skipped: [{name, position, why}]}
+  // Order: the next song in the set order, then the songs within `window` positions (nearest
+  // first, ahead before behind), then the rest of the set (ahead, then behind). A missing song
+  // is offered for download only when near (download: {artist, title, search_query}).
+  const FOLLOW_WINDOW = 3;
+  function followCandidates(o) {
+    const none = { set: null, pos: 0, list: [], skipped: [] };
+    const sets = o.sets || [];
+    if (o.follow === "none") return none;
+    const set = o.follow ? sets.find((s) => s.set_id === o.follow)
+      : sets.find((s) => (s.songs || []).some((x) => x.track_id && x.track_id === o.aId));
+    if (!set) return none;
+    const W = o.window == null ? FOLLOW_WINDOW : o.window;
+    const songs = (set.songs || []).filter((x) => x.status !== "id");
+    const here = songs.find((x) => x.track_id && x.track_id === o.aId);
+    const k = here ? here.position : 0;
+    const played = new Set(o.played || []);
+    const rank = (x) => {
+      const d = x.position - k;
+      return d > 0 && d <= W ? [d === 1 ? 0 : 1, d, 0] : d < 0 && -d <= W ? [1, -d, 1] : [2, d > 0 ? d : 1000 - d, 0];
+    };
+    const ordered = songs.filter((x) => x.position !== k).sort((x, y) => {
+      const a = rank(x), b = rank(y);
+      return a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
+    });
+    // the first song after k is "next" even when k+1 is an ID or missing entry
+    const firstAhead = ordered.find((x) => x.position > k);
+    if (firstAhead && rank(firstAhead)[0] !== 0) {
+      ordered.splice(ordered.indexOf(firstAhead), 1);
+      ordered.unshift(firstAhead);
+    }
+    const list = [], skipped = [], seen = new Set();
+    for (const x of ordered) {
+      const near = Math.abs(x.position - k) <= W;
+      let sp = null;
+      const why = x.track_id && (x.track_id === o.aId || played.has(x.track_id)) ? "already played this set"
+        : x.track_id && seen.has(x.track_id) ? "listed earlier"
+        : (sp = spacingWhy(x.title, o.recent)) ? sp
+        : !x.track_id && !near ? "not in the library (downloads when near)" : null;
+      if (why) { skipped.push({ name: x.title, position: x.position, why }); continue; }
+      if (x.track_id) seen.add(x.track_id);
+      const parts = String(x.title).split(/\s+[-–—]\s+/);
+      list.push({ track_id: x.track_id || null, name: x.title, position: x.position, near,
+                  download: x.track_id ? null : { artist: parts.length > 1 ? parts[0] : "", title: parts.length > 1 ? parts.slice(1).join(" - ") : x.title,
+                                                  search_query: `ytmsearch:${x.title}` } });
+    }
+    return { set, pos: k, list: list.slice(0, o.max || 8), skipped };
+  }
+
   // Macros the tab keeps in memory (the first `n`): studied macros first, then the server order.
   function macroOrder(list, n = 20) {
     const st = (m) => /^studied-/.test(String(m && m.name || ""));
@@ -201,7 +253,7 @@
     return g.ok ? { ok: true, why: g.why || `step ${step.n}: ${g.recipe}`, recipe: g.recipe } : g;
   }
 
-  const core = { MACRO_PREFERENCE, COMBO_MIN_WORKS, COMBO_LABEL, artistOf, studiedLabel, macroOrder, comboCandidates, macroCandidate,
+  const core = { MACRO_PREFERENCE, COMBO_MIN_WORKS, COMBO_LABEL, FOLLOW_WINDOW, artistOf, studiedLabel, followCandidates, macroOrder, comboCandidates, macroCandidate,
                  macroPrefer, streakAfter, streakLabel, applyPlan, fireAt, stepGate, editStep, setToMacro, runNowCheck,
                  createRuntime: create };   // node checks drive the runtime over a fake Host
   if (typeof module !== "undefined" && module.exports) module.exports = core;
@@ -217,7 +269,18 @@
     let streak = { n: 0, names: [] };
     let armed = null;                    // a step the user armed for the autopilot's next booking
     const played = [];                   // transitions this set: [{a, b, a_name, b_name, recipe, a_time, b_time}]
-    const stats = { macroSeen: 0, macroTaken: 0, comboTried: 0, comboPicked: 0, atlasPlan: 0, maxStreak: 0 };
+    const stats = { macroSeen: 0, macroTaken: 0, comboTried: 0, comboPicked: 0, atlasPlan: 0, maxStreak: 0, followTried: 0 };
+    let studiedSets = null;              // GET /api/studied/sets (FOLLOW SET), loaded once per refreshList
+    async function followSets() {
+      if (studiedSets) return studiedSets;
+      try { studiedSets = (await getJSON("/api/studied/sets")).sets || []; } catch (e) { studiedSets = []; }
+      const sel = ui.el("ap-follow-set");
+      if (sel && studiedSets.length && !sel.dataset.filled) {
+        sel.dataset.filled = "1";
+        sel.innerHTML += studiedSets.map((s) => `<option value="${esc(s.set_id)}">${esc(s.dj)} (${esc(s.set_id)})</option>`).join("");
+      }
+      return studiedSets;
+    }
     const flag = (id, d) => ui.flag(id, d);
     const say = (msg, ok = true) => { ui.status(`${ok ? "" : "✗ "}${msg}`); const el = ui.el("macro-status"); if (el) el.textContent = msg; };
     const step = (kind, o) => host.log.step(kind, Object.assign({ phase: "selection" }, o));
@@ -274,6 +337,22 @@
         stats.macroTaken++;
         const s = mc.found.step;
         out.push(mk(s.b, s.b_name, { _macro: { name: mc.found.macro, step: s } }));
+      }
+      // 1b) FOLLOW SET: a studied set's songs around the playing one (auto: the set it belongs to)
+      {
+        const sel = ui.el("ap-follow-set");
+        const fc = followCandidates({ sets: await followSets(), follow: sel ? sel.value : "", aId, played: o.played, recent: o.recent });
+        if (fc.set) {
+          stats.followTried++;
+          for (const c of fc.list) {
+            if (c.track_id && out.some((x) => x.track_id === c.track_id)) continue;
+            out.push(mk(c.track_id, c.name, { _follow: { set_id: fc.set.set_id, dj: fc.set.dj, position: c.position }, _download: c.download }));
+            const line = `studied: suggest ${c.name} (set ${fc.set.set_id}, pos ${c.position})${c.download ? " [download]" : ""}`;
+            console.info(line);
+            step("studied", { decision: "suggest", why: line });
+          }
+          if (!fc.list.length) step("studied", { decision: "skipped", why: `studied: set ${fc.set.set_id}: ${fc.skipped.slice(0, 2).map((s) => `${s.name}: ${s.why}`).join("; ") || "no song left"}` });
+        }
       }
       // 2) combos for A (loaded partner first)
       if (flag("ap-atlas-combo", true)) {
@@ -334,6 +413,7 @@
     }
     const fmt = (t) => (Number.isFinite(t) ? `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, "0")}` : "?");
     async function refreshList() {
+      studiedSets = null;               // re-read with the macros (an import-set adds songs)
       const sel = ui.el("macro-select");
       try {
         const list = (await getJSON("/api/macros")).macros || [];

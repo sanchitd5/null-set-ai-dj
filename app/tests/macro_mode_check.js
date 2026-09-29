@@ -52,6 +52,30 @@ const studied = { count: 1, sets: ["oRb_81stwy8"], djs: ["Anyma"], techniques: {
     "COMBO x2: MERGE -> STUDIED COMBO (Anyma set)");
 }
 
+// 1c) FOLLOW SET: playing song at position k -> k+1, then the neighbours (nearest, ahead first), then the rest
+{
+  const id = (n) => String(n).repeat(16).slice(0, 16);
+  const song = (p, title, tid, status = "library") => ({ position: p, title, track_id: tid, status });
+  const set = { set_id: "oRb_81stwy8", dj: "Anyma", songs: [
+    song(1, "A1 - One", id(1)), song(2, "A2 - Two", id(2)), song(3, "A3 - Three", id(3)), song(4, "ID - ID", null, "id"),
+    song(5, "A5 - Five", id(5)), song(6, "Cherry - Puer", null, "download"), song(7, "A7 - Seven", id(7)), song(8, "A8 - Eight", id(8)),
+    song(9, "A9 - Nine", id(9)), song(10, "Far - Missing", null, "download")] };
+  const f = mm.followCandidates({ sets: [set], follow: "", aId: id(3), played: [], recent: [] });
+  assert.strictEqual(f.set.set_id, "oRb_81stwy8", "auto: the playing song's set");
+  assert.strictEqual(f.pos, 3);
+  assert.deepStrictEqual(f.list.map((c) => c.position), [5, 2, 1, 6, 7, 8, 9], "next (ID skipped), neighbours nearest first, rest");
+  assert.deepStrictEqual(f.list.find((c) => c.position === 6).download, { artist: "Cherry", title: "Puer", search_query: "ytmsearch:Cherry - Puer" }, "a near missing song downloads");
+  assert.ok(f.skipped.some((s) => s.position === 10 && /downloads when near/.test(s.why)), "a far missing song waits");
+  const gated = mm.followCandidates({ sets: [set], follow: "", aId: id(3), played: [id(5)], recent: ["A2 - Something"] });
+  assert.deepStrictEqual(gated.list.map((c) => c.position).slice(0, 3), [1, 6, 7], "played (5) and artist spacing (2) fail their gates: skipped");
+  assert.ok(gated.skipped.some((s) => s.position === 5 && /already played/.test(s.why)));
+  assert.ok(gated.skipped.some((s) => s.position === 2 && /artist spacing/.test(s.why)));
+  assert.strictEqual(mm.followCandidates({ sets: [set], follow: "none", aId: id(3) }).list.length, 0, "off");
+  assert.strictEqual(mm.followCandidates({ sets: [set], follow: "", aId: "0".repeat(16) }).set, null, "not in a studied set: no auto follow");
+  const chosen = mm.followCandidates({ sets: [set], follow: "oRb_81stwy8", aId: "0".repeat(16), max: 2 });
+  assert.deepStrictEqual(chosen.list.map((c) => c.position), [1, 2], "a chosen set starts from its first song");
+}
+
 // 2) macro preference: ~80 % of valid steps over many seeded draws; an invalid step is never taken
 function mulberry(seed) { return () => { seed = (seed + 0x6D2B79F5) >>> 0; let t = seed; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
 {
@@ -155,5 +179,26 @@ function mulberry(seed) { return () => { seed = (seed + 0x6D2B79F5) >>> 0; let t
   partners.push(row(STUD, "Anyma - Eternity", 40, "studied", { studied }));     // same array the partners cache holds
   rt.landed(SEVEN, STUD, { recipe: "Stems Transition" });
   assert.strictEqual(els["combo-streak"].textContent, "COMBO x2: MERGE -> STUDIED COMBO (Anyma set)", "VIBE line names the studied set");
+  // FOLLOW SET in the runtime: the set's next song is tried before the atlas combos, and logged
+  {
+    const logs2 = [], els2 = {};
+    const el2 = (id) => els2[id] || (els2[id] = { id, value: "", dataset: {}, checked: id === "ap-atlas-combo", textContent: "", hidden: true, innerHTML: "", addEventListener() {} });
+    const sets = [{ set_id: "oRb_81stwy8", dj: "Anyma", songs: [{ position: 1, title: "Seven Lions - Days To Come", track_id: SEVEN, status: "library" },
+      { position: 2, title: "Some Artist - Other Song", track_id: OTHER, status: "library" }, { position: 3, title: "Cherry - Puer", track_id: null, status: "download" }] }];
+    const host2 = {
+      ui: { el: el2, flag: (id, d) => (els2[id] ? !!els2[id].checked : d), status() {} }, clock: { now: () => 0, setTimeout() {} },
+      random: { next: mulberry(5), uuid: () => "x" }, log: { step: (k, o) => logs2.push([k, o.decision, o.why]) }, bus: { on() {} }, mod: {}, state: {}, decks: {},
+      api: { fetch: async (url) => ({ ok: true, json: async () => (url.startsWith("/api/atlas/partners") ? { partners } : url === "/api/studied/sets" ? { sets } : url === "/api/macros" ? { macros: [] } : {}) }) },
+    };
+    const rt2 = mm.createRuntime({ host: host2 });
+    const f2 = await rt2.firstCandidates(SEVEN, { played: [], recent: [] });
+    assert.deepStrictEqual(f2.map((c) => c.track_id), [OTHER, null, STUD, LANE8], "set order first (next, then the near missing song), then combos");
+    assert.deepStrictEqual(f2[0]._follow, { set_id: "oRb_81stwy8", dj: "Anyma", position: 2 });
+    assert.strictEqual(f2[1]._download.search_query, "ytmsearch:Cherry - Puer");
+    assert.ok(logs2.some(([k, , w]) => k === "studied" && w === "studied: suggest Some Artist - Other Song (set oRb_81stwy8, pos 2)"));
+    els2["ap-follow-set"].value = "none";
+    const off = await rt2.firstCandidates(SEVEN, { played: [], recent: [] });
+    assert.deepStrictEqual(off.map((c) => c.track_id), [STUD, LANE8, OTHER], "FOLLOW SET off: combos only (studied first)");
+  }
   console.log("macro mode OK");
 })().catch((e) => { console.error(e); process.exit(1); });

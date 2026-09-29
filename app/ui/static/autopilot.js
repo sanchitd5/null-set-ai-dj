@@ -2650,10 +2650,20 @@ function createAutopilotEngine({ host, ai }) {
     if (host.mod.macroMode && !leadDue()) {
       const st = host.state || {}, other = activeDeck === "a" ? st.trackB : st.trackA;
       const first = await host.mod.macroMode.firstCandidates(currentId, { played: playedIds, recent: history, loadedId: other && other !== currentId ? other : null });
-      for (const c of first) {
+      for (let c of first) {
         if (!active || gen !== prepGen) return;
+        if (c._download) {        // FOLLOW SET: a studied set's song the library lacks, via the normal suggest -> download path
+          apStatus(`FOLLOW SET ${c._follow.set_id}: downloading ${c.name}`);
+          try {
+            c = Object.assign(await downloadSuggestion(c._download), { _follow: c._follow });
+          } catch (e) {
+            host.log.step("studied", { phase: "selection", decision: "download failed", why: `studied: ${c.name}: ${e.message}` });
+            continue;
+          }
+          if (!active || gen !== prepGen) return;
+        }
         if (c.track_id === currentId || playedIds.includes(c.track_id)) continue;
-        apStatus(`${c._macro ? `Macro ${c._macro.name || ""} step ${c._macro.step.n}` : `COMBO ${c._combo.label}`}: trying ${c.name}`);
+        apStatus(`${c._macro ? `Macro ${c._macro.name || ""} step ${c._macro.step.n}` : c._follow ? `FOLLOW SET ${c._follow.dj} #${c._follow.position}` : `COMBO ${c._combo.label}`}: trying ${c.name}`);
         if (await tryCandidate(currentId, c, gen)) return;
       }
       if (!active || gen !== prepGen) return;
