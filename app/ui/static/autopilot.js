@@ -935,8 +935,11 @@ function createAutopilotEngine({ host, ai }) {
   }
 
   const MASHUP_VOX = 0.7;     // B's voice under A's music but never buried (user)
-  // {entry, M, why} when a mashup transition fits A -> B, else null.
-  function mashupFits(od, idk) {
+  // {entry, M, why, variant} when a mashup transition fits A -> B, else null. t0: the transition's audio time
+  // (null at booking). Artist variants (stem-moves.js, batch B): a sung vocal over clashing keys may still ride
+  // A's drums alone (S9 drums host, owner's drumsOnlyKeyWaiver); no room left in A for the full mashup: a
+  // filtered loop of A's last vocal-free bars under B's vocal (S1 filter loop).
+  function mashupFits(od, idk, t0) {
     const ve = idk._vocalEntry;
     if (!od.stemsReady || !idk.stems || !ve || ve.entry == null || !od.bpm || !idk.bpm) return null;
     const aEff = od.bpm * od._playbackRate();
@@ -946,11 +949,18 @@ function createAutopilotEngine({ host, ai }) {
     const cs = host.mod.djMind && host.mod.djMind.core && host.mod.djMind.core.camelotScore;
     const ka = od.analysis && od.analysis.key && od.analysis.key.camelot, kb = idk.analysis && idk.analysis.key && idk.analysis.key.camelot;
     const keyOk = !cs || !ka || !kb || cs(ka, kb) >= 0.8;
-    if (!keyOk && !ve.rap) return null;                                // a sung vocal over clashing chords: no
     const barS = 240 / aEff;
     const aLeft = od.buffer ? (od.buffer.duration - od._currentPosition()) / od._playbackRate() : 0;
     const M = ve.vocal32 >= 0.7 && aLeft >= 44 * barS ? 32 : aLeft >= 26 * barS && ve.vocal16 >= 0.5 ? 16 : 0;
-    if (!M) return null;
+    const sm = host.mod.stemMoves, pA = Number.isFinite(t0) && od._positionAt ? od._positionAt(t0) : null;
+    if (!keyOk && !ve.rap) {                                           // a sung vocal over clashing chords: only over A's drums alone
+      const dh = M && sm && sm.drumsHostFits ? sm.drumsHostFits(od, idk, M, pA) : null;
+      return dh && dh.ok ? { entry: ve.entry, M, variant: dh, why: dh.why } : null;
+    }
+    if (!M) {
+      const fl = sm && sm.filterLoopFits ? sm.filterLoopFits(od, idk, ve, MASHUP_VOX, pA) : null;
+      return fl && fl.ok ? { entry: ve.entry, M: fl.M, variant: fl, why: fl.why } : null;
+    }
     return { entry: ve.entry, M, why: `${M}-bar mashup: B's ${ve.rap ? "rap" : "vocal"} over A's instrumental${gap > 0.02 ? `, B key-locked ${(gap * 100).toFixed(0)} %` : ""}, then B's beat on the line` };
   }
 
@@ -1081,7 +1091,7 @@ function createAutopilotEngine({ host, ai }) {
     executedMove = recipe;
     clearRun();
     xT0 = Number.isFinite(t0Audio) ? t0Audio : audioCtx.currentTime;
-    const kind = recipeKind(recipe);
+    let kind = recipeKind(recipe);    // "echo" when a drums-host mashup on clashing keys is refused at the line
     const scale = xfDuration >= 16 ? 1 : 0.5;
     const bar = barMs(out) * scale;
     const beat = bar / 4;
@@ -1156,15 +1166,16 @@ function createAutopilotEngine({ host, ai }) {
     // B on key-locked tempo stems at A's tempo when they differ.
     {
       const sm1 = host.mod.stemMoves, od1 = host.decks && host.decks[out], id1 = host.decks && host.decks[inn];
-      const mt = sm1 && od1 && id1 ? mashupFits(od1, id1) : null;
+      const mt = sm1 && od1 && id1 ? mashupFits(od1, id1, xT0) : null;
       if (mt && kind !== "double") {
         ["low", "mid", "high"].forEach((b) => { setRange(eqEl(out, b), 0); setRange(eqEl(inn, b), 0); });
-        const secs = sm1.mashupTransition(out, inn, xT0, mt.entry, mt.M, MASHUP_VOX, mt.why);
+        const secs = sm1.mashupTransition(out, inn, xT0, mt.entry, mt.M, MASHUP_VOX, mt.why, mt.variant || null);
         if (secs > 0) {
           runMergeFader(sm1, mt.M, 240 / (od1.bpm || 128) / od1._playbackRate());   // B's voice fades in with the fader
           executedMove = "Mashup → Transition";
           return secs * 1000;
         }
+        if (mt.variant && mt.variant.kind === "drums_host") kind = "echo";   // keys clash: only the key-safe stem bridge / echo path
       }
     }
 
