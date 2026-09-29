@@ -1988,6 +1988,7 @@ function createAutopilotEngine({ host, ai }) {
     }
     while (d.wait) {
       deferNote = `B's ${p.r.needs.join(" and ")}`;
+      host.session.deferring = true;         // learned-moves.js: no slice move while B's stems load (loop_extend may fill)
       apStatus(`Waiting for ${nextName}: ${p.r.needs.join(" and ")} (${Math.round(waited)} s of ${Math.round(budget)} s)`);
       // native stems on the deck but the tempo set not asked for (or the last try failed): ask now
       if (p.r.needs.includes("tempo stems") && sd.stems && sd.useTempoStems && host.clock.now() - lastTry > 15000) {
@@ -2002,6 +2003,7 @@ function createAutopilotEngine({ host, ai }) {
       d = autopilotCore.deferDecision({ needs: p.r.needs, waitedS: waited, budgetS: budget });
     }
     deferNote = null;
+    host.session.deferring = false;
     res.deferS = waited; res.needs = p.r.needs; res.gaveUp = p.r.needs.length > 0;
     if (waited > 0) {
       console.info("merge deferred:", res.gaveUp ? d.why : `waited ${waited.toFixed(0)} s, B ready`);

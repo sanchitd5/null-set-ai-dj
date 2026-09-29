@@ -1329,6 +1329,15 @@ def get_learned_pick(a: str, b: str, keylock: bool = False):
     return {"pick": pick}
 
 
+@app.get("/api/learned/moves")
+def get_learned_moves():
+    """The in-song learned moves (vocal loop / re-cut / chops, loop extend): per kind whether the
+    console may play it (sighted, not disabled), the user's rules and the sightings' parameters."""
+    from app.music_brain import techniques as tq
+
+    return {"moves": tq.learned_moves()}
+
+
 @app.get("/api/techniques")
 def get_techniques(a: str, b: str, keylock: bool = False):
     """Which learned techniques fit A -> B, each with its reasons (app.music_brain.techniques)."""

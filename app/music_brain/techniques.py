@@ -411,3 +411,73 @@ def learned_pick(ranked: List[dict], store: Optional[Dict[str, dict]] = None,
             best = {"kind": kind, "recipe": rec, "seen": seen, "source": r["source"], "reasons": r["reasons"],
                     "rules": [x for x in r["reasons"] if "rule:" in x]}
     return best
+
+
+# ------------------------------------------------------- learned -> in-song moves
+# The four learned kinds that are not transition recipes: the console plays them INSIDE a song
+# (app/ui/static/learned-moves.js). This is what the console reads: per kind, whether it may run
+# (seen in a studied set, not disabled) and the parameters the sightings show. The console clamps
+# them by what the playing song's audio allows; a value that is None here is a logged fallback there.
+MOVE_KINDS = ("vocal_loop", "vocal_resequence", "vocal_chop", "loop_extend")
+
+
+def _median(xs: Sequence[float]) -> Optional[float]:
+    xs = sorted(x for x in xs if x is not None)
+    if not xs:
+        return None
+    m = len(xs) // 2
+    return float(xs[m]) if len(xs) % 2 else (xs[m - 1] + xs[m]) / 2.0
+
+
+def _spans(obs: List[dict], key: str) -> List[float]:
+    """Lengths (s) of every [start, end] pair under detail[key]."""
+    out = []
+    for o in obs:
+        det = o.get("detail")
+        for p in (det.get(key) if isinstance(det, dict) else None) or []:
+            try:
+                out.append(float(p[1]) - float(p[0]))
+            except (TypeError, ValueError, IndexError):
+                continue
+    return out
+
+
+def _move_params(kind: str, obs: List[dict]) -> Dict[str, Optional[float]]:
+    det = [o.get("detail") if isinstance(o.get("detail"), dict) else {} for o in obs]
+    spans = []
+    for d in det:
+        try:
+            spans.append(float(d["set_span"][1]) - float(d["set_span"][0]))
+        except (KeyError, TypeError, ValueError, IndexError):
+            continue
+    span = _median(spans)
+    if kind == "vocal_loop":
+        return {"repeats": _median([d.get("repeats") for d in det]),
+                "repeats_max": max([d.get("repeats") or 0 for d in det], default=0) or None,
+                "line_s": _median(_spans(obs, "source_lines")), "span_s": span}
+    if kind == "vocal_resequence":
+        return {"lines": _median([len(d.get("source_lines") or []) for d in det]) or None,
+                "line_s": _median(_spans(obs, "source_lines")), "span_s": span}
+    if kind == "vocal_chop":
+        return {"frag_s": _median(_spans(obs, "fragments")),
+                "frags": _median([len(d.get("fragments") or []) for d in det]) or None,
+                "jumps": _median([d.get("jumps") for d in det]), "span_s": span}
+    gaps = sorted(o["tempo_gap"] for o in obs if o.get("tempo_gap") is not None)
+    return {"tempo_gap_max": gaps[-1] if gaps else None, "tempo_gap_median": _median(gaps)}
+
+
+def learned_moves(store: Optional[Dict[str, dict]] = None) -> Dict[str, dict]:
+    """{kind: {kind, enabled, seen, stems, rules, params}} for the in-song learned moves.
+    enabled = sighted at least once and not disabled by the user; rules = the user's words."""
+    if store is None:
+        from app.music_brain.set_learner import load_learned
+        store = load_learned()
+    out = {}
+    for kind in MOVE_KINDS:
+        e = (store or {}).get(kind) or {}
+        obs = [o for o in e.get("observations") or [] if isinstance(o, dict)]
+        rules = [str(r.get("text", "")) for r in e.get("user_rules") or [] if isinstance(r, dict)]
+        out[kind] = {"kind": kind, "enabled": bool(obs) and not e.get("disabled"), "disabled": bool(e.get("disabled")),
+                     "seen": len(obs), "stems": bool(e.get("stems")), "rules": rules,
+                     "ai_rules": list(e.get("ai_rules") or [])[:2], "params": _move_params(kind, obs)}
+    return out

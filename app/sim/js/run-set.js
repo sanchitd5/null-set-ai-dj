@@ -86,6 +86,10 @@ async function main() {
     return { i, from: s.data.from, to: s.data.to, recipe: s.data.recipe, planned: s.data.planned, out: s.data.out, in: s.data.in, seconds: s.data.seconds, t0: s.t, t1,
       ...analyseWindow(sampler.series, s.t - 1, t1, { inDeck: s.data.in }) };
   });
+  // in-song learned moves (learned-moves.js): the audible effect of each one's own window
+  const learned = env.logs.events.filter((e) => e.type === "ai-activity" && e.detail && e.detail.kind === "learned_move" && Number.isFinite(e.detail.t0) && Number.isFinite(e.detail.t1))
+    .map((e) => ({ move: e.detail.move, beats: e.detail.beats, cap_beats: e.detail.cap_beats, grid_err_s: e.detail.grid_err_s, t0: e.detail.t0, t1: e.detail.t1,
+      ...analyseWindow(sampler.series, e.detail.t0 - 0.5, e.detail.t1 + 0.5) }));
   const whole = sampler.series.length ? analyseWindow(sampler.series, sampler.series[0].t + 5, sampler.series[sampler.series.length - 1].t) : null;
   const series1hz = sampler.series.filter((s, k) => k % 4 === 0).map((s) => [s.t, +(10 * Math.log10(Math.max(1e-18, s.P))).toFixed(1),
     +(10 * Math.log10(Math.max(1e-18, (s.decks.a || { P: 0 }).P))).toFixed(1), +(10 * Math.log10(Math.max(1e-18, (s.decks.b || { P: 0 }).P))).toFixed(1)]);
@@ -96,7 +100,7 @@ async function main() {
     scripts: env.scripts, errors: env.logs.errors, console: env.logs.console, events: env.logs.events,
     ui_states: uiStates, supermoves: superMoves(env.logs.events),
     status_log: document.textLog, play_start_t: (sampler.series.find((s) => s.deck && Object.values(s.deck).some((d) => d.playing)) || {}).t,
-    net: env.net.log, session_events: env.net.sessionEvents, audible: { transitions: windows, set: whole, series_1hz: series1hz },
+    net: env.net.log, session_events: env.net.sessionEvents, audible: { transitions: windows, learned, set: whole, series_1hz: series1hz },
     audio_errors: env.audio ? env.audio._errors : [],
     dom_misses: [...(document.misses || [])].slice(0, 50),
   };
