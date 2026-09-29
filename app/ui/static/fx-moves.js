@@ -27,6 +27,7 @@
   const IDS = ["mid_blend", "wet_band", "kick_roll", "vocal_throw", "sweep_dir", "supermove_replay"];
   const LABEL = { mid_blend: "MID BLEND", wet_band: "MID-ONLY SEND", kick_roll: "KICK ROLL", vocal_throw: "VOCAL THROW",
                   sweep_dir: "SWEEP", supermove_replay: "REWIND REPLAY" };
+  const VIS_SUPER = { kick_roll: "t1", vocal_throw: "t0", supermove_replay: "t1" };   // hit time field; others: accent
   const MELODY_KEY_MIN = 0.8;   // G2: overlapped melodies need a +-1 hour / same key match (KB Acapella Overlay)
   const MIN_RMS = 0.01;         // stem-moves INTRO_MIN_RMS (-40 dBFS): below this a stem is not playing
   const UNMASK_SHARE = 0.15;    // S2: A's melody "resolved" once its `other` RMS < 15 % of the section peak
@@ -268,6 +269,9 @@
       console.info(`artist move ${id}: ${plan.why}${fb}`);
       host.bus.emit("ai-activity", Object.assign({ kind: "artist_move", deck, label: `ARTIST MOVE · ${LABEL[id]}`,
         why: plan.why, move: id, fallbacks: plan.fallbacks || [] }, extra));
+      // NULL-BOT / SHOW (mascot.js): kick roll hits on its drop, throw on the last word, rewind on the line; the rest pop
+      const sup = VIS_SUPER[id], at = sup ? extra[sup] : (Number.isFinite(extra.t0) ? extra.t0 : audioCtx.currentTime);
+      if (Number.isFinite(at)) host.bus.emit("vis-moment", { at, name: id === "supermove_replay" ? "REWIND" : LABEL[id], tier: sup ? "super" : "accent", deck });
     }
     // FX budget: at most one wet FX move per phrase and deck; batch D's fxBudget hook, if any, has the last word.
     function wetFree(deck, id, t, phraseS) {

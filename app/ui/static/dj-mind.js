@@ -111,6 +111,9 @@
   const BEAT_BOOST_COOLDOWN_S = 300;
   const FAKEOUT_VOCAL_SHARE = 0.5;     // vocal in the last bar -> 1 bar vocal-only, else 1 beat silence
   const PEAK_MOVES = ["fakeout", "peak_roll", "beat_boost"];   // in-song; the LLM may plan these
+  // vis-moment per in-song move: [caption, tier, hit now (else on the phrase line)]
+  const VIS_MOVES = { fakeout: ["FAKEOUT", "super"], peak_roll: ["PEAK ROLL", "super"], beat_boost: ["BEAT BOOST", "accent", true],
+                      stutter: ["STUTTER", "accent"], filter_build: ["FILTER BUILD", "accent"], echo_freeze: ["ECHO FREEZE", "accent"] };
   // Drop line: labels flicker (1-3 s slivers), so a drop is found by energy:
   // the phrase is in the song's top quartile and jumps >= DROP_JUMP over the
   // phrase before. Same rule as drop_lines() in app/music_brain/blend.py.
@@ -944,6 +947,9 @@
       lastMoveAt = nowS();
     }
     const beat = bar / 4, end = st.phraseEnd;
+    // NULL-BOT / SHOW (mascot.js): the peak moves hit on the drop line (super); the drop-builders pop on it (accent)
+    const vis = VIS_MOVES[dec.action];
+    if (vis) host.bus.emit("vis-moment", { at: audioCtx.currentTime + ((vis[2] ? pos : end) - pos) / rate, name: vis[0], tier: vis[1], deck: id, bar: bar / rate });
     if (dec.action === "hold") {
       holdsUsed++;
       plan.fireAt = Math.min(plan.maxFireAt, plan.fireAt + HOLD_BARS * bar);

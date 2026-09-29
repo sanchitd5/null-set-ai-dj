@@ -538,7 +538,12 @@
       if (!b || !b.getChannelData) return null;
       return envelope(b.getChannelData(0), b.sampleRate, Math.max(0, t0), t1, hop, st.lag || 0, st.ratio || 1);
     }
-    function say(d, label, why, extra = {}) { host.bus.emit("ai-activity", Object.assign({ kind: "learned_move", deck: d.id, label, why }, extra)); }
+    function say(d, label, why, extra = {}) {
+      host.bus.emit("ai-activity", Object.assign({ kind: "learned_move", deck: d.id, label, why }, extra));
+      // NULL-BOT / SHOW (mascot.js): VOCAL SWAP on the swap, ACAPELLA BUILD when the beat is back (super); learned vocal moves pop
+      if (Number.isFinite(extra.t0)) host.bus.emit("vis-moment", extra.artist ? { at: extra.move === "acapella_build" && Number.isFinite(extra.t1) ? extra.t1 : extra.t0,
+        name: extra.move === "vocal_swap" ? "VOCAL SWAP" : ARTIST_LABEL[extra.move] || "ARTIST MOVE", tier: "super", deck: d.id } : { at: extra.t0, name: LABEL[extra.move] || "LEARNED", tier: "accent", deck: d.id });
+    }
 
     // Run one slice plan on deck d: stem mode from the window start, the slices, the full mix again after.
     // Nothing is armed when the deck cannot play the window (stems not live, a hold / slice already running).

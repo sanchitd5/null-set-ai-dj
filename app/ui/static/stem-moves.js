@@ -1239,6 +1239,7 @@
     // a strip on purpose, on its section's last quarter: dip allowed, reported
     dipReport(d, "remix", remixEvents(kind, len), len, lineT, barS, DIP_ALLOWED.breakdown);
     note(d.id, `REMIX · ${REMIX_LABEL[kind] || kind}`, why || `bars ${len * 0.75}-${len} of this ${len}-bar section, back on the line`);
+    host.bus.emit("vis-moment", { at: at(len * 0.75), name: REMIX_LABEL[kind] || String(kind), tier: "accent", deck: d.id, bar: barS / rate });   // NULL-BOT pops on the strip
     return true;
   }
 
@@ -1307,6 +1308,7 @@
     }
     host.bus.emit("ai-cue", { at: t0 + plan.bEntry, kind: "drop", deck: innId, bar: barB,
       why: "B's beat lands after the stem bridge" });
+    host.bus.emit("vis-moment", { at: t0 + plan.bEntry, name: "STEM BRIDGE", tier: "super", deck: innId, bar: barB });   // NULL-BOT: B's beat lands
     console.info(`stem bridge ${outId}->${innId}: B in on its ${plan.intro === "drums" ? "drums" : "pads"}; master floor ${check.minDb.toFixed(1)} dB`);
     note(outId, `STEM BRIDGE ${outId.toUpperCase()} → ${innId.toUpperCase()}`, why ||
       `any tempo: strip A, ${aSings ? "hold its voice, " : ""}B's ${plan.intro === "drums" ? "drums (keys clash)" : "pads"} in beatless, B's beat drops on its own line`);
@@ -1572,6 +1574,7 @@
           Math.max(0, (at - audioCtx.currentTime) * 1000 - 250)));
       } else book(d, at, e.stems, Math.max(minStemRamp("stem", barS, false, d), e.ramp * barS));
     }
+    if (vk) host.bus.emit("vis-moment", { at: t0 + M * barS, name: vk === "filter_loop" ? "FILTER LOOP" : "DRUMS HOST", tier: "super", deck: innId, bar: barS });   // before the cue: this caption wins the de-dup
     host.bus.emit("ai-cue", { at: t0 + M * barS, kind: "drop", deck: innId, bar: barS,
       why: "B's beat takes over after the mashup" });
     if (vk) {
