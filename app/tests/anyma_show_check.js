@@ -221,7 +221,7 @@ function play(from, to, opts = {}) {
   const fb = C.drives(ms, C.stemsNew());                 // no stems: grid + energy + vocal regions
   assert.strictEqual(fb.eye, 0.8);
   assert.ok(Math.abs(fb.pulse - (0.3 + 0.7 * ms.energy)) < 1e-9);  // on the beat
-  assert.strictEqual(C.drives(null).intensity, 0.35);
+  assert.strictEqual(C.drives(null).intensity, 0.55);   // idle scene reads on a normal display
   C.stemsStep(st, null, 1 / 60);
   assert.strictEqual(st.live, false);
   C.stemsStep(st, { drums: NaN, bass: -1 }, NaN);
@@ -433,7 +433,7 @@ const trackOf = (len, fn, extra) => C.prepTrack(Object.assign(grid120(len), { en
   const sim = (from, to, fn) => {
     const a = C.autoNew(), log = [];
     kept = [];
-    let mode = "pip";
+    let mode = "embed";
     for (let t = from; t <= to + 1e-9; t = Math.round((t + 0.25) * 100) / 100) {
       const inp = Object.assign({ on: true, driving: true, mode, ms: M(t), moment: null }, fn ? fn(t) : {});
       const r = C.autoStep(a, inp, t);
@@ -444,12 +444,12 @@ const trackOf = (len, fn, extra) => C.prepTrack(Object.assign(grid120(len), { en
   };
   // set start: first phrase line after the AI starts driving -> full, held 32 bars, calm -> window
   const s1 = sim(5, 200, (t) => ({ ms: M(t, t >= 32 ? "calm" : "groove", 0.2) }));
-  assert.deepStrictEqual(s1.map((x) => [x.t, x.mode, x.why]), [[16, "full", "set start"], [80, "pip", "calm section"]]);
+  assert.deepStrictEqual(s1.map((x) => [x.t, x.mode, x.why]), [[16, "full", "set start"], [80, "embed", "calm section"]]);
   // a drop on a line in window mode: full; a low breakdown later: window
   const s2 = sim(0, 300, (t) => ({ moment: t === 144 ? { kind: "drop" } : null,
     ms: M(t, t >= 240 ? "breakdown" : t >= 64 && t < 144 ? "calm" : "groove", t >= 240 ? 0.2 : 0.7) }));
   assert.deepStrictEqual(s2.map((x) => [x.t, x.mode, x.why]),
-    [[0, "full", "set start"], [64, "pip", "calm section"], [144, "full", "drop"], [240, "pip", "low-energy breakdown"]]);
+    [[0, "full", "set start"], [64, "embed", "calm section"], [144, "full", "drop"], [240, "embed", "low-energy breakdown"]]);
   // a moment mid-phrase waits for the next line; its evidence reaches the log
   const s3 = sim(0, 200, (t) => ({ moment: t === 140 ? { kind: "anyma drop", evidence: "jump 0.9" } : null,
     ms: M(t, t >= 64 && t < 136 ? "calm" : "groove") }));
@@ -476,14 +476,14 @@ const trackOf = (len, fn, extra) => C.prepTrack(Object.assign(grid120(len), { en
   }
   // a supermove may break the 32-bar rule, never the 16-bar one
   const s6 = sim(0, 200, (t) => ({ moment: t === 96 ? { kind: "supermove" } : null, ms: M(t, t >= 32 && t < 90 ? "calm" : "groove") }));
-  assert.deepStrictEqual(s6.map((x) => [x.t, x.mode, x.why]), [[0, "full", "set start"], [64, "pip", "calm section"], [96, "full", "supermove"]]);
+  assert.deepStrictEqual(s6.map((x) => [x.t, x.mode, x.why]), [[0, "full", "set start"], [64, "embed", "calm section"], [96, "full", "supermove"]]);
   // user input on the decks: window now (mid-phrase), paused 2 minutes, then back to normal
   const s7 = sim(0, 400, (t) => ({ user: t === 20.5, moment: t === 48 || t === 176 ? { kind: "drop" } : null }));
   assert.deepStrictEqual(s7.map((x) => [x.t, x.mode, x.why]),
-    [[0, "full", "set start"], [20.5, "pip", "user input, auto paused 2 min"], [176, "full", "drop"]]);
+    [[0, "full", "set start"], [20.5, "embed", "user input, auto paused 2 min"], [176, "full", "drop"]]);
   // Esc: same, with its own reason
   const s8 = sim(0, 100, (t) => ({ esc: t === 30 }));
-  assert.deepStrictEqual(s8.map((x) => [x.t, x.mode, x.why]), [[0, "full", "set start"], [30, "pip", "esc, auto paused 2 min"]]);
+  assert.deepStrictEqual(s8.map((x) => [x.t, x.mode, x.why]), [[0, "full", "set start"], [30, "embed", "esc, auto paused 2 min"]]);
   // the user picking the stage size: kept, auto paused
   const a9 = C.autoNew();
   assert.strictEqual(C.autoStep(a9, { on: true, driving: true, mode: "full", ms: M(0), manual: true }, 0), null);
@@ -491,9 +491,51 @@ const trackOf = (len, fn, extra) => C.prepTrack(Object.assign(grid120(len), { en
   assert.strictEqual(a9.mode, "full");
   // the AI stops driving: window now; SHOW AUTO off or SHOW off: never acts
   const s10 = sim(0, 100, (t) => ({ driving: t < 40 }));
-  assert.deepStrictEqual(s10.map((x) => [x.t, x.mode, x.why]), [[0, "full", "set start"], [40, "pip", "AI stopped driving"]]);
+  assert.deepStrictEqual(s10.map((x) => [x.t, x.mode, x.why]), [[0, "full", "set start"], [40, "embed", "AI stopped driving"]]);
   assert.deepStrictEqual(sim(0, 300, (t) => ({ on: false, moment: { kind: "supermove" } })), []);
   assert.deepStrictEqual(sim(0, 300, (t) => ({ driving: false, moment: { kind: "drop" } })), []);
+
+  // ---- anticipation: FULL on the phrase line BEFORE a booked / predicted moment
+  const quiet = (t) => ({ ms: M(t, t >= 32 ? "calm" : "groove", 0.2) });
+  const upc = (list) => (t) => Object.assign(quiet(t), { upcoming: list(t) });
+  // a booked supermove 20 bars ahead (hit at 200, booked at 160): full at 176, one
+  // phrase before the hit's phrase, held 16 bars past the hit, window on the next calm line
+  const sm = C.bookedMoment("ai-supermove", { at: 200, name: "layer", deck: "b" });
+  assert.deepStrictEqual(sm, { key: "sm:b:LAYER", kind: "LAYER", at: 200, deck: "b" });
+  const a1 = sim(0, 300, upc((t) => (t >= 160 && t < 202 ? [sm] : [])));
+  assert.deepStrictEqual(a1.map((x) => [x.t, x.mode]), [[0, "full"], [64, "embed"], [176, "full"], [240, "embed"]]);
+  assert.strictEqual(a1[2].why, "ahead of LAYER at +24.0s (lead 12 bars)");
+  assert.ok(a1[2].phase * 8 < 1, "the anticipation switch is on a phrase line");
+  // the hit moved later (rescheduled, same key): the hold follows it
+  const a1b = sim(0, 300, upc((t) => (t >= 160 && t < 226 ? [Object.assign({}, sm, { at: t < 170 ? 200 : 224 })] : [])));
+  assert.deepStrictEqual(a1b.map((x) => [x.t, x.mode]), [[0, "full"], [64, "embed"], [208, "full"], [272, "embed"]]);
+  // a cancelled cue: no stuck FULL, back to window after one phrase
+  const a2 = sim(0, 300, upc((t) => (t >= 160 && t < 180 ? [sm] : [])));
+  assert.deepStrictEqual(a2.map((x) => [x.t, x.mode, x.why]).slice(2),
+    [[176, "full", "ahead of LAYER at +24.0s (lead 12 bars)"], [208, "embed", "moment cancelled"]]);
+  // a plain crossfade is not a moment; a drop-move transition is
+  assert.strictEqual(C.bookedMoment("ai-cue", { at: 200, kind: "transition", why: "long blend", deck: "a" }), null);
+  assert.strictEqual(C.bookedMoment("ai-cue", { at: 200, kind: "transition", why: "Double Drop: both drops", deck: "a" }).kind, "DOUBLE DROP");
+  assert.strictEqual(C.bookedMoment("ai-cue", { at: 200, kind: "drop", why: "after the merge", deck: "a" }).kind, "MERGE drop");
+  assert.strictEqual(C.bookedMoment("vis-moment", { at: 200, tier: "accent", name: "x" }), null);
+  assert.strictEqual(C.bookedMoment("vis-moment", { at: 200, tier: "super", name: "hook drop", deck: "a" }).key, "sm:a:HOOK DROP");
+  assert.deepStrictEqual(C.eventTrigger("vis-moment", { at: 3, tier: "accent" }, 1, (x) => x), { type: "accent", at: 3 });
+  const a3 = sim(0, 300, upc((t) => []));
+  assert.deepStrictEqual(a3.map((x) => [x.t, x.mode]), [[0, "full"], [64, "embed"]], "a plain crossfade stays window");
+  // an Anyma drop predicted from a synthetic build -> drop curve: full a phrase early
+  const brk = trackOf(320, (t) => (t < 64 ? 0.6 : t < 128 ? 0.15 : t < 192 ? 1 : 0.6));
+  const sms = C.songMoments(brk, C.anymaDrops(brk, ""));
+  assert.deepStrictEqual(sms.map((m) => [m.t, m.kind]), [[128, "anyma drop"]]);
+  const a4 = sim(0, 300, upc((t) => sms.filter((m) => m.t > t).map((m) => ({ key: m.key, kind: m.kind, at: m.t, evidence: m.evidence }))));
+  assert.deepStrictEqual(a4.map((x) => [x.t, x.mode]), [[0, "full"], [64, "embed"], [112, "full"], [176, "embed"]]);
+  assert.ok(/^ahead of anyma drop at \+16\.0s \(lead 8 bars\)$/.test(a4[2].why) && /jump/.test(a4[2].ev), a4[2].why);
+  // a section edge into a drop with a big jump is a song moment too (no Anyma dip needed)
+  const sec = trackOf(320, (t) => (t < 96 ? 0.4 : 0.95), { sections: [{ label: "verse", start: 0, end: 96 }, { label: "drop", start: 96, end: 320 }] });
+  assert.ok(C.songMoments(sec, []).some((m) => m.t === 96 && m.kind === "drop"));
+  assert.deepStrictEqual(C.songMoments(trackOf(320, () => 0.6, { sections: [{ label: "drop", start: 96, end: 320 }] }), []), []);
+  // the 16-bar minimum still holds with nothing upcoming (s5 above) and a far moment does nothing
+  const a5 = sim(0, 300, upc((t) => (t >= 150 ? [Object.assign({}, sm, { at: 290 })] : [])));
+  assert.ok(!a5.some((x) => x.t >= 150 && x.t < 256 && x.mode === "full"), JSON.stringify(a5));
 }
 
 // ---- the sim never loads the show (paint only), and the console does
@@ -506,4 +548,36 @@ const trackOf = (len, fn, extra) => C.prepTrack(Object.assign(grid120(len), { en
   assert.ok(!/id="ap-show-toggle"[^>]*checked/.test(html), "SHOW is off by default");
 }
 
+// ---- layout contract: the stage is baked into the console, no overlay window
+{
+  const fs = require("fs"), path = require("path");
+  const js = fs.readFileSync(path.join(__dirname, "../ui/static/anyma-show.js"), "utf8");
+  const css = fs.readFileSync(path.join(__dirname, "../ui/static/anyma-show.css"), "utf8");
+  assert.ok(!/requestFullscreen|anyma-bar/.test(js), "no browser fullscreen, no floating control bar");
+  assert.ok(/doc\.body\.insertBefore\(stage, bandTop/.test(js), "stage is inserted in the console flow before .wave-stage");
+  const base = css.match(/\.anyma-stage \{([^}]*)\}/)[1];
+  assert.ok(/position: absolute/.test(base) && /z-index: -1/.test(base) && /pointer-events: none/.test(base), "a background layer");
+  assert.ok(!/\.anyma-bar|z-index: 87\d/.test(css), "no overlay z-index");
+  assert.ok(/body\.show-embed/.test(css) && /body\.show-full/.test(css), "WINDOW / FULL are console layout states");
+}
+{
+  const fs = require("fs"), path = require("path");
+  const js = fs.readFileSync(path.join(__dirname, "../ui/static/anyma-show.js"), "utf8");
+  assert.ok(!/"pip"/.test(js), "no PIP / floating-window mode left");
+  assert.ok(/"IN CONSOLE"/.test(js), "stage button reads IN CONSOLE");
+  assert.ok(/debug\(\)\s*\{/.test(js) && /whyNotFull/.test(js), "anymaShow.debug() reports why not full");
+  assert.ok(/ap\.active === true\) \|\| !!\(d && d\.playing && ms\.ok\)/.test(js), "a playing analysed deck drives SHOW AUTO too");
+  assert.ok(/mode === "full" && e\.target\.closest/.test(js), "deck clicks only pause auto from FULL");
+}
+// manual play (driving true, no AI) with a booked moment still goes full ahead of it
+{
+  const a = C.autoNew();
+  let hit = null;
+  for (let t = 0; t <= 200; t = Math.round((t + 0.25) * 100) / 100) {
+    const r = C.autoStep(a, { on: true, driving: true, mode: a.mode, ms: { ok: true, beat: 0.5, phraseIdx: Math.floor(t / 16), phrasePhase: (t % 16) / 16, cls: t < 150 ? "calm" : "groove", energy: 0.6 }, moment: null,
+      upcoming: t >= 100 ? [{ key: "sm:a:X", kind: "X", at: 180 }] : [] }, t);
+    if (r && r.mode === "full" && t > 100 && hit === null) hit = t;
+  }
+  assert.ok(hit !== null && hit <= 176, `manual play goes full ahead (${hit})`);
+}
 console.log("anyma show ok");

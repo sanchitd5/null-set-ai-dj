@@ -246,7 +246,7 @@
     catch (e) { return "classic"; }
   }
   // Pure: the SHOW stage (window or full) is up -> this layer draws nothing.
-  function showYields(mode) { return mode === "pip" || mode === "full"; }
+  function showYields(mode) { return mode === "embed" || mode === "full"; }
   // Pure: alpha of the tinted flash overlay from the director's flash level.
   // Capped at 0.5, tinted cyan (never white), none under reduced motion.
   function anymaFlash(level, reduced) {

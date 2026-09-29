@@ -284,10 +284,10 @@ assert.strictEqual(safeBeat(-1), 60 / 128);
   // VFX yields to SHOW: window or stage up -> nothing drawn, bass band included
   const on = { enabled: true, hidden: false, playing: true, bassAlive: true, autopilot: { active: true } };
   assert.deepStrictEqual(V.vfxLayers({ ...on, show: "off" }), { bass: true, ai: true });
-  assert.deepStrictEqual(V.vfxLayers({ ...on, show: "pip" }), { bass: false, ai: false });
+  assert.deepStrictEqual(V.vfxLayers({ ...on, show: "embed" }), { bass: false, ai: false });
   assert.deepStrictEqual(V.vfxLayers({ ...on, show: "full" }), { bass: false, ai: false });
   assert.deepStrictEqual(V.vfxLayers({ ...on, show: undefined }), { bass: true, ai: true });
-  assert.strictEqual(V.showYields("pip"), true); assert.strictEqual(V.showYields("off"), false);
+  assert.strictEqual(V.showYields("embed"), true); assert.strictEqual(V.showYields("off"), false);
   // the gates hold in ANYMA too: the look only draws inside the ai layer
   assert.ok(/if \(L\.ai\) anymaFrame\(/.test(src));
   // one loop: visuals.js has exactly one requestAnimationFrame call site for its frame
