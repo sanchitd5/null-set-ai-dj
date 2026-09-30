@@ -1,139 +1,146 @@
-# DJ Console — Feature Spec
+# DJ Console: Feature Spec
 
-What's actually implemented in `app/ui` (the console) and `app/music_brain` (the AI engine) today,
-versus what's stubbed, disabled, or missing. Written so you can tell "real" from "placeholder" at a
-glance. Last verified against the codebase on 2026-09-10 (124/124 tests passing, 0 skipped).
+What is actually implemented in `app/ui` (the console), `app/music_brain` (the AI engine) and
+`app/sim` (the virtual set sim) today, versus what is partial, stubbed or deliberately absent.
+Written so you can tell "real" from "placeholder" at a glance.
 
-Legend: ✅ implemented and wired end-to-end · ⚠️ implemented but with a caveat · ❌ not implemented
-(UI may exist but is disabled/absent, or there's no UI for it at all).
+Last verified 2026-09-30 against main `10bb79e`. Code is cited by module and symbol, not by line.
+Names used here (atlas, macro, merge-hold, live ear, ...) are defined in
+[ANNEX.md](../engineering/ANNEX.md); future plans live in [IDEAS.md](IDEAS.md); release history
+lives in `CHANGELOG.md`.
+
+Status legend:
+
+- **Working**: implemented and wired end to end.
+- **Partial**: implemented, with a caveat in the notes.
+- **Stubbed**: UI or code exists but does nothing real yet.
+- **Absent**: not implemented (see Known gaps or Out of scope).
 
 ---
 
 ## 1. Playback engine (per deck)
 
-| Feature | Status | Notes |
-|---|---|---|
-| Load track (file picker or browser) | ✅ | Web Audio decode, drives waveform + deck engine |
-| Play / Pause / Cue | ✅ | |
-| Reverse | ✅ | |
-| Brake (turntable stop ramp) | ✅ | |
-| Pitch fader (±8%) | ✅ | Also shifts pitch (see Keylock below) |
-| Pitch bend (hold, ±2%) | ✅ | |
-| Tap tempo (override analyzer BPM) | ✅ | Drives loop length, beatjump, tempo-synced FX, jog spin |
-| Sync (match tempo to other deck) | ✅ | |
-| Beatjump (±1/4/8/16 beats) | ✅ | |
-| Loop (on/off, halve/double length) | ✅ | |
-| Loop Roll pads (8 fixed lengths) | ✅ | |
-| Hot cues (4 per deck + clear) | ✅ | |
-| Hot cue markers drawn on waveform | ❌ | `#cues-a`/`#cues-b` containers exist in markup but nothing populates them for real hot cues (only the new AI ghost-markers use this container, see §3) |
-| Slicer pads | ❌ | Tab is present but disabled — no beat-slicing DSP exists |
-| **Keylock** | ❌ | Explicitly flagged N/A in the header. Raw `playbackRate` always shifts pitch with tempo; true keylock needs a phase-vocoder (e.g. SoundTouchJS), not implemented |
-| Jog wheel | ⚠️ | Visual/seek only — a circular skeuomorphic turntable, not a scratch/XY control |
+| Feature | Status | Where | Notes |
+|---|---|---|---|
+| Load track (file picker or browser) | Working | `deck-controller.js`, `engine.js` | Web Audio decode drives waveform and deck |
+| Play / Pause / Cue, Reverse, Brake | Working | `deck-controller.js` (`BRAKE_SECONDS`) | |
+| Pitch fader, pitch bend, tap tempo, sync | Working | `deck-controller.js` | Pitch fader shifts pitch (see keylock) |
+| Beatjump, loop, Loop Roll pads | Working | `deck-controller.js`, `performance.js` | |
+| Hot cues (4 per deck) | Working | `deck-controller.js` `renderHotCueMarkers` | Now drawn on the waveform at the stored position |
+| Slicer pads | Absent | `index.html` (disabled SLICER tab), `performance.js` | No beat-slicing DSP on the deck pads. Remix mode CHOP pads cover the use case (see §4) |
+| Keylock on the decks | Absent | `index.html` (KEYLOCK N/A) | Raw `playbackRate` still shifts pitch with tempo |
+| Keylocked stems (server render) | Working | `keylock.py` `render` / `ensure`, `tempo-rule.js` `KEYLOCK_RANGE_PCT` | Tempo-matched stems rendered offline (rubberband), capped at 8%, served as FLAC |
+| Jog wheel | Partial | `deck-controller.js` | Click to play, drag to scrub, spin while playing. Not a scratch control |
 
 ## 2. Mixer
 
-| Feature | Status | Notes |
-|---|---|---|
-| 3-band EQ (Hi/Mid/Low) per channel | ✅ | |
-| Trim (gain) per channel | ✅ | |
-| Channel faders + VU meters | ✅ | |
-| Crossfader (equal-power) | ✅ | |
-| Master fader | ✅ | |
-| Dedicated filter knob (resonant HP/LP sweep) | ❌ | Only reachable via the FX row's "FILTER" effect, not a dedicated per-channel knob |
-| Mix recording → downloadable file | ✅ | MediaRecorder tap on the master bus, `.webm`, no backend round-trip |
+| Feature | Status | Where | Notes |
+|---|---|---|---|
+| 3-band EQ, trim, channel faders, VU, master | Working | `deck-controller.js`, `engine.js` | |
+| Crossfader (equal power) | Working | `deck-controller.js` | |
+| Dedicated per-channel filter knob | Absent | `index.html` FX row `data-type="filter"` | Filter only via the FX row |
+| Mix recording to file | Working | `performance.js` `startRecording`, `POST /api/recordings` | MediaRecorder on the master bus, uploaded and kept under `data/cache/recordings/` |
+| Set-log download and archive | Partial | `performance.js`, `POST /api/set-logs`, `GET /api/set-logs/{id}/markdown` | `djset-v1` JSON plus Markdown export. No replay of a log |
 
-## 3. AI Transition Brain (`app/music_brain`, exposed via `app/ui/server.py`)
+## 3. AI brain and autopilot
 
-| Feature | Status | Notes |
-|---|---|---|
-| Track analysis (BPM, beatgrid, Camelot key, phrases, sections, vocal presence) | ✅ | `POST /api/tracks`, `GET /api/tracks/{id}/analysis` |
-| Auto-suggest transitions once both decks are loaded | ✅ | No button press — fires automatically on `deck-track-loaded`, scores all 28 recipes (`POST /api/match`), top 3 shown as cards |
-| Manual point picking (click waveform to set exit/entry) | ✅ | Snaps to nearest 8-bar phrase boundary server-side |
-| Manual recipe override (dropdown) | ✅ | |
-| Ghost markers — hover a suggestion to preview where it would land | ✅ | Draws into the same `#cues-a`/`#cues-b` overlay containers hot cues leave unused (see §1) |
-| Instant preview (15–30s audition) | ✅ | `POST /api/preview`, plays inline in the AI panel |
-| **Render full mix (offline export)** | ✅ | `POST /api/render` → `render_full_mix()` in `transition_renderer.py`; was previously a dead button with no backend route — now wired end-to-end with a download link |
-| Stem separation (Demucs, 4-stem/2-stem) | ✅ | `POST /api/tracks/{id}/separate`; now exposed as a **STEMS A** / **STEMS B** toggle in the AI panel (previously backend-only, no UI trigger at all) |
-| Stem-based recipes actually consuming separated stems | ⚠️ | The stems endpoint runs and caches correctly, but `transition_renderer.py` only has dedicated DSP chains for Bass Swap / Drop Swap / Echo Out / Quick Cut / Hard Cut / Filter Transition — every other recipe (including the stem-based ones like Acapella Overlay, Stems Transition) falls back to `_generic_eq_blend`, which does **not** actually use the separated stem files. Separating stems today doesn't yet change how those recipes render |
-| "Commit" — an AI suggestion drives the live crossfader/EQ in real time | ❌ | Discussed as a UX direction, not built. Today "preview" plays a rendered clip through a hidden `<audio>` element, not through the actual deck/crossfader/EQ chain |
-| Live automation of console controls (any kind) | ❌ | Nothing in the console currently automates fader/EQ/crossfader movement over time — every transition is either a rendered clip (preview/render) or a manual human action |
+| Feature | Status | Where | Notes |
+|---|---|---|---|
+| Track analysis (BPM, beatgrid, Camelot, phrases, sections, vocals) | Working | `analyzer.py`, `GET /api/tracks/{id}/analysis` | |
+| Transition matching over the 28-recipe cookbook | Working | `recipe_matcher.py`, `POST /api/match` | Manual points go through `RecipeMatcher.resolve_candidate()` |
+| Preview and full offline render | Working | `transition_renderer.py` `render_preview` / `render_full_mix` | Dedicated DSP for Bass Swap, Echo Out, cuts, Filter Transition; the rest use `_generic_eq_blend` (see gaps) |
+| Stem separation (Demucs, 4/2 stem) | Working | `stem_service.py`, `stem_worker.py`, `POST /api/tracks/{id}/separate` | Stems stored as FLAC, WAV fallback |
+| Live autopilot (pick next, book, play) | Working | `autopilot.js` `decideRecipe` / `keySafeRecipe` / `energyStepOk`, `autopilot_service.py` | Replaces the old "no live automation" gap. Drives the real console controls |
+| Live Transition Maker | Working | `automation.js` | Phrase-timed runs scheduled on the AudioContext clock |
+| Merge, then hold, then transition | Working | `ai-actions.js` / `autopilot.js` `mergeNow`, `dj-mind.js` `pickHoldLoop` | Preferred plan when its gates pass; gate reasons and phase steps logged |
+| Hold-loop preplan | Working | `preplan.py` `preplan`, `POST /api/transition/preplan` | |
+| Atlas backup and deadline fallback | Working | `autopilot.js` `preplanBackup` / `deadlineFallback` | Tiers: atlas, then library, then hold |
+| Suggest-reject log | Working | `autopilot_service.py` `note_rejects` | Every dropped pick logged with its reason as a session event |
+| Stem moves (stem intro, voice strip, synth hold) | Working | `stem-moves.js` `pickIntro`, `engine.js` stem slices | Silent-stem moves refused, they fall back |
+| Artist and FX moves (S1 to S22 family) | Working | `artist-moves.js`, `fx-moves.js`, `fx-rack.js`, `fx-budget.js` `canSpend` | Budget per transition and per song |
+| AI ACTIONS buttons and toggle drawer | Working | `ai-actions.js`, `toggle-drawer.js` | Grouped, searchable, favourites persisted per browser |
+| AUTO MIX (mix into the other deck now) | Working | `ai-actions.js` | Not a crate automix queue |
+| Mashup / layer / riff-over-rap / remix mode | Working | `mashup-layer.js`, `riff-over-rap.js`, `remix-mode.js`, `POST /api/mashup/plan`, `POST /api/layer/plan` | |
+| LLM runtime | Working | `model_runtime.py` (`MLX_MODEL`, `OLLAMA_MODEL`), `llm_gate.py` | Local Qwen3 via MLX, Ollama as fallback |
+| Live ear (does the loop sound off?) | Partial | `live_ear.py` `rule_decision`, `live-ear.js` | Qwen3-Omni via mlx-vlm; rule fallback when the model is down. Audible benefit not verified by listening |
 
-## 4. Sampler & FX
+## 4. Sampler, pads and FX
 
-| Feature | Status | Notes |
-|---|---|---|
-| 8-slot sampler bank (synthesized one-shots) | ✅ | Oscillator/noise-based, not sample playback — there is no sample library in this repo |
-| Custom sample upload | ✅ | `POST /api/samples`, content-hashed |
-| Per-deck insert FX (Filter/Echo/Reverb/Flanger/Phaser/Bitcrusher/Ping-Pong) | ✅ | Real Web Audio graph, one wet/dry knob per deck |
-| Per-effect parameters beyond wet/dry | ❌ | Unlike some reference apps' per-effect param1/param2, there's a single shared wet knob only |
+| Feature | Status | Where | Notes |
+|---|---|---|---|
+| 8-slot sampler bank | Working | `sampler-deck.js`, `auto-sampler.js` | Synthesized one-shots plus uploads |
+| Custom sample upload | Working | `POST /api/samples` | Content-hashed |
+| Performance pads and remix CHOP pads | Working | `performance.js`, `remix-mode.js` (`triggerPad`) | |
+| Per-deck insert FX (Filter/Echo/Reverb/Flanger/Phaser/Bitcrusher/Ping-Pong) | Working | `fx-rack.js` | One wet/dry knob per deck |
+| Per-effect parameters beyond wet/dry | Absent | | |
 
-## 5. Track browser
+## 5. Learning from studied sets
 
-| Feature | Status | Notes |
-|---|---|---|
-| List/search/sort your own uploaded tracks | ✅ | By name, BPM, key, energy |
-| Genre browsing, streaming catalog | ❌ | Not a goal — this is a local-file tool, not a streaming product (see §7) |
-| Favorites / playlists / AutoMix | ❌ | Not implemented |
+| Feature | Status | Where | Notes |
+|---|---|---|---|
+| learn-set (study a recorded set) | Working | `set_learner.py`, `agent_bridge learn-set` | `--split-minutes` checkpointed parts, cleanup after each part, `--macros-only`, `--keep-files`. Study clips cut as FLAC |
+| Learning progress panel | Working | `learn_progress.py`, `learn-progress.js`, `GET /api/learn/progress` | |
+| Learned moves | Working | `techniques.py` `learned_pick` / `learned_moves`, `learned-moves.js`, `dj-mind.js` `learnedNow` | Scene-tagged sets count toward their scene only |
+| Pair atlas (segmented) | Working | `pair_atlas.py` `build`, `pair_atlas_rules.js`, `GET /api/atlas/pair` | Every library pair scored by the console's own rules |
+| Studied combos | Working | `studied_combos.py`, `GET /api/studied/sets` | Ranked first as atlas evidence |
+| Macros, macro mode, PLAY MACRO, FOLLOW SET | Working | `macros.py`, `set_import.py`, `macro-mode.js` `playMacro`, `/api/macros` | |
+| Knowledge export and seed | Working | `knowledge.py` `export` / `seed` / `auto_seed` | Slim atlas, privacy check before export |
+| Persisted genre labels | Working | `genre_labels.py` | Stored in `CACHE_DIR/genre_labels.json`, travel in the export |
+| Punjabi scene profile | Working | `scene_profile.py`, `scene-profile.js` | auto/on/off setting; scene-tagged learned moves |
 
-## 6. Keyboard shortcuts
+## 6. Library, browser and downloads
 
-| Feature | Status | Notes |
-|---|---|---|
-| Mirrored per-deck keys (Q/A/Z/S/D... for A, P/;//... for B) | ✅ | Legacy scheme, still the default for every per-deck action |
-| **Combo keys — same key, Shift picks the deck** | ✅ | New: `Space` = Play/Pause, `Enter` = Cue, `\` = FX on/off, `'` = Loop on/off. Plain = Deck A, Shift = Deck B. Lets you drive playback/live-FX one-handed without memorizing a second key per deck |
-| **Editable/rebindable shortcuts** | ✅ | Click any key chip in the shortcut legend (`?` or `` ` ``), press a new key. Persists per-browser in `localStorage`. "RESET ALL TO DEFAULTS" reverts everything. Binding collisions are allowed but flagged in the status line (last-bound wins) |
-| Sampler pad keys (T/Y/U/G/H/V/B/N) | ✅ | Also rebindable via the same system |
+| Feature | Status | Where | Notes |
+|---|---|---|---|
+| List/search/sort uploaded tracks | Working | `browser.js` | By name, BPM, key, energy |
+| Local library scan | Working | `library_service.py` `scan_library`, `POST /api/library/scan` | `DJ_LIBRARY_DIRS` allowlist |
+| Download by URL / search | Working | `download_service.py`, `download-progress.js`, `/api/download/jobs` | Guarded by `yt_guard.py` |
+| Duplicate song cleanup | Working | `dedup_songs.py` | |
+| FLAC conversion | Working | `audio_convert.py` | `--jobs` parallel, memory guard |
+| Favorites / playlists / crates | Absent | | Deliberately not rendered (`browser.js`) |
 
-## 7. Deliberately out of scope
+## 7. Keyboard shortcuts
 
-Per explicit direction: this is a local, personal/educational tool, not a monetized product. These are
-not gaps to fill:
+| Feature | Status | Where | Notes |
+|---|---|---|---|
+| Mirrored per-deck keys | Working | `performance.js` | Legacy default scheme |
+| Combo keys (Shift picks deck B) | Working | `performance.js` | `Space`, `Enter`, `` ` ``, `'` |
+| Editable shortcuts | Working | `performance.js` | Persist in `localStorage`, reset to defaults |
+| Sampler pad keys | Working | `performance.js`, `sampler-deck.js` | Rebindable |
+
+## 8. Visuals and show
+
+| Feature | Status | Where | Notes |
+|---|---|---|---|
+| Waveforms, beat layer, stem waves | Working | `visuals.js`, `beat-layer.js`, `stem-wave.js` | |
+| VIBE strip and marquee | Working | `vibe-ui.js`, `marquee.js` | |
+| NULL-BOT mascot | Working | `mascot.js`, `null-bot.css` | |
+| ANYMA look and SHOW mode | Working | `anyma-show.js`, `anyma-ui.js` | WebGL stage, drop detector, SHOW AUTO |
+
+## 9. Virtual set sim and CI
+
+| Feature | Status | Where | Notes |
+|---|---|---|---|
+| Virtual set sim | Working | `app/sim/virtual_set.py`, `app/sim/suite.py` | Real console JS in node on a virtual clock. Cannot judge sound |
+| Sim baseline | Partial | `app/sim/baseline.json` | Recorded with the stub LLM; real-LLM re-record pending |
+| CI | Working | `.github/workflows/ci.yml` | pytest (not slow) on push and PR |
+
+## 10. Out of scope
+
+A local, personal and educational tool, not a product. These are not gaps:
 
 - Login / account system
-- "Pro" paywall / unlock gating
+- "Pro" paywall or unlock gating
 - App-download CTA
-- Streaming/Beatport-style catalog browsing
+- Streaming or Beatport-style catalog browsing
 
-## 8. Known architectural gaps worth knowing about
+## 11. Known gaps
 
-- **No live automation engine.** Every "apply a transition" action today produces a rendered audio
-  clip (preview or full render); nothing drives the actual crossfader/EQ/fader controls over time.
-  Building that ("Commit" from the earlier UX discussion) is real DSP + UI work, not yet started.
-- **Stem separation and stem-based recipe rendering are not yet connected.** You can separate a deck's
-  stems and it caches correctly, but no renderer currently reads those stem files back in — every
-  non-dedicated recipe (including the nominally stem-based ones) renders through the generic EQ-blend
-  fallback instead.
-- **Hot cues aren't drawn on the waveform.** The DOM containers exist and are now used by the AI ghost
-  markers, but real hot cues remain pad-only with no on-waveform visualization.
-
-## 9. In-progress live-console foundation (2026-09-10)
-
-- **Waveform seek and AI point selection:** ✅ A normal main-waveform click seeks the deck. Shift-click
-  pins the outgoing/incoming AI point, which the backend phrase-snaps when rendering or matching.
-- **Live Transition Maker:** ⚠️ Candidate cards can arm a phrase-timed live console run. Bass Swap,
-  Drop Swap, Filter Transition, Echo Out, Quick Cut, and Hard Cut schedule against the Web Audio clock;
-  a manual trusted control move cancels remaining automation. It still needs browser/audio QA, a visual
-  mix corridor, emergency recovery, and broader recipe coverage.
-- **Set-log download and archive:** ⚠️ Stopping a browser recording offers a `djset-v1` JSON download with
-  recording metadata and captured control/automation events. The backend validates and caches submitted logs
-  with an Obsidian Markdown export; browser-side replay and richer journey capture are not implemented.
-- **Configured local library scan:** ✅ `DJ_LIBRARY_DIRS` is a server-side semicolon-separated allowlist;
-  `POST /api/library/scan` discovers supported audio files safely and makes them available to the browser.
-- **Render-loop optimization:** ✅ Overview nodes and readouts are cached/dirty-checked, and overview
-  updates use compositor transforms. The AudioContext requests interactive latency.
-
-## 10. Virtual set sim and autopilot gates (2026-09-29)
-
-- **Virtual set sim (`app/sim/`):** ✅ Runs the console's real browser JS in node against the real API on a
-  virtual clock, scores a whole set with one deterministic number, record/replay fixtures, `suite --check`
-  gate against `baseline.json`. ⚠️ `baseline.json` was recorded with the stub LLM (real-LLM re-record
-  pending). It cannot judge sound quality, real vocal clash or LLM taste. See `app/sim/LEARNINGS.md`.
-- **Host port (`engine.js`):** ✅ `autopilot`, `dj-mind`, `stem-moves`, `riff-over-rap`, `ai-actions`,
-  `tempo-rule` run on an injected Host (browser host and sim host, `host_contract_check.js`). ⚠️ `app.js`,
-  `deck-controller.js`, `live-ear.js`, `mashup-layer.js` and the other UI scripts still read window/document.
-- **Key and tempo gates:** ✅ Tonal blends need Camelot >= 0.8 else Echo Out; key-locked stretch capped at 8%;
-  learned technique picks skip bass swap / stem intro on clashing pairs. ⚠️ Audible benefit not verified by
-  listening.
-- **Silence and energy gates:** ✅ Silent stem intro, empty voice strip and empty synth hold are refused;
-  energy `force` widens rises only; low-energy hybrid window is MEDIUM. ⚠️ The EQ-path `eqIntro` has no
-  loudness floor of its own (the sim still counts silent intros).
+- **Offline renderer ignores stems.** `transition_renderer.py` renders every recipe without a
+  dedicated chain through `_generic_eq_blend`, including stem-based ones. The live console does
+  play stems; only preview/render lacks them.
+- **No keylock on the decks.** Only server-rendered keylocked stems keep pitch.
+- **No slicer on the deck pads**, no dedicated filter knob, no per-effect parameters.
+- **Sim baseline is stub-LLM era.** See `app/sim/LEARNINGS.md`.
+- **Live ear and learned moves are not verified by listening.**
+- **Set logs cannot be replayed** in the browser.
