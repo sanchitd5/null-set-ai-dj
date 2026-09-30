@@ -133,8 +133,13 @@ class MainLibrary:
 
     def shared_files(self) -> dict:
         """learned_techniques.json and set_memory.json (frozen into fixtures/_shared so before / after runs see the same)."""
+        from app.music_brain.learning.set_learner import load_learned
+
         out = {}
-        for fn in ("learned_techniques.json", "set_memory.json"):
+        learned = load_learned(self.cache / "learned_techniques.json")      # the app DB (or a pre-DB JSON)
+        if learned:
+            out["learned_techniques.json"] = json.dumps(learned, indent=2)
+        for fn in ("set_memory.json",):
             p = self.cache / fn
             if p.exists():
                 out[fn] = p.read_text(encoding="utf-8")

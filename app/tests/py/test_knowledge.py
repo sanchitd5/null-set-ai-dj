@@ -126,10 +126,11 @@ def test_export_has_no_private_strings(src):
 
 
 def test_export_refuses_a_path(src):
+    from app.music_brain.learning import set_learner as sl
     lt = src["cache"] / "learned_techniques.json"
-    d = json.loads(lt.read_text())
+    d = sl.load_learned(lt)
     d["bass_swap"]["observations"][0]["detail"]["file"] = "/Users/me/x.mp3"
-    lt.write_text(json.dumps(d))
+    sl._save(d, lt)
     with pytest.raises(ValueError, match="private"):
         kn.export(src["cache"], src["out"])
 

@@ -241,9 +241,11 @@ def export(cache_dir: Optional[Path] = None, out: Optional[Path] = None,
         files[rel] = m
         ids.update(m["tracks"])
     n_macros = len(files)
-    learned = _read(cache / LEARNED)
+    from app.music_brain.learning.set_learner import load_learned
+
+    learned = load_learned(cache / LEARNED)        # the app DB (migrates an old JSON once)
     n_obs = 0
-    if isinstance(learned, dict):
+    if learned:
         files[LEARNED] = learned
         n_obs = sum(len(e.get("observations") or []) for e in learned.values() if isinstance(e, dict))
     from app.music_brain.atlas import pair_atlas as pa
