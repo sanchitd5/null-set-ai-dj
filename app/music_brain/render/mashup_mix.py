@@ -292,6 +292,59 @@ def single_genre(chain: List[dict]) -> dict:
 BPM_SPAN = 0.035          # a genre's peak chain keeps to +-3.5 % around its qualifying songs' median tempo
 CLIMAX_BONUS = 20.0       # chain score per energy level of the song the chain ends on (the climax last)
 
+# $Up3R-M@SS!V3-M0v3 generator gates (strict mode: future variants; the saved variant is never regenerated).
+# Owner: "no sudden forced changes, used atlas high scored transitions, less songs are fine" and no
+# "different genre slow to high energy" step (Ben Bohmer "After Earth" -> Anyma "Eternity").
+STRICT_MIN_SONGS = 4
+WORKS_MIN = 85.0          # atlas pair works floor: the top ~3 % of the atlas's 331k pairs (95th pct 80, 99th 88)
+LAYERED_BEST = ("Merge → Hold", "Long Blend", "Mashup → Transition", "Bass Swap", "Drop Swap")
+LEVEL_STEP_MAX = 3        # song-level energy step between neighbours (autopilot ENERGY_MATCH_TOL)
+FEEL_TEMPO_MAX = 0.005    # a sub-label change (melodic house -> melodic techno) may not also speed up by > 0.5 %
+
+
+def handover_gate(row: Optional[dict]) -> Optional[str]:
+    """Why an atlas pair row ({works, best}) is no strict-mode handover, or None: the pair's own best move must be a
+    layered one (an Echo Out / Stem Bridge best means the atlas hears a forced change) with works >= WORKS_MIN."""
+    if not row:
+        return "no atlas row for the pair"
+    if (row.get("works") or 0) < WORKS_MIN:
+        return f"atlas works {row.get('works')} < {WORKS_MIN:g}"
+    if row.get("best") not in LAYERED_BEST:
+        return f"atlas best move {row.get('best')!r} is not a layered handover"
+    return None
+
+
+def energy_step_gate(a: dict, b: dict) -> Optional[str]:
+    """Song-level step a -> b (dicts with level, genre, bpm): None when fine. Refused: a level step over
+    LEVEL_STEP_MAX, or a sub-label change that also speeds up (the slow-to-high-energy jump)."""
+    la, lb = a.get("level"), b.get("level")
+    if la is not None and lb is not None and abs(lb - la) > LEVEL_STEP_MAX:
+        return f"energy level step {la} -> {lb} (max {LEVEL_STEP_MAX})"
+    ga, gb = str(a.get("genre") or "").strip().lower(), str(b.get("genre") or "").strip().lower()
+    if ga and gb and ga != gb and b["bpm"] > a["bpm"] * (1 + FEEL_TEMPO_MAX):
+        return f"slow to high energy: {ga} {a['bpm']:g} -> {gb} {b['bpm']:g} BPM"
+    return None
+
+
+def strict_pair_ok(a: dict, b: dict, row: Optional[dict]) -> bool:
+    return not (handover_gate(row) or energy_step_gate(a, b))
+
+
+def atlas_rows(cache_dir: str, ids: Sequence[str]) -> dict:
+    """{(a, b): {works, best}} for consecutive-pair lookups (read only)."""
+    import sqlite3
+
+    ids = list(dict.fromkeys(ids))
+    if not ids:
+        return {}
+    db = sqlite3.connect(f"file:{cache_dir}/app.db?mode=ro", uri=True)
+    try:
+        m = ",".join("?" * len(ids))
+        return {(a, b): {"works": w, "best": best} for a, b, w, best in db.execute(
+            f"select a, b, works, best from atlas_pairs where a in ({m}) and b in ({m})", ids + ids)}
+    finally:
+        db.close()
+
 
 def peak_candidates(cache_dir: str, genres: Sequence[str], liked: set, levels: dict) -> List[dict]:
     """Library songs with one of `genres`, stems + analysis, a qualifying drop core (pick_peak_core) and an
@@ -313,11 +366,13 @@ def peak_candidates(cache_dir: str, genres: Sequence[str], liked: set, levels: d
     return out
 
 
-def pick_peak_chain(cache_dir: str, n: int, min_songs: int = 8, liked: Optional[set] = None) -> tuple:
+def pick_peak_chain(cache_dir: str, n: int, min_songs: int = 8, liked: Optional[set] = None,
+                    strict: bool = False) -> tuple:
     """(chain, ranking) for the peak single-genre mashup. Every one-cluster sub-label is scored by its peak
     candidates in its densest tempo band; a label with >= min_songs of them is chained (n songs, then fewer
     down to min_songs) with the highest-energy song favoured last (the climax). Winner: the chained label
-    with the highest mean energy percentile. Whole-cluster fallback only when no sub-label chains."""
+    with the highest mean energy percentile. Whole-cluster fallback only when no sub-label chains.
+    strict: every consecutive pair passes strict_pair_ok (the $Up3R-M@SS!V3-M0v3 generator gates)."""
     liked = liked or set()
     levels = genre_levels(cache_dir)
     labels = [g for g in levels if label_cluster(g)]
@@ -336,7 +391,8 @@ def pick_peak_chain(cache_dir: str, n: int, min_songs: int = 8, liked: Optional[
             ch = sm.select_chain(cache_dir, k, lanes={g: 0 for g in genres}, bpm_lo=bpm * (1 - BPM_SPAN),
                                  bpm_hi=bpm * (1 + BPM_SPAN), key_min=MIN_KEY_SCORE,
                                  keep=lambda c: c["id"] in ids,
-                                 final_bonus=lambda c: CLIMAX_BONUS * (c.get("level") or 0))
+                                 final_bonus=lambda c: CLIMAX_BONUS * (c.get("level") or 0),
+                                 pair_ok=strict_pair_ok if strict else None)
             if len(ch) >= k:
                 for c in ch:
                     c.update({x: ids[c["id"]][x] for x in ("an", "core", "pct")})
@@ -371,15 +427,29 @@ def peak_shape(chain: List[dict]) -> dict:
             "rise_db": CLIMAX_RISE_DB}
 
 
-def build_plan(chain: List[dict], target: float, peak: bool = False) -> dict:
+def build_plan(chain: List[dict], target: float, peak: bool = False, atlas: Optional[dict] = None) -> dict:
     """Pure plan (JSON-safe, no audio) for a chain from swap_mix.select_chain with `an` (analysis), `core`
     (pick_core / pick_peak_core) and optional `stem_bars` per song. Hard gates: one genre (single_genre);
-    with `peak`, every core a drop window (peak_shape). Either raises ValueError."""
+    with `peak`, every core a drop window (peak_shape). Either raises ValueError.
+    atlas ({(a, b): {works, best}}, atlas_rows) turns on strict mode ($Up3R-M@SS!V3-M0v3 generator): at least
+    STRICT_MIN_SONGS songs, every handover the pair's atlas best move (handover_gate), no slow-to-high step
+    (energy_step_gate) and no refused lead-in (a hard cut in is a forced change): all raise ValueError."""
     genre = single_genre(chain)
     shape = peak_shape(chain) if peak else {"peak": False, "rise_db": 0.0}
+    if atlas is not None:
+        if len(chain) < STRICT_MIN_SONGS:
+            raise ValueError(f"strict: {len(chain)} songs, at least {STRICT_MIN_SONGS}")
+        for a, b in zip(chain, chain[1:]):
+            row = atlas.get((a.get("id"), b.get("id")))
+            why = handover_gate(row) or energy_step_gate(a, b)
+            if why:
+                raise ValueError(f"strict: {a['name']} -> {b['name']}: {why}")
+            a["move"], a["works"] = row["best"], row["works"]
     bar = 240.0 / target
     for i, s in enumerate(chain):
         if i and not enter_ok(s.get("an"), s.get("stem_bars"), s["core"]["start"], ENTER_BARS):
+            if atlas is not None:
+                raise ValueError(f"strict: {s['name']}: entering other stem has no energy (a hard cut in)")
             s["enter_bars"], s["enter_refused"] = 0, "entering other stem has no energy"
     sl = slots(chain, target)
     vocal_mutes(chain, sl, target)
@@ -549,18 +619,23 @@ def main(argv=None) -> int:
     ap.add_argument("--songs", type=int, default=12)
     ap.add_argument("--tmp", default=None)
     ap.add_argument("--plan-only", action="store_true", help="print the JSON plan, render nothing")
+    ap.add_argument("--supermove", action="store_true",
+                    help="$Up3R-M@SS!V3-M0v3 variant: strict atlas / energy-step gates, 4 songs minimum")
     args = ap.parse_args(argv)
     try:
-        if args.songs < 8:
-            raise ValueError("a mashup needs at least 8 songs")
-        chain, ranking = pick_peak_chain(args.cache, args.songs, liked=liked_names(args.cache))
-        if len(chain) < 8:
-            raise ValueError(f"no single genre chains 8 peak drop songs: {ranking[:3]}")
+        least = STRICT_MIN_SONGS if args.supermove else 8
+        if args.songs < least:
+            raise ValueError(f"a mashup needs at least {least} songs")
+        chain, ranking = pick_peak_chain(args.cache, args.songs, min_songs=least, liked=liked_names(args.cache),
+                                         strict=args.supermove)
+        if len(chain) < least:
+            raise ValueError(f"no single genre chains {least} peak drop songs: {ranking[:3]}")
         top2 = [r for r in ranking if r["qualifying"]][:2]
         why = "; ".join(f"{r['genre']}: {r['qualifying']} peak drop songs, {r.get('in_band', 0)} in its tempo band, "
                         f"chained {r['chained']}" + (f", mean energy pct {r['mean_pct']}" if r.get("mean_pct") else "")
                         for r in top2)
-        plan = build_plan(chain, sm.target_bpm([s["bpm"] for s in chain]), peak=True)
+        plan = build_plan(chain, sm.target_bpm([s["bpm"] for s in chain]), peak=True,
+                          atlas=atlas_rows(args.cache, [s["id"] for s in chain]) if args.supermove else None)
         plan["genre"]["ranking"] = top2
         if args.plan_only:
             print(json.dumps(plan))

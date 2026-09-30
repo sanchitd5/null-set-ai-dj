@@ -251,11 +251,12 @@ def qc(out: np.ndarray, sr: int, layers, norm: float, slots) -> dict:
 
 def select_chain(cache_dir: str, n: int = 12, lanes: Optional[Dict[str, int]] = None,
                  bpm_lo: float = 124.5, bpm_hi: float = 129.5, key_min: float = KEY_SAFE_MIN,
-                 keep=None, final_bonus=None) -> List[dict]:
+                 keep=None, final_bonus=None, pair_ok=None) -> List[dict]:
     """Best-`works` path of n songs through the pair atlas that passes the live gates (Bass / Drop Swap only).
     key_min: KEY_SAFE_MIN for handovers, mashup.MIN_KEY_SCORE when the pair's melodic stems are layered.
     keep(song) -> bool: extra per-song filter (song dict has id, name, bpm, cam, genre, level, analysis, ...).
-    final_bonus(song) -> float: added to a path's score for the song it ends on (e.g. the climax last)."""
+    final_bonus(song) -> float: added to a path's score for the song it ends on (e.g. the climax last).
+    pair_ok(A, B, {works, best}) -> bool: extra per-pair gate (None: every pair the live gates pass)."""
     import sqlite3
     from app.music_brain.analysis.genre import family_jump
     from app.music_brain.analysis.genre_labels import name_key, title_key
@@ -294,7 +295,10 @@ def select_chain(cache_dir: str, n: int = 12, lanes: Optional[Dict[str, int]] = 
             continue
         if V.blocked(vet, A["name"], B["name"], A["genre"]):
             continue
-        mv = json.loads(data).get("moves", {})
+        d = json.loads(data)
+        if pair_ok is not None and not pair_ok(A, B, {"works": works, "best": d.get("best")}):
+            continue
+        mv = d.get("moves", {})
         bs, ds = mv.get("bass_swap", [0, 0]), mv.get("drop_swap", [0, 0])
         if not (bs[0] or ds[0]):
             continue
