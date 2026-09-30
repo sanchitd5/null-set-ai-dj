@@ -110,10 +110,25 @@ assert.ok(am.planDholDrop(Object.assign(dholBase(), { recipe: "Long Blend", onDe
 p = am.planDholDrop(Object.assign(dholBase(), { pos: 59.8 }));
 assert.ok(p.ok && p.window_beats === 4, "1-bar fallback");
 
+// ---- chop_duck (S18)
+p = am.planChopDuck({ kind: "vocal_chop", drumsRms: 0.2, chopRms: 0.2 });
+assert.ok(p.ok && p.duck_db === -10, JSON.stringify(p));          // chops level with the drums: the deepest duck
+p = am.planChopDuck({ kind: "vocal_chop", drumsRms: 0.1, chopRms: 0.2 });
+assert.ok(p.ok && p.duck_db === -6, JSON.stringify(p));           // chops 6 dB over: the lightest duck
+assert.ok(Math.abs(p.gain - Math.pow(10, -6 / 20)) < 1e-9);
+p = am.planChopDuck({ kind: "vocal_chop", drumsRms: 0.1, chopRms: 0.13 });
+assert.ok(p.ok && p.duck_db <= -6 && p.duck_db >= -10);
+const refuseK = (c, gate) => { const r = am.planChopDuck(c); assert.strictEqual(r.ok, false); assert.strictEqual(r.gate, gate, JSON.stringify(r)); };
+refuseK({ kind: "vocal_loop", drumsRms: 0.2, chopRms: 0.2 }, "not_chop");
+refuseK({ kind: "vocal_chop", drumsRms: 0.2, chopRms: 0.2, relaxed: true }, "relaxed");
+refuseK({ kind: "vocal_chop", drumsRms: null, chopRms: 0.2 }, "unmeasured");
+refuseK({ kind: "vocal_chop", drumsRms: 0.001, chopRms: 0.2 }, "no_drums");
+refuseK({ kind: "vocal_chop", drumsRms: 0.02, chopRms: 0.2 }, "no_need");   // 20 dB over the drums already
+
 // ---- wiring: every new move has a button (ACTION_IDS) and a toggle in index.html
 const html = fs.readFileSync(path.join(STATIC, "index.html"), "utf8");
 const src = fs.readFileSync(path.join(STATIC, "artist-moves.js"), "utf8");
-for (const [btn, kind] of [["artist-pad", "pad_lead"], ["artist-chant", "chant_gate"], ["artist-dhol", "dhol_drop"]]) {
+for (const [btn, kind] of [["artist-pad", "pad_lead"], ["artist-chant", "chant_gate"], ["artist-dhol", "dhol_drop"], ["artist-duck", "chop_duck"]]) {
   assert.ok(html.includes(`data-ai-action="${btn}"`), btn);
   assert.ok(html.includes(`id="ap-artist-${kind}"`), kind);
   assert.ok(new RegExp(`"${btn}": "${kind}"`).test(src), `ACTION_IDS ${btn}`);
@@ -249,5 +264,21 @@ const o = (pos, over = {}) => Object.assign({ pos, bar: 2, entryT: 0, lineT: 64,
   // a blend entry: the drop-in refuses by recipe, the tease is free again
   api.tick(a, o(105, { lineT: 999, exitT: 110, bEntry: 20, recipe: "Long Blend" }));
   assert.ok(H.steps.some((s) => s.o.decision === "dhol_drop" && /^recipe/.test(s.o.why)));
+}
+{
+  // chop duck runtime: the learned chop hook ducks A's drums from the window start, logs an artist_move
+  const a = fakeDeck("a"), b = fakeDeck("b", { playing: false });
+  const H = fakeHost({ a, b });
+  const api = mount(H);
+  const plan = { kind: "vocal_chop", start: 60, end: 64, beats: 8, cap_beats: 32, slices: [{ from: 50, dur: 0.2 }, { from: 52, dur: 0.2 }] };
+  const r = api.chopDuck(a, plan, 1, 5);
+  assert.ok(r && r.ok && r.duck_db === -10, JSON.stringify(r));    // fake stems: vocals level with drums
+  const m = a.mixCalls.find((x) => x[0] && x[0].drums != null);
+  assert.ok(m && Math.abs(m[0].drums - r.gain) < 1e-9 && m[1] === 1, "drums ducked at the window start");
+  assert.ok(H.events.some((e) => e.type === "ai-activity" && e.detail.move === "chop_duck" && e.detail.kind === "artist_move"));
+  assert.strictEqual(api.chopDuck(a, Object.assign({}, plan, { kind: "vocal_loop" }), 1, 5), null, "only under chops");
+  // learned-moves.js runSlices calls the hook for vocal_chop
+  const lm = fs.readFileSync(path.join(STATIC, "learned-moves.js"), "utf8");
+  assert.ok(lm.includes('if (plan.kind === "vocal_chop" && am && typeof am.chopDuck === "function") am.chopDuck(d, plan, at, until);'));
 }
 console.log("artist_moves_more_check ok");

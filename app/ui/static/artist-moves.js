@@ -29,16 +29,20 @@
 //                dhol entry is the scene's dominant move, GUESS from set lengths): B's drum stem
 //                from the 1 or 2 bars before its entry point layered under A's last bars,
 //                high-passed at 150 Hz, then the cut lands on the downbeat and B's drums run on.
+//   chop_duck    S18 "leave room" (Fred again.., SECONDARY: gearnews, kicks and claps sparse to leave
+//                space for the sample): while a learned vocal_chop plays, A's drum stem is ducked
+//                6 to 10 dB (deeper when the chops are quieter than the drums), back on the window
+//                end. A modifier of learned-moves.js runSlices, not a move of its own on the timeline.
 (function (root) {
   "use strict";
 
   const lm = root.learnedMovesCore || (typeof require === "function" ? require("./learned-moves.js") : null);
   const { envelope, snapBeat, median } = lm;
 
-  const KINDS = ["slip_loop", "cue_tease", "roll", "perc_bridge", "pad_lead", "chant_gate", "dhol_drop"];
-  const SPEC = { slip_loop: "S13", cue_tease: "S14", roll: "S12", perc_bridge: "S11", pad_lead: "Lane8", chant_gate: "S20", dhol_drop: "Desi" };
+  const KINDS = ["slip_loop", "cue_tease", "roll", "perc_bridge", "pad_lead", "chant_gate", "dhol_drop", "chop_duck"];
+  const SPEC = { slip_loop: "S13", cue_tease: "S14", roll: "S12", perc_bridge: "S11", pad_lead: "Lane8", chant_gate: "S20", dhol_drop: "Desi", chop_duck: "S18" };
   const LABEL = { slip_loop: "SLIP LOOP", cue_tease: "CUE TEASE", roll: "ROLL", perc_bridge: "PERC BRIDGE",
-    pad_lead: "PAD LEAD", chant_gate: "CHANT GATE", dhol_drop: "DHOL DROP-IN" };
+    pad_lead: "PAD LEAD", chant_gate: "CHANT GATE", dhol_drop: "DHOL DROP-IN", chop_duck: "CHOP DUCK" };
   const MIN_LEAD_S = 0.6;             // a move is booked at least this far ahead (learned-moves.js)
   const SLIP_WINDOW_BEATS = [16, 8];  // window before the line; the loop is its first half (4 or 8 beats)
   const SLIP_CAP_BEATS = 16;          // hard cap on the slip window (KB 16-beat hold)
@@ -71,6 +75,8 @@
   const DHOL_EVERY = 2;               // autopilot: at most one drop-in every 2 cut transitions
   const DHOL_REL = 0.5;               // B's drums about 6 dB under A's (UNVERIFIED by ear)
   const DHOL_GAIN_FALLBACK = 0.3;
+  const DUCK_DB = [-10, -6];          // S18: drums -6 to -10 dB under the chops
+  const DUCK_HEADROOM_DB = 12;        // the chops end up at least this much over the ducked drums, within DUCK_DB
   const CUT_RECIPES = /\bcut\b/i;    // Quick Cut, Hard Cut, the profile cut
 
   const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
@@ -342,15 +348,30 @@
     return last;
   }
 
+  // ---- S18 chop duck --------------------------------------------------------------------------
+  // c: {kind (the learned plan's kind), drumsRms (A's drum stem median over the window), chopRms (median
+  //     level of the chop sources on the vocal stem), relaxed, onDemand}
+  function planChopDuck(c) {
+    if (c.kind !== "vocal_chop") return no("not_chop", `${c.kind || "no move"} is not a vocal chop`);
+    if (c.relaxed && !c.onDemand) return no("relaxed", "relaxed session: no artist moves");
+    if (!fin(c.drumsRms) || !fin(c.chopRms)) return no("unmeasured", "no drum / vocal stem level over the window");
+    if (c.drumsRms < MIN_RMS) return no("no_drums", "A's drums are silent under the chops: nothing to duck");
+    const rel = 20 * Math.log10(Math.max(1e-9, c.chopRms) / c.drumsRms);
+    if (rel >= DUCK_HEADROOM_DB) return no("no_need", `the chops already sit ${rel.toFixed(1)} dB over the drums`);
+    const duckDb = clamp(rel - DUCK_HEADROOM_DB, DUCK_DB[0], DUCK_DB[1]);
+    return { ok: true, kind: "chop_duck", duck_db: +duckDb.toFixed(1), gain: Math.pow(10, duckDb / 20), rel_db: +rel.toFixed(1), fallbacks: [],
+      why: `drums ${duckDb.toFixed(1)} dB under the vocal chops (chops ${rel.toFixed(1)} dB vs drums): leave room for the sample` };
+  }
+
   const PLANNERS = { slip_loop: planSlipLoop, cue_tease: planCueTease, roll: planRoll, perc_bridge: planPercBridge,
-    pad_lead: planPadLead, chant_gate: planChantGate, dhol_drop: planDholDrop };
+    pad_lead: planPadLead, chant_gate: planChantGate, dhol_drop: planDholDrop, chop_duck: planChopDuck };
 
   const core = { KINDS, SPEC, LABEL, MIN_LEAD_S, SLIP_WINDOW_BEATS, SLIP_CAP_BEATS, SLIP_PER_SONG, SLIP_GAP_BARS,
     TEASE_BARS, TEASE_MAX_STABS, TEMPO_CAP_PCT, HP_HZ, ROLL_WET, PLANNERS,
     PAD_BARS, PAD_KEY_MIN, PAD_EVERY, PAD_RECIPES, CHANT_BARS, CHANT_PER_SONG, CHANT_MIN_VOCAL, CHANT_STEP_BEATS, CHANT_FLOOR,
-    DHOL_BARS, DHOL_EVERY, CUT_RECIPES,
+    DHOL_BARS, DHOL_EVERY, CUT_RECIPES, DUCK_DB, DUCK_HEADROOM_DB,
     vocalShare, meanEnergy, nearestBeat, shadowAt, envMean, planSlipLoop, planCueTease, planRoll, planPercBridge,
-    planPadLead, planChantGate, planDholDrop };
+    planPadLead, planChantGate, planDholDrop, planChopDuck };
   root.artistMovesCore = core;
   if (typeof module !== "undefined" && module.exports) module.exports = core;
 
@@ -485,6 +506,24 @@
         grid_err_s: +p.grid_err_s.toFixed(4), params: { window_beats: p.window_beats, step_beats: p.step_beats, floor: p.floor, steps: p.steps.length },
         fallbacks: p.fallbacks });
       return { busyS: 0, why: p.why };
+    }
+
+    // S18 hook: learned-moves.js runSlices calls this once the chop slices are booked (stem mode is on from
+    // `at`); the drums ramp down over one beat and come back with the full mix learned-moves restores at `until`.
+    function chopDuck(d, plan, at, until, onDemand = false) {
+      if (!d || !plan || !on("chop_duck")) return null;
+      const beat = 60 / (d.bpm || 128), rate = rateOf(d);
+      const dr = stemEnv(d, "drums", plan.start, plan.end, beat);
+      const lv = (plan.slices || []).map((x) => { const e = stemEnv(d, "vocals", x.from, x.from + x.dur, Math.max(0.01, x.dur)); return e && e.v.length ? e.v[0] : null; })
+        .filter((x) => fin(x));
+      const p = planChopDuck({ kind: plan.kind, relaxed: relaxed(), onDemand,
+        drumsRms: dr && dr.v.length ? median(dr.v) : null, chopRms: lv.length ? median(lv) : null });
+      if (!p.ok) { refuse(d, "chop_duck", (plan.start || 0).toFixed(1), p); return null; }
+      if (!d.stemMix({ drums: p.gain }, at, beat / rate)) return null;
+      logPlan("chop_duck", p);
+      say(d, "chop_duck", p.why, { t0: at, t1: until, beats: plan.beats, cap_beats: plan.cap_beats,
+        params: { duck_db: p.duck_db, rel_db: p.rel_db }, fallbacks: p.fallbacks });
+      return p;
     }
 
     // ---- one attempt of one kind on deck d. o: {pos, bar, entryT, lineT, exitT, bEntry, quiet, holdActive,
@@ -642,6 +681,14 @@
         return { ok, why };
       };
       if (!PLANNERS[kind]) return done(false, "unknown move");
+      if (kind === "chop_duck") {                    // a chop now (learned-moves), the duck rides on it
+        const mind = host.mod.djMind, dd = ctx.deck || hostDeck();
+        if (!dd) return done(false, "nothing is playing");
+        if (!mind || !mind.learnedNow) return done(false, "SET MIND not loaded");
+        const r = mind.learnedNow(dd.id, "vocal_chop");
+        d = dd;
+        return r && !r.refused ? done(true, `${r.why}; drums ducked under the chops`) : done(false, (r && r.refused) || "no chop");
+      }
       d = ctx.deck || hostDeck();
       if (!d) return done(false, "nothing is playing");
       const mind = host.mod.djMind;
@@ -678,7 +725,7 @@
     // on-demand wiring: the AI ACTIONS register API when present, and `ai-action` events on djEvents
     const ACTION_IDS = { "artist-slip": "slip_loop", "artist-tease": "cue_tease", "artist-roll": "roll", "artist-perc": "perc_bridge",
       "artist-pad": "pad_lead", "artist-chant": "chant_gate",
-      "artist-dhol": "dhol_drop" };
+      "artist-dhol": "dhol_drop", "artist-duck": "chop_duck" };
     let registered = false;
     const register = () => {
       const reg = host.mod.aiActions;
@@ -702,7 +749,7 @@
       if (ACTION_IDS[btn.dataset.aiAction]) btn.addEventListener("click", () => fromUi(btn.dataset.aiAction));
     }
 
-    const api = { core, tick, stop, runNow, ACTION_IDS };
+    const api = { core, tick, stop, runNow, chopDuck, ACTION_IDS };
     host.mod.artistMoves = api;
     return api;
   }
