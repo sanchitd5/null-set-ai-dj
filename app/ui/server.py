@@ -2323,9 +2323,9 @@ def autopilot_vet(req: VetRequest):
                  vetoes=_vetoes(), punjabi_profile=req.punjabi_profile, anchor_genre=req.anchor_genre or None)
     for r, row in zip(res, rows):
         r["genre"], r["era"] = row["genre"], row["era"]
-    from app.music_brain.analysis.genre import genre_families
+    from app.music_brain.analysis.genre import scene_keys
     return {"a_name": a_name, "a_genre": av["genre"], "a_era": av["era"],
-            "a_families": sorted(genre_families(av["genre"])), "results": res}
+            "a_families": scene_keys(av["genre"]), "results": res}
 
 
 def _pair_vibe(track_a_id: str, track_b_id: str) -> Dict[str, Optional[str]]:

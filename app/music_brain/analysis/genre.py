@@ -18,7 +18,8 @@ GENRE_FAMILIES = {
                     "indian", "filmi", "sufi", "qawwali", "haryanvi", "tamil", "telugu"),
     "electronic": ("house", "techno", "garage", "trance", "edm", "electronic", "electronica",
                    "dubstep", "drum & bass", "drum and bass", "dnb", "bass music", "breakbeat",
-                   "downtempo", "ambient", "future bass", "electro", "idm", "jungle", "dance"),
+                   "downtempo", "ambient", "future bass", "electro", "idm", "jungle", "dance",
+                   "breaks", "trip hop", "chillout", "big room", "riddim"),
     "hiphop": ("hip-hop", "hip hop", "rap", "trap", "drill", "grime"),
     "rnb": ("r&b", "rnb", "soul"),
     "latin": ("reggaeton", "latin", "dembow", "cumbia", "bachata", "salsa", "urbano"),
@@ -30,14 +31,99 @@ GENRE_FAMILIES = {
 }
 
 
+# "electronic" is too broad to hold a set: it let The Sound of Goodbye (trance) hand over to
+# Bonobo - Me and You (downtempo) (owner, session 2026-09-30_205816). A label in that family is
+# placed in one or more of these SUB-FAMILIES (clusters of scenes that mix into each other).
+# Terms are whole words; the longest term wins and consumes its words, so "melodic techno" is
+# melodic, not techno, and "electro" never matches inside "electronic". A label in the family that
+# names no cluster ("electronic", "indie electronic", "dance pop") stays the generic "electronic",
+# which neighbours every cluster: too vague to refuse anything.
+ELECTRONIC_CLUSTERS = {
+    # four-to-the-floor house and its garage / disco / afro / latin offshoots
+    "house": ("house", "deep house", "tech house", "bass house", "synth house", "disco house",
+              "afro house", "latin house", "funky house", "uk garage", "garage", "speed garage"),
+    # the melodic / progressive floor: melodic techno + house, progressive, organic
+    "melodic": ("melodic", "melodic techno", "melodic house", "progressive house", "progressive",
+                "organic house"),
+    # trance, split from melodic (owner, 2026-09-30) so the chill <-> melodic bridge does not
+    # let trance hand over to downtempo; it keeps every other melodic neighbour
+    "trance": ("trance", "psytrance", "uplifting trance"),
+    # warehouse techno: straight, hard, minimal, industrial
+    "techno": ("techno", "hard techno", "minimal techno", "industrial techno", "acid techno"),
+    # bass music: dubstep, riddim, future bass, melodic dubstep
+    # (bass house sits in house AND bass: the bridge between the two floors)
+    "bass": ("dubstep", "melodic dubstep", "bass music", "bass house", "future bass", "riddim", "brostep"),
+    # 170+ BPM: drum and bass, jungle, liquid
+    "dnb": ("drum and bass", "drum & bass", "dnb", "jungle", "liquid", "neurofunk"),
+    # the low-energy listening end: downtempo, ambient, chillout, trip hop, idm, electronica
+    "chill": ("downtempo", "ambient", "chillout", "chill", "trip hop", "idm", "electronica"),
+    # festival / commercial dance: big room, edm, electro (house), eurodance, plain "dance"
+    "edm": ("edm", "big room", "electro", "electro house", "eurodance", "dance"),
+    # breakbeat, breaks, big beat
+    "breaks": ("breakbeat", "breaks", "big beat"),
+}
+
+# Cluster pairs DJs really mix across (owner decisions, 2026-09-30). chill's only neighbour is
+# melodic (organic / melodic house <-> electronica, downtempo); trance <-> chill stays a jump.
+# Trance has exactly melodic's neighbours minus chill: melodic, techno, house, bass, edm.
+ELECTRONIC_NEIGHBOURS = tuple(frozenset(p) for p in (
+    ("house", "melodic"),    # melodic house / progressive sit on the house floor
+    ("melodic", "techno"),   # melodic techno <-> techno
+    ("chill", "melodic"),    # organic / melodic house <-> electronica, downtempo
+    ("bass", "melodic"),     # melodic dubstep / future bass <-> melodic house, techno
+    ("bass", "house"),       # dubstep <-> house, bass house bridges them
+    ("edm", "melodic"),      # festival main stage: big room / eurodance <-> melodic house, progressive
+    ("trance", "melodic"),   # trance keeps melodic's neighbours, chill aside
+    ("trance", "techno"),
+    ("trance", "house"),
+    ("trance", "bass"),
+    ("trance", "edm"),
+    ("house", "techno"),     # tech house bridges them
+    ("house", "edm"),        # electro / big room house
+    ("edm", "bass"),         # festival sets drop dubstep / future bass
+    ("bass", "dnb"),         # the bass music scene
+    ("breaks", "house"),     # UK breaks / garage
+    ("breaks", "dnb"),       # breakbeat roots of jungle
+)) + tuple(frozenset({"electronic", c}) for c in ELECTRONIC_CLUSTERS)
+
+_TERM_CLUSTERS: dict = {}
+for _c, _ts in ELECTRONIC_CLUSTERS.items():
+    for _t in _ts:
+        _TERM_CLUSTERS.setdefault(_t, set()).add(_c)
+_CLUSTER_TERMS = sorted(_TERM_CLUSTERS, key=len, reverse=True)
+
+
+def _electronic_clusters(g: str) -> set:
+    s = " " + " ".join(re.sub(r"[-_/,()]", " ", g).split()) + " "
+    found = set()
+    for term in _CLUSTER_TERMS:
+        if f" {term} " in s:
+            found |= _TERM_CLUSTERS[term]
+            s = s.replace(f" {term} ", "  ")
+    return found or {"electronic"}
+
+
 def genre_families(label) -> set:
+    """Broad families, with "electronic" split into its sub-families (ELECTRONIC_CLUSTERS)."""
     g = str(label or "").lower()
-    return {fam for fam, keys in GENRE_FAMILIES.items() if any(k in g for k in keys)}
+    fams = {fam for fam, keys in GENRE_FAMILIES.items() if any(k in g for k in keys)}
+    if "electronic" in fams:
+        fams = (fams - {"electronic"}) | _electronic_clusters(g)
+    return fams
 
 
 # Families a set moves between freely (owner, 2026-09-30: hip-hop <-> R&B are neighbours, the
 # DJ Timeless set does it): a move between neighbours is not a family jump.
-NEIGHBOUR_FAMILIES = (frozenset({"hiphop", "rnb"}),)
+NEIGHBOUR_FAMILIES = (frozenset({"hiphop", "rnb"}),) + ELECTRONIC_NEIGHBOURS
+
+
+def scene_keys(label) -> list:
+    """The console's scene anchor tokens (booking vet `families`): the families plus one "a|b" token
+    per electronic neighbour pair, so two labels share a token exactly when their clusters are the
+    same or neighbours. hip-hop <-> R&B gets no token: the anchor keeps them apart, as before."""
+    fams = genre_families(label)
+    pairs = {"|".join(sorted(p)) for p in ELECTRONIC_NEIGHBOURS if p & fams}
+    return sorted(fams | pairs)
 
 
 def _families_touch(a: set, b: set) -> bool:
@@ -95,6 +181,8 @@ def scene_relation(ref, other) -> str:
     """How `other` sits against the reference label `ref` (the playing song's stored label, or
     the set's scene anchor): "scene" (a shared scene term), "family" (a shared genre family
     only), "unknown" (a label unknown or unrecognised), "cross" (both families known, none shared)."""
+    if family_jump(ref, other):   # "melodic dubstep" vs "melodic house" share a word, not a scene
+        return "cross"
     near = genre_near(ref, other)
     if near is True:
         return "scene"

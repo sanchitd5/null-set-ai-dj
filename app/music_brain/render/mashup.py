@@ -47,7 +47,9 @@ def scene_gate(host_genre, guest_genre) -> Optional[str]:
     mashup never crosses into another music world. NARROW (owner: "more quality mashups, not less"):
     only a CLEAR mismatch refuses, both labels known and no shared genre family (genre.family_jump:
     punjabi / south asian vs electronic, pop vs electronic), the rule the song picks score as a
-    genre jump. House <-> techno <-> garage stay one world; an unknown genre on either side passes.
+    genre jump. The electronic sub-families (genre.ELECTRONIC_CLUSTERS) apply: house <-> techno <->
+    garage stay one world (same cluster or neighbours), trance -> downtempo does not; an unknown
+    genre on either side passes.
     (genre_near, the scene-term test, would have refused 8462 of the atlas's 11208 mashup pairs,
     4518 of them inside one family: far too wide.)"""
     from app.music_brain.analysis.genre import family_jump
