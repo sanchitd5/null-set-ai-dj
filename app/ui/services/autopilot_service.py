@@ -80,13 +80,12 @@ OCCASION FIRST (overrides VIBE CONTINUITY, SAME-ARTIST and CREDITS when they con
     anthems. The occasion line
     tells you which step you are on - at step N be about N/6 of the way there.
   Once inside that world, apply VIBE CONTINUITY within it. Examples of canons:
-    "punjabi wedding" / "bhangra" -> Diljit Dosanjh, AP Dhillon, Karan Aujla, Panjabi MC,
-      Imran Khan, Yo Yo Honey Singh, Guru Randhawa, Jazzy B, Malkit Singh
-      (bridges from electronic: Panjabi MC "Mundian To Bach Ke", Diljit x Sia, bhangra remixes)
-      Sidhu Moose Wala is a DIFFERENT scene (pendu, rural Punjabi) from Karan Aujla
-      (urban Punjabi): never suggest one right after the other, even in this canon.
+    "punjabi wedding" / "bhangra" -> the occasion's best-known Punjabi pop, bhangra and
+      Punjabi hip-hop artists (bridges from electronic: bhangra-electronic crossovers,
+      bhangra remixes). Rural (pendu) Punjabi rap and urban Punjabi rap are DIFFERENT
+      scenes: never suggest one right after the other, even in this canon.
     "bollywood night" -> Bollywood dance hits; "latin party" -> reggaeton / salsa / dembow;
-    "afrobeats" -> Burna Boy, Wizkid, Rema; "90s hip-hop" -> 90s rap classics.
+    "afrobeats" -> the genre's own anthems; "90s hip-hop" -> 90s rap classics.
   THEME LOCK: once inside the occasion's world, EVERY suggestion must itself fit the occasion
   (its own "occasion_fit" >= 7). Variety / subgenre changes happen WITHIN the theme - for a
   Punjabi wedding: bhangra, Punjabi pop, Punjabi hip-hop, bhangra-house, Punjabi Bollywood
@@ -108,7 +107,7 @@ ERA CONTINUITY (as important as genre):
   Also infer the current song's era (the decade it was released, e.g. "1990s") and give every
   suggestion its own release "era". A set holds its era the way it holds its genre: stay within
   ONE decade of the current song (1990s -> 1990s or 2000s is fine; 1990s -> 2010s is a jump).
-  Eurodance/90s pop (Aqua "Barbie Girl") continues with other 90s/early-2000s dance-pop, NOT a 2010s
+  A 1990s Eurodance/pop song continues with other 90s/early-2000s dance-pop, NOT a 2010s
   UK breakbeat track, even at the same tempo. A remix counts at the remix's own release year.
   To change era, bridge through a modern remix or rework of an older song.
 
@@ -142,7 +141,7 @@ AVOID TRACKS: The history list contains track names already played. Do NOT sugge
 
 REMIXES: remixes, edits and reworks are welcome when they keep the vibe (a club remix of a
   vocal song is often the better fit on a dancefloor). Give the remixer in the title, e.g.
-  "Treat You Better (Purple Disco Machine Remix)". Never the same version of a song twice.
+  "Song Title (Remixer Remix)". Never the same version of a song twice.
 
 FACTS (critical):
   Suggest only songs that really exist, credited to their real artist. Every pick is
@@ -434,7 +433,7 @@ _USER_TEMPLATE = (
     "move ONE step per song through a crossover song that belongs to both worlds (e.g. Urdu pop -> "
     "Punjabi pop -> Punjabi hip-hop -> hip-hop; melodic house -> organic house -> afro house -> afrobeats), "
     "so each song shares its genre with the one before it. This holds even when heading to a DESTINATION.\n"
-    "SCENE: when the recent songs share one scene (e.g. melodic techno / Afterlife), stay in that scene; "
+    "SCENE: when the recent songs share one scene (e.g. melodic techno), stay in that scene; "
     "no jump to pop, a mashup, a bootleg or an \"A x B\" MashMIX unless the energy arc or the occasion asks for it.\n\n"
     "Suggest {n} tracks. Prioritise: vibe continuity → harmonic compatibility → energy arc for {arc_phase} → diversity.\n"
     "Reply ONLY with the JSON object, compact (no line breaks or indentation), only the fields "
