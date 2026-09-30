@@ -45,6 +45,7 @@ from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
+from app.music_brain import scene_profile as _scene_profile
 from app.music_brain.config import CACHE_DIR, ROOT_DIR
 
 SR = 11025
@@ -858,8 +859,11 @@ def _merge_locked(observations: List[Observation], path: Path, set_ids: Sequence
         obs = e["observations"]
         e["count"] = len(obs)
         e["ai_rules"] = list(dict.fromkeys(o["detail"]["ai_rule"] for o in obs if o.get("detail", {}).get("ai_rule")))[:8]
-        e["tempo_gap_max"] = max([o["tempo_gap"] for o in obs if o.get("tempo_gap") is not None], default=None)
-        e["key_score_min"] = min([o["key_score"] for o in obs if o.get("key_score") is not None], default=None)
+        # the global ranges: a scene-tagged set's sightings count toward its scene only
+        # (scene_profile.SET_SCENES, techniques.scene_store recomputes per scene)
+        glob = [o for o in obs if not _scene_profile.set_scene(o.get("set_id"))]
+        e["tempo_gap_max"] = max([o["tempo_gap"] for o in glob if o.get("tempo_gap") is not None], default=None)
+        e["key_score_min"] = min([o["key_score"] for o in glob if o.get("key_score") is not None], default=None)
     # the user's word (rules, a disable) outlives the observations it was given on
     store = {k: v for k, v in store.items() if v["observations"] or v.get("user_rules") or v.get("disabled")}
     _save(store, path)
