@@ -285,3 +285,32 @@ def recipe_choice(band: Optional[str], mashup_fits: bool, mashup_kind: Optional[
             continue
         return r
     return order[0]
+
+
+BAND_LEVEL = {"relaxed": 4, "middle": 6, "high": 8}
+
+
+def pair_choice(row: dict, band: str) -> dict:
+    """The live choice for one pair-atlas row at a given set band (previews / tools; the live
+    console computes it from the decks). The atlas's own mashup fit is the plain M-bar mashup,
+    whose A beat drops out for 2 bars before B's beat (stem-moves.js mashupTransitionPlan):
+    LOW-ENERGY. Key clash / tempo gap rows keep their Echo Out (not re-ordered).
+    -> {recipe, a_time, b_time, why}"""
+    if band not in BAND_LEVEL:
+        raise ValueError(f"set band must be one of {sorted(BAND_LEVEL)}")
+    stored = row.get("recipe") or "Echo Out"
+    bl = row.get("blend") or {}
+    mash = row.get("mashup") or {}
+    key = row.get("key")
+    beat = row.get("lock") not in (None, "none")
+    key_ok = key is None or key >= 0.6          # KEY_SAFE_MIN
+    blend_open = beat and key_ok and bool(bl.get("ok"))
+    clean = bool(bl.get("instrumental"))
+    long_ok = clean or (bl.get("b_vocal_coverage") is not None and bl["b_vocal_coverage"] <= 0.15)
+    fits = bool(mash.get("ok")) and beat and all(row.get("stems") or [False, False])
+    pick = recipe_choice(band, fits, "low" if fits else None, blend_open, clean, long_ok, BAND_LEVEL[band])
+    recipe = pick or stored
+    why = (f"{band} set: mashup {'low-energy (plain, A beat out 2 bars)' if fits else 'does not fit'}"
+           f"{', ' + ('clean instrumental' if clean else 'vocal') + ' overlap' if blend_open else ', no blend (key / tempo)'}"
+           f" -> {recipe}")
+    return {"recipe": recipe, "a_time": row.get("exit"), "b_time": row.get("entry"), "why": why}

@@ -209,6 +209,7 @@ def stem_preview(
     allow_stem_path: bool = False,
     xf: Optional[float] = None,
     full: bool = False,
+    energy_no_mashup: bool = False,
 ) -> dict:
     """The transition exactly as the live console plays it, on the real audio (stems included).
 
@@ -230,7 +231,7 @@ def stem_preview(
         raise ValueError("--out is required")
     t_start = _time.monotonic()
     cap = capture(track_a_path, track_b_path, recipe_name, a_time, b_time, pre=pre, post=post,
-                  allow_stem_path=allow_stem_path, xf=xf, full=full)
+                  allow_stem_path=allow_stem_path, xf=xf, full=full, energy_no_mashup=energy_no_mashup)
     files = {}
     for side in ("a", "b"):
         s = cap["songs"][side]
@@ -281,6 +282,19 @@ def stem_preview(
     }
 
 
+def set_energy_choice(track_a_path: str, track_b_path: str, band: str, cache_dir: Optional[Path] = None) -> dict:
+    """The set-energy recipe choice for A -> B (analysis/energy.pair_choice on the pair atlas row)."""
+    from app.music_brain.analysis import energy
+    from app.music_brain.atlas import pair_atlas
+    from app.sim.stem_capture import track_id
+
+    a, b = track_id(Path(track_a_path)), track_id(Path(track_b_path))
+    row = pair_atlas.pairs_for(a, cache_dir=cache_dir).get(f"{a}>{b}")
+    if not row:
+        raise ValueError(f"no pair atlas row for {a} -> {b}")
+    return dict(energy.pair_choice(row, band), band=band, pair=f"{a}>{b}")
+
+
 def list_recipes() -> dict:
     """Every parsed transition recipe with its tags/prerequisites."""
     return {"recipes": [r.to_dict() for r in _get_knowledge().get_all()]}
@@ -325,9 +339,12 @@ def _build_parser() -> argparse.ArgumentParser:
     p_sp = sub.add_parser("stem-preview", help="Render a transition as the live console plays it (stems, EQ, FX) on the real audio.")
     p_sp.add_argument("track_a")
     p_sp.add_argument("track_b")
-    p_sp.add_argument("--recipe", required=True)
-    p_sp.add_argument("--a-time", type=float, required=True, help="A's exit (song seconds): the move starts here.")
-    p_sp.add_argument("--b-time", type=float, required=True, help="B's entry (song seconds).")
+    p_sp.add_argument("--recipe", default=None, help="Required unless --set-energy picks it.")
+    p_sp.add_argument("--a-time", type=float, default=None, help="A's exit (song seconds): the move starts here.")
+    p_sp.add_argument("--b-time", type=float, default=None, help="B's entry (song seconds).")
+    p_sp.add_argument("--set-energy", choices=["relaxed", "middle", "high"], default=None,
+                      help="PREVIEW ONLY: pick Mashup / Bass Swap / Long Blend as the console would at this set "
+                           "energy (the pair atlas row's facts); exit / entry from the row unless given.")
     p_sp.add_argument("--pre", type=float, default=30.0, help="Seconds of A before the move.")
     p_sp.add_argument("--post", type=float, default=30.0, help="Seconds of B after the move ends.")
     p_sp.add_argument("--out", required=True, help=".wav (44.1 kHz stereo 16-bit) or .mp3")
@@ -434,9 +451,20 @@ def main(argv: Optional[list[str]] = None) -> int:
                 genre_a=args.genre_a, genre_b=args.genre_b, era_a=args.era_a, era_b=args.era_b,
             )
         elif args.command == "stem-preview":
-            payload = stem_preview(args.track_a, args.track_b, args.recipe, args.a_time, args.b_time,
+            recipe, a_t, b_t, choice = args.recipe, args.a_time, args.b_time, None
+            if args.set_energy:
+                choice = set_energy_choice(args.track_a, args.track_b, args.set_energy)
+                recipe = choice["recipe"]
+                a_t = a_t if a_t is not None else choice["a_time"]
+                b_t = b_t if b_t is not None else choice["b_time"]
+            if not recipe or a_t is None or b_t is None:
+                raise ValueError("--recipe, --a-time and --b-time are required (or --set-energy with an atlas row)")
+            payload = stem_preview(args.track_a, args.track_b, recipe, a_t, b_t,
                                    out=args.out, pre=args.pre, post=args.post,
-                                   allow_stem_path=args.allow_stem_path, xf=args.xf, full=args.full)
+                                   allow_stem_path=args.allow_stem_path, xf=args.xf, full=args.full,
+                                   energy_no_mashup=bool(choice and choice["recipe"] != "Mashup → Transition"))
+            if choice:
+                payload["set_energy_choice"] = choice
         elif args.command == "list-recipes":
             payload = list_recipes()
         elif args.command == "learn-set":

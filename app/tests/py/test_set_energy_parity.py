@@ -55,6 +55,24 @@ def test_set_energy_and_choice_match_js(tmp_path):
         assert got == want, c
 
 
+def test_pair_choice_on_atlas_rows():
+    # Neverland -> No Control as the atlas stores it: plain mashup fits, clean instrumental blend, key 1
+    nc = {"recipe": "Mashup → Transition", "key": 1, "lock": "pitched", "stems": [True, True], "exit": 97.64,
+          "entry": 48.344, "mashup": {"M": 16, "ok": True},
+          "blend": {"ok": True, "instrumental": True, "b_vocal_coverage": 0.033}}
+    assert energy.pair_choice(nc, "relaxed")["recipe"] == energy.MASHUP
+    assert energy.pair_choice(nc, "middle")["recipe"] == energy.BLEND     # low-energy mashup refused, clean overlap
+    assert energy.pair_choice(nc, "high")["recipe"] == energy.BLEND
+    vocal = dict(nc, blend={"ok": True, "instrumental": False, "b_vocal_coverage": 0.5}, mashup={"ok": False})
+    assert energy.pair_choice(vocal, "high")["recipe"] == energy.BASS
+    # a key clash keeps its Echo Out at every band (not re-ordered)
+    clash = dict(nc, key=0, recipe="Echo Out", mashup={"ok": False})
+    for band in ("relaxed", "middle", "high"):
+        assert energy.pair_choice(clash, band)["recipe"] == "Echo Out"
+    with pytest.raises(ValueError):
+        energy.pair_choice(nc, "loud")
+
+
 def test_set_energy_examples():
     e = energy.set_energy(0.5, [3, 3, 3])   # peak 8, played 3 -> 5.5 -> 6
     assert (e["arc"], e["level"], e["band"]) == ("peak", 6, "middle")

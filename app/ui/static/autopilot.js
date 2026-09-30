@@ -1235,6 +1235,7 @@ function createAutopilotEngine({ host, ai }) {
     return DL && Array.isArray(v) && Number.isFinite(at0) && ratio > 0 ? DL.mappedSings(v, t0, at0, ratio) : null;
   }
   let lastVariantTag = "";   // the variant line is logged when it changes, not on every poll
+  let energyNoMashup = false;   // set by the booking when the set-energy choice refused the mashup (executeTransition)
   function mashupFits(od, idk, t0) {
     const ve = idk._vocalEntry;
     if (!od.stemsReady || !idk.stems || !ve || ve.entry == null || !od.bpm || !idk.bpm) return null;
@@ -1444,6 +1445,7 @@ function createAutopilotEngine({ host, ai }) {
   // that was refused and fell to the EQ path must not be logged as a Stem Bridge).
   let executedMove = null;
   function executeTransition(recipe, out, inn, xfDuration, t0Audio) {
+    const noMash = energyNoMashup; energyNoMashup = false;   // one booking's set-energy veto, consumed here
     executedMove = recipe;
     clearRun();
     xT0 = Number.isFinite(t0Audio) ? t0Audio : audioCtx.currentTime;
@@ -1526,7 +1528,10 @@ function createAutopilotEngine({ host, ai }) {
     // B on key-locked tempo stems at A's tempo when they differ.
     {
       const sm1 = host.mod.stemMoves, od1 = host.decks && host.decks[out], id1 = host.decks && host.decks[inn];
-      const mt = sm1 && od1 && id1 ? mashupFits(od1, id1, xT0) : null;
+      // SET ENERGY: a booking whose set-energy choice refused the mashup (a low-energy one at a middle /
+      // high set, or a match veto) plays what it booked (noMash: read at the top of this function)
+      const mt = sm1 && od1 && id1 && !noMash ? mashupFits(od1, id1, xT0) : null;
+      if (noMash) console.info("transition energy:", `mashup not upgraded at fire time (booked ${recipe})`);
       if (mt && kind !== "double" && kind !== "profile-cut") {
         ["low", "mid", "high"].forEach((b) => { setRange(eqEl(out, b), 0); setRange(eqEl(inn, b), 0); });
         const secs = sm1.mashupTransition(out, inn, xT0, mt.entry, mt.M, MASHUP_VOX, mt.why, mt.variant || null);
@@ -3381,6 +3386,7 @@ function createAutopilotEngine({ host, ai }) {
     }
     if (setEn) decIn.energy = setEn;
     const dec = autopilotCore.decideRecipe(decIn, host.mod.tempoRule);
+    energyNoMashup = !!(dec.energyPick && dec.recipe !== "Mashup → Transition");
     if (dec.energyPick) {
       console.info("transition energy:", dec.energyPick.why);
       host.log.step("set_energy", { deck: activeDeck, decision: dec.recipe, why: `${setEn.why}; ${dec.energyPick.why}` });
@@ -4295,6 +4301,8 @@ function createAutopilotEngine({ host, ai }) {
     if (fb.refused) console.warn(`macro: step ${f.n} refused: ${fb.refused} -> ${fb.recipe}`);
     if (lk.ok) setDeckPitch(o.inn, lk.pct, lk.range);
     // a merge plays B itself from its plan's line; every other move needs B running from the stored entry
+    // preview only (stem-preview --set-energy): the set-energy choice refused the mashup; stored steps never carry it
+    energyNoMashup = !!f.energy_no_mashup && fb.recipe !== "Mashup → Transition";
     if (fb.recipe !== "Stem Merge") idk.play(autopilotCore.entryClamp(fb.bT || 0, autopilotCore.audibleEnd(idk.analysis, idk.buffer.duration)), false, o.t0);
     const totalMs = executeTransition(fb.recipe, o.out, o.inn, 16, o.t0);
     later(Math.max(0, (o.t0 - audioCtx.currentTime) * 1000) + totalMs + 300, () => { if (!active) od.stopNow(); });

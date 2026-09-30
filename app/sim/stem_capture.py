@@ -152,7 +152,8 @@ def _worker(cfg_path: Path) -> int:
 
 def capture(a_path, b_path, recipe: str, a_time: float, b_time: float, pre: float = 30.0,
             post: float = 30.0, src_cache: Optional[Path] = None, timeout_s: float = 900.0,
-            allow_stem_path: bool = False, xf: Optional[float] = None, full: bool = False) -> dict:
+            allow_stem_path: bool = False, xf: Optional[float] = None, full: bool = False,
+            energy_no_mashup: bool = False) -> dict:
     """Capture the console playing A -> B with `recipe` forced at A's exit `a_time` and B's
     entry `b_time` (the macro PLAY STEP path: autopilot performNow + forcedBooking gates).
 
@@ -160,7 +161,8 @@ def capture(a_path, b_path, recipe: str, a_time: float, b_time: float, pre: floa
     loads (never app/ui/static, never the live console), listed in the result's `sim_overrides`:
     allow_stem_path lifts the stem blend's loudness floor; xf sets PLAY STEP's crossfade budget
     (default 16 = the booking as it is; below 16 every bar count is halved, like a running set's
-    quick / vocal-short window).
+    quick / vocal-short window). energy_no_mashup: the set-energy choice (stem-preview
+    --set-energy) refused the mashup, so the fire-time mashup upgrade stays off, as in a booking.
 
     full: the window is A from its 0:00 (A plays from the start) to B's own end; pre / post
     are ignored."""
@@ -187,7 +189,7 @@ def capture(a_path, b_path, recipe: str, a_time: float, b_time: float, pre: floa
                "recipe": recipe, "aTime": float(a_time), "bTime": float(b_time), "pre": float(pre),
                "post": float(post), "out": str(out), "timeout_s": timeout_s,
                "allowStemPath": bool(allow_stem_path), "xf": None if xf is None else float(xf), "full": bool(full),
-               "fameIds": songs[ida].get("fame_ids", [])}
+               "fameIds": songs[ida].get("fame_ids", []), "energyNoMashup": bool(energy_no_mashup)}
         cfg_path = d / "cfg.json"
         cfg_path.write_text(json.dumps(cfg))
         env = dict(os.environ, AIDJ_CACHE_DIR=str(cache), PYTHONPATH=str(REPO_ROOT))

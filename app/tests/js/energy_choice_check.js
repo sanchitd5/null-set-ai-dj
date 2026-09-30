@@ -122,6 +122,11 @@ assert.strictEqual(ap.windowLevel(null, 1, 1), null); n++;
   // the booking never computes set energy for a forced (macro / studied / FOLLOW SET / liked) step
   const src = fs.readFileSync(path.join(__dirname, "../../ui/static/autopilot.js"), "utf8");
   assert.ok(/if \(!forced\) \{\s*try \{ setEn = liveSetEnergy/.test(src), "set energy skipped when forced"); n++;
+  // the fire-time mashup upgrade honours the booking's set-energy refusal, and only that booking's
+  assert.ok(src.includes('energyNoMashup = !!(dec.energyPick && dec.recipe !== "Mashup → Transition")'), "booking sets the veto"); n++;
+  assert.ok(/function executeTransition\([^)]*\) \{\s*const noMash = energyNoMashup; energyNoMashup = false;/.test(src), "veto consumed per transition"); n++;
+  assert.ok(src.includes("mashupFits(od1, id1, xT0) : null") && src.includes("&& !noMash ? mashupFits(od1, id1, xT0)"), "fire-time upgrade gated"); n++;
+  assert.ok(src.includes("energyNoMashup = !!f.energy_no_mashup"), "performNow: preview-only field"); n++;
 }
 
 console.log(`energy_choice_check: ${n} checks ok`);
