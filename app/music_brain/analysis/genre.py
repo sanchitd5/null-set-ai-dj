@@ -75,6 +75,25 @@ def genre_near(genre_a, genre_b) -> Optional[bool]:
     return bool(a & b)
 
 
+# Scene continuity for the fallback paths (library tempo-lock, atlas backup, scene anchor).
+# Session 2026-09-30_191133: the deadline's library fallback put Four Tet (electronic) after
+# Big Boss Vette (hip hop) because the console sent no genre at all. Best first.
+SCENE_RANK = {"scene": 0, "family": 1, "unknown": 2, "cross": 3}
+
+
+def scene_relation(ref, other) -> str:
+    """How `other` sits against the reference label `ref` (the playing song's stored label, or
+    the set's scene anchor): "scene" (a shared scene term), "family" (a shared genre family
+    only), "unknown" (a label unknown or unrecognised), "cross" (both families known, none shared)."""
+    near = genre_near(ref, other)
+    if near is True:
+        return "scene"
+    a, b = genre_families(ref), genre_families(other)
+    if a and b:
+        return "family" if a & b else "cross"
+    return "unknown"
+
+
 # Era: a set holds its decade the way it holds its genre. Aqua "Barbie Girl"
 # (1997) -> Bicep "Glue" (2017) shares tempo and even "dance", but breaks the
 # vibe (user). Labels come from the model ("1990s", "90s", "late 90s", "1997").

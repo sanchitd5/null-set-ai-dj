@@ -18,6 +18,12 @@ stored=True (a macro step, a FOLLOW SET song, a studied combo: a move replayed f
                kept, as it is for the picks
 Every candidate (stored or not):
   veto         the owner vetoed the pair, or the song in this scene (atlas/vetoes.py)
+  scene_anchor while the console recovers from an off-scene mistake (anchor_genre given: the set's
+               scene before a fallback / BAD PAIR brought A in from outside it), a candidate that
+               continues A's mistaken genre (shares A's family, none of the anchor's) is refused:
+               the song after the mistake goes back to the set's scene (owner, session 2026-09-30_191133)
+Each result carries B's genre families and scene_rel against the anchor (else A's label), which the
+console ranks and feeds its scene anchor with.
 The energy step is not here: evaluateCandidate already runs energyStepOk on every candidate.
 An unknown genre passes, as in the suggestion filter (the studied pair is the evidence). Era is not a
 stored-move rule (owner's list: repeat + scene; the owner-liked Adapter - Catchaman -> PACS & Ruiz (BR) -
@@ -28,7 +34,7 @@ from __future__ import annotations
 from typing import Iterable, List, Optional
 
 from app.music_brain.analysis import scene_profile as sp
-from app.music_brain.analysis.genre import family_jump
+from app.music_brain.analysis.genre import family_jump, genre_families, scene_relation
 from app.music_brain.atlas import vetoes as vt
 from app.ui.services.set_memory import _key as memory_key
 
@@ -40,11 +46,15 @@ def _k(name: str) -> str:
 def vet_one(a_name: str, b_name: str, *, a_genre: Optional[str] = None, a_era: Optional[str] = None,
             b_genre: Optional[str] = None, b_era: Optional[str] = None, history: Iterable[str] = (),
             earlier: Iterable[str] = (), vetoes: Iterable[dict] = (), stored: bool = False,
-            punjabi_profile: str = "off") -> Optional[dict]:
+            punjabi_profile: str = "off", anchor_genre: Optional[str] = None) -> Optional[dict]:
     """None when B may follow A, else {gate, why}."""
     why = vt.blocked(vetoes, a_name, b_name, a_genre)
     if why:
         return {"gate": "veto", "why": why}
+    if anchor_genre and family_jump(anchor_genre, b_genre) and not family_jump(a_genre, b_genre) \
+            and genre_families(a_genre):
+        return {"gate": "scene_anchor", "why": f"continues the off-scene {a_genre} instead of going back to "
+                                               f"the set's {anchor_genre} ({b_genre})"}
     if not stored:
         return None
     bk = _k(b_name)
@@ -68,6 +78,9 @@ def vet(a_name: str, cands: List[dict], **kw) -> List[dict]:
         # scene_clash: a CLEAR mismatch (both labels known, no shared family): the console's mashup
         # transition refuses only that (render/mashup.py scene_gate, the same narrow rule)
         clash = bool(family_jump(kw.get("a_genre"), c.get("genre")))
+        ref = kw.get("anchor_genre") or kw.get("a_genre")
         out.append({"track_id": c.get("track_id"), "name": c.get("name"), "ok": r is None,
-                    "gate": r["gate"] if r else None, "why": r["why"] if r else None, "scene_clash": clash})
+                    "gate": r["gate"] if r else None, "why": r["why"] if r else None, "scene_clash": clash,
+                    "families": sorted(genre_families(c.get("genre"))),
+                    "scene_rel": scene_relation(ref, c.get("genre")) if ref else "unknown"})
     return out

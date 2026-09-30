@@ -131,12 +131,33 @@ def _earlier_set_keys(set_id: str) -> set:
     return {sm._key(n) for n in mem.earlier_sets([], limit=sm.MAX_SONGS, set_id=set_id)}
 
 
+def _mark_scene(a: str, anchor: str, rows: List[dict]) -> str:
+    """rows with b_genre and scene_rel (genre.scene_relation) against the reference label: the
+    set's scene anchor when given, else A's stored label (genre_labels.json). Returns that label
+    ("" when unknown: every row is then "unknown")."""
+    from app.music_brain.analysis.genre import scene_relation
+
+    try:
+        from app.ui import server
+        ref = str(anchor or "").strip()[:80] or (server._track_vibe(a).get("genre") or "")
+        label = lambda r: server._track_vibe(r.get("b") or "").get("genre") or server._vibe_by_name(r.get("b_name") or "").get("genre") or ""
+    except Exception:  # noqa: BLE001 -- no server registry (tests)
+        ref, label = str(anchor or "").strip()[:80], (lambda r: r.get("b_genre") or "")
+    for r in rows:
+        r["b_genre"] = label(r) or None
+        r["scene_rel"] = scene_relation(ref, r["b_genre"]) if ref else "unknown"
+    return ref
+
+
 @router.get("/api/atlas/backup")
-def atlas_backup(a: str, n: int = 40, set_id: str = ""):
+def atlas_backup(a: str, n: int = 40, set_id: str = "", anchor: str = ""):
     """A's atlas partners for the console's preplanned backup B (autopilot.js rankAtlasBackups):
     the served rows (one shard read) with b_level (energy 1-10), a_level, and earlier_set
     (the song was heard in an earlier set: tried after the fresh ones, like the suggest
-    prompt's "prefer fresh"). The live gates still decide at booking time."""
+    prompt's "prefer fresh"). The live gates still decide at booking time.
+    Each row carries b_genre and scene_rel against A's stored label (or `anchor`, the set's scene
+    while the console recovers from an off-scene mistake): the ranker keeps a cross-family partner
+    for the last resort (session 2026-09-30_191133)."""
     from app.ui.services import set_memory as sm
 
     idx = _index()
@@ -147,8 +168,9 @@ def atlas_backup(a: str, n: int = 40, set_id: str = ""):
     for r in rows:
         r["earlier_set"] = sm._key(r.get("b_name") or "") in earlier
     _mark_vetoed(a, idx.names.get(a), rows)
+    ref = _mark_scene(a, anchor, rows)
     a_level = ((idx._light.get("tracks") or {}).get(a) or {}).get("level")
-    return {"a": a, "a_level": a_level, "partners": rows, "built": True}
+    return {"a": a, "a_level": a_level, "partners": rows, "built": True, "ref_genre": ref or None}
 
 
 _SETS_MEMO: dict = {}
