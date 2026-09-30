@@ -31,6 +31,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import numpy as np
 import soundfile as sf
 
+from app.music_brain import audio_io
 from app.music_brain import waveform_params as wp
 from app.music_brain.config import CACHE_DIR
 
@@ -158,7 +159,7 @@ def stretched_levels(folder: Path, meta: dict, plan: dict) -> dict:
     s0, s1 = (plan["a_solo"][0] - ws) * r, (plan["a_solo"][1] - ws) * r
     ys = {}
     for n in STEMS:
-        y, sr = sf.read(folder / f"{n}.wav", always_2d=True)
+        y, sr = sf.read(audio_io.stem_file(folder, n), always_2d=True)
         ys[n] = y.mean(axis=1)
     mix = sum(ys.values())
     cut = lambda y, a, b: y[int(a * sr): int(b * sr)]  # noqa: E731
@@ -173,10 +174,11 @@ def backfill_voice_band(key: str) -> Optional[dict]:
     """meta of a render made before the voice-band level was measured, with it added (and saved). None when absent."""
     p = KEYLOCK_DIR / key
     m = meta(key)
-    if m is None or "a_riff_voice_db" in m or not (p / "other.wav").exists():
+    other = audio_io.stem_file(p, "other")
+    if m is None or "a_riff_voice_db" in m or other is None:
         return m
     try:
-        y, sr = sf.read(p / "other.wav", always_2d=True)
+        y, sr = sf.read(other, always_2d=True)
         ws, r = m["window_start"], m["ratio"]
         y = y.mean(axis=1)[int((m["a_solo"][0] - ws) * r * sr): int((m["a_solo"][1] - ws) * r * sr)]
         m["a_riff_voice_db"] = _voice_band_db(y, sr)
@@ -262,9 +264,20 @@ def render(key: str, stems: Dict[str, str], plan: dict) -> None:
         src.unlink()
     meta = {"window_start": max(0.0, lo), "ratio": plan["ratio"], "a_groove": plan["a_groove"], "a_solo": plan["a_solo"]}
     meta.update(stretched_levels(tmp, meta, plan))
+    meta["format"] = _to_flac(tmp)
     (tmp / "meta.json").write_text(json.dumps(meta))
     shutil.rmtree(out, ignore_errors=True)
     tmp.rename(out)
+
+
+def _to_flac(folder: Path) -> str:
+    """Rubber Band's float WAV of every stem -> 24-bit FLAC (0.46x, residual -143 dB, see
+    research/notes/audio-format-study.md). Runs inside the .tmp dir, before the rename publishes it."""
+    for n in STEMS:
+        w = folder / f"{n}.wav"
+        audio_io.encode_file(w, folder / f"{n}.flac", audio_io.RENDER_SUBTYPE)
+        w.unlink()
+    return "flac"
 
 
 def ensure(audio_hash: str, stems: Dict[str, str], plan: dict) -> Tuple[str, str]:
@@ -301,8 +314,8 @@ def state(key: str) -> str:
 def stem_path(key: str, name: str) -> Optional[Path]:
     if name not in STEMS or not key.replace("_", "").isalnum():
         return None
-    p = KEYLOCK_DIR / key / f"{name}.wav"
-    if not p.exists():
+    p = audio_io.stem_file(KEYLOCK_DIR / key, name)      # .flac, else a pre-FLAC .wav set
+    if p is None:
         return None
     touch(key)
     return p
@@ -343,7 +356,7 @@ def render_tempo(key: str, stems: Dict[str, str], ratio: float) -> None:
     for n in STEMS:
         subprocess.run([RUBBERBAND, "-3", "-q", "-t", f"{ratio:.6f}", str(stems[n]), str(tmp / f"{n}.wav")],
                        check=True, capture_output=True, timeout=900)
-    (tmp / "meta.json").write_text(json.dumps({"ratio": ratio}))
+    (tmp / "meta.json").write_text(json.dumps({"ratio": ratio, "format": _to_flac(tmp)}))
     shutil.rmtree(out, ignore_errors=True)
     tmp.rename(out)
 

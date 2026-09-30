@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Optional
 
+from app.music_brain import audio_io
+from app.music_brain.audio_io import MANIFEST_VERSION, read_manifest, write_manifest  # noqa: F401 (re-export)
 from app.music_brain.config import DEMUCS_MODEL, STEMS_CACHE_DIR
 
 FOUR_STEM_NAMES = ("vocals", "drums", "bass", "other")
@@ -58,14 +60,7 @@ def _manifest_path(cache_dir: Path) -> Path:
 
 
 def _load_from_cache(cache_dir: Path) -> Optional[Dict[str, str]]:
-    manifest_path = _manifest_path(cache_dir)
-    if not manifest_path.exists():
-        return None
-    with open(manifest_path, "r", encoding="utf-8") as f:
-        manifest = json.load(f)
-    if all(Path(p).exists() for p in manifest.values()):
-        return manifest
-    return None
+    return read_manifest(cache_dir)
 
 
 def _demucs_out():
@@ -145,17 +140,19 @@ def separate(
 
     stems: Dict[str, str] = {}
     for name in stem_names:
-        src = track_stem_dir / f"{name}.wav"
-        if not src.exists():
+        src = audio_io.stem_file(track_stem_dir, name)
+        if src is None:
             continue
-        dest = cache_dir / f"{name}.wav"
-        shutil.copy2(src, dest)
+        dest = cache_dir / f"{name}.flac"
+        if src.suffix.lower() == ".flac":
+            shutil.copy2(src, dest)
+        else:
+            audio_io.encode_file(src, dest)    # Demucs' 16-bit WAV -> 16-bit FLAC, bit-exact
         stems[name] = str(dest)
 
     shutil.rmtree(demucs_out_dir, ignore_errors=True)
 
-    with open(_manifest_path(cache_dir), "w", encoding="utf-8") as f:
-        json.dump(stems, f, indent=2)
+    write_manifest(cache_dir, stems)
 
     return StemResult(
         audio_hash=audio_hash, model=model, two_stems=two_stems,
@@ -211,8 +208,7 @@ class StemWorker:
         """Write the manifest for a finished job (the cache hit marker)."""
         stems = result["stems"]
         cache_dir = Path(next(iter(stems.values()))).parent
-        with open(_manifest_path(cache_dir), "w", encoding="utf-8") as f:
-            json.dump(stems, f, indent=2)
+        write_manifest(cache_dir, stems)
         return stems
 
 

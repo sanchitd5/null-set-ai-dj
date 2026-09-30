@@ -68,7 +68,11 @@ def test_render_is_key_locked(tmp_path, monkeypatch):
     monkeypatch.setattr(keylock, "KEYLOCK_DIR", tmp_path / "kl")
     plan = {"ratio": 0.8, "a_groove": [1.0, 3.0], "a_solo": [3.0, 4.0]}
     keylock.render("k1", stems, plan)
-    y, sr2 = sf.read(tmp_path / "kl" / "k1" / "other.wav")
+    out = tmp_path / "kl" / "k1"
+    assert not list(out.glob("*.wav")) and (out / "other.flac").exists()      # rendered straight to FLAC
+    assert sf.info(str(out / "other.flac")).subtype == "PCM_24"
+    assert keylock.stem_path("k1", "other") == out / "other.flac"
+    y, sr2 = sf.read(out / "other.flac")
     assert abs(len(y) / sr2 - (4.0 + 1.0 - 0.0) * 0.8) < 0.1                  # window [0, 5] s stretched x0.8
     spec = np.abs(np.fft.rfft(y[:, 0] * np.hanning(len(y))))
     peak_hz = np.argmax(spec) * sr2 / len(y)

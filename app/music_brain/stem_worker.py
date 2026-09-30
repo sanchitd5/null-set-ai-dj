@@ -24,6 +24,8 @@ import threading
 import time
 from pathlib import Path
 
+from app.music_brain.audio_io import STEM_SUBTYPE, write_flac
+
 
 def main() -> None:
     ap = argparse.ArgumentParser()
@@ -31,7 +33,6 @@ def main() -> None:
     ap.add_argument("--device", default=None)
     args = ap.parse_args()
 
-    import soundfile as sf
     import torch
     from demucs.api import Separator
 
@@ -74,8 +75,7 @@ def main() -> None:
                 out.mkdir(parents=True, exist_ok=True)
                 paths = {}
                 for name, wav in stems.items():
-                    p = out / f"{name}.wav"
-                    sf.write(p, wav.cpu().numpy().T, sep.samplerate, subtype="PCM_16")
+                    p = write_flac(out / f"{name}.flac", wav.cpu().numpy().T, sep.samplerate, STEM_SUBTYPE)
                     paths[name] = str(p)
                 emit({"id": job["id"], "ok": True, "stems": paths, "seconds": round(time.monotonic() - t0, 2)})
             except Exception as exc:

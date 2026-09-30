@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+from app.music_brain.audio_io import stem_file
 from app.sim.pool import Pool, find_data_dir
 
 _SPLIT = re.compile(r"\s+[-–—]\s+")
@@ -24,7 +25,7 @@ class LibTrack:
     hash: str           # full sha256 of the audio (the cache key)
     name: str           # display name ("Artist - Title ...")
     audio: Path
-    stems: Optional[dict]   # stem name -> wav path (4-stem), or None
+    stems: Optional[dict]   # stem name -> flac/wav path (4-stem), or None
     duration: float
     bpm: float
     key: str            # Camelot, "" when unknown
@@ -46,8 +47,8 @@ class MainLibrary:
     def _stems_for(self, h: str) -> Optional[dict]:
         for model in ("htdemucs_ft", "htdemucs"):
             d = self.cache / "stems" / f"{h}_{model}"
-            paths = {n: d / f"{n}.wav" for n in ("drums", "bass", "vocals", "other")}
-            if all(p.exists() for p in paths.values()):
+            paths = {n: stem_file(d, n) for n in ("drums", "bass", "vocals", "other")}   # .flac, else .wav
+            if all(p is not None for p in paths.values()):
                 return {k: str(v) for k, v in paths.items()}
         return None
 
