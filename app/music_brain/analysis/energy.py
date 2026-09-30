@@ -22,6 +22,7 @@ allows.
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -226,3 +227,61 @@ def allowed_window(cur: int, relaxed: bool = False, songs: Optional[int] = None,
     ok = [n for n in range(1, 11)
           if next_ok(cur, n, relaxed=relaxed, songs=songs, set_pos=set_pos, recent=recent, reset=reset)["ok"]]
     return (min(ok), max(ok)) if ok else (cur, cur)
+
+
+# ---- SET ENERGY (owner spec, energy-recipe-choice): twin of autopilot.js setEnergy /
+# energyRecipeChoice (parity: app/tests/py/test_set_energy_parity.py). The set's energy is the
+# planned arc target and the recent songs actually played, combined. GUESS numbers (DJ/06 curves).
+ARC_TARGET = {"warm-up": 4, "build": 6, "peak": 8, "cool-down": 5}
+SET_RECENT = 4          # rolling window: the last 4 played levels, newest weighted most (4,3,2,1)
+SET_ARC_W = 0.5         # combined = 0.5 * arc target + 0.5 * rolling played level
+SET_RELAXED_MAX, SET_HIGH_MIN = 5, 7
+ENERGY_MATCH_TOL = 3    # an option whose window level is > 3 off the set level is vetoed
+MASHUP, BASS, BLEND = "Mashup → Transition", "Bass Swap", "Long Blend"
+
+
+def arc_at(set_pos: Optional[float]) -> Optional[str]:
+    if set_pos is None:
+        return None
+    return "warm-up" if set_pos < 0.1 else "build" if set_pos < 0.3 else "peak" if set_pos <= 0.85 else "cool-down"
+
+
+def set_energy(set_pos: Optional[float], recent: Optional[list]) -> dict:
+    """{level, band, arc, target, played}: the set's energy, arc target and rolling played level."""
+    arc = arc_at(set_pos)
+    target = ARC_TARGET.get(arc) if arc else None
+    lv = [v for v in (recent or []) if v is not None][-SET_RECENT:]
+    played = None
+    if lv:
+        s = w = 0
+        for i, v in enumerate(lv):
+            s += v * (i + 1)
+            w += i + 1
+        played = s / w
+    raw = played if target is None else target if played is None else SET_ARC_W * target + (1 - SET_ARC_W) * played
+    if raw is None:
+        return {"level": None, "band": None, "arc": arc, "target": target, "played": played}
+    level = max(1, min(10, math.floor(raw + 0.5)))   # half up, as the JS twin (not banker's)
+    band = "relaxed" if level <= SET_RELAXED_MAX else "high" if level >= SET_HIGH_MIN else "middle"
+    return {"level": level, "band": band, "arc": arc, "target": target, "played": played}
+
+
+def recipe_choice(band: Optional[str], mashup_fits: bool, mashup_kind: Optional[str], blend_open: bool,
+                  clean_both: bool, long_blend_ok: bool = False, set_level: Optional[float] = None,
+                  levels: Optional[dict] = None) -> Optional[str]:
+    """The recipe among Mashup / Bass Swap / Long Blend by set energy (None: keep the rules' pick)."""
+    allowed = bool(mashup_fits) and (band == "relaxed" if mashup_kind == "low"
+                                     else band in ("middle", "high") if mashup_kind == "beat" else False)
+    order = [MASHUP] if allowed else []
+    if blend_open:
+        order += [BLEND, BASS] if clean_both else ([BASS, BLEND] if long_blend_ok else [BASS])
+    if not order:
+        return None
+    key = {MASHUP: "mashup", BASS: "bass", BLEND: "blend"}
+    lv = levels or {}
+    for r in order:
+        v = lv.get(key[r])
+        if v is not None and set_level is not None and abs(v - set_level) > ENERGY_MATCH_TOL:
+            continue
+        return r
+    return order[0]
