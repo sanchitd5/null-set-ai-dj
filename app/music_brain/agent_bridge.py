@@ -206,6 +206,8 @@ def stem_preview(
     pre: float = 30.0,
     post: float = 30.0,
     peak_dbfs: float = -1.0,
+    allow_stem_path: bool = False,
+    xf: Optional[float] = None,
 ) -> dict:
     """The transition exactly as the live console plays it, on the real audio (stems included).
 
@@ -214,6 +216,8 @@ def stem_preview(
     they schedule is rendered on the real mix and stem files (render/graph_render.py): A from
     `pre` s before the move, B until `post` s after it ends, the master limiter, then peak
     normalised to `peak_dbfs`. Both songs need cached 4-stem sets (nothing is separated).
+    allow_stem_path / xf: preview-only overrides of the capture's copy of the console
+    (app/sim/stem_capture.capture); the result's `sim_overrides` lists what was applied.
     """
     import math
     import time as _time
@@ -224,7 +228,8 @@ def stem_preview(
     if not out:
         raise ValueError("--out is required")
     t_start = _time.monotonic()
-    cap = capture(track_a_path, track_b_path, recipe_name, a_time, b_time, pre=pre, post=post)
+    cap = capture(track_a_path, track_b_path, recipe_name, a_time, b_time, pre=pre, post=post,
+                  allow_stem_path=allow_stem_path, xf=xf)
     files = {}
     for side in ("a", "b"):
         s = cap["songs"][side]
@@ -256,6 +261,7 @@ def stem_preview(
         "ran": cap.get("ran"),
         "refused": cap.get("refused"),
         "line": cap.get("line"),
+        "sim_overrides": cap.get("sim_overrides", []),
         "output_path": str(out_path),
         "duration_seconds": round(w1 - w0, 3),
         "sample_rate": gr.SR,
@@ -324,6 +330,10 @@ def _build_parser() -> argparse.ArgumentParser:
     p_sp.add_argument("--pre", type=float, default=30.0, help="Seconds of A before the move.")
     p_sp.add_argument("--post", type=float, default=30.0, help="Seconds of B after the move ends.")
     p_sp.add_argument("--out", required=True, help=".wav (44.1 kHz stereo 16-bit) or .mp3")
+    p_sp.add_argument("--allow-stem-path", action="store_true",
+                      help="PREVIEW ONLY: lift the stem blend's loudness floor in the capture's copy of the console.")
+    p_sp.add_argument("--xf", type=float, default=None,
+                      help="PREVIEW ONLY: PLAY STEP crossfade budget (16 = as booked; < 16 halves every bar count, like the running set).")
 
     sub.add_parser("list-recipes", help="List every parsed transition recipe.")
 
@@ -423,7 +433,8 @@ def main(argv: Optional[list[str]] = None) -> int:
             )
         elif args.command == "stem-preview":
             payload = stem_preview(args.track_a, args.track_b, args.recipe, args.a_time, args.b_time,
-                                   out=args.out, pre=args.pre, post=args.post)
+                                   out=args.out, pre=args.pre, post=args.post,
+                                   allow_stem_path=args.allow_stem_path, xf=args.xf)
         elif args.command == "list-recipes":
             payload = list_recipes()
         elif args.command == "learn-set":
