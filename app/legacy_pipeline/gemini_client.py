@@ -9,7 +9,6 @@ Provides multi-key rotation and robust Gemini 3.6 Flash integration for:
 
 import os
 import json
-import re
 from dotenv import load_dotenv
 from google import genai
 from google.genai import errors

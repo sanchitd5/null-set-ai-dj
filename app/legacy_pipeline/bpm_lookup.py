@@ -121,64 +121,6 @@ def refine_bpm(title, artist, audio_file=None):
     BPM detection using librosa beat tracking only.
     OpenAI BPM lookup disabled - using local librosa analysis for accuracy.
     """
-    # === COMMENTED OUT: OpenAI BPM lookup ===
-    # try:
-    #     response = client.chat.completions.create(
-    #         model="gpt-4o",  # Using gpt-4o for better accuracy
-    #         messages=[
-    #             {
-    #                 "role": "system", 
-    #                 "content": """You are a music database expert. You MUST provide the EXACT BPM from sources like Tunebat, SongBPM, or GetSongBPM.
-    # 
-    # CRITICAL: Return the precise BPM - NOT rounded to 100, 120, etc.
-    # 
-    # Examples of CORRECT responses:
-    # - "Blinding Lights" by The Weeknd → 171
-    # - "Levitating" by Dua Lipa → 103
-    # - "Peaches" by Justin Bieber → 90
-    # - "Bad Guy" by Billie Eilish → 135
-    # 
-    # Return ONLY the number. Nothing else."""
-    #             },
-    #             {
-    #                 "role": "user", 
-    #                 "content": f"BPM of '{title}' by {artist}"
-    #             }
-    #         ],
-    #         temperature=0.0,
-    #         max_tokens=5
-    #     )
-    #     bpm_text = response.choices[0].message.content.strip()
-    #     
-    #     # Extract just the number
-    #     bpm_match = re.search(r'\d+', bpm_text)
-    #     if bpm_match:
-    #         bpm = int(bpm_match.group())
-    #         if 60 <= bpm <= 220:
-    #             # Check if it's a suspicious round number - verify it
-    #             if bpm % 10 == 0 and bpm in [100, 110, 120, 130, 140, 150]:
-    #                 print(f"⚠ Got round number {bpm} for '{title}', verifying...")
-    #                 # Quick retry with more specific prompt
-    #                 verify_response = client.chat.completions.create(
-    #                     model="gpt-4o",
-    #                     messages=[
-    #                         {"role": "system", "content": "Return EXACT BPM from Tunebat.com or GetSongBPM.com. If it's truly 100 or 120, confirm. If it's close like 104 or 118, return that exact number."},
-    #                         {"role": "user", "content": f"Verify: Is '{title}' by {artist} exactly {bpm} BPM or is it {bpm-4} to {bpm+4}? Return only the exact number."}
-    #                     ],
-    #                     temperature=0.0,
-    #                     max_tokens=5
-    #                 )
-    #                 verify_bpm = re.search(r'\d+', verify_response.choices[0].message.content.strip())
-    #                 if verify_bpm:
-    #                     bpm = int(verify_bpm.group())
-    #             
-    #             print(f"✓ BPM for '{title}': {bpm}")
-    #             return bpm
-    #     
-    #     print(f"⚠ BPM extraction failed for '{title}', got: '{bpm_text}'")
-    # except Exception as e:
-    #     print(f"❌ BPM lookup failed for '{title}' by '{artist}': {e}")
-    
     # Use librosa beat tracking for BPM detection
     if audio_file and os.path.exists(audio_file):
         print(f"  → Using librosa beat tracking for BPM...")

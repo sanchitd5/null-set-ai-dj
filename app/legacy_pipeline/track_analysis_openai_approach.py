@@ -27,9 +27,6 @@ if OpenAI is not None:
         client = None
 
 SONGS_DIR = "./data/songs"
-OUTPUT_FILE = "analyzed_setlist.json"
-
-
 def select_and_order_songs_with_openai(available_songs, user_input):
     """
     Let OpenAI parse the user input and directly select + order songs from available list.
@@ -137,65 +134,6 @@ def get_available_songs():
         })
     
     return songs
-
-
-def apply_energy_curve_ordering(songs):
-    """
-    Reorder songs to create a professional DJ energy arc.
-    Pattern: moderate start → peak → moderate end
-    
-    This creates a natural flow like a real DJ set:
-    - Opening: 60-70% energy (warm up the crowd)
-    - Peak: 90-100% energy (middle of the set)
-    - Closing: 60-70% energy (wind down)
-    """
-    if len(songs) <= 3:
-        return songs  # Too few songs to reorder
-    
-    # Check if songs have energy data
-    has_energy = all("energy" in song for song in songs)
-    if not has_energy:
-        print("  ⚠️ Energy data not available, keeping original order")
-        return songs
-    
-    # Sort by energy level
-    sorted_by_energy = sorted(songs, key=lambda s: s.get("energy", 0.5))
-    
-    # Create energy curve: moderate → high → moderate
-    n = len(sorted_by_energy)
-    mid_point = n // 2
-    
-    # Split into low and high energy groups
-    low_energy = sorted_by_energy[:mid_point]
-    high_energy = sorted_by_energy[mid_point:]
-    
-    # Arrange: start with moderate, build to high, end with moderate
-    # Pattern: [mid-low, mid-high, high, highest, high, mid-high, mid-low]
-    reordered = []
-    
-    # Opening (30% of set): gradually increase
-    opening_count = max(1, n // 3)
-    reordered.extend(low_energy[-opening_count:])  # Take moderate energy
-    
-    # Peak (40% of set): high energy
-    peak_count = max(1, int(n * 0.4))
-    reordered.extend(high_energy[:peak_count])
-    
-    # Closing (30% of set): wind down
-    closing_count = n - len(reordered)
-    if closing_count > 0:
-        # Mix of moderate-high and moderate
-        remaining_low = low_energy[:-opening_count]
-        remaining_high = high_energy[peak_count:]
-        closing = remaining_high + remaining_low
-        reordered.extend(closing[:closing_count])
-    
-    print(f"  ✓ Applied energy curve ordering (arc pattern)")
-    print(f"    Opening: {reordered[0].get('energy', 0):.2f}, "
-          f"Peak: {max(s.get('energy', 0) for s in reordered):.2f}, "
-          f"Closing: {reordered[-1].get('energy', 0):.2f}")
-    
-    return reordered
 
 
 def combined_engine(user_input, output_path="data/output/analyzed_setlist.json"):
