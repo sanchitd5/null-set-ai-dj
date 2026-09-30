@@ -2110,7 +2110,7 @@ _suggested_genres: Dict[str, str] = {}
 # Normalised title -> release era the model gave it ("1990s"), same lifetime
 # as _suggested_genres: the library fallback holds the set's decade too.
 _suggested_eras: Dict[str, str] = {}
-# Both persist in CACHE_DIR/genre_labels.json (app.music_brain.analysis.genre_labels): lost on a
+# Both persist in the app DB, CACHE_DIR/app.db (app.music_brain.analysis.genre_labels): lost on a
 # restart, the library fallback had no labelled Punjabi song (session 2026-09-30_102327).
 LABELS_PATH: Optional[Path] = None        # None: genre_labels.path(); tests point it at tmp_path
 _labels_dirty = False

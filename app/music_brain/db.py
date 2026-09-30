@@ -67,13 +67,34 @@ def connect(path: Union[str, Path]) -> sqlite3.Connection:
     conn.execute(f"PRAGMA busy_timeout={BUSY_MS}")
     conn.execute("PRAGMA page_size=16384")       # only takes on a new file: atlas rows are ~1.3 KB, 16 KB pages
                                                   # pack them ~13 % smaller than 4 KB ones (measured)
-    conn.execute("PRAGMA journal_mode=WAL")
+    # two processes creating the same new file race on the WAL switch, which ignores busy_timeout
+    _retry(lambda: conn.execute("PRAGMA journal_mode=WAL").fetchone()[0] == "wal" or _raise_locked())
     conn.execute("PRAGMA journal_size_limit=67108864")   # the WAL file shrinks back to 64 MB after a big write
     conn.execute("PRAGMA synchronous=NORMAL")    # WAL + NORMAL: a commit survives a process crash
     conn.execute("PRAGMA foreign_keys=ON")
-    conn.execute("CREATE TABLE IF NOT EXISTS schema_version (store TEXT PRIMARY KEY, version INTEGER NOT NULL)")
+    _retry(lambda: conn.execute("CREATE TABLE IF NOT EXISTS schema_version "
+                                "(store TEXT PRIMARY KEY, version INTEGER NOT NULL)"))
     cache[key] = conn
     return conn
+
+
+def _raise_locked():
+    raise sqlite3.OperationalError("database is locked")
+
+
+def _retry(fn: Callable[[], object]) -> None:
+    """fn() until it stops raising "database is locked", up to BUSY_MS."""
+    import time
+
+    end = time.monotonic() + BUSY_MS / 1000
+    while True:
+        try:
+            fn()
+            return
+        except sqlite3.OperationalError as exc:
+            if "locked" not in str(exc) or time.monotonic() > end:
+                raise
+            time.sleep(0.02)
 
 
 def close_all() -> None:

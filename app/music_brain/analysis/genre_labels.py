@@ -4,8 +4,9 @@ The suggestion filters and the library fallback (/api/library/lockable) read the
 They used to live only in server memory, so after a restart a Punjabi set's library
 fallback found no labelled song and the set sat in HOLD LOOP (session 2026-09-30_102327).
 
-    CACHE_DIR/genre_labels.json
-    {"version": 1, "labels": {"<title key>": {"genre": "punjabi pop", "era": "2020s"}}}
+    CACHE_DIR/app.db, table labels (file, key, genre, era): one row per title key.
+    (Before: CACHE_DIR/genre_labels.json {"version": 1, "labels": {"<title key>": {...}}},
+    migrated once on first open and kept as genre_labels.json.migrated.)
 
 Keyed by the normalised clean title (server._genre_key), the same key the readers use:
 the model labels songs by title, often before the song is downloaded and has a track id.
@@ -15,7 +16,6 @@ through each id's name, so another machine's library gets them by name.
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
@@ -48,12 +48,17 @@ def _clean(v) -> str:
     return str(v or "").strip()[:MAX_FIELD]
 
 
-def load(p: Optional[Path] = None) -> Tuple[Dict[str, str], Dict[str, str]]:
-    """(genres, eras) by title key; empty when the file is missing or unreadable."""
-    try:
-        d = json.loads(Path(p or path()).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}, {}
+# SQLite (app.music_brain.db, the APP DB): the labels at legacy path P live in P.parent/app.db,
+# keyed by P's file name. labels_files marks a file name as living in the DB (its old JSON was
+# migrated and renamed .migrated, or never existed); a stray JSON written later is ignored.
+LABEL_STEPS = (
+    """CREATE TABLE labels_files (file TEXT PRIMARY KEY, migrated_at REAL);
+    CREATE TABLE labels (file TEXT NOT NULL, key TEXT NOT NULL, genre TEXT, era TEXT,
+        PRIMARY KEY (file, key))""",
+)
+
+
+def _parse(d) -> Tuple[Dict[str, str], Dict[str, str]]:
     labels = d.get("labels") if isinstance(d, dict) else None
     genres, eras = {}, {}
     for k, v in (labels or {}).items():
@@ -66,64 +71,116 @@ def load(p: Optional[Path] = None) -> Tuple[Dict[str, str], Dict[str, str]]:
     return genres, eras
 
 
-def save(genres: Dict[str, str], eras: Dict[str, str], p: Optional[Path] = None) -> bool:
-    """Atomic write (tmp + replace). The newest MAX_LABELS keys win (dicts keep insertion
-    order, the server re-inserts a relabelled key). False on an I/O error: never raises."""
-    p = Path(p or path())
-    labels: Dict[str, dict] = {}
-    for k in list(dict.fromkeys(list(genres) + list(eras)))[-MAX_LABELS:]:
-        e = {x: _clean(src.get(k)) for x, src in (("genre", genres), ("era", eras)) if _clean(src.get(k))}
+def _db(p: Path):
+    """(connection, file key); the first open with the old JSON on disk migrates it once."""
+    from app.music_brain import db
+
+    p = Path(p)
+    conn = db.connect(db.beside(p))
+    db.ensure(conn, "labels", LABEL_STEPS)
+    f = p.name
+    if conn.execute("SELECT 1 FROM labels_files WHERE file = ?", (f,)).fetchone() is None and p.is_file():
+        with db.tx(conn):
+            if conn.execute("SELECT 1 FROM labels_files WHERE file = ?", (f,)).fetchone() is None:
+                try:
+                    d = json.loads(p.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    d = None                          # unreadable: left alone, the store starts empty
+                if isinstance(d, dict):
+                    _write(conn, f, *_parse(d))
+                    db.retire(p)
+    return conn, f
+
+
+def _read(conn, f: str) -> Tuple[Dict[str, str], Dict[str, str]]:
+    genres, eras = {}, {}
+    for k, g, e in conn.execute("SELECT key, genre, era FROM labels WHERE file = ? ORDER BY key", (f,)):
+        if g:
+            genres[k] = g
         if e:
-            labels[k] = e
-    data = json.dumps({"version": VERSION, "labels": dict(sorted(labels.items()))},
-                      sort_keys=True, indent=0, ensure_ascii=False)
+            eras[k] = e
+    return genres, eras
+
+
+def _write(conn, f: str, genres: Dict[str, str], eras: Dict[str, str]) -> int:
+    """Make the DB hold exactly these labels (the newest MAX_LABELS keys: dicts keep insertion
+    order, the server re-inserts a relabelled key). Only changed rows are written. Row count."""
+    import time as _time
+
+    want: Dict[str, tuple] = {}
+    for k in list(dict.fromkeys(list(genres) + list(eras)))[-MAX_LABELS:]:
+        g, e = _clean(genres.get(k)) or None, _clean(eras.get(k)) or None
+        if g or e:
+            want[k] = (g, e)
+    have = {k: (g, e) for k, g, e in conn.execute("SELECT key, genre, era FROM labels WHERE file = ?", (f,))}
+    n = 0
+    for k, v in want.items():
+        if have.pop(k, None) != v:
+            conn.execute("INSERT OR REPLACE INTO labels (file, key, genre, era) VALUES (?, ?, ?, ?)", (f, k, *v))
+            n += 1
+    for k in have:
+        conn.execute("DELETE FROM labels WHERE file = ? AND key = ?", (f, k))
+        n += 1
+    conn.execute("INSERT OR IGNORE INTO labels_files (file, migrated_at) VALUES (?, ?)", (f, _time.time()))
+    return n
+
+
+def load(p: Optional[Path] = None) -> Tuple[Dict[str, str], Dict[str, str]]:
+    """(genres, eras) by title key; empty when there are none or the store is unreadable."""
+    import sqlite3
+
+    from app.music_brain import db
+
     try:
-        p.parent.mkdir(parents=True, exist_ok=True)
-        tmp = p.with_name(f"{p.name}.{os.getpid()}.tmp")
-        tmp.write_text(data, encoding="utf-8")
-        tmp.replace(p)
+        conn, f = _db(Path(p or path()))
+        with db.read(conn):
+            return _read(conn, f)
+    except sqlite3.DatabaseError:
+        return {}, {}
+
+
+def save(genres: Dict[str, str], eras: Dict[str, str], p: Optional[Path] = None) -> bool:
+    """Replace the stored labels with these, in one transaction. The newest MAX_LABELS keys win
+    (dicts keep insertion order, the server re-inserts a relabelled key). False on a DB error:
+    never raises."""
+    import sqlite3
+
+    from app.music_brain import db
+
+    try:
+        conn, f = _db(Path(p or path()))
+        with db.tx(conn):
+            _write(conn, f, genres, eras)
         return True
-    except OSError:
+    except (sqlite3.Error, OSError):
         return False
 
 
-class _lock:
-    """Exclusive flock on <labels>.lock across load -> save (no-op where fcntl is missing)."""
-
-    def __init__(self, p: Path):
-        self.path = Path(p).with_suffix(".lock")
-
-    def __enter__(self):
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.fh = open(self.path, "a")
-        try:
-            import fcntl
-            fcntl.flock(self.fh, fcntl.LOCK_EX)
-        except ImportError:
-            pass
-        return self
-
-    def __exit__(self, *exc):
-        self.fh.close()
-
-
 def merge_save(genres: Dict[str, str], eras: Dict[str, str], p: Optional[Path] = None) -> bool:
-    """save() that never drops labels another process wrote: under the lock, labels on disk
-    that `genres` / `eras` lack are added in place (oldest first, so the caller's own stay
-    the newest), then everything is saved. The live server and the `label` command both
-    write this file; a plain save() from the server's startup copy wiped a whole labelling run.
-    False on an I/O error: never raises."""
-    p = Path(p or path())
-    with _lock(p):
-        dg, de = load(p)
-        for mine, disk in ((genres, dg), (eras, de)):
-            extra = {k: v for k, v in disk.items() if k not in mine}
-            if extra:
-                keep = dict(mine)
-                mine.clear()
-                mine.update(extra)
-                mine.update(keep)
-        return save(genres, eras, p)
+    """save() that never drops labels another process wrote: in one write transaction, stored
+    labels that `genres` / `eras` lack are added in place (oldest first, so the caller's own stay
+    the newest), then only the changed rows are upserted. The live server and the `label` command
+    both write the store; a plain save() from the server's startup copy wiped a whole labelling
+    run. False on a DB error: never raises."""
+    import sqlite3
+
+    from app.music_brain import db
+
+    try:
+        conn, f = _db(Path(p or path()))
+        with db.tx(conn):
+            dg, de = _read(conn, f)
+            for mine, disk in ((genres, dg), (eras, de)):
+                extra = {k: v for k, v in disk.items() if k not in mine}
+                if extra:
+                    keep = dict(mine)
+                    mine.clear()
+                    mine.update(extra)
+                    mine.update(keep)
+            _write(conn, f, genres, eras)
+        return True
+    except (sqlite3.Error, OSError):
+        return False
 
 
 def backfill(genres: Dict[str, str], eras: Dict[str, str], tracked: dict, names: Dict[str, str]) -> int:

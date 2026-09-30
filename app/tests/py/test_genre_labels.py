@@ -12,8 +12,31 @@ def test_save_load_round_trip(tmp_path):
     assert gl.save({"lover": "punjabi pop", "glue": "uk bass"}, {"lover": "2020s"}, p)
     g, e = gl.load(p)
     assert g == {"lover": "punjabi pop", "glue": "uk bass"} and e == {"lover": "2020s"}
-    assert json.loads(p.read_text())["version"] == gl.VERSION
-    assert not list(tmp_path.glob("*.tmp"))                               # atomic: no tmp left
+    assert not p.exists() and not list(tmp_path.glob("*.tmp"))           # the app DB, no file
+
+
+def test_old_json_migrates_once(tmp_path):
+    p = tmp_path / "genre_labels.json"
+    p.write_text(json.dumps({"version": 1, "labels": {"b": {"genre": "house"}, "a": {"genre": "pop", "era": "90s"}}}))
+    assert gl.load(p) == ({"a": "pop", "b": "house"}, {"a": "90s"})
+    assert not p.exists() and (tmp_path / "genre_labels.json.migrated").is_file()
+    p.write_text(json.dumps({"version": 1, "labels": {}}))                # old code writing again: ignored
+    assert gl.load(p)[0] == {"a": "pop", "b": "house"}
+
+
+def test_two_processes_merging_labels_lose_nothing(tmp_path):
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    p = tmp_path / "genre_labels.json"
+    code = ("import sys\nfrom app.music_brain.analysis import genre_labels as gl\n"
+            "for i in range(15):\n"
+            "    assert gl.merge_save({f'{sys.argv[1]}{i}': 'house'}, {}, sys.argv[2])\n")
+    root = Path(__file__).resolve().parents[3]
+    procs = [subprocess.Popen([sys.executable, "-c", code, t, str(p)], cwd=root) for t in ("x", "y")]
+    assert [pr.wait(120) for pr in procs] == [0, 0]
+    assert set(gl.load(p)[0]) == {f"{t}{i}" for t in "xy" for i in range(15)}
 
 
 def test_load_missing_or_bad_file_is_empty(tmp_path):
