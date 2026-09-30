@@ -376,6 +376,23 @@ console.log("dj-mind relaxed ok");
   console.log("loop start on the master ok");
 }
 
+// HOLD LOOP near the end (session 2026-09-30_225021): an 8-bar loop at 322.8 s of a 329.6 s song
+// was pushed a loop ahead past the end and the whole track played on. The loop must fit the track.
+{
+  const { nextLoopStart, loopWrapped } = require("../../ui/static/dj-mind.js");
+  const len = 15.5, dur = 329.6;
+  const s = nextLoopStart(307.3, 322.8, len, true, dur);
+  assert.ok(s + len <= dur + 0.01, `loop ${s}..${s + len} runs past the end ${dur}`);
+  assert.strictEqual(s, 307.3);                                           // the last whole loop that fits
+  assert.strictEqual(nextLoopStart(100, 105, 16, true, 400), 116);        // room left: as before
+  assert.strictEqual(nextLoopStart(100, 105, 16, true, NaN), 116);        // unknown length: as before
+  // every pass is seen: the playhead jumps back to the loop start
+  assert.ok(loopWrapped(322.7, 307.4, 307.3, len));
+  assert.ok(!loopWrapped(310, 310.1, 307.3, len));                        // playing on inside the loop
+  assert.ok(!loopWrapped(undefined, 307.4, 307.3, len));                  // first tick
+  console.log("hold loop fits the track, each pass logged ok");
+}
+
 { // the LLM plan is waited for at least 12 s (plans take 4-13 s; a 3 s floor discarded 13 of 19)
   const { planWaitMs } = core;
   assert.strictEqual(planWaitMs(0), 12000);

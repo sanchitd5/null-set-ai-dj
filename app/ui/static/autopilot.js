@@ -492,17 +492,18 @@ var autopilotCore = (function () {
         : played.has(r.b) || recent.has(name) ? "already played this set"
         : (r.played_bad || 0) > (r.played_good || 0) ? `bad played evidence (-${r.played_bad})` : null;
       if (!why && o.spacing) why = o.spacing(name) || null;
-      if (!why && o.rejected) { const k = o.rejected(r.b); if (k) why = k.why || String(k); }
+      let measured = false;      // set aside only by a measured gate: the stuck deadline may still book it
+      if (!why && o.rejected) { const k = o.rejected(r.b); if (k) { why = k.why || String(k); measured = true; } }
       let fit = 0;
       if (!why && Number.isFinite(o.energyA) && Number.isFinite(r.b_level)) {
         const v = energyStepOk(o.energyA, r.b_level, { songs: o.songs, relaxed: o.relaxed, recent: o.recentLevels });
-        if (v.ok) fit = 1; else why = v.why;
+        if (v.ok) fit = 1; else { why = v.why; measured = true; }
       }
-      if (why) { skipped.push({ b: r.b, name, why }); continue; }
       const row = { track_id: r.b, name, bpm: r.b_bpm, duration: r.b_duration, works: r.works || 0, plan: r.plan || null,
                     level: Number.isFinite(r.b_level) ? r.b_level : null, fit, earlier: !!r.earlier_set,
                     tier: r.studied ? "studied combo" : r.combo ? "atlas combo" : "atlas partner",
                     genre: r.b_genre || null, sceneRel: r.scene_rel || null };
+      if (why) { skipped.push(measured ? { b: r.b, name, why, measured: row } : { b: r.b, name, why }); continue; }
       // a cross-family partner (both labels known, no shared family) is the last resort, not a backup
       if (r.scene_rel === "cross") { skipped.push({ b: r.b, name, why: `cross-family (${r.b_genre || "?"})`, cross: row }); continue; }
       list.push(row);
@@ -519,6 +520,40 @@ var autopilotCore = (function () {
     const rank = { "studied combo": 0, "atlas combo": 1, "atlas partner": 2 };
     return ((r && r.skipped) || []).filter((s) => s.cross).map((s) => s.cross)
       .sort((x, y) => (x.earlier - y.earlier) || (rank[x.tier] - rank[y.tier]) || (y.fit - x.fit) || (y.works - x.works));
+  }
+  // ---- known compatible steps / the stuck deadline (session 2026-09-30_225021) ----
+  // Owner: "current set stuck on picking up next song, even when it is a macro prestudied set triggered".
+  // PLAY MACRO step 1 (Martin Roth -> Alex Wann, Stem Bridge) died on the vibe gate (whole-song means,
+  // 0.23 -> 0.41), the pair reject was remembered, and every later PLAY MACRO step 1 died silently on it;
+  // the atlas backup died on the same gate, and the set sat in HOLD LOOP on a model inventing songs.
+  // A step of the macro the owner runs (PLAY MACRO) or armed (PLAY STEP) is a known compatible pair, and
+  // after STUCK_AFTER_HOLDS deadline holds for the same song the atlas rows are the way out: for both the
+  // measured gates (remembered pair reject, vibe distance, energy step) are waived. Every other gate
+  // stays (repeat, veto, artist spacing, the tempo rule; plan-fit keeps a forced move as an Echo Out).
+  // -> why the measured gates are waived, or null
+  const STUCK_AFTER_HOLDS = 2;        // GUESS: 2 holds = ~2 failed searches (20-40 s apart) past the deadline
+  function measuredWaiver(cand) {
+    const m = cand && cand._macro;
+    if (m && (m.run || m.byUser)) {
+      const n = m.step && m.step.n != null ? m.step.n : "?";
+      return `${m.byUser ? "step armed by the owner" : "PLAY MACRO"}: ${m.name ? `${m.name} ` : ""}step ${n} is a known compatible pair`;
+    }
+    if (cand && cand._stuck) return `stuck deadline: ${cand._stuck}`;
+    return null;
+  }
+  // holds: {id, n} deadline holds for the playing song so far -> the stuck deadline's state
+  function deadlineStuck(holds, aId) {
+    const n = holds && holds.id === aId ? holds.n : 0;
+    return { n, stuck: n >= STUCK_AFTER_HOLDS };
+  }
+  // the stuck deadline's atlas rows: the in-scene list, then the rows set aside only by a measured gate
+  // (rankAtlasBackups `measured`), in-scene / same family first; never a played / vetoed / spaced one
+  function stuckBackups(r) {
+    const rank = { "studied combo": 0, "atlas combo": 1, "atlas partner": 2 };
+    const set = ((r && r.skipped) || []).filter((s) => s.measured && s.measured.sceneRel !== "cross").map((s) => s.measured)
+      .sort((x, y) => (x.earlier - y.earlier) || ((x.sceneRel === "unknown") - (y.sceneRel === "unknown"))
+        || (rank[x.tier] - rank[y.tier]) || (y.works - x.works));
+    return ((r && r.list) || []).concat(set);
   }
   // ---- booking vet (server booking_vet.py) ----
   // A stored move replayed from memory (a macro step, a FOLLOW SET song, a studied combo) obeys the picks'
@@ -1092,7 +1127,7 @@ var autopilotCore = (function () {
   }
   const api = { prerenderTargets, readinessNeeds, aTempoAtEntry, deferBudgetS, deferDecision, orderByReadiness, DEFER_MAX_S, DEFER_MIN_LEAD_S, PREFER_READY_JUMP,
     emptyRetryMs, useLibraryFallback, searchPlan, DEADLINE_LEAD_S, preparedWait, PREPARED_LEAD_S, gateWhy, candSource, deckEvent,
-    sceneAnchorNext, sceneAnchorBad, sceneOrder, SCENE_ORDER, rankAtlasBackups, crossBackups, backupStale, backupNeedsStems, rememberPairReject, pairRejected, awaitJob, keySafeRecipe, KEY_SAFE_MIN, energyStepOk, hybridWindowKey, highSpans, quantileLinear, median, exitPastHigh, learnedRecipe, vocalRecipe, stemBlendBars, stemBlendFader, phraseWaitS, introBars, FADER_PARK_BARS, homePlan, maskedGlideBars, maskedDropAt, HOME_DROP_PCT, LADDER_STEP_PCT,
+    sceneAnchorNext, sceneAnchorBad, sceneOrder, SCENE_ORDER, rankAtlasBackups, crossBackups, measuredWaiver, deadlineStuck, stuckBackups, STUCK_AFTER_HOLDS, backupStale, backupNeedsStems, rememberPairReject, pairRejected, awaitJob, keySafeRecipe, KEY_SAFE_MIN, energyStepOk, hybridWindowKey, highSpans, quantileLinear, median, exitPastHigh, learnedRecipe, vocalRecipe, stemBlendBars, stemBlendFader, phraseWaitS, introBars, FADER_PARK_BARS, homePlan, maskedGlideBars, maskedDropAt, HOME_DROP_PCT, LADDER_STEP_PCT,
     tempoLockableAt, recipeKind, decideRecipe, planSkipReason, WINDOWS, playWindowFor, exitBounds, exitPick, exitTiming, exitHighPush, audibleEnd, entryClamp, SILENT_FLOOR,
     breakdownSpans, exitOutOfBreakdown, exitBreakdownPush, energyAtTarget, FINISH_MAX_S, forcedExit, forcedRecipe, forcedLine, forcedBooking,
     storedMove, vetRefusal, vetStep, badPairOf, pairKey, mashupGate, mashupBars,
@@ -2893,9 +2928,17 @@ function createAutopilotEngine({ host, ai }) {
     }
     if (!active) return false;
 
+    // a running macro step / the stuck deadline: the measured gates below don't refuse it (measuredWaiver)
+    const waived = autopilotCore.measuredWaiver(cand);
+    const waive = (gate, why) => {
+      console.info(`[waive] ${nextName}: ${gate} (${why}) waived, ${waived}`);
+      host.log.step(cand._macro ? "macro" : "deadline_fallback", { track_id: nextId, phase: "selection", decision: `${gate} waived`, why: `${waived}: ${why}` });
+    };
     const known = autopilotCore.pairRejected(pairRejects, currentId, nextId, forceJump, pendingCleared);
-    if (!known) cand._preparing = null;
-    if (known) {
+    if (!known || waived) cand._preparing = null;
+    if (known && waived) waive("remembered reject", known.why);
+    else if (known) {
+      if (autopilotCore.storedMove(cand)) host.log.step(cand._macro ? "macro" : "studied", { track_id: nextId, phase: "selection", decision: "refused (remembered)", why: known.why });
       apStatus(`Not after this song: ${nextName} (${known.why}) — already checked, kept for later`);
       cand.keep = true;
       return false;
@@ -2908,7 +2951,9 @@ function createAutopilotEngine({ host, ai }) {
 
     // Measured vibe gate: reject candidates whose loudness / brightness /
     // onset density / energy sit too far from what is playing right now.
-    if (candidate.vibe && candidate.vibe.ok === false) {
+    if (candidate.vibe && candidate.vibe.ok === false && waived) {
+      waive("vibe gate", (candidate.vibe.reasons || []).join("; ") || `distance ${candidate.vibe.distance}`);
+    } else if (candidate.vibe && candidate.vibe.ok === false) {
       const why = (candidate.vibe.reasons || []).join("; ") || `distance ${candidate.vibe.distance}`;
       console.warn("Autopilot vibe reject:", nextName, why); host.log.step("candidate_reject", { track_id: nextId, phase: "selection", decision: "vibe reject", why });
       apStatus(`Not after this song: ${nextName} (${why}) — kept for later`);
@@ -2926,7 +2971,8 @@ function createAutopilotEngine({ host, ai }) {
       const verdict = autopilotCore.energyStepOk(ev.energy_a, ev.energy_b, {
         relaxed: !!(host.session && host.session.relaxed), songs: history.length, force: forceJump, recent: playedEnergies(), reset: dipAsked,
         rawDelta: Number.isFinite(ev.energy_raw_a) && Number.isFinite(ev.energy_raw_b) ? ev.energy_raw_b - ev.energy_raw_a : null });
-      if (!verdict.ok) {
+      if (!verdict.ok && waived) waive("energy gate", verdict.why);
+      else if (!verdict.ok) {
         console.warn("Autopilot energy reject:", nextName, verdict.why); host.log.step("candidate_reject", { track_id: nextId, phase: "selection", decision: "energy reject", why: verdict.why });
         apStatus(`Not after this song: ${nextName} (${verdict.why}) — kept for later`);
         autopilotCore.rememberPairReject(pairRejects, currentId, nextId, verdict.why, forceJump);
@@ -3386,6 +3432,7 @@ function createAutopilotEngine({ host, ai }) {
   // then a library song that tempo-locks in that scene. Only when none passes, the last resort outside
   // the scene (atlas cross-family partner, library song of another family / unknown genre), logged as
   // such. Null = nothing booked: HOLD LOOP stays.
+  let deadlineHolds = { id: null, n: 0 };    // deadline holds for the playing song (autopilotCore.deadlineStuck)
   async function deadlineFallback(currentId, gen, reason) {
     const held = preparedCandidate(currentId);
     if (held && reason === "deadline") {
@@ -3397,13 +3444,17 @@ function createAutopilotEngine({ host, ai }) {
     const anchor = recoverGenre() || (!currentGenre && held && held._genre) || "";
     const b = await preplanBackup(currentId);
     if (!active || gen !== prepGen) return null;
+    // STUCK: this song already held STUCK_AFTER_HOLDS times: the atlas rows go out with the measured gates
+    // waived (autopilotCore.measuredWaiver), incl. the ones set aside only by them (stuckBackups)
+    const st = autopilotCore.deadlineStuck(deadlineHolds, currentId);
+    const stuckTag = st.stuck ? `${st.n} holds on this song` : null;
     const tryAtlas = async (rows, tag) => {
       for (const c of (rows || []).slice(0, 4)) {
         if (!active || gen !== prepGen) return null;
         if (c.track_id === currentId || playedIds.includes(c.track_id)) continue;
         apStatus(`Backup (${c.tier}${tag ? `, ${tag}` : ""}): trying ${c.name}`);
         const cand = { track_id: c.track_id, name: c.name, bpm: c.bpm, duration: c.duration, keep: false, fromLibrary: true,
-                       _fallback: "atlas", _genre: c.genre || null, _sceneRel: c.sceneRel || null };
+                       _fallback: "atlas", _genre: c.genre || null, _sceneRel: c.sceneRel || null, _stuck: stuckTag };
         if (await tryCandidate(currentId, cand, gen)) {
           host.log.step("atlas_fallback", { track_id: c.track_id, phase: "selection", decision: `${currentId}>${c.track_id}`,
             why: `${c.tier}, works ${c.works}${c.level != null ? `, energy level ${c.level}` : ""}${tag ? `, ${tag}` : ""} (${reason})` });
@@ -3412,8 +3463,8 @@ function createAutopilotEngine({ host, ai }) {
       }
       return false;
     };
-    if (await tryAtlas(b && b.list, "")) {
-      host.log.step("deadline_fallback", { phase: "selection", decision: "atlas", why: reason });
+    if (await tryAtlas(st.stuck ? autopilotCore.stuckBackups(b) : b && b.list, st.stuck ? "stuck" : "")) {
+      host.log.step("deadline_fallback", { phase: "selection", decision: st.stuck ? "atlas (stuck)" : "atlas", why: stuckTag ? `${reason}, ${stuckTag}` : reason });
       return "atlas";
     }
     if (!active || gen !== prepGen) return null;
@@ -3434,8 +3485,9 @@ function createAutopilotEngine({ host, ai }) {
       host.log.step("deadline_fallback", { phase: "selection", decision: "atlas cross-family", why: `${reason}: nothing in the scene passed` });
       return "atlas";
     }
+    deadlineHolds = { id: currentId, n: st.n + 1 };
     host.log.step("deadline_fallback", { phase: "selection", decision: "hold",
-      why: `${reason}: no atlas partner or library song passed the gates${b && b.skipped && b.skipped.length ? ` (${b.skipped.slice(0, 2).map((s) => `${s.name}: ${s.why}`).join("; ")})` : ""}` });
+      why: `${reason} (hold ${st.n + 1}${st.stuck ? ", stuck" : ""}): no atlas partner or library song passed the gates${b && b.skipped && b.skipped.length ? ` (${b.skipped.slice(0, 2).map((s) => `${s.name}: ${s.why}`).join("; ")})` : ""}` });
     return null;
   }
 
