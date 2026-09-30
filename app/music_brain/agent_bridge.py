@@ -122,7 +122,8 @@ def preview(
 
 
 def learn_set(source: str, tracklist: Optional[str] = None, download: bool = True, jobs: int = 2, ai: bool = True,
-              macros: bool = True, macros_only: bool = False) -> dict:
+              macros: bool = True, macros_only: bool = False, split_minutes: Optional[float] = None,
+              keep_files: bool = False) -> dict:
     """Study a DJ set (URL or file): stems, per-stem song matching, transition and
     vocal re-cut extraction; merges learned techniques into the store. Then (macros=True)
     imports the set's songs as library tracks and rebuilds the pair atlas incrementally,
@@ -131,7 +132,12 @@ def learn_set(source: str, tracklist: Optional[str] = None, download: bool = Tru
     ({imported, skipped, written[], error}).
     macros_only: no set audio, no study; the tracklist alone becomes the macro set-<set_id>
     (set_import.learn_tracklist_macro). Both end by exporting app/music_brain/knowledge/
-    (the `knowledge` field; nothing is committed)."""
+    (the `knowledge` field; nothing is committed).
+    split_minutes: a set longer than this is studied in checkpointed parts (None = the
+    learner's SPLIT_MIN, 0 = never split); a killed run resumes at the next part.
+    keep_files: skip the cleanup; by default every good song and ID cut is registered in the
+    library, then clips, clip stems, registered song files and the set recording are deleted
+    (the `cleanup` field: freed_bytes, deleted, kept[{file, reason}])."""
     log = lambda m: print(m, file=sys.stderr, flush=True)  # noqa: E731
     if macros_only:
         from app.music_brain.set_import import learn_tracklist_macro
@@ -140,7 +146,10 @@ def learn_set(source: str, tracklist: Optional[str] = None, download: bool = Tru
     else:
         from app.music_brain.set_learner import learn_set as _learn
 
-        report = _learn(source, tracklist=tracklist, download=download, jobs=jobs, ai=ai, log=log)
+        from app.music_brain.set_learner import SPLIT_MIN
+
+        report = _learn(source, tracklist=tracklist, download=download, jobs=jobs, ai=ai, log=log,
+                        split_minutes=SPLIT_MIN if split_minutes is None else split_minutes, keep_files=keep_files)
         if macros:
             from app.music_brain.set_import import learn_macros
 
@@ -241,6 +250,12 @@ def _build_parser() -> argparse.ArgumentParser:
                          help="No set audio, no Demucs on the mix: find or download each tracklist song, register it, "
                               "build the atlas and write the macro set-<set_id> in tracklist order. A later full "
                               "learn of the same set writes studied-set-<set_id>; both macros coexist.")
+    p_learn.add_argument("--split-minutes", type=float, default=None,
+                         help="Study a set longer than this in parts of about this length, each checkpointed so a "
+                              "killed run resumes at the next part (default 60; 0 = never split).")
+    p_learn.add_argument("--keep-files", action="store_true",
+                         help="Skip the cleanup. By default every good song and ID cut is registered in the library, "
+                              "then clips, clip stems, registered song files and the set recording are deleted.")
 
     sub.add_parser("learned", help="List techniques learned from studied sets.")
     sub.add_parser("learn-status", help="Progress of running / recent set studies (human readable, no server needed).")
@@ -313,7 +328,8 @@ def main(argv: Optional[list[str]] = None) -> int:
             payload = list_recipes()
         elif args.command == "learn-set":
             payload = learn_set(args.source, tracklist=args.tracklist, download=not args.no_download, jobs=args.jobs, ai=not args.no_ai,
-                                macros=not args.no_macros, macros_only=args.macros_only)
+                                macros=not args.no_macros, macros_only=args.macros_only,
+                                split_minutes=args.split_minutes, keep_files=args.keep_files)
             if args.macros_only and not payload.get("macro"):
                 print(json.dumps(payload, indent=2, default=str))
                 return 1                  # the macro was the whole job

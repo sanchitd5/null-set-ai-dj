@@ -35,6 +35,8 @@ assert.strictEqual(lp.fmtDuration(3900), "1h 05m");
 assert.strictEqual(lp.fmtDuration(null), "");
 assert.strictEqual(lp.fmtDuration(NaN), "");
 
+assert.strictEqual(lp.view(st({ parts: 3, part: 2 })).part, "part 2/3");
+assert.strictEqual(lp.view(st({ parts: 1, part: 1 })).part, "");
 let v = lp.view(st({ title: "Big Set", current: "song.mp3", elapsed_s: 780, eta_s: 1800,
   techniques_found: { vocal_loop: 2, stem_intro: 5, bass_swap: 2 }, warnings: ["w1", "w2", "w3", "w4", "w5"] }));
 assert.strictEqual(v.title, "Big Set");

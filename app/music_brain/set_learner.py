@@ -25,6 +25,14 @@ Pipeline (the manual USB002 study, research/notes/set-study-gfF8jzBVWvM.md, as c
 5. Learn.     Observations merge into data/cache/learned_techniques.json;
               techniques.rank() loads them as conditional techniques with
               the tempo gap / key score ranges they were seen at.
+   Parts.     A set longer than split_minutes (SPLIT_MIN, 60) is studied in parts cut at
+              tracklist boundaries (plan_parts); each part is checkpointed under
+              SETS_DIR/<id>/parts/ and a killed run resumes at the next part. The
+              merged study has the unsplit shape.
+   Cleanup.   (learn_cleanup.py, after each part and at the end, unless keep_files)
+              good songs and ID cuts are registered in the library first, then clips,
+              clip stems, registered song files, yt-dlp leftovers and the set recording
+              are deleted. Songs the library does not hold are kept and listed.
 6. Macros.    (agent_bridge learn-set, unless --no-macros) the set's songs are
               registered as library tracks (set_import.learn_macros = import-set)
               and the pair atlas is rebuilt incrementally, writing the macros
@@ -39,6 +47,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
@@ -1075,16 +1084,28 @@ def _parallel(fn: Callable, items: Sequence, jobs: int, log: Callable[[str], Non
         return list(ex.map(run, items))
 
 
+SPLIT_MIN = 60.0           # a set longer than this is learned in parts of about this length (0 = never split)
+
+
 def learn_set(source: str, tracklist: Optional[str] = None, download: bool = True,
               store_path: Path = LEARNED_PATH, log: Callable[[str], None] = lambda m: None,
-              jobs: int = DEFAULT_JOBS, ai: bool = True) -> dict:
+              jobs: int = DEFAULT_JOBS, ai: bool = True, split_minutes: float = SPLIT_MIN,
+              keep_files: bool = False) -> dict:
     """Study one set. tracklist: text or a path to a text file. jobs: Demucs runs at once.
-    Progress is written to CACHE_DIR/learn_progress/<set_id>.json (learn_progress.py) for the console panel."""
+    Progress is written to CACHE_DIR/learn_progress/<set_id>.json (learn_progress.py) for the console panel.
+
+    split_minutes: a longer set is studied part by part (plan_parts), each part checkpointed
+    under SETS_DIR/<set_id>/parts/, so a crash or kill resumes at the next part (automatic when
+    the checkpoint's tracklist and split match). The result has the unsplit shape.
+    keep_files: skip the cleanup (learn_cleanup.py): by default every good song is registered in
+    the library, then clips, clip stems, registered song files, yt-dlp leftovers and the set
+    recording (once every ID slot is cut) are deleted; the result's `cleanup` says what and why."""
     from app.music_brain.learn_progress import Progress
 
     prog = Progress(source, announce=log)
     try:
-        report = _learn_set(source, tracklist, download, store_path, prog.wrap_log(log), jobs, ai, prog)
+        report = _learn_set(source, tracklist, download, store_path, prog.wrap_log(log), jobs, ai, prog,
+                            split_s=max(0.0, float(split_minutes or 0)) * 60, keep_files=keep_files)
     except BaseException as exc:                   # incl. Ctrl-C: the file must not say `running`
         prog.fail(exc)
         raise
@@ -1092,49 +1113,240 @@ def learn_set(source: str, tracklist: Optional[str] = None, download: bool = Tru
     return report
 
 
-def _learn_set(source: str, tracklist: Optional[str], download: bool, store_path: Path,
-               log: Callable[[str], None], jobs: int, ai: bool, prog) -> dict:
-    import librosa
+# ---------------------------------------------------------------------------- split
+TRANSITION_KINDS = ("bass_swap", "stem_intro", "acapella_over", "hard_cut", "loop_extend")
 
-    from app.music_brain.analyzer import analyze
-    from app.music_brain.stem_service import separate
 
-    set_path, set_id, desc = fetch_set(source)
-    prog.set_id(set_id, title=_set_title(set_id, set_path))
+def plan_parts(starts: Sequence[float], duration: float, split_s: float) -> List[dict]:
+    """Cut a tracklist into parts at tracklist boundaries (never inside a transition).
+    starts: entry start times in set order. -> [{lo, hi, own, t0, t1}]:
+      lo..hi  the entries the part studies (inclusive). Consecutive parts share one slot
+              (hi of part k == lo of part k+1), so the handover out of that slot is seen by
+              the next part and the one into it by this part: every transition exactly once.
+      own     the entries whose start this part clips (the shared slot's start belongs to the
+              earlier part), so no set window is cut twice.
+      t0..t1  the set time this part's per-song moves and timeline rows are kept for: the
+              boundary is the midpoint between the shared slot's start and the next start.
+    One part (the whole set) when split_s is 0, the set is not longer than split_s (or than
+    WHOLE_UNDER_S, which is studied as one clip) or there are fewer than 3 slots."""
+    n = len(starts)
+    whole = [{"lo": 0, "hi": n - 1, "own": list(range(n)), "t0": 0.0, "t1": float(duration)}]
+    groups = sorted(set(starts))                     # a layered "A x B" slot is one start
+    if not split_s or duration <= max(split_s, WHOLE_UNDER_S) or len(groups) < 3:
+        return whole
+    cuts = [0]                                       # group index each part starts at
+    for g in range(1, len(groups) - 1):
+        if groups[g] - groups[cuts[-1]] >= split_s:
+            cuts.append(g)
+    if len(cuts) == 1:
+        return whole
+    first = {g: min(i for i, s in enumerate(starts) if s == g) for g in groups}
+    last = {g: max(i for i, s in enumerate(starts) if s == g) for g in groups}
+    ends = cuts[1:] + [len(groups) - 1]
+    parts = []
+    for k, (a, b) in enumerate(zip(cuts, ends)):
+        own_from = a if k == 0 else a + 1
+        parts.append({
+            "lo": first[groups[a]], "hi": last[groups[b]],
+            "own": [i for i, s in enumerate(starts) if groups[own_from] <= s <= groups[b]],
+            "t0": 0.0 if k == 0 else round((groups[a] + groups[a + 1]) / 2, 3),
+            "t1": float(duration) if k == len(cuts) - 1 else round((groups[b] + groups[b + 1]) / 2, 3)})
+    return parts
+
+
+class _Checkpoint:
+    """SETS_DIR/<set_id>/parts/: plan.json (the key: tracklist + split) and part-<k>.json per
+    finished part. A different tracklist or split starts over; the dir goes once study.json is written."""
+
+    def __init__(self, set_dir: Path, key: str, log: Callable[[str], None]):
+        self.dir, self.key = set_dir / "parts", key
+        plan = self.dir / "plan.json"
+        try:
+            old = json.loads(plan.read_text(encoding="utf-8")).get("key")
+        except (OSError, ValueError, AttributeError):
+            old = None
+        if old != key:
+            if old is not None:
+                log("tracklist or split changed since the last partial study: starting over")
+            shutil.rmtree(self.dir, ignore_errors=True)
+            self.dir.mkdir(parents=True, exist_ok=True)
+            plan.write_text(json.dumps({"key": key}), encoding="utf-8")
+
+    def _path(self, k: int) -> Path:
+        return self.dir / f"part-{k}.json"
+
+    def load(self, k: int) -> Optional[dict]:
+        try:
+            return json.loads(self._path(k).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+
+    def save(self, k: int, res: dict) -> None:
+        tmp = self._path(k).with_suffix(f".{os.getpid()}.tmp")
+        tmp.write_text(json.dumps(res, default=str), encoding="utf-8")
+        tmp.replace(self._path(k))
+
+    def clear(self) -> None:
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+
+def _plan_key(entries: List[TrackEntry], split_s: float, parts: List[dict]) -> str:
+    raw = json.dumps([[e.start, e.title] for e in entries] + [split_s, [[p["lo"], p["hi"]] for p in parts]])
+    return hashlib.sha256(raw.encode()).hexdigest()[:16]
+
+
+def _read_tracklist(tracklist: Optional[str], desc: str) -> List[TrackEntry]:
     text = tracklist or ""
     if text and len(text) < 4096 and Path(text).expanduser().is_file():
         text = Path(text).expanduser().read_text(encoding="utf-8")
     entries = parse_tracklist(text or desc)
     if len(entries) < 2:
         raise ValueError("need a tracklist with at least 2 timestamped songs (--tracklist, or the video description)")
+    return entries
 
+
+def _learn_set(source: str, tracklist: Optional[str], download: bool, store_path: Path,
+               log: Callable[[str], None], jobs: int, ai: bool, prog,
+               split_s: float = 0.0, keep_files: bool = True) -> dict:
+    import librosa
+    from app.music_brain.config import STEMS_CACHE_DIR
+    from app.music_brain.learn_cleanup import Tidy
+
+    set_path, set_id, desc = fetch_set(source)
+    prog.set_id(set_id, title=_set_title(set_id, set_path))
+    entries = _read_tracklist(tracklist, desc)
     prog.update(tracks_total=len(entries))
+    duration = float(librosa.get_duration(path=str(set_path)))
+    parts = plan_parts([e.start for e in entries], duration, split_s)
+    if len(parts) > 1:
+        log(f"{duration / 60:.0f} min set: learning in {len(parts)} parts of about {split_s / 60:.0f} min")
+    ck = _Checkpoint(SETS_DIR / set_id, _plan_key(entries, split_s, parts), log)
+    tidy = None if keep_files else Tidy(set_id, CACHE_DIR, SETS_DIR, STEMS_CACHE_DIR, log=log)
+    results: List[dict] = []
+    for k, part in enumerate(parts):
+        prog.update(part=k + 1, parts=len(parts))
+        res = ck.load(k)
+        if res is not None:
+            log(f"part {k + 1}/{len(parts)}: already studied, resuming after it")
+        else:
+            if len(parts) > 1:
+                log(f"part {k + 1}/{len(parts)}: {entries[part['lo']].title} .. {entries[part['hi']].title}")
+            res = _study_part(set_path, set_id, entries, part, duration, download, log, jobs, ai, prog)
+            if tidy and not (why := tidy.busy()):
+                moved = tidy.register([entries[i].__dict__ | res["tracks"][str(i)] for i in range(part["lo"], part["hi"] + 1)])
+                res["paths"] = {i: moved.get(p, p) for i, p in res["paths"].items()}
+            elif tidy:
+                tidy.skipped, moved = why, {}
+            else:
+                moved = {}
+            ck.save(k, res)                            # repointed paths first: a crash here re-registers nothing
+            if tidy and not tidy.skipped:
+                tidy.sweep(moved, res["clip_files"], res["clip_stem_dirs"])
+        for i, p in res["paths"].items():              # later parts find the overlap song (maybe in the library now)
+            entries[int(i)].path = p
+        results.append(res)
+
+    prog.stage("merge")
+    obs = [Observation(**o) for res in results for o in res["observations"]]
+    store = merge(obs, store_path, set_ids=(set_id,))
+    verdict = [next(res["tracks"][str(i)] for res, p in zip(results, parts) if i in p["own"]) for i in range(len(entries))]
+    timeline = [r for res in results for r in res["timeline"]]
+    report = {
+        "set_id": set_id, "set_path": str(set_path),
+        "missing": [t for res in results for t in res["missing"]],
+        "clips": [c for res in results for c in res["clips"]],
+        "tracks": [asdict(e) | v for e, v in zip(entries, verdict)],
+        "identified_share": round(sum(1 for r in timeline if r["owners"])
+                                  / max(1, sum(1 for r in timeline if r["db"] > SILENT_DB)), 3),
+        "observations": [asdict(o) for o in obs],
+        "ai": "; ".join(dict.fromkeys(res["ai"] for res in results)),
+        "ai_rejected": [o for res in results for o in res["ai_rejected"]],
+        "learned": {k: v["count"] for k, v in store.items()},
+    }
+    if len(parts) > 1:
+        report["parts"] = [{"lo": p["lo"], "hi": p["hi"], "t0": p["t0"], "t1": p["t1"]} for p in parts]
+    out_dir = SETS_DIR / set_id
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "study.json").write_text(json.dumps(report | {"timeline": timeline}, indent=2), encoding="utf-8")
+    report["study_path"] = str(out_dir / "study.json")
+    ck.clear()
+    if tidy:
+        prog.stage("cleanup")
+        report["cleanup"] = _final_cleanup(tidy, report, set_path, log)
+    return report
+
+
+def _final_cleanup(tidy, report: dict, set_path: Path, log: Callable[[str], None]) -> dict:
+    """Register the whole set (every good song, every ID slot cut from the recording), then
+    delete what the library now holds and, once every ID is cut, the recording."""
+    if not tidy.skipped and (why := tidy.busy()):
+        tidy.skipped = why
+    if not tidy.skipped:
+        moved = tidy.register(report["tracks"], set_audio=Path(set_path))
+        if moved:                                  # study.json names the library copy (import-set reads it next)
+            for t in report["tracks"]:
+                t["path"] = moved.get(t.get("path"), t.get("path"))
+            sp = Path(report["study_path"])
+            try:
+                doc = json.loads(sp.read_text(encoding="utf-8"))
+                doc["tracks"] = report["tracks"]
+                tmp = sp.with_suffix(f".{os.getpid()}.tmp")
+                tmp.write_text(json.dumps(doc, indent=2), encoding="utf-8")
+                tmp.replace(sp)
+            except (OSError, ValueError) as exc:   # a stale path only costs import-set that song: keep the files
+                log(f"cleanup: could not repoint study.json ({exc}): keeping every file")
+                tidy.skipped = f"study.json not repointed: {exc}"[:200]
+    if not tidy.skipped:
+        # the song files, set dir leftovers and recording; song stems stay (library tracks keep theirs)
+        songs = [str(p) for p in tidy.songs_dir.glob("*") if p.is_file()]
+        clips = [str(p) for p in tidy.clips_dir.glob("*") if p.is_file()]    # e.g. left by a killed part
+        tidy.sweep({p: "" for p in songs}, clip_files=clips, set_path=Path(set_path))
+        tidy.keep_unlisted()
+    out = tidy.result()
+    log(f"cleanup: freed {out['freed_bytes'] / 1e6:.0f} MB, deleted {out['deleted']}, kept {len(out['kept'])}"
+        + (f" (skipped: {out['skipped']})" if out.get("skipped") else ""))
+    return out
+
+
+def _study_part(set_path: Path, set_id: str, all_entries: List[TrackEntry], part: dict, duration: float,
+                download: bool, log: Callable[[str], None], jobs: int, ai: bool, prog) -> dict:
+    """Fetch, cut, separate, locate, detect and review one part (the whole set when unsplit).
+    Returns plain JSON (the checkpoint): observations, timeline rows (song indices global),
+    per-entry verdicts keyed by global index, the song paths, and the working files to clean."""
+    from app.music_brain.analyzer import analyze
+    from app.music_brain.stem_service import separate
+
+    lo, hi = part["lo"], part["hi"]
+    entries = all_entries[lo:hi + 1]
+    known = {e.title: e.path for e in all_entries if e.path}   # a song listed again is not fetched again
     prog.stage("fetch", total=len(entries))
     missing = []
     for e in entries:
         prog.update(current=e.title)
-        p = find_or_fetch_song(e.title, SETS_DIR / set_id / "songs", download=download, exclude_ids=(set_id,))
-        e.path = str(p) if p else None
-        if not p:
-            missing.append(e.title)
-        log(f"song {e.title}: {p or 'NOT FOUND'}")
+        if not e.path:
+            p = Path(known[e.title]) if known.get(e.title) and Path(known[e.title]).is_file() else \
+                find_or_fetch_song(e.title, SETS_DIR / set_id / "songs", download=download, exclude_ids=(set_id,))
+            e.path = str(p) if p else None
+            if not p:
+                missing.append(e.title)
+            log(f"song {e.title}: {p or 'NOT FOUND'}")
         prog.tick("fetch")
 
-    duration = float(librosa.get_duration(path=str(set_path)))
-    clips = plan_clips([e.start for e in entries], duration)
+    clips = plan_clips([all_entries[i].start for i in part["own"]], duration)
     prog.stage("cut", total=len(clips))
     log(f"clipping {len(clips)} blend windows ({sum(b - a for a, b in clips) / 60:.0f} of {duration / 60:.0f} min)")
     cut: List[Tuple[Tuple[float, float], Path]] = []
     for a, b in clips:
         try:                                    # one undecodable stretch must not sink the study
             cut.append(((a, b), clip_audio(set_path, a, b, SETS_DIR / set_id / "clips")))
-            prog.tick("cut", current=f"{a / 60:.1f}-{b / 60:.1f} min")
         except Exception as exc:
             log(f"failed to cut clip {a:.0f}-{b:.0f} s: {exc}")
+        prog.tick("cut", current=f"{a / 60:.1f}-{b / 60:.1f} min")
     if not cut:                                 # before any song is sent to Demucs
         raise ValueError(f"no clip of {set_path.name} could be cut (ffmpeg installed? file decodes?)")
 
     vocal_paths: Dict[str, str] = {}
+    clip_stem_dirs: List[str] = []
 
     def song_job(path: str):
         log(f"separating {Path(path).name}")
@@ -1157,7 +1369,10 @@ def _learn_set(source: str, tracklist: Optional[str], download: bool, store_path
         (t0, _), path = item
         log(f"separating clip {path.name}")
         prog.update(current=f"clip {t0 / 60:.1f} min")
-        stems = {n: _load(q) for n, q in separate(path).stems.items() if n in STEMS}
+        res = separate(path)
+        if getattr(res, "cache_dir", None):
+            clip_stem_dirs.append(str(res.cache_dir))
+        stems = {n: _load(q) for n, q in res.stems.items() if n in STEMS}
         if "drums" not in stems:
             return None
         bpm_at = _set_tempo_fn(stems["drums"])
@@ -1168,9 +1383,10 @@ def _learn_set(source: str, tracklist: Optional[str], download: bool, store_path
                 stem_timeline(stems, songs, bpm_at, CWIN_S, CHOP_HOP_S, only=("vocals",), min_r=CHOP_MATCH_R,
                               track=False, t0=t0))
 
-    uniq = sorted({e.path for e in entries if e.path})           # a song listed 3x separates once
+    uniq = sorted({e.path for e in entries if e.path})          # a song listed 3x separates once
     prog.update(tracks_total=len(uniq))
     prog.stage("separate", total=len(uniq))
+
     def song_counted(path):                     # a song counts done whether it worked or not
         try:
             return song_job(path)
@@ -1179,11 +1395,11 @@ def _learn_set(source: str, tracklist: Optional[str], download: bool, store_path
 
     done = dict(zip(uniq, _parallel(song_counted, uniq, jobs, log, lambda x: Path(x).name)))
     songs = [SongData(e.title, e.start, **(done.get(e.path) or {"bpm": 0.0, "key": None, "env": {}})) for e in entries]
-
     rows: List[dict] = []
     vrows: List[dict] = []
     crows: List[dict] = []
     prog.stage("analyze", total=len(cut))
+
     def counted(item):                          # a clip counts done whether it worked or not
         try:
             return clip_job(item)
@@ -1210,8 +1426,12 @@ def _learn_set(source: str, tracklist: Optional[str], download: bool, store_path
     prog.stage("lyrics")
     _attach_lyrics(songs, entries, verdict, vocal_paths, log)
     prog.stage("detect")
-    obs = transitions(rows, songs, set_id) + vocal_recuts(vrows, songs, set_id) + acapella_drops(rows, songs, set_id) \
-        + vocal_chops(crows, songs, set_id)
+    t0, t1 = part["t0"], part["t1"]
+    # a handover exists in one part only (plan_parts); a per-song move near the shared slot
+    # can be heard by both, so it is kept by the part owning its set time
+    obs = [o for o in transitions(rows, songs, set_id) + vocal_recuts(vrows, songs, set_id)
+           + acapella_drops(rows, songs, set_id) + vocal_chops(crows, songs, set_id)
+           if o.kind in TRANSITION_KINDS or t0 <= o.at < t1]
     # the balance the DJ ran at each move: what the user's feedback is usually about
     lv = {(r["t"], r["stem"]): r["db"] for r in rows}
     ts = sorted({r["t"] for r in rows})
@@ -1222,31 +1442,22 @@ def _learn_set(source: str, tracklist: Optional[str], download: bool, store_path
     ai_res = {"kept": obs, "rejected": [], "ai": "off"}
     if ai:
         from app.music_brain import set_ai
-
         prog.stage("ai_review", total=len(obs))
-
-        try:                      # the review is advice: its failure keeps the measurement
+        try:                                    # the review is advice: its failure keeps the measurement
             ai_res = set_ai.review(obs, log=log)
         except Exception as exc:
             ai_res = {"kept": obs, "rejected": [], "ai": f"skipped (review failed: {exc})"[:200]}
         log(f"ai: {ai_res['ai']}, kept {len(ai_res['kept'])}, rejected {len(ai_res['rejected'])}")
         obs = ai_res["kept"]
         prog.techniques(obs)
-    prog.stage("merge")
-    store = merge(obs, store_path, set_ids=(set_id,))
-
-    report = {
-        "set_id": set_id, "set_path": str(set_path), "missing": missing, "clips": clips,
-        "tracks": [asdict(e) | v for e, v in zip(entries, verdict)],
-        "identified_share": round(sum(1 for r in rows if r["owner"]) / max(1, sum(1 for r in rows if r["db"] > SILENT_DB)), 3),
+    return {
         "observations": [asdict(o) for o in obs],
         "ai": ai_res["ai"], "ai_rejected": [asdict(o) for o in ai_res["rejected"]],
-        "learned": {k: v["count"] for k, v in store.items()},
+        "timeline": [{"t": r["t"], "stem": r["stem"], "db": r["db"],
+                      "owners": [asdict(h) | {"track": h.track + lo} for h in r["owners"]]}
+                     for r in rows if t0 <= r["t"] < t1],
+        "tracks": {str(lo + i): v for i, v in enumerate(verdict)},
+        "paths": {str(lo + i): e.path for i, e in enumerate(entries)},
+        "missing": missing, "clips": clips,
+        "clip_files": [str(p) for _, p in cut], "clip_stem_dirs": sorted(set(clip_stem_dirs)),
     }
-    out_dir = SETS_DIR / set_id
-    out_dir.mkdir(parents=True, exist_ok=True)
-    (out_dir / "study.json").write_text(json.dumps(report | {"timeline": [
-        {"t": r["t"], "stem": r["stem"], "db": r["db"], "owners": [asdict(h) for h in r["owners"]]} for r in rows]}, indent=2),
-        encoding="utf-8")
-    report["study_path"] = str(out_dir / "study.json")
-    return report
