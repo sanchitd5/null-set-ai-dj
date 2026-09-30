@@ -8,5 +8,5 @@ else:
     from app.music_brain.matching.knowledge import *  # noqa: F401,F403
     from app.music_brain.matching.knowledge import (  # noqa: F401
         _SHARD_ID, _ABS, _EMAIL, _SEEN, _cache, _read, _dump, _write_bytes, _gz_json, _export_atlas,
-        _Resolver, _seed_atlas, _stamp,
+        _Resolver, _stamp,
     )

@@ -5,7 +5,7 @@ strength". data/ stays gitignored; this folder holds JSON only: no audio, stems,
 session logs, absolute paths or e-mail addresses (export refuses to write any).
 
     python3 -m app.music_brain.matching.knowledge export [--cache-dir D] [--out K]   cache -> knowledge/
-    python3 -m app.music_brain.matching.knowledge import [--cache-dir D] [--src K]   knowledge/ -> cache
+    python3 -m app.music_brain.matching.knowledge sync [--dry-run] [--cache-dir D] [--src K]   knowledge/ -> cache (import = sync)
 
 Files: macros/<name>.json, learned_techniques.json, names.json (track id -> "Artist - Title"),
 genre_labels.json (track id -> {genre, era}, the model's labels; the server backfills by name),
@@ -17,9 +17,11 @@ macro keeps its tracked "created", an unchanged atlas its tracked built_at), and
 rewritten only when its bytes change, so git diffs stay small.
 
 Track ids are sha256(bytes)[:16]: another download of the same song has another id, so import
-resolves every id by NAME (dedup_songs.identity) onto the local library. The local cache always
-wins: a local macro, atlas pair or studied set is never overwritten; unresolved songs are
-skipped and reported. auto_seed runs import when knowledge/ or the local library changed
+resolves every id by NAME (dedup_songs.identity) onto the local library; unresolved songs are
+skipped and reported. Import is `sync` (knowledge_sync.py): per-file version stamps (git commit
+sha, sha256 without git) and per-row provenance, so a pulled update replaces a row still as it
+was seeded while a row the owner changed is kept and recorded as a conflict (`conflicts`,
+`take ITEM --published|--local`). auto_seed runs it when knowledge/ or the local library changed
 (stamp in CACHE_DIR/knowledge_seed.json); atlas_api calls it where macros and the atlas load.
 """
 from __future__ import annotations
@@ -334,91 +336,12 @@ class _Resolver:
 
 
 def seed(cache_dir: Optional[Path] = None, src: Optional[Path] = None,
-         log: Callable[[str], None] = lambda m: None) -> dict:
-    """knowledge/ -> cache, never overwriting local data:
-    macros the cache lacks (every song name-resolved, else skipped), learner observations of
-    sets the local store has none of, atlas pairs the local atlas lacks (only when both carry
-    the current rules hash)."""
-    from app.music_brain.atlas import macros as mc
-    from app.music_brain.atlas import pair_atlas as pa
-    from app.music_brain.learning import set_learner as sl
-    from app.music_brain.learning.set_import import _atlas_lock
-
-    cache, src = _cache(cache_dir), Path(src or KNOWLEDGE_DIR)
-    rep = {"macros": [], "macros_skipped": [], "observations": 0, "pairs": 0, "atlas": None}
-    if not src.is_dir():
-        rep["atlas"] = "no knowledge folder"
-        return rep
-    res = _Resolver(cache, _read(src / NAMES, {}) or {})
-    local_macros = set(mc.stored(cache))
-    for p in sorted((src / MACROS).glob("*.json")):
-        m = _read(p)
-        if not isinstance(m, dict) or p.stem in local_macros:
-            continue                                        # the local macro wins
-        missing = [res.tracked.get(t, t) for t in m.get("tracks") or [] if res(t) is None]
-        if missing:
-            rep["macros_skipped"].append({"macro": p.stem, "missing": missing[:10]})
-            continue
-        try:
-            m2 = mc.normalize(mc.resolve_ids(m, lambda t: res(t) or t))
-        except (ValueError, KeyError) as exc:
-            rep["macros_skipped"].append({"macro": p.stem, "missing": [], "error": str(exc)[:120]})
-            continue
-        m2["title"], m2["knowledge"] = m.get("title") or m2["title"], True
-        if mc.put_new(dict(m2, name=p.stem), cache):
-            rep["macros"].append(p.stem)
-    # learner observations: a set the local store knows is the local store's
-    tracked = _read(src / LEARNED, {}) or {}
-    local_path = cache / LEARNED
-    local = sl.load_learned(local_path)
-    local_sets = {o.get("set_id") for e in local.values() for o in e.get("observations") or []}
-    names = {f.name for f in fields(sl.Observation)}
-    new = [sl.Observation(**{k: v for k, v in o.items() if k in names})
-           for e in tracked.values() if isinstance(e, dict) for o in e.get("observations") or []
-           if isinstance(o, dict) and o.get("set_id") not in local_sets and o.get("kind") in sl.KINDS]
-    if new:
-        sl.merge(new, path=local_path)
-        rep["observations"] = len(new)
-    # atlas pairs
-    if not any(res(t) for t in res.tracked):
-        rep["atlas"] = "no tracked song in this library"
-    else:
-        rep["atlas"] = _seed_atlas(cache, src, res, pa, _atlas_lock)
-        rep["pairs"] = rep["atlas"] if isinstance(rep["atlas"], int) else 0
-    log(f"knowledge seed: {len(rep['macros'])} macros, {rep['observations']} observations, {rep['pairs']} pairs")
-    return rep
-
-
-def _seed_atlas(cache: Path, src: Path, res: _Resolver, pa, lock) -> object:
-    ka = load_atlas(src)
-    if not ka:
-        return "no tracked atlas"
-    if ka.get("rules") != pa.rules_hash():
-        return "tracked atlas is stale (rules changed): rebuild and export"
-    with lock(cache):
-        path = pa.atlas_path(cache)
-        local = pa.load(cache)                     # migrates an old folder / single pair_atlas.json first
-        if local is None and (pa._has_atlas(pa._db(path)) or (path / pa.META).exists()
-                              or pa._legacy(path).exists()):
-            return "local atlas unreadable: left alone"
-        if local is not None and local.get("rules") != ka["rules"]:
-            return "local atlas has other rules: left alone"
-        doc = local or {"schema": pa.SCHEMA, "rules": ka["rules"], "built_at": ka.get("built_at"), "cache_dir": "",
-                        "tracks": {}, "pairs": {}, "stats": {}}
-        added = 0
-        for p in ka["pairs"].values():
-            a, b = res(p["a"]), res(p["b"])
-            if not a or not b or a == b or f"{a}>{b}" in doc["pairs"]:
-                continue
-            doc["pairs"][f"{a}>{b}"] = dict(p, a=a, b=b, knowledge=True)
-            for tid, kid in ((a, p["a"]), (b, p["b"])):
-                if tid not in doc["tracks"] and kid in ka["tracks"]:
-                    doc["tracks"][tid] = dict(ka["tracks"][kid], knowledge=True)
-            added += 1
-        if added:
-            doc.setdefault("stats", {})["knowledge_pairs"] = added
-            pa.write_atlas(doc, path)              # only the new pairs' rows are written
-        return added
+         log: Callable[[str], None] = lambda m: None, dry_run: bool = False) -> dict:
+    """knowledge/ -> cache by version stamp (knowledge_sync.sync): new rows added, rows still
+    as seeded updated or removed with the published file, the owner's changed rows kept (a
+    conflict to resolve with `take`); an atlas pair only when both carry the current rules hash."""
+    from app.music_brain.matching import knowledge_sync
+    return knowledge_sync.sync(cache_dir, src, dry_run=dry_run, log=log)
 
 
 def _stamp(cache: Path, src: Path) -> str:
@@ -456,7 +379,12 @@ def auto_seed(cache_dir: Optional[Path] = None, src: Optional[Path] = None) -> O
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     ap = argparse.ArgumentParser(prog="knowledge", description=__doc__.split("\n\n")[0])
-    ap.add_argument("cmd", choices=("export", "import"))
+    ap.add_argument("cmd", choices=("export", "import", "sync", "conflicts", "take"))
+    ap.add_argument("item", nargs="?", help="take: store:item from `conflicts`")
+    ap.add_argument("--dry-run", action="store_true", help="sync: report, write nothing")
+    side = ap.add_mutually_exclusive_group()
+    side.add_argument("--published", action="store_true", help="take: the published row wins")
+    side.add_argument("--local", action="store_true", help="take: the local row wins")
     ap.add_argument("--cache-dir", default=None, help="cache to read (export) or seed (import); default CACHE_DIR")
     ap.add_argument("--out", default=None, help="export: knowledge folder (default app/music_brain/knowledge)")
     ap.add_argument("--src", default=None, help="import: knowledge folder (default app/music_brain/knowledge)")
@@ -465,8 +393,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     try:
         if a.cmd == "export":
             out = export(Path(a.cache_dir) if a.cache_dir else None, Path(a.out) if a.out else None, log)
+        elif a.cmd in ("import", "sync"):
+            out = seed(Path(a.cache_dir) if a.cache_dir else None, Path(a.src) if a.src else None, log,
+                       dry_run=a.dry_run)
         else:
-            out = seed(Path(a.cache_dir) if a.cache_dir else None, Path(a.src) if a.src else None, log)
+            from app.music_brain.matching import knowledge_sync
+            cache = Path(a.cache_dir) if a.cache_dir else None
+            if a.cmd == "conflicts":
+                out = {"conflicts": knowledge_sync.conflicts(cache)}
+            elif not a.item or a.published == a.local:
+                raise ValueError("take needs an item and exactly one of --published / --local")
+            else:
+                out = knowledge_sync.take(a.item, a.published, cache)
     except (OSError, ValueError) as exc:
         print(json.dumps({"error": str(exc)}))
         return 1
