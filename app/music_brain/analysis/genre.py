@@ -35,10 +35,20 @@ def genre_families(label) -> set:
     return {fam for fam, keys in GENRE_FAMILIES.items() if any(k in g for k in keys)}
 
 
+# Families a set moves between freely (owner, 2026-09-30: hip-hop <-> R&B are neighbours, the
+# DJ Timeless set does it): a move between neighbours is not a family jump.
+NEIGHBOUR_FAMILIES = (frozenset({"hiphop", "rnb"}),)
+
+
+def _families_touch(a: set, b: set) -> bool:
+    """A shared family, or two families listed as neighbours."""
+    return bool(a & b) or any(x != y and frozenset({x, y}) in NEIGHBOUR_FAMILIES for x in a for y in b)
+
+
 def family_jump(genre_a, genre_b) -> bool:
-    """True when both labels are known and share no family (e.g. melodic house -> metal)."""
+    """True when both labels are known and share no family, neighbours aside (e.g. melodic house -> metal)."""
     a, b = genre_families(genre_a), genre_families(genre_b)
-    return bool(a and b) and not (a & b)
+    return bool(a and b) and not _families_touch(a, b)
 
 
 # Scene-level terms: finer than the families above. "electronic" holds both
@@ -90,7 +100,7 @@ def scene_relation(ref, other) -> str:
         return "scene"
     a, b = genre_families(ref), genre_families(other)
     if a and b:
-        return "family" if a & b else "cross"
+        return "family" if _families_touch(a, b) else "cross"
     return "unknown"
 
 

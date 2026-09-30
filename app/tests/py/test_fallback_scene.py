@@ -149,3 +149,12 @@ def test_fallback_fix_js_check():
     check = Path(__file__).parents[1].joinpath("js", "fallback_fix_check.js")
     res = subprocess.run([node, str(check)], capture_output=True, text=True, timeout=30)
     assert res.returncode == 0, res.stderr or res.stdout
+
+
+def test_hiphop_and_rnb_are_neighbour_families():
+    """Owner: hip-hop <-> R&B is not a genre jump (the booking vet refused Naughty Girl after Pretty Girls Walk)."""
+    from app.music_brain.analysis.genre import family_jump, scene_relation
+    assert not family_jump("hip hop", "r&b") and not family_jump("contemporary r&b", "trap")
+    assert scene_relation("hip hop", "r&b") == "family"
+    assert family_jump("hip hop", "deep house")                    # a real jump still is one
+    assert scene_relation("hip hop", "ambient") == "cross"
