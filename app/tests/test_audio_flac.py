@@ -140,7 +140,8 @@ def test_mismatch_keeps_wav(tmp_path, monkeypatch):
     real = audio_convert.verify
     monkeypatch.setattr(audio_convert, "verify",
                         lambda w, f, s: "injected" if w.name == "bass.wav" else real(w, f, s))
-    res = audio_convert.run(tmp_path, apply=True, log=lambda s: None)
+    # monkeypatch only reaches this process, so stay in-process
+    res = audio_convert.run(tmp_path, apply=True, log=lambda s: None, jobs=1)
     assert len(res["failed"]) == 1 and "bass.wav" in res["failed"][0]["file"]
     assert (d / "bass.wav").exists() and not (d / "bass.flac").exists()
     assert not (d / "drums.wav").exists()
