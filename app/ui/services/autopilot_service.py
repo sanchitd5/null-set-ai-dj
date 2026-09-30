@@ -675,10 +675,21 @@ def scene_of(genre) -> str:
     return "" if not sc or sc & _OPEN_FORMAT_SCENES else " / ".join(sorted(sc))
 
 
+def scene_line(genre: str = "", scene_anchor: str = "") -> str:
+    """The prompt line that grounds the scene: the playing song's stored label, and while recovering
+    from an off-scene mistake, the set's scene to go back to (the SCENE ANCHOR, autopilot.js)."""
+    genre, scene_anchor = str(genre or "").strip()[:80], str(scene_anchor or "").strip()[:80]
+    line = f"\nThis song's stored genre label: {genre}. Use it as current_genre.\n" if genre else ""
+    if scene_anchor:
+        line += (f"SCENE RECOVERY: this set's scene is {scene_anchor}; this song left it by mistake. "
+                 f"Pick songs back in {scene_anchor}, not more of this song's genre.\n")
+    return line
+
+
 def _filter_suggestions(
     data: dict, history: list[str], occasion_set: bool = False, current_key: str | None = None,
     allow_genre_change: bool = False, current_artist: str = "", measured_energy: int | None = None,
-    energy_lo: int | None = None, punjabi_profile: str = "off",
+    energy_lo: int | None = None, punjabi_profile: str = "off", scene_genre: str = "",
 ) -> list[dict]:
     """Drop sets/interviews, exact repeats, profile clashes and (unless steering)
     suggestions whose expected_key clashes with `current_key`. A pick that clashes
@@ -687,7 +698,9 @@ def _filter_suggestions(
     measured_energy: the library-measured 1-10 level of the playing song; it replaces
     the model's own guess of the current energy in the profile check.
     energy_lo: the lowest level the set's energy rule allows next (energy.allowed_window);
-    a pick the model rates below it is a clash (a set that only ever falls drains)."""
+    a pick the model rates below it is a clash (a set that only ever falls drains).
+    scene_genre: the playing song's stored label (or the set's scene anchor while recovering
+    from an off-scene mistake): the scene the filters hold, over the model's current_genre."""
     from app.ui.services.download_service import _is_mix, _is_non_music
 
     played = {h.lower() for h in history}
@@ -715,7 +728,7 @@ def _filter_suggestions(
     # "move" only licenses a genre jump inside an occasion: with no occasion the
     # model says "move" freely (it let Pal Pal -> Delilah through).
     steering_any = occasion_set and steering_move
-    cur_genre = data.get("current_genre")
+    cur_genre = scene_genre or data.get("current_genre")
     cur_era = data.get("current_era")
     # Punjabi scene profile (scene_profile.py): while the playing song is Punjabi
     # (auto) or always (on), punjabi / bhangra / desi are one scene, bollywood its
@@ -1186,6 +1199,7 @@ def suggest_next_tracks(
     energy_history: list[int] | None = None,
     energy_reset: bool = False,
     punjabi_profile: str = "off",  # scene_profile mode: off | on | auto
+    scene_anchor: str = "",        # the set's scene while the playing song is an off-scene mistake
 ) -> list[dict]:
     """
     Call local Ollama (gemma3:4b) to suggest next n tracks.
@@ -1195,7 +1209,11 @@ def suggest_next_tracks(
       always "": the model no longer writes display-only fields).
 
     set_position: 0.0 = start of set, 1.0 = end of set.
-    genre: this track's genre from an earlier suggestion ("" = generic DJ rules).
+    genre: this track's STORED label (genre_labels.json; "" = generic DJ rules). It grounds the
+      scene the filters hold over the model's current_genre (the model called Four Tet "deep house"
+      over its stored label, session 2026-09-30_191133); the model's label counts only when none exists.
+    scene_anchor: the set's scene while this track is an off-scene mistake (a fallback / BAD PAIR
+      brought it in): the prompt asks to go back there and the filters hold it instead.
     history_display: cleaned history names for the prompt; `history` (raw names)
     still drives the repeat filter.
     lookahead: songs for AFTER the booked next one; lowest LLM priority.
@@ -1204,6 +1222,7 @@ def suggest_next_tracks(
       Tempo only: never sets occasion_set, theme lock or steering.
     Compatible with both openai v0.x/3.x (ChatCompletion.create) and v1.x/v2.x (OpenAI client).
     """
+    scene_genre = str(scene_anchor or genre or "").strip()
     try:
         target = float(tempo_target) if tempo_target is not None else 0.0
     except (TypeError, ValueError):
@@ -1248,11 +1267,12 @@ def suggest_next_tracks(
 
     try:
         from app.music_brain.matching.dj_knowledge import selection_brief
-        brief = selection_brief(genre or "")
+        brief = selection_brief(scene_genre)
     except Exception:  # grounding is best-effort
         brief = ""
     if brief:
         user_msg += _KNOWLEDGE_TEMPLATE.format(brief=brief)
+    user_msg += scene_line(genre, scene_anchor)
     if relaxed:
         user_msg += RELAXED_LINE
 
@@ -1313,7 +1333,7 @@ def suggest_next_tracks(
         data["steering"] = "move"  # the user's destination: no continuity / key filters against it
     suggestions = _filter_suggestions(
         data, history, occasion_set=bool((occasion or "").strip()) and not lead_to, current_key=camelot,
-        allow_genre_change=bool(lead_to), current_artist=artist, measured_energy=measured_energy, energy_lo=energy_lo, punjabi_profile=punjabi_profile,
+        allow_genre_change=bool(lead_to), current_artist=artist, measured_energy=measured_energy, energy_lo=energy_lo, punjabi_profile=punjabi_profile, scene_genre=scene_genre,
     )
     # Every pick clashed (energy / mood / tempo feel / key / scene): none is kept as a
     # last resort; ask once more with the rejects and their reasons named.
@@ -1332,7 +1352,7 @@ def suggest_next_tracks(
             retry = _filter_suggestions(
                 data2, history, occasion_set=bool((occasion or "").strip()) and not lead_to,
                 current_key=camelot, allow_genre_change=bool(lead_to), current_artist=artist,
-                measured_energy=measured_energy, energy_lo=energy_lo, punjabi_profile=punjabi_profile)
+                measured_energy=measured_energy, energy_lo=energy_lo, punjabi_profile=punjabi_profile, scene_genre=scene_genre)
             if retry:
                 data, suggestions = data2, retry
         except ValueError as exc:
@@ -1341,7 +1361,7 @@ def suggest_next_tracks(
     # jumped, ask once more with the rejected picks named, rather than play a jump.
     if (suggestions and str(suggestions[0].get("rejected_reason", "")).startswith(("genre jump", "era jump"))
             and can_retry()):
-        cur_genre = data.get("current_genre") or "the current song's genre"
+        cur_genre = scene_genre or data.get("current_genre") or "the current song's genre"
         jumped = "; ".join(f"{x.get('artist', '')} - {x.get('title', '')} ({x.get('genre', '')})"
                            for x in data.get("suggestions", []) if isinstance(x, dict))[:400]
         cur_era = data.get("current_era") or "the current song's era"
@@ -1355,7 +1375,7 @@ def suggest_next_tracks(
             data2.setdefault("current_era", data.get("current_era"))
             retry = _filter_suggestions(
                 data2, history, occasion_set=bool((occasion or "").strip()) and not lead_to,
-                current_key=camelot, allow_genre_change=bool(lead_to), current_artist=artist, measured_energy=measured_energy, energy_lo=energy_lo, punjabi_profile=punjabi_profile)
+                current_key=camelot, allow_genre_change=bool(lead_to), current_artist=artist, measured_energy=measured_energy, energy_lo=energy_lo, punjabi_profile=punjabi_profile, scene_genre=scene_genre)
             if retry and not str(retry[0].get("rejected_reason", "")).startswith(("genre jump", "era jump")):
                 data, suggestions = data2, retry
         except ValueError as exc:
@@ -1385,7 +1405,7 @@ def suggest_next_tracks(
                 data2.setdefault("current_era", data.get("current_era"))
                 retry = _filter_suggestions(
                     data2, history, occasion_set=bool((occasion or "").strip()) and not lead_to,
-                    current_key=camelot, allow_genre_change=bool(lead_to), current_artist=artist, measured_energy=measured_energy, energy_lo=energy_lo, punjabi_profile=punjabi_profile)
+                    current_key=camelot, allow_genre_change=bool(lead_to), current_artist=artist, measured_energy=measured_energy, energy_lo=energy_lo, punjabi_profile=punjabi_profile, scene_genre=scene_genre)
                 retry = [x for x in retry if _tempo_locks(target, x.get("expected_bpm")) is not False]
                 if retry:
                     data, suggestions = data2, retry
@@ -1414,7 +1434,7 @@ def suggest_next_tracks(
             data2.setdefault("current_era", data.get("current_era"))
             retry = _filter_suggestions(
                 data2, history, occasion_set=bool((occasion or "").strip()) and not lead_to,
-                current_key=camelot, allow_genre_change=bool(lead_to), current_artist=artist, measured_energy=measured_energy, energy_lo=energy_lo, punjabi_profile=punjabi_profile)
+                current_key=camelot, allow_genre_change=bool(lead_to), current_artist=artist, measured_energy=measured_energy, energy_lo=energy_lo, punjabi_profile=punjabi_profile, scene_genre=scene_genre)
             if not moving:
                 retry = [x for x in retry if _tempo_locks(target, x.get("expected_bpm")) is not False]
             retry = [x for x in retry if _bare_title(x.get("title", "")) != seed]
@@ -1457,7 +1477,7 @@ def suggest_next_tracks(
             data3.setdefault("current_era", data.get("current_era"))
             retry = _filter_suggestions(
                 data3, history, occasion_set=bool((occasion or "").strip()) and not lead_to,
-                current_key=camelot, allow_genre_change=bool(lead_to), current_artist=artist, measured_energy=measured_energy, energy_lo=energy_lo, punjabi_profile=punjabi_profile)
+                current_key=camelot, allow_genre_change=bool(lead_to), current_artist=artist, measured_energy=measured_energy, energy_lo=energy_lo, punjabi_profile=punjabi_profile, scene_genre=scene_genre)
             retry = [x for x in retry if _bare_title(x.get("title", "")) != seed]
             real3, _ = _verify_picks(retry)
             fresh = [x for x in real3 if _bare_title(x.get("title", "")) not in heard]
@@ -1481,7 +1501,7 @@ def suggest_next_tracks(
             retry = _filter_suggestions(
                 data4, history, occasion_set=bool((occasion or "").strip()) and not lead_to,
                 current_key=camelot, allow_genre_change=bool(lead_to), current_artist=artist,
-                measured_energy=measured_energy, energy_lo=energy_lo, punjabi_profile=punjabi_profile)
+                measured_energy=measured_energy, energy_lo=energy_lo, punjabi_profile=punjabi_profile, scene_genre=scene_genre)
             retry = [x for x in retry if _bare_title(x.get("title", "")) != seed
                      and _bare_title(x.get("title", "")) not in heard]
             real4, _ = _verify_picks(retry)
@@ -1497,7 +1517,9 @@ def suggest_next_tracks(
               f"model gave {n_raw}, {len(raw or '')} reply chars): {(raw or '')[:300]!r}", flush=True)
     if meta is not None:  # caller wants the model's read of the CURRENT track too
         meta["current_profile"] = data.get("current_profile") or {}
-        meta["current_genre"] = data.get("current_genre") or ""
+        meta["current_genre"] = str(genre or "").strip() or data.get("current_genre") or ""
+        meta["model_genre"] = data.get("current_genre") or ""
+        meta["scene_anchor"] = scene_anchor or ""
         meta["current_era"] = data.get("current_era") or ""
         try:
             meta["occasion_fit"] = max(0.0, min(10.0, float(data.get("occasion_fit"))))

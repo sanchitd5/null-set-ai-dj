@@ -829,7 +829,8 @@ def _cached_energy_fit(path, bpm: float, cur: int) -> int:
 
 @app.get("/api/library/lockable")
 def get_library_lockable(bpm: float, key: str = "", exclude: str = "", limit: int = 6, max_gap: float = 0.08,
-                         genre: str = "", era: str = "", punjabi_profile: str = "off", energy: int = 0):
+                         genre: str = "", era: str = "", punjabi_profile: str = "off", energy: int = 0,
+                         a_id: str = "", anchor: str = ""):
     """Library songs whose analysed tempo locks to `bpm` (half / double time
     count) within max_gap, best key match first. The autopilot's fallback
     before it would force a tempo jump.
@@ -853,20 +854,35 @@ def get_library_lockable(bpm: float, key: str = "", exclude: str = "", limit: in
     `energy` = the playing song's measured level (1-10, 0 = unknown). Songs
     whose already-measured level sits within energy.MAX_STEP go first: in
     102327 every candidate died on "energy drop 8 -> 5". Nothing is measured
-    here; unmeasured songs rank in between."""
+    here; unmeasured songs rank in between.
+
+    The reference genre is `anchor` (the set's scene while the console recovers from an
+    off-scene mistake), else the playing song's STORED label (`a_id`, genre_labels.json),
+    else `genre` (the console's / model's label). Session 2026-09-30_191133: the console
+    sent genre="" for a FOLLOW SET song, nothing was filtered, and Big Boss Vette (hip hop)
+    handed over to Four Tet (electronic).
+
+    `outside`: songs that lock but sit outside the reference scene, ranked same family,
+    then unknown genre, then cross-family (genre.SCENE_RANK), each with its `scene_rel`.
+    The console books one only when nothing in `tracks` passed and logs it as such."""
     from app.music_brain.matching import techniques as tq
-    from app.music_brain.analysis.genre import MAX_ERA_GAP, era_gap, genre_near
+    from app.music_brain.analysis.genre import MAX_ERA_GAP, SCENE_RANK, era_gap, genre_near, scene_relation
     from app.ui.services.download_service import _is_live, _is_mix
     from app.ui.services.track_identity import clean_identity
 
     skip = set(filter(None, exclude.split(",")))
+    genre = str(genre or "").strip()[:80]
+    anchor = str(anchor or "").strip()[:80]
+    stored = (_track_vibe(str(a_id)[:64]).get("genre") or "") if a_id else ""
+    genre = anchor or stored or genre
     # Punjabi scene profile: one scene (punjabi / bhangra / desi, bollywood near) and
     # a wider era gate while it is active; "off" (the default) is today's filter.
     from app.music_brain.analysis import scene_profile as _sp
     sp_active = _sp.selection_active(punjabi_profile, genre)
-    genre = str(genre or "").strip()[:80]
     era = str(era or "").strip()[:40]
-    out = []
+    if a_id and not era:
+        era = _track_vibe(str(a_id)[:64]).get("era") or ""
+    out, outside = [], []
     for tid, path in list(_tracks.items()):
         if tid in skip:
             continue
@@ -877,8 +893,7 @@ def get_library_lockable(bpm: float, key: str = "", exclude: str = "", limit: in
         lib_genre = _suggested_genres.get(lib_key, "")
         near = (_sp.scene_near(genre, lib_genre, True) if sp_active
                 else genre_near(genre, lib_genre)) if genre else True
-        if near is not True and not (sp_active and not lib_genre):
-            continue
+        inside = near is True or (sp_active and not lib_genre)
         lib_era = _suggested_eras.get(lib_key, "")
         if sp_active:
             if _sp.era_jump(era, lib_era, True):
@@ -898,12 +913,17 @@ def get_library_lockable(bpm: float, key: str = "", exclude: str = "", limit: in
             continue
         k = a.key.camelot if a.key else None
         ks = tq.camelot_score(key, k) if key and k else 0.5
-        out.append({"track_id": tid, "name": name, "bpm": a.bpm, "key": k, "gap": round(gap, 4),
-                    "key_score": ks, "duration": a.duration, "stems": _stem_cache.get(tid) is not None,
-                    "genre": lib_genre, "era": lib_era, "genre_known": near is True,
-                    "energy_fit": _cached_energy_fit(path, a.bpm, energy)})
-    out.sort(key=lambda x: (not x["genre_known"], -x["energy_fit"], -x["key_score"], x["gap"]))
-    return {"tracks": out[: max(1, min(limit, 20))]}
+        row = {"track_id": tid, "name": name, "bpm": a.bpm, "key": k, "gap": round(gap, 4),
+               "key_score": ks, "duration": a.duration, "stems": _stem_cache.get(tid) is not None,
+               "genre": lib_genre, "era": lib_era, "genre_known": near is True,
+               "energy_fit": _cached_energy_fit(path, a.bpm, energy),
+               "scene_rel": scene_relation(genre, lib_genre) if genre else "unknown"}
+        (out if inside else outside).append(row)
+    rank = lambda x: (-x["energy_fit"], -x["key_score"], x["gap"])
+    out.sort(key=lambda x: (not x["genre_known"], *rank(x)))
+    outside.sort(key=lambda x: (SCENE_RANK.get(x["scene_rel"], 3), *rank(x)))
+    lim = max(1, min(limit, 20))
+    return {"tracks": out[:lim], "outside": outside[:lim], "ref_genre": genre}
 
 
 @app.get("/api/stems/status")
@@ -1099,6 +1119,9 @@ def _song_step(kind: str, track_id: Optional[str], **fields) -> None:
         pass
 
 
+SESSION_EVENT_KINDS = ("track", "ear_flush", "note", "glitch", "move", "deck_load", "deck_unload", "veto")
+
+
 class SessionEvent(BaseModel):
     kind: str
     data: Dict = {}
@@ -1109,8 +1132,10 @@ def post_session_event(ev: SessionEvent):
     """The console's side of this session's log (track changes, ear flushes)."""
     from app.ui.services import session_log
 
-    if ev.kind not in ("track", "ear_flush", "note", "glitch", "move"):
-        raise HTTPException(status_code=400, detail="kind must be track, ear_flush, glitch, move or note")
+    # deck_load / deck_unload: a song loaded on the staging deck and why it backed off (191133 had no
+    # trace of Hanumankind loading); veto: BAD PAIR (the console sent it, the whitelist refused it)
+    if ev.kind not in SESSION_EVENT_KINDS:
+        raise HTTPException(status_code=400, detail=f"kind must be one of {', '.join(SESSION_EVENT_KINDS)}")
     # the event's own fields may reuse the log's names (a glitch report has its own "kind"):
     # those are kept as "<name>_" instead of clashing
     fields = {(f"{k}_" if k in ("kind", "t", "at") else k): v for k, v in list(ev.data.items())[:20] if isinstance(k, str)}
@@ -2002,6 +2027,9 @@ class AutopilotSuggestRequest(BaseModel):
     # Punjabi scene profile (app/music_brain/analysis/scene_profile.py): off | on | auto.
     # Absent -> "off" so older clients get today's behaviour.
     punjabi_profile: str = "off"
+    # SCENE ANCHOR (autopilot.js sceneAnchorNext): the set's scene while the playing song is an
+    # off-scene mistake (a fallback / BAD PAIR brought it in). "" = no recovery.
+    scene_anchor: str = Field(default="", max_length=80)
     # Relaxed session (autopilot.js RELAXED_OCCASION): picks never lift the energy.
     relaxed: bool = False
     # "dip": the set has sat near its loudness peak for a while, so ask for a
@@ -2264,6 +2292,7 @@ class VetRequest(BaseModel):
     history: List[str] = Field(default_factory=list, max_length=400)
     set_id: str = Field(default="", max_length=64)
     punjabi_profile: str = "off"
+    anchor_genre: str = Field(default="", max_length=80)   # the set's scene while recovering from a mistake
     cands: List[VetCand] = Field(default_factory=list, max_length=60)
 
 
@@ -2291,10 +2320,12 @@ def autopilot_vet(req: VetRequest):
             v = _vibe_by_name(name)
         rows.append({"track_id": c.track_id, "name": name, "genre": v["genre"], "era": v["era"], "stored": c.stored})
     res = bv.vet(a_name, rows, a_genre=av["genre"], a_era=av["era"], history=req.history, earlier=earlier,
-                 vetoes=_vetoes(), punjabi_profile=req.punjabi_profile)
+                 vetoes=_vetoes(), punjabi_profile=req.punjabi_profile, anchor_genre=req.anchor_genre or None)
     for r, row in zip(res, rows):
         r["genre"], r["era"] = row["genre"], row["era"]
-    return {"a_name": a_name, "a_genre": av["genre"], "a_era": av["era"], "results": res}
+    from app.music_brain.analysis.genre import genre_families
+    return {"a_name": a_name, "a_genre": av["genre"], "a_era": av["era"],
+            "a_families": sorted(genre_families(av["genre"])), "results": res}
 
 
 def _pair_vibe(track_a_id: str, track_b_id: str) -> Dict[str, Optional[str]]:
@@ -2477,6 +2508,7 @@ def _autopilot_suggest_impl(req: AutopilotSuggestRequest):
             lead_steps=max(0, min(req.lead_steps, 12)),
             lead_bpm=req.lead_bpm,
             punjabi_profile=req.punjabi_profile,
+            scene_anchor=req.scene_anchor.strip(),
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"LLM suggest error: {exc}") from exc
@@ -2486,10 +2518,12 @@ def _autopilot_suggest_impl(req: AutopilotSuggestRequest):
         if s.get("title") and s.get("era"):
             _set_label(_suggested_eras, _genre_key(s["title"]), s["era"])
     # The playing song's own genre (the model's current_genre): library songs
-    # get labels as they play, so the library fallback can check genre.
-    if meta.get("current_genre") and not req.lookahead:
+    # get labels as they play, so the library fallback can check genre. A stored
+    # label wins (suggest_next_tracks grounds current_genre on it): the model called
+    # Four Tet "deep house" / "melodic techno" over its stored label (session 191133).
+    if meta.get("current_genre") and not req.lookahead and not genre:
         _set_label(_suggested_genres, _genre_key(title_part), meta["current_genre"])
-    if meta.get("current_era") and not req.lookahead:
+    if meta.get("current_era") and not req.lookahead and not _suggested_eras.get(_genre_key(title_part)):
         _set_label(_suggested_eras, _genre_key(title_part), meta["current_era"])
     _save_labels()
     _song_step("suggest", req.track_id,

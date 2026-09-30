@@ -407,6 +407,73 @@ var autopilotCore = (function () {
       retryMs: emptyRetryMs(Math.max(emptyStreak, failedSearches)),
     };
   }
+  // A candidate being prepared (loaded, then backed off only because its stems were not on yet) is
+  // waited for at the deadline, not replaced (session 2026-09-30_191133: Hanumankind was loaded for
+  // Big Boss Vette, backed off on "no stems on both decks", and the deadline booked Four Tet from the
+  // library). The wait rides A to its latest exit line (exitHi) minus the lead the booking needs; only
+  // when that is gone does the fallback run. o: {pos, exitLo, exitHi, ready} -> {wait, book, budgetS, why}
+  const PREPARED_LEAD_S = 30;   // load + match + plan before the exit line (GUESS, as DEADLINE_LEAD_S)
+  function preparedWait(o) {
+    const end = Number.isFinite(o.exitHi) ? Math.max(o.exitHi, Number.isFinite(o.exitLo) ? o.exitLo : -Infinity) : o.exitLo;
+    const budgetS = Number.isFinite(end) && Number.isFinite(o.pos) ? Math.max(0, end - o.pos - PREPARED_LEAD_S) : 0;
+    if (o.ready) return { wait: false, book: true, budgetS, why: "ready" };
+    if (budgetS > 0) return { wait: true, book: false, budgetS, why: `can still make the exit (${Math.round(budgetS)} s before the latest exit line)` };
+    return { wait: false, book: false, budgetS: 0, why: "cannot be ready before the latest exit line" };
+  }
+  // A gate refusal's reason: planHold's own refusals say `why`, stem-moves holdPlan's say `reason`
+  // (the "merge_gate refused key: undefined" line in 191133 was a real Camelot clash, reason unread).
+  const gateWhy = (hd) => (hd && (hd.why || hd.reason)) || "refused";
+  // Where a candidate came from, for the deck_load / deck_unload session events.
+  function candSource(c) {
+    if (!c) return "";
+    if (c._fallback) return `${c._fallback} fallback`;
+    if (c._macro) return "macro step";
+    if (c._follow) return "follow set";
+    if (c._combo) return c._combo.studied ? "studied combo" : "atlas combo";
+    if (c.suggestion) return "pick";
+    return c.fromLibrary ? "library" : "candidate";
+  }
+  // deck_load / deck_unload event body (events.jsonl): the song, its deck and why.
+  function deckEvent(kind, o) {
+    const dflt = kind === "deck_load" ? candSource(o.cand) : "rejected after load";
+    return { deck: o.deck || null, song: (o.cand && o.cand.name) || "", track_id: (o.cand && o.cand.track_id) || null,
+             source: candSource(o.cand), reason: String(o.reason || dflt).slice(0, 200) };
+  }
+  // ---- SCENE ANCHOR (owner: "if a decision is made mistakenly, the next song should go back to the
+  // original genre") ----
+  // The set's scene: genre families from the stored labels (booking vet `families`). It follows the set
+  // (a song inside it, or a deliberate move outside it, moves it); a song brought in from outside it by a
+  // fallback path (deadline atlas / library), or a pair the owner vetoed (BAD PAIR), is an OFF-SCENE
+  // MISTAKE: the anchor stays and the next selection goes back to it (recover).
+  // state: {anchor: {genre, families} | null, prev, recover: {anchor, mistaken} | null}
+  // t: {name, genre, families, fallback, vetoed} -> the next state + {mistake, why}
+  function sceneAnchorNext(state, t) {
+    const s = state || {}, anchor = s.anchor || null, fam = (t && t.families) || [];
+    if (!fam.length) return { anchor, prev: anchor, recover: null, mistake: false, why: "genre unknown: anchor kept" };
+    const b = { genre: (t && t.genre) || "", families: fam.slice().sort() };
+    if (!anchor || !(anchor.families || []).length) return { anchor: b, prev: anchor, recover: null, mistake: false, why: "anchor set" };
+    if (fam.some((f) => anchor.families.includes(f))) {
+      return { anchor: b, prev: anchor, recover: null, mistake: false, why: s.recover ? "back in the scene" : "in the scene" };
+    }
+    if (t.fallback || t.vetoed) {
+      return { anchor, prev: anchor, recover: { anchor, mistaken: t.name || "" }, mistake: true,
+               why: `${t.vetoed ? "vetoed pair" : `${t.fallback} fallback`} left ${anchor.genre || anchor.families.join("/")} for ${b.genre || fam.join("/")}` };
+    }
+    return { anchor: b, prev: anchor, recover: null, mistake: false, why: "deliberate move: the anchor follows" };
+  }
+  // BAD PAIR on the pair that already landed: the anchor goes back to where it was before it.
+  function sceneAnchorBad(state, name) {
+    const s = state || {}, anchor = s.prev || s.anchor || null;
+    if (!anchor) return Object.assign({}, s, { mistake: false, why: "no anchor yet" });
+    return { anchor, prev: anchor, recover: { anchor, mistaken: name || "" }, mistake: true, why: "BAD PAIR" };
+  }
+  // Recovery / fallback ranking by scene_rel (server genre.scene_relation), stable: in-scene or same
+  // family first, then unknown genre, then cross-family. A row without the field keeps its place class 0.
+  const SCENE_ORDER = { scene: 0, family: 0, unknown: 1, cross: 2 };
+  function sceneOrder(list, relOf) {
+    return (list || []).map((c, i) => ({ c, i, r: SCENE_ORDER[relOf(c)] != null ? SCENE_ORDER[relOf(c)] : 0 }))
+      .sort((x, y) => x.r - y.r || x.i - y.i).map((x) => x.c);
+  }
   // Atlas backup B (preplanned as soon as A plays; GET /api/atlas/backup rows). The atlas's partners
   // are library songs with a scored pair: they cannot be invented the way the model's picks were.
   // Tier order: studied combo, atlas combo, then the best partner; songs heard in an earlier set after
@@ -432,14 +499,26 @@ var autopilotCore = (function () {
         if (v.ok) fit = 1; else why = v.why;
       }
       if (why) { skipped.push({ b: r.b, name, why }); continue; }
-      list.push({ track_id: r.b, name, bpm: r.b_bpm, duration: r.b_duration, works: r.works || 0, plan: r.plan || null,
-                  level: Number.isFinite(r.b_level) ? r.b_level : null, fit, earlier: !!r.earlier_set,
-                  tier: r.studied ? "studied combo" : r.combo ? "atlas combo" : "atlas partner" });
+      const row = { track_id: r.b, name, bpm: r.b_bpm, duration: r.b_duration, works: r.works || 0, plan: r.plan || null,
+                    level: Number.isFinite(r.b_level) ? r.b_level : null, fit, earlier: !!r.earlier_set,
+                    tier: r.studied ? "studied combo" : r.combo ? "atlas combo" : "atlas partner",
+                    genre: r.b_genre || null, sceneRel: r.scene_rel || null };
+      // a cross-family partner (both labels known, no shared family) is the last resort, not a backup
+      if (r.scene_rel === "cross") { skipped.push({ b: r.b, name, why: `cross-family (${r.b_genre || "?"})`, cross: row }); continue; }
+      list.push(row);
     }
     const rank = { "studied combo": 0, "atlas combo": 1, "atlas partner": 2 };
-    list.sort((x, y) => (x.earlier - y.earlier) || (rank[x.tier] - rank[y.tier]) || (y.fit - x.fit)
-      || (y.works - x.works) || (x.track_id < y.track_id ? -1 : x.track_id > y.track_id ? 1 : 0));
+    const sc = (x) => (x.sceneRel === "unknown" ? 1 : 0);    // unknown genre after the in-scene ones
+    const cmp = (x, y) => (x.earlier - y.earlier) || (sc(x) - sc(y)) || (rank[x.tier] - rank[y.tier]) || (y.fit - x.fit)
+      || (y.works - x.works) || (x.track_id < y.track_id ? -1 : x.track_id > y.track_id ? 1 : 0);
+    list.sort(cmp);
     return { list, skipped };
+  }
+  // the last-resort cross-family partners rankAtlasBackups set aside (skipped rows with `cross`), best first
+  function crossBackups(r) {
+    const rank = { "studied combo": 0, "atlas combo": 1, "atlas partner": 2 };
+    return ((r && r.skipped) || []).filter((s) => s.cross).map((s) => s.cross)
+      .sort((x, y) => (x.earlier - y.earlier) || (rank[x.tier] - rank[y.tier]) || (y.fit - x.fit) || (y.works - x.works));
   }
   // ---- booking vet (server booking_vet.py) ----
   // A stored move replayed from memory (a macro step, a FOLLOW SET song, a studied combo) obeys the picks'
@@ -500,9 +579,14 @@ var autopilotCore = (function () {
   // while A still plays. A reject made under the relaxed last-round limits holds in every round; one
   // made under the strict limits does not hold in the forced round (it may pass there).
   const pairKey = (aId, bId) => `${aId}>${bId}`;
-  function rememberPairReject(store, aId, bId, why, forced) { store.set(pairKey(aId, bId), { why, forced: !!forced }); }
-  function pairRejected(store, aId, bId, forced) {
+  // pending: the reject is only a state that is being prepared ("stems": B / A stems still separating):
+  // it lifts once cleared(pending, bId) says that state is there (the pair is tried again).
+  function rememberPairReject(store, aId, bId, why, forced, pending) {
+    store.set(pairKey(aId, bId), { why, forced: !!forced, pending: pending || null });
+  }
+  function pairRejected(store, aId, bId, forced, cleared) {
     const r = store.get(pairKey(aId, bId));
+    if (r && r.pending && cleared && cleared(r.pending, bId)) { store.delete(pairKey(aId, bId)); return null; }
     return r && (!forced || r.forced) ? r : null;
   }
   // ---- scheduleTransition seams (pure; the virtual set in app/sim drives them) ----
@@ -870,7 +954,8 @@ var autopilotCore = (function () {
     return out;
   }
   const api = { prerenderTargets, readinessNeeds, aTempoAtEntry, deferBudgetS, deferDecision, orderByReadiness, DEFER_MAX_S, DEFER_MIN_LEAD_S, PREFER_READY_JUMP,
-    emptyRetryMs, useLibraryFallback, searchPlan, DEADLINE_LEAD_S, rankAtlasBackups, backupStale, backupNeedsStems, rememberPairReject, pairRejected, awaitJob, keySafeRecipe, KEY_SAFE_MIN, energyStepOk, hybridWindowKey, highSpans, quantileLinear, median, exitPastHigh, learnedRecipe, vocalRecipe, stemBlendBars, stemBlendFader, phraseWaitS, introBars, FADER_PARK_BARS, homePlan, maskedGlideBars, maskedDropAt, HOME_DROP_PCT, LADDER_STEP_PCT,
+    emptyRetryMs, useLibraryFallback, searchPlan, DEADLINE_LEAD_S, preparedWait, PREPARED_LEAD_S, gateWhy, candSource, deckEvent,
+    sceneAnchorNext, sceneAnchorBad, sceneOrder, SCENE_ORDER, rankAtlasBackups, crossBackups, backupStale, backupNeedsStems, rememberPairReject, pairRejected, awaitJob, keySafeRecipe, KEY_SAFE_MIN, energyStepOk, hybridWindowKey, highSpans, quantileLinear, median, exitPastHigh, learnedRecipe, vocalRecipe, stemBlendBars, stemBlendFader, phraseWaitS, introBars, FADER_PARK_BARS, homePlan, maskedGlideBars, maskedDropAt, HOME_DROP_PCT, LADDER_STEP_PCT,
     tempoLockableAt, recipeKind, decideRecipe, planSkipReason, WINDOWS, playWindowFor, exitBounds, exitPick, exitTiming, exitHighPush, audibleEnd, entryClamp, SILENT_FLOOR,
     breakdownSpans, exitOutOfBreakdown, exitBreakdownPush, energyAtTarget, FINISH_MAX_S, forcedExit, forcedRecipe, forcedLine, forcedBooking,
     storedMove, vetRefusal, vetStep, badPairOf, pairKey, mashupGate, mashupBars,
@@ -1393,7 +1478,7 @@ function createAutopilotEngine({ host, ai }) {
     let plan = hd.plan || null;
     if (!plan) {
       const mf = mergeFits(od, idk);
-      mergeGateLog(activeDeck, hd.gate, hd.why, !!mf, hd.tried);
+      mergeGateLog(activeDeck, hd.gate, autopilotCore.gateWhy(hd), !!mf, hd.tried);
       if (!mf) return null;
       const cs = host.mod.djMind && host.mod.djMind.core && host.mod.djMind.core.camelotScore;
       const ka = od.analysis && od.analysis.key && od.analysis.key.camelot, kb = idk.analysis && idk.analysis.key && idk.analysis.key.camelot;
@@ -2005,7 +2090,8 @@ function createAutopilotEngine({ host, ai }) {
     const data = await ai.suggest({ set_id: setId, track_id: trackId, occasion: occasionWithBridge(opts), ...leadFields(opts), history: history.slice(-30), avoid: avoid.slice(-6), queue: queueNames(), set_position: setPos, set_mode: setMode(), relaxed: !!host.session.relaxed, energy_note: energyNote, energy_hook: energyHook, energy_history: playedEnergies(), lookahead: !!opts.lookAhead,
         variety_run: varietyRun().run, variety_genre: varietyRun().genre,
         tempo_target: bridgeTarget(opts.lookAhead), tempo_note: bridgeNote(opts.lookAhead) || null,
-        elapsed_seconds: setStartedAt ? (host.clock.now() - setStartedAt) / 1000 : null, punjabi_profile: punjabiMode() });
+        elapsed_seconds: setStartedAt ? (host.clock.now() - setStartedAt) / 1000 : null, punjabi_profile: punjabiMode(),
+        scene_anchor: opts.lookAhead ? "" : recoverGenre() });
     // OCCASION FIRST: the AI says the playing song is outside the occasion's
     // music ("punjabi wedding" while Fred again.. plays) -> steer, even across
     // a tempo gap (Echo Out), instead of holding out for a beat-matchable pick.
@@ -2162,6 +2248,14 @@ function createAutopilotEngine({ host, ai }) {
     fetch("/api/prerender", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ items: [] }) }).catch(() => {});
   }
   const candReady = (c) => !!(rdyById[c.track_id] && rdyById[c.track_id].ready);
+  // A pending pair reject ("stems") lifts once B's stems are made (prerender) and A's are sounding.
+  const pendingCleared = (what, bId) => what === "stems" && !!(rdyById[bId] && rdyById[bId].stems)
+    && !stemsWhy(host.decks && host.decks[activeDeck]);
+  // The candidate the deadline waits for instead of replacing it: loaded, backed off only on its stems.
+  function preparedCandidate(currentId) {
+    return poolRanked().find((c) => c._preparing && c._preparing.for === currentId && c.track_id !== currentId
+      && !playedIds.includes(c.track_id)) || null;
+  }
 
   // Match + gates + load + schedule one downloaded candidate. True = scheduled.
   // Can `cand` be tempo-locked to the playing deck (half/double time counts)?
@@ -2202,6 +2296,12 @@ function createAutopilotEngine({ host, ai }) {
   // Variety: subgenre of each played song, to spot a style that has plateaued.
   let genreLog = [];
   let currentGenre = "";
+  // SCENE ANCHOR (autopilotCore.sceneAnchorNext): the set's scene, and while the playing song is an
+  // off-scene mistake, the scene the next selection goes back to (every path: suggest, FOLLOW SET /
+  // combos, pool, atlas backup, library, booking vet).
+  let sceneState = { anchor: null, prev: null, recover: null };
+  let badPairPending = null;     // BAD PAIR pressed while the transition runs: the landing is a vetoed pair
+  const recoverGenre = () => (sceneState.recover && sceneState.recover.anchor && sceneState.recover.anchor.genre) || "";
   let currentEra = "";     // model's release decade for the playing song ("1990s"): library fallback holds it
   function genreFamily(g) {
     return String(g || "").toLowerCase().split(/[\/,&(]| - /)[0].replace(/[^a-z0-9 ]+/g, " ").trim();
@@ -2527,14 +2627,42 @@ function createAutopilotEngine({ host, ai }) {
       const res = await fetch("/api/autopilot/vet", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ a_id: currentId, a_name: history[history.length - 1] || "", history: history.slice(-400), set_id: setId || "",
-          punjabi_profile: punjabiMode(), cands: [{ track_id: cand.track_id || null, name: cand.name || "", stored: autopilotCore.storedMove(cand) }] }),
+          punjabi_profile: punjabiMode(), anchor_genre: recoverGenre(),
+          cands: [{ track_id: cand.track_id || null, name: cand.name || "", stored: autopilotCore.storedMove(cand) }] }),
       });
       if (!res.ok) { console.warn("vet: HTTP", res.status); return null; }
       const j = await res.json();
       const r0 = j && Array.isArray(j.results) ? j.results[0] : null;
       if (r0 && cand.track_id) pairClash.set(autopilotCore.pairKey(currentId, cand.track_id), r0.scene_clash === true);   // mashupFits' scene gate
+      if (r0) { cand._genre = r0.genre || null; cand._families = r0.families || []; cand._sceneRel = r0.scene_rel || null; }   // scene anchor
+      if (j && j.a_genre && currentTrackId === currentId) {
+        currentGenre = j.a_genre;   // the playing song's STORED label wins
+        // the set's first scene: the playing song's, before any landing moved it
+        if (!sceneState.anchor && (j.a_families || []).length) sceneState = Object.assign({}, sceneState, { anchor: { genre: j.a_genre, families: j.a_families.slice().sort() } });
+      }
       return autopilotCore.vetRefusal(j);
     } catch (e) { console.warn("vet:", e && e.message); return null; }
+  }
+
+  // SCENE ANCHOR recovery: the candidates of one path (stored moves, pool) with the anchor's scene first
+  // (booking vet scene_rel against the anchor, autopilotCore.sceneOrder). Off recovery: unchanged.
+  async function sceneRanked(currentId, list, what) {
+    const g = recoverGenre();
+    if (!g || !Array.isArray(list) || list.length < 2) return list;
+    try {
+      const res = await fetch("/api/autopilot/vet", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ a_id: currentId, a_name: history[history.length - 1] || "", history: history.slice(-400), set_id: setId || "",
+          punjabi_profile: punjabiMode(), anchor_genre: g,
+          cands: list.map((c) => ({ track_id: c.track_id || null, name: c.name || "", stored: false })) }),
+      });
+      const rows = ((res.ok && (await res.json())) || {}).results || [];
+      const rel = new Map(list.map((c, i) => [c, rows[i] && rows[i].scene_rel]));
+      const out = autopilotCore.sceneOrder(list, (c) => rel.get(c));
+      host.log.step("scene_recover", { phase: "selection", decision: `ranked ${what}`,
+        why: `anchor ${g}: ${out.slice(0, 4).map((c) => `${c.name} (${rel.get(c) || "?"})`).join(" > ")}` });
+      return out;
+    } catch (e) { console.warn("scene rank:", e && e.message); return list; }
   }
 
   async function evaluateCandidate(currentId, cand, gen) {
@@ -2586,7 +2714,8 @@ function createAutopilotEngine({ host, ai }) {
     }
     if (!active) return false;
 
-    const known = autopilotCore.pairRejected(pairRejects, currentId, nextId, forceJump);
+    const known = autopilotCore.pairRejected(pairRejects, currentId, nextId, forceJump, pendingCleared);
+    if (!known) cand._preparing = null;
     if (known) {
       apStatus(`Not after this song: ${nextName} (${known.why}) — already checked, kept for later`);
       cand.keep = true;
@@ -2655,6 +2784,9 @@ function createAutopilotEngine({ host, ai }) {
     const blob = await audioRes.blob();
     if (!active) return false;
     await loadIntoDeck(stagingDeck(), nextId, nextName, blob);
+    // events.jsonl had no trace of a song loaded and backed off (the owner saw Hanumankind do it, 191133)
+    stagedLoad = { deck: stagingDeck(), cand };
+    sessionEvent("deck_load", autopilotCore.deckEvent("deck_load", { deck: stagingDeck(), cand }));
     // tempo gap 2-15 %: render its key-locked tempo stems now, long before the blend
     {
       const oa1 = host.decks && host.decks[activeDeck], sd1 = host.decks && host.decks[stagingDeck()];
@@ -2683,6 +2815,7 @@ function createAutopilotEngine({ host, ai }) {
       const ok2 = sd2 && sd2._tempoStemsJob ? await Promise.race([sd2._tempoStemsJob, new Promise((r) => setTimeout(() => r(false), 90000))]) : false;
       if (!ok2 && !forceJump) {
         apStatus(`Not now: ${nextName} needs key-locked stems that aren't ready — kept for later`);
+        cand._rejectWhy = "stems failed: key-locked tempo stems not ready";
         cand.keep = true;
         return false;
       }
@@ -2697,6 +2830,11 @@ function createAutopilotEngine({ host, ai }) {
       const odF = host.decks && host.decks[activeDeck], sdF = host.decks && host.decks[stagingDeck()];
       if (odF && sdF && odF.bpm > 0) {
         if (odF.stems && !odF.stemsReady && odF.rearmStems) odF.rearmStems("plan-fit check");
+        // B's stems are made (prerender) but still attaching to the deck just loaded: a few seconds, not a reject
+        if (!sdF.stems && pendingCleared("stems", nextId)) {
+          const t3 = host.clock.now();
+          while (!sdF.stems && active && host.clock.now() - t3 < 15000) await new Promise((r) => setTimeout(r, 500));
+        }
         const aStemsWhyF = stemsWhy(odF), stemsBothF = !aStemsWhyF && !!sdF.stems;
         const fit = host.mod.tempoRule.planFit({
           aEff: odF.bpm * odF._playbackRate(), bBpm: sdF.bpm, stemsBoth: stemsBothF,
@@ -2708,10 +2846,17 @@ function createAutopilotEngine({ host, ai }) {
         if (!fit.smooth && !allowTempoJump && candidate.forced) {
           console.info(`plan-fit: ${nextName} (${fit.why}): stored move kept, the booking falls back`);
         } else if (!fit.smooth && !allowTempoJump) {
+          // only the stems are missing (a Stem Bridge is smooth once both decks have them): the song is
+          // being PREPARED, not refused for good. It stays in the prerender list, the pair is tried again
+          // once its stems land, and the deadline waits for it (autopilotCore.preparedWait).
+          const withStems = !stemsBothF && host.mod.tempoRule.planFit({ aEff: odF.bpm * odF._playbackRate(), bBpm: sdF.bpm, stemsBoth: true,
+            tempoStemsBpm: sdF.tempoStems && sdF.tempoStems.bpm }).smooth;
           console.warn("Autopilot plan-fit reject:", nextName, fit.why);
-          host.log.step("candidate_reject", { track_id: nextId, phase: "selection", decision: "plan-fit reject", why: fit.why });
+          host.log.step("candidate_reject", { track_id: nextId, phase: "selection", decision: withStems ? "plan-fit wait (stems)" : "plan-fit reject", why: fit.why });
           apStatus(`Not after this song: ${nextName} (${fit.why}) — kept for later`);
-          autopilotCore.rememberPairReject(pairRejects, currentId, nextId, fit.why, forceJump);
+          autopilotCore.rememberPairReject(pairRejects, currentId, nextId, fit.why, forceJump, withStems ? "stems" : null);
+          if (withStems) cand._preparing = { what: "stems", since: host.clock.now(), for: currentId };
+          cand._rejectWhy = withStems ? `stems not ready (${fit.why})` : `plan-fit: ${fit.why}`;
           cand.keep = true;
           return false;
         }
@@ -3027,15 +3172,16 @@ function createAutopilotEngine({ host, ai }) {
     if (backupPromise && backupPromise.for === currentId) return backupPromise;
     const p = (async () => { try {
       let data = {};
-      try { data = await (await fetch(`/api/atlas/backup?a=${encodeURIComponent(currentId)}&n=40&set_id=${encodeURIComponent(setId || "")}`)).json(); }
+      try { data = await (await fetch(`/api/atlas/backup?a=${encodeURIComponent(currentId)}&n=40&set_id=${encodeURIComponent(setId || "")}&anchor=${encodeURIComponent(recoverGenre())}`)).json(); }
       catch (e) { data = {}; }
       const energyA = Number.isFinite(measuredById[currentId]) ? measuredById[currentId] : data.a_level;
       const r = autopilotCore.rankAtlasBackups(data.partners || [], {
         aId: currentId, played: playedIds, recent: history, energyA, songs: history.length,
         relaxed: !!(host.session && host.session.relaxed), recentLevels: playedEnergies(),
         spacing: (n) => (host.mod.artistSpacing ? host.mod.artistSpacing.spacingBlock(n, history, false) : null),
-        rejected: (b) => autopilotCore.pairRejected(pairRejects, currentId, b, false) });
-      atlasBackup = { for: currentId, played: playedIds.length, energyA: measuredById[currentId], list: r.list, skipped: r.skipped, cand: r.list[0] || null };
+        rejected: (b) => autopilotCore.pairRejected(pairRejects, currentId, b, false, pendingCleared) });
+      atlasBackup = { for: currentId, played: playedIds.length, energyA: measuredById[currentId], list: r.list, skipped: r.skipped,
+        cross: autopilotCore.crossBackups(r), cand: r.list[0] || null, anchor: recoverGenre() };
       const c = atlasBackup.cand;
       if (c) {
         host.log.step("atlas_backup", { track_id: c.track_id, phase: "planning", decision: `backup ${c.name}`,
@@ -3054,70 +3200,146 @@ function createAutopilotEngine({ host, ai }) {
     p.finally(() => { if (backupPromise === p) backupPromise = null; });
     return p;
   }
-  // Deadline fallback, in tier order: the atlas backup (studied combo / atlas combo / best partner,
-  // up to 4 tried), then a library song that tempo-locks. Null = nothing booked: HOLD LOOP stays.
+  // Deadline fallback. First a candidate that is being PREPARED (loaded, backed off only because its
+  // stems were not on yet) is waited for while it can still make A's latest exit line
+  // (autopilotCore.preparedWait): 191133 threw Hanumankind away for Four Tet. Then, in tier order, the
+  // atlas backup (studied combo / atlas combo / best partner, up to 4 tried, in the playing song's scene),
+  // then a library song that tempo-locks in that scene. Only when none passes, the last resort outside
+  // the scene (atlas cross-family partner, library song of another family / unknown genre), logged as
+  // such. Null = nothing booked: HOLD LOOP stays.
   async function deadlineFallback(currentId, gen, reason) {
+    const held = preparedCandidate(currentId);
+    if (held && reason === "deadline") {
+      const r = await waitPrepared(currentId, held, gen, reason);
+      if (r || !active || gen !== prepGen) return r;
+    }
+    // the fallback's scene: the anchor while recovering, else the playing song's stored label (server),
+    // else the prepared candidate's scene when the playing song has no label
+    const anchor = recoverGenre() || (!currentGenre && held && held._genre) || "";
     const b = await preplanBackup(currentId);
     if (!active || gen !== prepGen) return null;
-    for (const c of (b && b.list || []).slice(0, 4)) {
-      if (!active || gen !== prepGen) return null;
-      if (c.track_id === currentId || playedIds.includes(c.track_id)) continue;
-      apStatus(`Backup (${c.tier}): trying ${c.name}`);
-      const cand = { track_id: c.track_id, name: c.name, bpm: c.bpm, duration: c.duration, keep: false, fromLibrary: true };
-      if (await tryCandidate(currentId, cand, gen)) {
-        host.log.step("atlas_fallback", { track_id: c.track_id, phase: "selection", decision: `${currentId}>${c.track_id}`,
-          why: `${c.tier}, works ${c.works}${c.level != null ? `, energy level ${c.level}` : ""} (${reason})` });
-        host.log.step("deadline_fallback", { phase: "selection", decision: "atlas", why: reason });
-        return "atlas";
+    const tryAtlas = async (rows, tag) => {
+      for (const c of (rows || []).slice(0, 4)) {
+        if (!active || gen !== prepGen) return null;
+        if (c.track_id === currentId || playedIds.includes(c.track_id)) continue;
+        apStatus(`Backup (${c.tier}${tag ? `, ${tag}` : ""}): trying ${c.name}`);
+        const cand = { track_id: c.track_id, name: c.name, bpm: c.bpm, duration: c.duration, keep: false, fromLibrary: true,
+                       _fallback: "atlas", _genre: c.genre || null, _sceneRel: c.sceneRel || null };
+        if (await tryCandidate(currentId, cand, gen)) {
+          host.log.step("atlas_fallback", { track_id: c.track_id, phase: "selection", decision: `${currentId}>${c.track_id}`,
+            why: `${c.tier}, works ${c.works}${c.level != null ? `, energy level ${c.level}` : ""}${tag ? `, ${tag}` : ""} (${reason})` });
+          return true;
+        }
       }
+      return false;
+    };
+    if (await tryAtlas(b && b.list, "")) {
+      host.log.step("deadline_fallback", { phase: "selection", decision: "atlas", why: reason });
+      return "atlas";
     }
     if (!active || gen !== prepGen) return null;
-    if (await tryLibraryLockable(currentId, gen)) {
+    if (await tryLibraryLockable(currentId, gen, { anchor })) {
       host.log.step("deadline_fallback", { phase: "selection", decision: "library", why: reason });
       return "library";
+    }
+    if (!active || gen !== prepGen) return null;
+    // last resort: nothing in the scene passed. Library songs of the same family / unknown genre first
+    // (server ranks them), the cross-family ones (and the atlas cross partners) last. Logged as such.
+    const lib = await tryLibraryLockable(currentId, gen, { anchor, outside: true });
+    if (lib) {
+      host.log.step("deadline_fallback", { phase: "selection", decision: `library outside the scene (${lib})`, why: `${reason}: nothing in the scene passed` });
+      return "library";
+    }
+    if (!active || gen !== prepGen) return null;
+    if (await tryAtlas(b && b.cross, "cross-family")) {
+      host.log.step("deadline_fallback", { phase: "selection", decision: "atlas cross-family", why: `${reason}: nothing in the scene passed` });
+      return "atlas";
     }
     host.log.step("deadline_fallback", { phase: "selection", decision: "hold",
       why: `${reason}: no atlas partner or library song passed the gates${b && b.skipped && b.skipped.length ? ` (${b.skipped.slice(0, 2).map((s) => `${s.name}: ${s.why}`).join("; ")})` : ""}` });
     return null;
   }
 
-  async function tryLibraryLockable(currentId, gen) {
+  // The deadline's wait for a prepared candidate: bounded by A's latest exit line (preparedWait), then
+  // booked when its stems are there; "replaced by fallback" when it can't be.
+  async function waitPrepared(currentId, held, gen, reason) {
+    const decide = () => {
+      const w = exitWindow(50);
+      return autopilotCore.preparedWait({ pos: deckPosition(activeDeck), exitLo: w.lo, exitHi: w.hi, ready: pendingCleared("stems", held.track_id) });
+    };
+    let d = decide();
+    host.log.step("deadline_hold", { track_id: held.track_id, phase: "selection",
+      decision: d.book ? "prepared ready" : d.wait ? "waiting for the prepared song" : "prepared too late", why: `${held.name}: ${d.why} (${reason})` });
+    while (d.wait) {
+      deferNote = `${held.name}'s stems`;
+      apStatus(`Deadline: waiting for ${held.name}'s stems (${Math.round(d.budgetS)} s left)`);
+      await new Promise((r) => setTimeout(r, 1000));
+      if (!active || gen !== prepGen || currentTrackId !== currentId) { deferNote = null; return null; }
+      prepStartedAt = host.clock.now();      // waiting is progress, not a stalled search (watchdog)
+      d = decide();
+    }
+    deferNote = null;
+    if (d.book && await tryCandidate(currentId, held, gen)) {
+      host.log.step("deadline_fallback", { phase: "selection", decision: "prepared", why: `${held.name} (${reason})` });
+      return "prepared";
+    }
+    if (!active || gen !== prepGen) return null;
+    host.log.step("deadline_hold", { track_id: held.track_id, phase: "selection", decision: "replaced by fallback",
+      why: `${held.name}: ${d.book ? "failed its gates once ready" : d.why}` });
+    held._preparing = null;
+    return null;
+  }
+
+  // o: {anchor: the scene to hold ("" = the playing song's stored label), outside: the last-resort rows}
+  // -> false | the scene_rel of the booked song ("scene" etc.)
+  async function tryLibraryLockable(currentId, gen, o = {}) {
     const d = host.decks && host.decks[activeDeck];
     if (!d || !d.bpm) return false;
     const aEff = d.bpm * d._playbackRate();
     const key = d.analysis && d.analysis.key && d.analysis.key.camelot || "";
     const exclude = [...playedIds, currentId].join(",");
+    const anchor = o.anchor != null ? o.anchor : recoverGenre();
     try {
-      // genre: the server only offers library songs known to share the playing
-      // song's scene (tempo + key alone paired Barbie Girl with Bicep "Glue")
-      const res = await fetch(`/api/library/lockable?bpm=${aEff.toFixed(2)}&key=${encodeURIComponent(key)}&exclude=${encodeURIComponent(exclude)}&max_gap=${lockLimit()}&genre=${encodeURIComponent(currentGenre || "")}&era=${encodeURIComponent(currentEra || "")}&punjabi_profile=${encodeURIComponent(punjabiMode())}&energy=${measuredById[currentId] || 0}`);
-      const lib = (await res.json()).tracks || [];
-      for (const t of lib) {
+      // genre: the server only offers library songs known to share the playing song's scene (tempo + key
+      // alone paired Barbie Girl with Bicep "Glue"); a_id: it reads the playing song's STORED label (191133:
+      // genre="" for a FOLLOW SET song let Four Tet in)
+      const res = await fetch(`/api/library/lockable?bpm=${aEff.toFixed(2)}&key=${encodeURIComponent(key)}&exclude=${encodeURIComponent(exclude)}&max_gap=${lockLimit()}&genre=${encodeURIComponent(currentGenre || "")}&era=${encodeURIComponent(currentEra || "")}&punjabi_profile=${encodeURIComponent(punjabiMode())}&energy=${measuredById[currentId] || 0}&a_id=${encodeURIComponent(currentId)}&anchor=${encodeURIComponent(anchor || "")}`);
+      const j = await res.json();
+      const lib = (o.outside ? j.outside : j.tracks) || [];
+      for (const t of lib.slice(0, o.outside ? 4 : lib.length)) {
         if (!active || gen !== prepGen) return false;
         if (history.includes(t.name)) continue;
-        apStatus(`Library pick that locks to ${Math.round(aEff)} BPM: ${t.name}`);
-        const c = { track_id: t.track_id, name: t.name, bpm: t.bpm, duration: t.duration, keep: false, fromLibrary: true };
-        if (await tryCandidate(currentId, c, gen)) return true;
+        apStatus(`Library pick that locks to ${Math.round(aEff)} BPM${o.outside ? ` (outside the scene: ${t.scene_rel})` : ""}: ${t.name}`);
+        const c = { track_id: t.track_id, name: t.name, bpm: t.bpm, duration: t.duration, keep: false, fromLibrary: true,
+                    _fallback: "library", _genre: t.genre || null, _sceneRel: t.scene_rel || null };
+        if (await tryCandidate(currentId, c, gen)) return t.scene_rel || "scene";
       }
     } catch (e) { console.warn("library fallback:", e.message); }
     return false;
   }
 
+  let stagedLoad = null;   // {deck, cand}: the song this attempt loaded into the staging deck
   async function tryCandidate(currentId, cand, gen) {
     focusCand = cand;
     syncPrerender();     // the song being tried is rank 0: its stems and tempo sets come first
+    let ok = false;
+    if (cand) cand._rejectWhy = null;
     try {
-      const ok = await evaluateCandidate(currentId, cand, gen);
+      ok = await evaluateCandidate(currentId, cand, gen);
       if (!ok && cand && !cand.keep) cand._dead = true;     // rejected for good: no more work for it
       return ok;
     } catch (e) {
       console.warn("Autopilot candidate failed:", cand && cand.name, e.message);
       apStatus(`Skipping ${cand && cand.name}: ${e.message}`);
-      if (cand) cand._dead = true;
+      if (cand) { cand._dead = true; cand._rejectWhy = `error: ${e.message}`; }
       return false;
     } finally {
       if (focusCand === cand) focusCand = null;
       deferNote = null;
+      if (stagedLoad && stagedLoad.cand === cand) {
+        if (!ok) sessionEvent("deck_unload", autopilotCore.deckEvent("deck_unload", { deck: stagedLoad.deck, cand, reason: cand._rejectWhy }));
+        stagedLoad = null;
+      }
     }
   }
 
@@ -3148,7 +3370,7 @@ function createAutopilotEngine({ host, ai }) {
     // pool below) decides only when none of them passes the gates.
     if (host.mod.macroMode && !leadDue()) {
       const st = host.state || {}, other = activeDeck === "a" ? st.trackB : st.trackA;
-      const first = await host.mod.macroMode.firstCandidates(currentId, { played: playedIds, recent: history, aName: history[history.length - 1] || "", aStyle: currentGenre || "", loadedId: other && other !== currentId ? other : null });
+      const first = await sceneRanked(currentId, await host.mod.macroMode.firstCandidates(currentId, { played: playedIds, recent: history, aName: history[history.length - 1] || "", aStyle: recoverGenre() || currentGenre || "", loadedId: other && other !== currentId ? other : null }), "stored moves");
       for (let c of first) {
         if (!active || gen !== prepGen) return;
         if (c._download) {        // FOLLOW SET: a studied set's song the library lacks, via the normal suggest -> download path
@@ -3164,6 +3386,8 @@ function createAutopilotEngine({ host, ai }) {
         if (c.track_id === currentId || playedIds.includes(c.track_id)) continue;
         apStatus(`${c._macro ? `Macro ${c._macro.name || ""} step ${c._macro.step.n}` : c._follow ? `FOLLOW SET ${c._follow.dj} #${c._follow.position}` : `COMBO ${c._combo.label}`}: trying ${c.name}`);
         if (await tryCandidate(currentId, c, gen)) return;
+        // backed off only on its stems (Hanumankind, 191133): keep preparing it, the deadline waits for it
+        if (c._preparing) addReady(c);
       }
       if (!active || gen !== prepGen) return;
     }
@@ -3198,6 +3422,11 @@ function createAutopilotEngine({ host, ai }) {
         host.log.step("candidate_order", { phase: "selection", decision: "ready song first", why: ordered.map((c) => `${c.name}${candReady(c) ? " (ready)" : ""}`).join(" > ") });
         pool.splice(0, pool.length, ...ordered);
       }
+    }
+    if (recoverGenre() && pool.length > 1) {   // SCENE ANCHOR: after a mistake, the anchor's songs first
+      const back = await sceneRanked(currentId, pool, "pool");
+      pool.splice(0, pool.length, ...back);
+      if (!active || gen !== prepGen) { back.forEach(addReady); return; }
     }
     heldPool = pool;     // ready[] is empty while the pool is tried: keep them in the server's list
     syncPrerender(true); // A's tempo changed with the new song: the tempo sets to make are recomputed
@@ -3752,7 +3981,10 @@ function createAutopilotEngine({ host, ai }) {
         playedIds.push(nextId);
         unmuteBeatLayer();
         genreLog.push(currentGenre || "");
-        currentGenre = (scheduledNext && scheduledNext.suggestion && scheduledNext.suggestion.genre) || "";
+        // the stored label (booking vet) over the pick's own genre: a FOLLOW SET song had none, the library
+        // fallback then filtered nothing (191133)
+        currentGenre = (scheduledNext && (scheduledNext._genre || (scheduledNext.suggestion && scheduledNext.suggestion.genre))) || "";
+        noteSceneLanding(scheduledNext, nextName);
         currentEra = (scheduledNext && scheduledNext.suggestion && scheduledNext.suggestion.era) || currentEra;
         songsSinceJump = jumpPending ? 0 : songsSinceJump + 1;
         jumpPending = false;
@@ -3831,6 +4063,22 @@ function createAutopilotEngine({ host, ai }) {
   // OWNER VETO "bad pair" (button #ap-bad-pair, Shift+B; plain keys belong to performance.js): the pair playing now (the blend running, else
   // the last one) never happens again. POST /api/vetoes stores it at once (atomic, persistent); every
   // booking path asks /api/autopilot/vet, and the next atlas build counts it as PLAYED_BAD evidence.
+  const sceneLabel = (a) => (a ? a.genre || (a.families || []).join("/") : "?");
+  // A transition landed: the scene anchor follows it or marks it an off-scene mistake (sceneAnchorNext).
+  function noteSceneLanding(cand, name) {
+    const was = sceneState;
+    const n = autopilotCore.sceneAnchorNext(was, { name, genre: cand && cand._genre, families: (cand && cand._families) || [],
+      fallback: (cand && cand._fallback) || null, vetoed: !!badPairPending && badPairPending === name });
+    badPairPending = null;
+    sceneState = { anchor: n.anchor, prev: n.prev, recover: n.recover };
+    if (n.mistake) {
+      host.log.step("scene_recover", { phase: "selection", decision: "off-scene mistake",
+        why: `anchor ${sceneLabel(n.anchor)}; mistaken ${name}: ${n.why}` });
+    } else if (was.recover) {
+      host.log.step("scene_recover", { phase: "selection", decision: n.why === "back in the scene" ? "pick back" : "not back",
+        why: `anchor ${sceneLabel(was.recover.anchor)}; after ${was.recover.mistaken}: ${name} (${n.why})` });
+    }
+  }
   async function markBadPair() {
     const p = autopilotCore.badPairOf({ history, playedIds, mixing: mixingPair });
     if (!p) { apStatus("Bad pair: no pair played yet"); return null; }
@@ -3842,6 +4090,14 @@ function createAutopilotEngine({ host, ai }) {
       if (p.a_id && p.b_id) autopilotCore.rememberPairReject(pairRejects, p.a_id, p.b_id, "owner veto", true);
       atlasBackup = null;                                    // re-ranked without it
       host.log.step("veto", { phase: "selection", decision: "bad pair", why: `owner veto: ${p.a_name} -> ${p.b_name}`, result: { added: !!j.added } });
+      // SCENE ANCHOR: a vetoed pair is a mistake; the next song goes back to the set's scene
+      if (mixingPair) badPairPending = p.b_name;            // still blending: counted when it lands
+      else {
+        const n = autopilotCore.sceneAnchorBad(sceneState, p.b_name);
+        sceneState = { anchor: n.anchor, prev: n.prev, recover: n.recover };
+        if (n.mistake) host.log.step("scene_recover", { phase: "selection", decision: "off-scene mistake",
+          why: `anchor ${sceneLabel(n.anchor)}; mistaken ${p.b_name}: BAD PAIR` });
+      }
       sessionEvent("veto", { a: p.a_name, b: p.b_name, added: !!j.added });
       apStatus(`BAD PAIR: ${p.a_name} -> ${p.b_name} never again`);
       return j;
@@ -4013,7 +4269,7 @@ function createAutopilotEngine({ host, ai }) {
     leadTo = null;
     leadStatus("");
     genreLog = [];
-    currentGenre = "";
+    currentGenre = ""; sceneState = { anchor: null, prev: null, recover: null }; badPairPending = null;
     currentEra = "";
     songsSinceJump = 0;
     jumpPending = false;
@@ -4069,7 +4325,7 @@ function createAutopilotEngine({ host, ai }) {
     leadTo = null;
     leadStatus("");
     genreLog = [];
-    currentGenre = "";
+    currentGenre = ""; sceneState = { anchor: null, prev: null, recover: null }; badPairPending = null;
     currentEra = "";
     songsSinceJump = 0;
     jumpPending = false;
