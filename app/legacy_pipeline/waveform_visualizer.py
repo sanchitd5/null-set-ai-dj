@@ -16,7 +16,6 @@ import numpy as np
 import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend for server environments
 import matplotlib.pyplot as plt
-from matplotlib.patches import Rectangle
 from pydub import AudioSegment
 
 # Output directory for waveform visualizations
