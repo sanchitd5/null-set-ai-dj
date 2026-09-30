@@ -618,7 +618,7 @@ class World:
                     ad = self.run_cache / "analysis"
                     vibe.analyze_vibe(p)
                     en.measure(p, float(a.bpm or 0))
-                    entry = assemble_entry(h, p.stem, json.loads((ad / f"{h}.v5.json").read_text(encoding="utf-8")),
+                    entry = assemble_entry(h, p.stem, json.loads((ad / f"{h}.v{analyzer.ANALYSIS_VERSION}.json").read_text(encoding="utf-8")),
                                            json.loads((ad / f"{h}.vibe.json").read_text(encoding="utf-8")),
                                            json.loads((ad / f"{h}.energy.json").read_text(encoding="utf-8")), None, "live")
                 except Exception as exc:

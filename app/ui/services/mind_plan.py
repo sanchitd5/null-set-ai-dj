@@ -23,7 +23,7 @@ import time
 from functools import lru_cache
 from typing import Any, Optional
 
-from app.music_brain.render.blend import drop_lines
+from app.music_brain.render.blend import track_drop_lines
 from app.ui.services import llm_gate
 from app.ui.services.autopilot_service import STRICT_RETRY, _extract_json, chat_raw, failure_reason, note_retry
 
@@ -257,8 +257,8 @@ def build_facts(a: dict, b: dict, candidates: list[dict], ctx: dict) -> dict:
     spans = [(t, phrases[i + 1] if i + 1 < len(phrases) else t + PHRASE_BARS * bar)
              for i, t in enumerate(phrases)]
     labels = [phrase_label(raw_secs, t, end) for t, end in spans]
-    # acoustic drop hits (labels flicker); same rule as dj-mind.js dropLines()
-    hits = [x for x, _, _ in drop_lines(phrases, a.get("energy_times"), a.get("energy_curve"), bar)]
+    # drop hits: v6 phrase-grid drops, else the acoustic rule (dj-mind.js trackDropLines)
+    hits = [x for x, _, _ in track_drop_lines(a, bar)]
     rows = []
     for i, (t, end) in enumerate(spans):
         if t < now or t > hi or end > duration + 0.5:

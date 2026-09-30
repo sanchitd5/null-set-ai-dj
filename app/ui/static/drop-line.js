@@ -71,6 +71,11 @@
     for (const x of a.sections || []) {
       if (x && /drop/i.test(String(x.label || "")) && fin(x.start) && fin(x.end) && x.end - x.start >= MIN_SECTION_DROP_BARS * bar - 1e-6) out.push([x.start, Math.min(x.end, x.start + W)]);
     }
+    if (Array.isArray(a.drops) && a.drops.length) {
+      // v6 record: the analyzer's phrase-grid drops (blend.py track_drop_lines)
+      for (const x of a.drops) if (x && fin(x.start)) out.push([x.start, x.start + W]);
+      return out;
+    }
     if (dropLinesFn === undefined) dropLinesFn = defaultDropLines();
     if (typeof dropLinesFn === "function") {
       for (const x of dropLinesFn(a.phrase_boundaries_8bar, a.energy_times, a.energy_curve, bar) || []) if (x && fin(x.t)) out.push([x.t, x.t + W]);

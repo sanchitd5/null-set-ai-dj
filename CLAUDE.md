@@ -72,7 +72,10 @@ python -m app.music_brain.agent_bridge list-recipes
 **JSON shapes returned:**
 * `analyze` → `path`, `duration`, `bpm`, `beat_times[]`, `downbeat_times[]`, `phrase_boundaries_8bar[]`,
   `phrase_boundaries_16bar[]`, `key` (Camelot), `energy_curve[]`, `energy_times[]`, `sections[]`,
-  `vocal_active_regions[]`.
+  `vocal_active_regions[]`, and (v6, `analysis/structure.py`) `drops[]` (each: `start`, `end`, `energy`,
+  `jump`, `contrast`, `confidence`, `source` stems|mix), `main_drop`, `structure`. Sections sit on the 8-bar
+  phrase grid. Readers go through `blend.track_drop_lines` / `dj-mind.js trackDropLines` (v5 records fall back
+  to the energy-curve rule). After a merge that bumps it: `python3 -m app.music_brain.analysis.reanalyse --all`.
 * `separate` → `audio_hash`, `model`, `two_stems`, `stems{name: abs_path}`, `cache_dir`, `from_cache`.
 * `match` → `track_a`, `track_b`, `candidates[]` (each: `recipe`, `score` 0–100, `a_time`, `b_time`,
   `explanation`, and the `camelot_score` / `bpm_score` / `phrase_score` / `vocal_penalty` sub-scores).
