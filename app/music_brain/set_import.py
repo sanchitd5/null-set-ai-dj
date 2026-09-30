@@ -33,7 +33,7 @@ from typing import Callable, Dict, List, Optional
 
 APP_URL = "http://127.0.0.1:8000"
 
-from app.music_brain.studied_combos import _ID_ONLY as _ID_TITLE     # "ID", "ID ID - Higher", "Adam Beyer - ID"
+from app.music_brain.atlas.studied_combos import _ID_ONLY as _ID_TITLE     # "ID", "ID ID - Higher", "Adam Beyer - ID"
 _NOT_THE_SONG = re.compile(r"\b(samples?|sample[\s_-]*pack|presets?|serum|wav[\s_-]*samples|construction[\s_-]*kit|"
                            r"isolated[\s_-]*(vocals?|stems?)|acapella|a[\s_-]*cappella|instrumental[\s_-]*only)\b", re.I)
 
@@ -96,7 +96,7 @@ def plan(cache_dir: Path, set_id: str) -> List[dict]:
 def plan_tracks(cache_dir: Path, set_id: str, tracks: List[dict], set_audio: Optional[Path] = None) -> List[dict]:
     """plan() over tracklist rows [{title, start, path, likely_wrong_song?, heard_share?}]
     (a study's tracks, or a bare tracklist's found songs). No set_audio: IDs are skipped."""
-    from app.music_brain import studied_combos as sc
+    from app.music_brain.atlas import studied_combos as sc
     from app.ui.services import dedup_songs as ds
 
     cache_dir = Path(cache_dir)
@@ -253,7 +253,7 @@ def learn_macros(set_id: str, cache_dir: Optional[Path] = None, log: Callable[[s
         if s["errors"]:
             out["error"] = f"import: {len(s['errors'])} failed ({s['errors'][0]['error']})"[:200]
         if build is None:
-            from app.music_brain.pair_atlas import build
+            from app.music_brain.atlas.pair_atlas import build
         with _atlas_lock(cache_dir):
             doc = build(cache_dir, seed_macros_to=cache_dir, log=log)
         sid = re.escape(set_id.lower())   # macro names are slugs: lowercased (macros.slug)
@@ -293,7 +293,7 @@ def learn_tracklist_macro(source: str, tracklist: Optional[str] = None, download
     atlas lock, and macros.from_picks in tracklist order (locked).
     -> {set_id, macro, songs_found, songs_skipped[], macros{imported, skipped, written, error}}.
     ValueError when there is no usable tracklist (fewer than 2 songs)."""
-    from app.music_brain import macros as mc
+    from app.music_brain.atlas import macros as mc
     from app.music_brain import set_learner as sl
     from app.music_brain.config import CACHE_DIR
 
@@ -325,7 +325,7 @@ def learn_tracklist_macro(source: str, tracklist: Optional[str] = None, download
         for e in s["errors"]:
             skipped.append({"position": e["position"], "title": e["title"], "why": f"import failed: {e['error']}"})
         if build is None:
-            from app.music_brain.pair_atlas import build
+            from app.music_brain.atlas.pair_atlas import build
         with _atlas_lock(cache_dir):
             atlas = build(cache_dir, seed_macros_to=cache_dir, log=log)
         ids, seen = [], set()

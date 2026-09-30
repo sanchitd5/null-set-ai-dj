@@ -69,7 +69,7 @@ def test_export_includes_labels_per_name(tmp_path):
     gl.save({gl.name_key("Diljit Dosanjh - Lover"): "punjabi pop"}, {gl.name_key("Diljit Dosanjh - Lover"): "2020s"},
             gl.path(cache))
     # export only names songs the atlas / macros use: write a tiny macro over both
-    from app.music_brain import macros as mc
+    from app.music_brain.atlas import macros as mc
     mc.write_seed({"name": "m1", "source": "atlas:chain",
                    "steps": [{"a": "a" * 16, "b": "b" * 16, "recipe": "Bass Swap"}]}, cache)
     out = tmp_path / "knowledge"

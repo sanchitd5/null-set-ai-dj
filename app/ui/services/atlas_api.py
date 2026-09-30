@@ -18,8 +18,8 @@ from typing import List, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from app.music_brain import macros as mc
-from app.music_brain import pair_atlas as pa
+from app.music_brain.atlas import macros as mc
+from app.music_brain.atlas import pair_atlas as pa
 from app.music_brain.config import CACHE_DIR
 
 router = APIRouter()
@@ -135,7 +135,7 @@ _SETS_MEMO: dict = {}
 def studied_sets():
     """The studied famous sets in set order with each song's library id (FOLLOW SET).
     Recomputed when the library names or a study file change."""
-    from app.music_brain import studied_combos as sc
+    from app.music_brain.atlas import studied_combos as sc
 
     files = [ATLAS_CACHE_DIR / "uploads" / "_names.json", ATLAS_CACHE_DIR / "track_aliases.json",
              *sorted((ATLAS_CACHE_DIR / "sets").glob("*/study.json"))]
@@ -205,7 +205,7 @@ def post_macro_from_session(session: str, name: Optional[str] = None):
 def post_plan_from_picks(body: PicksBody):
     atlas = pa.load_for(body.ids, ATLAS_CACHE_DIR)   # every pair of the picks (their shards only), not just top partners
     if atlas is None:
-        raise HTTPException(status_code=409, detail="no pair atlas yet: run `python3 -m app.music_brain.pair_atlas build`")
+        raise HTTPException(status_code=409, detail="no pair atlas yet: run `python3 -m app.music_brain.atlas.pair_atlas build`")
     try:
         m = mc.from_picks(body.ids, atlas, body.locked, body.name)
         if body.save:

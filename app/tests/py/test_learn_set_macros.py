@@ -80,7 +80,7 @@ def test_no_macros_skips_the_step(monkeypatch, learned, capsys):
 
 
 def test_failing_build_keeps_the_learn_result(tmp_path, monkeypatch, learned, imported, capsys):
-    from app.music_brain import pair_atlas
+    from app.music_brain.atlas import pair_atlas
 
     def boom(*a, **kw):
         raise OSError("disk full")

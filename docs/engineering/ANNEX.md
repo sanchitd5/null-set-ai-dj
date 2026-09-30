@@ -120,7 +120,7 @@ tempo lock, energy step, vocals, recipe, merge-hold, riff, mashup, supermove) an
 [works score](#works-score). Played evidence from sessions, set logs and studied sets is
 attached, so a studied pair becomes a [combo](#combo). Stored in `data/cache/pair_atlas.json`;
 a pair is rescored only when its inputs or the [rules hash](#rules-hash) change. Code:
-`app/music_brain/pair_atlas.py`, node half `app/music_brain/pair_atlas_rules.js`. CLI:
+`app/music_brain/atlas/pair_atlas.py`, node half `app/music_brain/pair_atlas_rules.js`. CLI:
 `python -m app.music_brain.pair_atlas build | show | best | studied | import-set`. REST:
 `app/ui/services/atlas_api.py` (`/api/atlas/status`, `/api/atlas/partners`, `/api/atlas/pair`). Feeds
 [macros](#macro) and the autopilot's combo list.
@@ -218,7 +218,7 @@ their own 0.8 floors. Key-agnostic recipes on a clashing pair score
 
 ### KEY_SAFE_MIN
 The minimum Camelot score (0.6) for a tonal blend. `app/ui/static/autopilot.js:KEY_SAFE_MIN`,
-parity-tested twin `app/music_brain/pair_atlas.py:KEY_SAFE_MIN`.
+parity-tested twin `app/music_brain/atlas/pair_atlas.py:KEY_SAFE_MIN`.
 
 ### keySafeRecipe
 Rewrites a tonal recipe to Echo Out when the key score is below KEY_SAFE_MIN.
@@ -274,10 +274,10 @@ recipe, A's exit and B's entry, the merge-hold plan, the tempo decision and any 
 Stored in `data/cache/macros/<name>.json`. A stored decision that is no longer valid is logged
 and falls back. Sources: the current set, a past session, atlas-ordered picks or the CLI
 (`python -m app.music_brain.macros list | show | from-session | picks`). Code:
-`app/music_brain/macros.py`; REST `/api/macros` (`app/ui/services/atlas_api.py`).
+`app/music_brain/atlas/macros.py`; REST `/api/macros` (`app/ui/services/atlas_api.py`).
 
 ### macro kinds
-`studied`, `chain`, `combo`, `seed`, `yours` (`app/music_brain/macros.py:KINDS`). The MACRO
+`studied`, `chain`, `combo`, `seed`, `yours` (`app/music_brain/atlas/macros.py:KINDS`). The MACRO
 dropdown groups them as STUDIED SETS, CHAINS, COMBOS, YOUR MACROS
 (`app/ui/static/macro-mode.js:MACRO_GROUPS`).
 
@@ -344,7 +344,7 @@ Running the sim from a recorded fixture with zero network: `virtual_set --replay
 subject, not prompt text; a call with no recorded reply is a replay miss. See `app/sim/README.md`.
 
 ### rules hash
-A hash of the files whose rules the atlas applies (`app/music_brain/pair_atlas.py:RULE_FILES`,
+A hash of the files whose rules the atlas applies (`app/music_brain/atlas/pair_atlas.py:RULE_FILES`,
 `rules_hash`). Editing any of them invalidates every atlas pair; `knowledge import` checks it.
 
 ### scene profiles (Punjabi)
@@ -395,7 +395,7 @@ server side. `app/ui/static/step-log.js`, `app/ui/services/song_log.py`, `/api/s
 The transitions real DJs played in studied sets, taken from each studied set's tracklist and
 learner observations. Both songs resolve to library ids by name; a resolved pair becomes the
 `studied` evidence class on its atlas pair and a combo the console tries first, badged
-"STUDIED COMBO (&lt;DJ&gt; set)". `app/music_brain/studied_combos.py`.
+"STUDIED COMBO (&lt;DJ&gt; set)". `app/music_brain/atlas/studied_combos.py`.
 
 ### suite
 The regression gate: the fixed panel of recorded sets (`app/sim/panel.json`), replayed and scored.
@@ -405,7 +405,7 @@ The regression gate: the fixed panel of recorded sets (`app/sim/panel.json`), re
 ### supermove
 The big announced moves: double drop, drop swap, plus merge, mashup and riff over rap, called out
 by the mascot. `app/ui/static/dj-mind.js:peakTransition`, `app/ui/static/mascot.js:CUE_MOVES`; the
-atlas scores them as the `supermove` move (`app/music_brain/pair_atlas.py:MOVE_ALIASES`).
+atlas scores them as the `supermove` move (`app/music_brain/atlas/pair_atlas.py:MOVE_ALIASES`).
 
 ### tempo rules
 - Pitch-locked blends: within about 6% (`app/ui/services/autopilot_service.py:TEMPO_LOCK_PCT`).
@@ -419,7 +419,7 @@ Whole-song BPM uses a section-consensus estimate (`app/music_brain/analysis/temp
 
 ### titles
 Human names for macros, shown in the MACRO dropdown, for example "Anyma @ Live from Atomium
-(studied set, 12 songs)". The slug stays the stable id. `app/music_brain/macros.py:title_of`.
+(studied set, 12 songs)". The slug stays the stable id. `app/music_brain/atlas/macros.py:title_of`.
 
 ### toggle drawer
 The panel of on/off switches for console features, grouped by kind.
@@ -448,7 +448,7 @@ whole set with one number (lower is better). Record once with the real model, th
 
 ### works score
 The atlas's 0 to 1 blend (shown as 0 to 100) of key, tempo gap, energy, vocal cleanliness, stems,
-merge and combo fit for one pair. `app/music_brain/pair_atlas.py:works_score`.
+merge and combo fit for one pair. `app/music_brain/atlas/pair_atlas.py:works_score`.
 
 ## Key numbers
 

@@ -115,7 +115,7 @@ def slim_atlas(atlas: dict, keep: int = KEEP, per_move: int = PER_MOVE) -> dict:
     plus, per A, the top `keep` by works and the top `per_move` per judged move (what the
     server's Index serves). Tracks keep what summary / chains / order_picks read.
     Dropped: file-stat sigs, per-bar features, vocal regions, session ids, the cache path."""
-    from app.music_brain import pair_atlas as pa
+    from app.music_brain.atlas import pair_atlas as pa
 
     by_a: Dict[str, List[dict]] = {}
     for p in atlas["pairs"].values():
@@ -217,8 +217,8 @@ def export(cache_dir: Optional[Path] = None, out: Optional[Path] = None,
     """cache -> knowledge/. Every cache macro is written (a tracked macro the cache lacks is
     kept: it may be another machine's, unresolved here); the learned store and the slim atlas
     mirror the cache when it has them. ValueError (nothing written) on a privacy hit."""
-    from app.music_brain import macros as mc
-    from app.music_brain import studied_combos as sc
+    from app.music_brain.atlas import macros as mc
+    from app.music_brain.atlas import studied_combos as sc
     from app.ui.services import dedup_songs as ds
 
     cache, out = _cache(cache_dir), Path(out or KNOWLEDGE_DIR)
@@ -246,7 +246,7 @@ def export(cache_dir: Optional[Path] = None, out: Optional[Path] = None,
     if isinstance(learned, dict):
         files[LEARNED] = learned
         n_obs = sum(len(e.get("observations") or []) for e in learned.values() if isinstance(e, dict))
-    from app.music_brain import pair_atlas as pa
+    from app.music_brain.atlas import pair_atlas as pa
 
     atlas = pa.load(cache)
     slim = slim_atlas(atlas) if atlas else None
@@ -297,7 +297,7 @@ class _Resolver:
     else the unique library song of the same name (dedup_songs.identity, strong match)."""
 
     def __init__(self, cache: Path, tracked_names: Dict[str, str]):
-        from app.music_brain import studied_combos as sc
+        from app.music_brain.atlas import studied_combos as sc
         from app.ui.services import dedup_songs as ds
 
         self.ds, self.cache, self.tracked = ds, cache, tracked_names
@@ -338,8 +338,8 @@ def seed(cache_dir: Optional[Path] = None, src: Optional[Path] = None,
     macros the cache lacks (every song name-resolved, else skipped), learner observations of
     sets the local store has none of, atlas pairs the local atlas lacks (only when both carry
     the current rules hash)."""
-    from app.music_brain import macros as mc
-    from app.music_brain import pair_atlas as pa
+    from app.music_brain.atlas import macros as mc
+    from app.music_brain.atlas import pair_atlas as pa
     from app.music_brain import set_learner as sl
     from app.music_brain.set_import import _atlas_lock
 
