@@ -421,7 +421,8 @@ var autopilotCore = (function () {
     for (const r of rows || []) {
       if (!r || !r.b || r.b === o.aId) continue;
       const name = r.b_name || r.b;
-      let why = played.has(r.b) || recent.has(name) ? "already played this set"
+      let why = r.vetoed ? String(r.vetoed)                          // OWNER VETO (atlas_api marks the row)
+        : played.has(r.b) || recent.has(name) ? "already played this set"
         : (r.played_bad || 0) > (r.played_good || 0) ? `bad played evidence (-${r.played_bad})` : null;
       if (!why && o.spacing) why = o.spacing(name) || null;
       if (!why && o.rejected) { const k = o.rejected(r.b); if (k) why = k.why || String(k); }
@@ -453,6 +454,16 @@ var autopilotCore = (function () {
     const busy = busyAt(M);
     if (busy && M === 32 && ve && ve.vocal16 >= 0.5 && !busyAt(16)) return { M: 16, busy: null };
     return { M, busy };
+  }
+  // OWNER VETO "bad pair": the pair the owner is hearing. o: {history (names), playedIds, mixing: {aId, aName,
+  // bId, bName} while a transition runs, else null} -> {a_id, a_name, b_id, b_name} | null (no pair yet)
+  function badPairOf(o) {
+    const m = o && o.mixing;
+    if (m && m.aName && m.bName) return { a_id: m.aId || null, a_name: m.aName, b_id: m.bId || null, b_name: m.bName };
+    const h = (o && o.history) || [], ids = (o && o.playedIds) || [];
+    if (h.length < 2) return null;
+    return { a_id: ids.length >= 2 ? ids[ids.length - 2] : null, a_name: h[h.length - 2],
+             b_id: ids.length >= 2 ? ids[ids.length - 1] : null, b_name: h[h.length - 1] };
   }
   // The backup is re-ranked when A changed, a song was played since, or A's energy became known / changed.
   function backupStale(b, ctx) {
@@ -749,7 +760,7 @@ var autopilotCore = (function () {
     emptyRetryMs, useLibraryFallback, searchPlan, DEADLINE_LEAD_S, rankAtlasBackups, backupStale, backupNeedsStems, rememberPairReject, pairRejected, awaitJob, keySafeRecipe, KEY_SAFE_MIN, energyStepOk, hybridWindowKey, highSpans, quantileLinear, median, exitPastHigh, learnedRecipe, vocalRecipe, stemBlendBars, stemBlendFader, phraseWaitS, introBars, FADER_PARK_BARS, homePlan, maskedGlideBars, maskedDropAt, HOME_DROP_PCT, LADDER_STEP_PCT,
     tempoLockableAt, recipeKind, decideRecipe, planSkipReason, WINDOWS, playWindowFor, exitBounds, exitPick, exitTiming, exitHighPush, audibleEnd, entryClamp, SILENT_FLOOR,
     breakdownSpans, exitOutOfBreakdown, exitBreakdownPush, energyAtTarget, FINISH_MAX_S, forcedExit, forcedRecipe, forcedLine, forcedBooking,
-    mashupGate, mashupBars };
+    badPairOf, mashupGate, mashupBars };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   return api;
 })();
@@ -798,6 +809,7 @@ function createAutopilotEngine({ host, ai }) {
   let active = false;
   let activeDeck = "a";       // which deck is currently playing
   let currentTrackId = null;
+  let bookedPair = null, mixingPair = null;   // OWNER VETO "bad pair": the booked / the sounding A -> B
   let occasion = "";
   let history = [];           // display names of played tracks (last 5 kept)
   let mashupTag = "";         // status suffix while a vocal layer is booked
@@ -3114,6 +3126,7 @@ function createAutopilotEngine({ host, ai }) {
   }
 
   function scheduleTransition(currentId, nextId, nextName, candidate, blend = null, minExit = null, layer = null) {
+    bookedPair = { aId: currentId, aName: history[history.length - 1] || "", bId: nextId, bName: nextName };
     // Tempo gap 2-15 %: render B's stems key-locked at A's tempo now, while A plays
     // (multi-BPM stem sets, cached on the server), so the blend keeps B's key.
     {
@@ -3517,6 +3530,7 @@ function createAutopilotEngine({ host, ai }) {
         resetDeck(outgoing);
 
         history.push(nextName);
+        mixingPair = null;
         dipAsked = false;
         sessionEvent("track", { event: "transition_end", now_playing: nextName, deck: incoming, set_songs: history.length });
         if (host.mod.liveEar && host.mod.liveEar.flush) host.mod.liveEar.flush("transition done");
@@ -3593,12 +3607,40 @@ function createAutopilotEngine({ host, ai }) {
   // Restraint: at most one layer per track; skipped unless key and tempo fit.
   // One line in this session's event log (app/ui/services/session_log.py). Fire and forget.
   function sessionEvent(kind, data) {
+    if (kind === "track" && data && data.event === "transition_start") mixingPair = bookedPair;   // "bad pair" target
     try {
       fetch("/api/session/event", { method: "POST", headers: { "Content-Type": "application/json" }, keepalive: true,
         body: JSON.stringify({ kind, data }) }).catch(() => {});
     } catch (e) { /* logging never breaks the set */ }
   }
   host.bus.on("ear-flush", (e) => sessionEvent("ear_flush", e.detail));
+
+  // OWNER VETO "bad pair" (button #ap-bad-pair, Shift+B; plain keys belong to performance.js): the pair playing now (the blend running, else
+  // the last one) never happens again. POST /api/vetoes stores it at once (atomic, persistent); every
+  // booking path asks /api/autopilot/vet, and the next atlas build counts it as PLAYED_BAD evidence.
+  async function markBadPair() {
+    const p = autopilotCore.badPairOf({ history, playedIds, mixing: mixingPair });
+    if (!p) { apStatus("Bad pair: no pair played yet"); return null; }
+    try {
+      const res = await fetch("/api/vetoes", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kind: "pair", a_id: p.a_id, b_id: p.b_id, a_name: p.a_name, b_name: p.b_name }) });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j.detail || `HTTP ${res.status}`);
+      if (p.a_id && p.b_id) autopilotCore.rememberPairReject(pairRejects, p.a_id, p.b_id, "owner veto", true);
+      atlasBackup = null;                                    // re-ranked without it
+      host.log.step("veto", { phase: "selection", decision: "bad pair", why: `owner veto: ${p.a_name} -> ${p.b_name}`, result: { added: !!j.added } });
+      sessionEvent("veto", { a: p.a_name, b: p.b_name, added: !!j.added });
+      apStatus(`BAD PAIR: ${p.a_name} -> ${p.b_name} never again`);
+      return j;
+    } catch (e) {
+      apStatus(`Bad pair not saved: ${e && e.message}`);
+      return null;
+    }
+  }
+  { const btn = ui.el("ap-bad-pair"); if (btn) btn.addEventListener("click", () => { markBadPair(); }); }
+  if (host.bus && host.bus.on) host.bus.on("keydown", (e) => {
+    if (e && e.key === "B" && e.shiftKey && !(e.target && /input|select|textarea/i.test(e.target.tagName || ""))) markBadPair();
+  });
   // every AI move (stem moves, remix, merges, hook drops, learned moves) with the deck
   // position, so a move that "killed the vibe" can be found in the session log
   host.bus.on("ai-activity", (e) => {

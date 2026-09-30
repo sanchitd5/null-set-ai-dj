@@ -93,7 +93,29 @@ def atlas_partners(a: str, move: Optional[str] = None, n: int = 10, combo: bool 
         return {"a": a, "partners": rows[:max(1, min(100, n))], "built": False}
     if combo:
         rows = [r for r in rows if r.get("combo")][:max(1, min(100, n))]
+    rows = _mark_vetoed(a, idx.names.get(a), [dict(r) for r in rows])
     return {"a": a, "name": idx.names.get(a), "move": move, "partners": rows, "built": True}
+
+
+def _mark_vetoed(a: str, a_name: Optional[str], rows: List[dict]) -> List[dict]:
+    """rows with "vetoed": reason on each pair the owner vetoed (atlas/vetoes.py); the console's
+    combo and backup rankers skip them. The build folds vetoes into played evidence too, but a
+    live veto must hold before the next build."""
+    from app.music_brain.atlas import vetoes as vt
+
+    try:
+        from app.ui import server
+        vs = server._vetoes()
+        a_name = a_name or server._name_of(a)
+    except Exception:  # noqa: BLE001 -- no server registry (tests)
+        vs = vt.load(ATLAS_CACHE_DIR)
+    if not vs or not a_name:
+        return rows
+    for r in rows:
+        why = vt.blocked(vs, a_name, r.get("b_name") or "")
+        if why:
+            r["vetoed"] = why
+    return rows
 
 
 def _earlier_set_keys(set_id: str) -> set:
@@ -124,6 +146,7 @@ def atlas_backup(a: str, n: int = 40, set_id: str = ""):
     earlier = _earlier_set_keys(str(set_id or "")[:64])
     for r in rows:
         r["earlier_set"] = sm._key(r.get("b_name") or "") in earlier
+    _mark_vetoed(a, idx.names.get(a), rows)
     a_level = ((idx._light.get("tracks") or {}).get(a) or {}).get("level")
     return {"a": a, "a_level": a_level, "partners": rows, "built": True}
 

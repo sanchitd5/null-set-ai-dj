@@ -55,7 +55,8 @@
     for (const p of o.partners || []) {
       if (!p || !(p.combo || p.studied) || p.b === o.aId) continue;
       let sp = null;
-      const why = played.has(p.b) ? "already played this set"
+      const why = p.vetoed ? String(p.vetoed)                        // OWNER VETO (atlas_api marks the row)
+        : played.has(p.b) ? "already played this set"
         : !p.studied && p.works < minWorks ? `works ${p.works} < ${minWorks}`
         : (sp = spacingWhy(p.b_name, o.recent)) ? sp
         : (p.played_bad || 0) > (p.played_good || 0) ? `bad played evidence (-${p.played_bad})` : null;

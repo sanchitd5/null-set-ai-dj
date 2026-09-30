@@ -2183,6 +2183,70 @@ def _track_vibe(track_id: str) -> Dict[str, Optional[str]]:
     return {"genre": _suggested_genres.get(key) or None, "era": _suggested_eras.get(key) or None}
 
 
+def _vibe_by_name(name: str) -> Dict[str, Optional[str]]:
+    from app.ui.services.track_identity import clean_identity
+
+    key = _genre_key(clean_identity(str(name or ""))[1]) if name else ""
+    return {"genre": _suggested_genres.get(key) or None, "era": _suggested_eras.get(key) or None}
+
+
+# ---- OWNER VETO + booking vet (app/music_brain/atlas/vetoes.py, app/ui/services/booking_vet.py) ----
+_VETO_MEMO: dict = {}
+
+
+def _vetoes() -> list:
+    """The owner's vetoes (seed + CACHE_DIR/vetoes.json), re-read when the file changes."""
+    from app.music_brain.atlas import vetoes as vt
+
+    p = vt.path(CACHE_DIR)
+    stamp = (str(p), p.stat().st_mtime_ns if p.exists() else None)
+    if _VETO_MEMO.get("stamp") != stamp:
+        _VETO_MEMO.update(stamp=stamp, rows=vt.load(CACHE_DIR))
+    return _VETO_MEMO["rows"]
+
+
+def _name_of(track_id: str) -> str:
+    path = _tracks.get(track_id)
+    return _track_names.get(track_id) or (path.stem if path else "")
+
+
+class VetoRequest(BaseModel):
+    kind: str = "pair"                          # "pair" (A -> B) | "song" (B in A's scene)
+    a_id: Optional[str] = Field(default=None, max_length=64)
+    b_id: Optional[str] = Field(default=None, max_length=64)
+    a_name: Optional[str] = Field(default=None, max_length=300)
+    b_name: Optional[str] = Field(default=None, max_length=300)
+    note: str = Field(default="", max_length=200)
+
+
+@app.get("/api/vetoes")
+def get_vetoes():
+    return {"vetoes": _vetoes()}
+
+
+@app.post("/api/vetoes")
+def post_veto(req: VetoRequest):
+    """Console "bad pair": the owner's live veto. Stored at once (atomic) and read by every booking
+    path through /api/autopilot/vet; the next atlas build turns it into PLAYED_BAD evidence."""
+    from app.music_brain.atlas import vetoes as vt
+    from app.music_brain.analysis.genre import genre_scenes
+
+    a = req.a_name or (_name_of(req.a_id) if req.a_id else "")
+    b = req.b_name or (_name_of(req.b_id) if req.b_id else "")
+    scene = ""
+    if req.kind == "song" and a:
+        sc = sorted(genre_scenes(_vibe_by_name(a)["genre"]))
+        scene = sc[0] if sc else ""
+    try:
+        e = vt.make(req.kind, b, a, scene=scene, source="console", note=req.note)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    added = vt.add(e, CACHE_DIR)
+    _VETO_MEMO.clear()
+    print(f"[veto] {'added' if added else 'already there'}: {e.get('a', '')} -> {e['b']}", flush=True)
+    return {"added": added, "veto": e}
+
+
 def _pair_vibe(track_a_id: str, track_b_id: str) -> Dict[str, Optional[str]]:
     """Genre/era kwargs for RecipeMatcher.match / resolve_candidate."""
     a, b = _track_vibe(track_a_id), _track_vibe(track_b_id)
