@@ -642,7 +642,9 @@ def name_references(cache: Path, groups: List[Group]) -> Dict[str, int]:
     """Name-keyed state (no remap needed: set_memory / learned_techniques key on the song NAME, which the
     canonical copy shares): how many entries mention each duplicate's normalised title."""
     out: Dict[str, int] = {}
-    mem = _read_json(Path(cache) / "set_memory.json")
+    from app.ui.services import set_memory as sm
+
+    mem = sm.peek(Path(cache) / "set_memory.json")        # the user DB, read-only (dry runs touch nothing)
     if isinstance(mem, dict):
         keys = {fold(k) for k in mem}
         for g in groups:

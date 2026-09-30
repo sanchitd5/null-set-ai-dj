@@ -139,8 +139,9 @@ class MainLibrary:
         learned = load_learned(self.cache / "learned_techniques.json")      # the app DB (or a pre-DB JSON)
         if learned:
             out["learned_techniques.json"] = json.dumps(learned, indent=2)
-        for fn in ("set_memory.json",):
-            p = self.cache / fn
-            if p.exists():
-                out[fn] = p.read_text(encoding="utf-8")
+        from app.ui.services import set_memory as sm
+
+        mem = sm.load(self.cache / "set_memory.json")                      # the user DB (or a pre-DB JSON)
+        if mem:
+            out["set_memory.json"] = json.dumps(mem)
         return out

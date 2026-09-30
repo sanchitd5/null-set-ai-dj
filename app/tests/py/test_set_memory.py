@@ -1,4 +1,25 @@
+import json
+
+from app.ui.services import set_memory as sm
 from app.ui.services.set_memory import SetMemory
+
+
+def test_old_json_migrates_into_the_user_db(tmp_path):
+    from app.music_brain import db
+    p = tmp_path / "set_memory.json"
+    p.write_text(json.dumps({"a - b": {"name": "A - B", "t": 5.0, "set": "s1"}}))
+    assert sm.load(p) == {"a - b": {"name": "A - B", "t": 5.0, "set": "s1"}}
+    assert not p.exists() and (tmp_path / "set_memory.json.migrated").is_file()
+    assert (tmp_path / db.USER_DB).is_file() and not (tmp_path / db.APP_DB).exists(), "private: user DB only"
+
+
+def test_record_writes_only_changed_rows(tmp_path):
+    m = SetMemory(tmp_path / "mem.json")
+    m.record(["A - One", "B - Two"], "s1")
+    conn, f = sm._db(tmp_path / "mem.json")
+    before = conn.total_changes
+    m.record(["C - Three"], "s1")
+    assert conn.total_changes - before == 1, "one new song: one row, not a whole-file rewrite"
 
 
 def test_memory_offers_only_earlier_sets(tmp_path):
