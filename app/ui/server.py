@@ -808,9 +808,24 @@ def get_vocal_entry(track_id: str):
     return res
 
 
+def _cached_energy_fit(path, bpm: float, cur: int) -> int:
+    """1 when the song's cached level is within energy.MAX_STEP of `cur`,
+    -1 when outside, 0 when unknown (no level asked, or not measured yet)."""
+    if not cur:
+        return 0
+    try:
+        from app.music_brain import energy as en
+
+        if not en._cache(Path(path)).exists():
+            return 0
+        return 1 if abs(en.level(path, bpm)["level"] - int(cur)) <= en.MAX_STEP else -1
+    except Exception:
+        return 0
+
+
 @app.get("/api/library/lockable")
 def get_library_lockable(bpm: float, key: str = "", exclude: str = "", limit: int = 6, max_gap: float = 0.08,
-                         genre: str = "", era: str = "", punjabi_profile: str = "off"):
+                         genre: str = "", era: str = "", punjabi_profile: str = "off", energy: int = 0):
     """Library songs whose analysed tempo locks to `bpm` (half / double time
     count) within max_gap, best key match first. The autopilot's fallback
     before it would force a tempo jump.
@@ -823,7 +838,18 @@ def get_library_lockable(bpm: float, key: str = "", exclude: str = "", limit: in
 
     `era` = the playing song's release decade: a library song more than one
     decade away is left out (Barbie Girl 1997 -> Glue 2017). Unknown era is
-    allowed; genre already gates the unlabelled ones."""
+    allowed; genre already gates the unlabelled ones.
+
+    Under an active Punjabi profile a song whose genre is not known yet is
+    kept but ranked after the known ones: genre labels live in memory and only
+    for songs the model named this server run, so after a restart the
+    deadline fallback found nothing and the set sat in HOLD LOOP (session
+    2026-09-30_102327). The console's vibe and energy gates still check it.
+
+    `energy` = the playing song's measured level (1-10, 0 = unknown). Songs
+    whose already-measured level sits within energy.MAX_STEP go first: in
+    102327 every candidate died on "energy drop 8 -> 5". Nothing is measured
+    here; unmeasured songs rank in between."""
     from app.music_brain import techniques as tq
     from app.music_brain.genre import MAX_ERA_GAP, era_gap, genre_near
     from app.ui.download_service import _is_live, _is_mix
@@ -845,8 +871,9 @@ def get_library_lockable(bpm: float, key: str = "", exclude: str = "", limit: in
             continue
         lib_key = _genre_key(clean_identity(name)[1])
         lib_genre = _suggested_genres.get(lib_key, "")
-        if genre and (_sp.scene_near(genre, lib_genre, True) if sp_active
-                      else genre_near(genre, lib_genre)) is not True:
+        near = (_sp.scene_near(genre, lib_genre, True) if sp_active
+                else genre_near(genre, lib_genre)) if genre else True
+        if near is not True and not (sp_active and not lib_genre):
             continue
         lib_era = _suggested_eras.get(lib_key, "")
         if sp_active:
@@ -869,8 +896,9 @@ def get_library_lockable(bpm: float, key: str = "", exclude: str = "", limit: in
         ks = tq.camelot_score(key, k) if key and k else 0.5
         out.append({"track_id": tid, "name": name, "bpm": a.bpm, "key": k, "gap": round(gap, 4),
                     "key_score": ks, "duration": a.duration, "stems": _stem_cache.get(tid) is not None,
-                    "genre": lib_genre, "era": lib_era})
-    out.sort(key=lambda x: (-x["key_score"], x["gap"]))
+                    "genre": lib_genre, "era": lib_era, "genre_known": near is True,
+                    "energy_fit": _cached_energy_fit(path, a.bpm, energy)})
+    out.sort(key=lambda x: (not x["genre_known"], -x["energy_fit"], -x["key_score"], x["gap"]))
     return {"tracks": out[: max(1, min(limit, 20))]}
 
 

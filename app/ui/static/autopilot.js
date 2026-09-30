@@ -2727,7 +2727,7 @@ function createAutopilotEngine({ host, ai }) {
     try {
       // genre: the server only offers library songs known to share the playing
       // song's scene (tempo + key alone paired Barbie Girl with Bicep "Glue")
-      const res = await fetch(`/api/library/lockable?bpm=${aEff.toFixed(2)}&key=${encodeURIComponent(key)}&exclude=${encodeURIComponent(exclude)}&max_gap=${lockLimit()}&genre=${encodeURIComponent(currentGenre || "")}&era=${encodeURIComponent(currentEra || "")}&punjabi_profile=${encodeURIComponent(punjabiMode())}`);
+      const res = await fetch(`/api/library/lockable?bpm=${aEff.toFixed(2)}&key=${encodeURIComponent(key)}&exclude=${encodeURIComponent(exclude)}&max_gap=${lockLimit()}&genre=${encodeURIComponent(currentGenre || "")}&era=${encodeURIComponent(currentEra || "")}&punjabi_profile=${encodeURIComponent(punjabiMode())}&energy=${measuredById[currentId] || 0}`);
       const lib = (await res.json()).tracks || [];
       for (const t of lib) {
         if (!active || gen !== prepGen) return false;
