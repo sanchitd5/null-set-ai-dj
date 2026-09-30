@@ -321,6 +321,41 @@ playing song is in a macro, the autopilot takes the next step with probability
 tracklist song, registers it, builds the atlas and writes `studied-set-<set_id>`
 (`app/music_brain/agent_bridge.py`).
 
+### maintain.sh
+One command that keeps the library, stems and atlas current: `./maintain.sh [--steps
+stems,flac,labels,review,atlas,export] [--dry-run] [--jobs N] [--max-minutes M] [--no-network]`
+(wrapper for `python3 -m app.music_brain.maintain`, code `app/music_brain/maintain.py`). Steps run
+in that order, each through its own existing function. stems: first the [ft cleanup](#one-stem-set-per-song)
+for songs that already have a complete htdemucs_ft set (dry-run lists the folders and GB), then
+`stem_service.separate` (htdemucs_ft) for every track with no stems or only fast htdemucs stems
+(files over 15 min are skipped as albums, failures counted), `audio_convert.run`
+for leftover WAVs, `genre_labels.label_library` missing-only, `set_learner.review_learned` for
+sets none of whose observations has an `ai_rule`, incremental `pair_atlas.build` (full rescore
+when the rules hash moved), and `knowledge.export_safe` with its privacy check. The labels and
+review backend is `AI_REVIEW_BACKEND` (local default, `claudecode` optional); an unavailable
+backend skips the step with a note, and `--no-network` skips claudecode. While the app answers
+on `$PORT`, stems and flac refuse; the other steps take their own locks. Never downloads, never
+runs the learner, never deletes user data. Report: JSON on stdout, saved to
+`data/cache/maintain/<timestamp>.json`, logs in `data/cache/maintain/maintain.log`. When to run:
+after adding songs, after learning a set, weekly. Optional schedule (not installed), saved as
+`~/Library/LaunchAgents/com.aidj.maintain.plist`, then `launchctl load` it:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.aidj.maintain</string>
+  <key>ProgramArguments</key><array>
+    <string>/path/to/AI-DJ-Mixing-System/maintain.sh</string><string>--max-minutes</string><string>120</string>
+  </array>
+  <key>StartCalendarInterval</key><dict>
+    <key>Weekday</key><integer>1</integer><key>Hour</key><integer>4</integer><key>Minute</key><integer>0</integer>
+  </dict>
+  <key>StandardOutPath</key><string>/tmp/ai-dj-maintain.out</string>
+  <key>StandardErrorPath</key><string>/tmp/ai-dj-maintain.err</string>
+</dict></plist>
+```
+
 ### merge-hold
 Merge, then hold, then transition: the two tracks share stems (B's drums and bass under A's vocal
 and synths, one tonal owner, one sub owner), hold together for whole 8-bar phrases while the pair
@@ -328,6 +363,15 @@ stays clean, then hand over on a downbeat. Hold length comes from measured stem 
 gaps, never a fixed constant. `app/ui/static/stem-moves.js:holdPlan` and `mergeTransitionPlan`;
 Python scoring `app/music_brain/render/merge.py`. It is what a merge combo plays. Theory:
 [[Stems Transition]].
+
+### one stem set per song
+Owner rule: once a song has a complete htdemucs_ft 4-stem set (manifest ok, all 4 files on
+disk), its other stem folders (`<hash>_htdemucs`, `<hash>_htdemucs_vocals`, any non-ft model) are
+removed: renamed out to `cache/stems_trash/` (atomic) and deleted. It happens right after an ft set
+is written (`stem_service.separate`, `StemWorker.finish`) and in the maintain.sh stems step; never
+when the ft set is incomplete. The 2-stem vocal readers (`server._vocals_stem_impl`,
+`_cached_vocal_regions`, `_vocals_cached`) use the ft vocals stem first, so a pruned 2-stem folder
+never forces a new separation. Code: `app/music_brain/audio/stem_service.py:prune_non_ft`.
 
 ### observations
 One detected technique sighting from a studied set (set, DJ, position, songs, overlap, tempo gap,
