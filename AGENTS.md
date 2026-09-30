@@ -162,6 +162,12 @@ Agents working on the codebase (`mixing_engine.py`, `structure_detector.py`, `ge
 * **Code Implementation:** the energy last-round `force` widens rises only (`energy.py:next_ok`). A stem intro, voice-alone strip or synth hold on a stem with no energy in the window is refused (`stem-moves.js:pickIntro`, `breakdownVocalOk`, `keepsVibe`).
 * **Verify rule changes with the sim** (`app/sim/README.md`): `python3 -m app.sim.suite --check`, `python3 -m app.sim.virtual_set --replay NAME --out DIR`, `python3 -m app.sim.compare A/report.json B/report.json`. It cannot judge sound quality; `baseline.json` is stub-LLM era. Log results in `app/sim/LEARNINGS.md`.
 
+### F. Genre Clusters, Macros, $Up3R-M@SS!V3-M0v3 and Analysis v6
+* **Genre families and electronic clusters:** electronic is split into sub-families (`analysis/genre.py:ELECTRONIC_CLUSTERS`: house, melodic, trance, techno, bass, dnb, chill, edm, breaks) with an owner-decided neighbour table (`ELECTRONIC_NEIGHBOURS`); hip-hop and R&B are neighbours too. `family_jump` / `scene_relation` treat listed neighbours as touching, anything else is a jump. Change the table, never add ad-hoc exceptions.
+* **Studied-set macros and deadlines:** a running or armed studied-set macro's own next song is the deadline's first fallback, with the measured gates waived (`autopilot.js:macroFallback`, `macro-mode.js:deadlineStepOf`); a PLAY MACRO step and a stuck deadline may book a known pair past the measured gates. A hand-started move (PLAY STEP, MERGE -> HOLD) fires on its phrase line (`autopilot.js:fireOnLine`), never at the press.
+* **$Up3R-M@SS!V3-M0v3 isolation:** nothing in `app/ui/static/super-move.js` runs unless a variant is loaded or a manual press is pending; the autopilot asks `takeOver()` at each booking point and carries on unchanged when it says false. Variants ship as git-tracked JSON in `app/music_brain/supermove/variants/` (`v1.json`), written by `python -m app.music_brain.supermove save`; no DB store.
+* **Analysis v6:** sections and drops sit on the 8-bar phrase grid (`analysis/structure.py`, `STRUCTURE_VERSION`). Readers go through the v6 fields and keep a v5 fallback; after a version bump run `python3 -m app.music_brain.analysis.reanalyse --all` with the app stopped.
+
 ---
 
 ## 4b. The Music Brain Package (`music_brain/`) — Agent Entry Point
