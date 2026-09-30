@@ -34,6 +34,7 @@ DJ theory lives in the Obsidian vault, not here. Entries point at notes by name,
 - [8% keylock](#8-keylock)
 - [agent_bridge CLI](#agent_bridge-cli)
 - [AI review](#ai-review)
+- [artist moves](#artist-moves)
 - [atlas (pair_atlas)](#atlas-pair_atlas)
 - [AUTO MIX / automix](#auto-mix--automix)
 - [autopilot](#autopilot)
@@ -112,6 +113,25 @@ A stage of [learn-set](#learn-mode--learn-set) where the local model checks each
 and keeps or rejects it. Rejected observations never count as a technique. Shows in the
 LEARNING panel as the "AI review" stage (`app/music_brain/learning/learn_progress.py:STAGES`,
 `app/ui/static/learn-progress.js`). Skip it with `learn-set --no-ai`.
+
+### artist moves
+Named in-song moves copied from specific DJs (specs S1 to S22 in
+`research/notes/artist-signature-techniques.md`, plus set-study moves). Each is a pure planner in a
+module's `core` (node-tested) that says ok or refuses with a named gate; the runtime plays it only
+through the Host port, logs an `ai-activity` event (`kind: "artist_move"`, `move`, `why`) and a
+refusal once per phrase. HUD toggles `ap-artist-<move>`, AI ACTIONS buttons in the ARTIST LOOPS
+group. `app/ui/static/artist-moves.js` holds the loop / tease family:
+`slip_loop` (S13), `cue_tease` (S14), `roll` (S12), `perc_bridge` (S11, always refused: two decks),
+`pad_lead` (Lane 8 pads first: B's other stem alone under A's last 8 or 4 bars before a tonal
+blend, key >= 0.8, one every 3 transitions), `chant_gate` (S20: A's vocal gated on 16ths over the
+last 1 or 2 bars of a build, once per song, one "vocal" unit of the FX budget), `dhol_drop` (desi
+drum-bed hand-off: B's drums under A's last 1 or 2 bars before a cut, every other cut; owner rule:
+both songs Punjabi and the scene profile level "full", never an experiment elsewhere) and
+`chop_duck` (S18 leave room: A's drums 6 to 10 dB down under a learned vocal chop). The FX family
+(S2 to S6) is `fx-moves.js`, the vocal pair (S7, S8) is in `learned-moves.js`, S1 / S9 are mashup
+slots in `stem-moves.js`. Owner rule "never vocal mix a drop line": `chant_gate` and `chop_duck` refuse
+(gate `drop_line`) any window over a drop or a sung line running into one. The sim counts them as
+`artist_<move>` features (informational, no gate).
 
 ### atlas (pair_atlas)
 Offline, deterministic pre-knowledge of which library songs go well together and how. Every
