@@ -301,6 +301,14 @@ def _build_parser() -> argparse.ArgumentParser:
     p_sr.add_argument("--session", default=None, help="session id, e.g. 2026-09-28_212853")
     p_sr.add_argument("--render", action="store_true", help="(re)render waveform.png for every song, synchronously")
 
+    p_lr = sub.add_parser("learned-review", help="Re-review stored learned moves with the AI (local model, or Claude Code).")
+    g = p_lr.add_mutually_exclusive_group(required=True)
+    g.add_argument("--set", dest="set_id", default=None, help="one set id")
+    g.add_argument("--all", action="store_true", help="every set in the store")
+    p_lr.add_argument("--backend", choices=("local", "claudecode"), default=None,
+                      help="default: AI_REVIEW_BACKEND, else local")
+    p_lr.add_argument("--dry-run", action="store_true", help="counts and calls only, no model call")
+
     return parser
 
 
@@ -382,6 +390,14 @@ def main(argv: Optional[list[str]] = None) -> int:
             payload = song_log.report(args.session)
             if args.render and payload["session"]:
                 payload["rendered"] = song_log.render_all(payload["session"])
+        elif args.command == "learned-review":
+            from dotenv import load_dotenv
+
+            from app.music_brain.learning.set_learner import review_learned
+
+            load_dotenv()  # AI_REVIEW_BACKEND / CLAUDECODE_MODEL, as the server reads them
+            payload = review_learned(args.set_id, backend=args.backend, dry_run=args.dry_run,
+                                     log=lambda m: print(m, file=sys.stderr, flush=True))
         else:  # pragma: no cover - argparse enforces valid choices
             parser.error(f"Unknown command: {args.command}")
             return 2

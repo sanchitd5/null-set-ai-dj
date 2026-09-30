@@ -13,6 +13,10 @@ judges what a measurement means, the way the USB002 study was done by hand:
 
 Everything degrades: no model reachable -> the algorithm's answer stands and the
 result says `ai: "skipped (...)"`. Model answers are cached per input on disk.
+
+review() can optionally run on Claude Code (AI_REVIEW_BACKEND=claudecode, see
+app/music_brain/llm/claudecode.py for what leaves the machine). Default is the
+local model. Cached answers are keyed by backend + model so the two never mix.
 """
 from __future__ import annotations
 
@@ -29,6 +33,7 @@ AI_CACHE_DIR = CACHE_DIR / "set_ai"
 MODEL_URLS = [f"http://127.0.0.1:{os.environ.get('MLX_PORT', '8081')}/v1",
               f"http://127.0.0.1:{os.environ.get('OMNI_PORT', '8901')}/v1"]
 REVIEW_BATCH = 12             # observations per model call
+CLAUDECODE_REVIEW_BATCH = 40  # fewer, bigger calls spend the subscription limits better
 TIMEOUT_S = 120.0
 
 Chat = Callable[[str, str], str]      # (system, user) -> raw text (JSON expected)
@@ -71,9 +76,13 @@ def find_model(urls: Optional[List[str]] = None, opener=None) -> Optional[tuple]
     return None
 
 
-def _ask(system: str, user: str, chat: Optional[Chat], cache_key: str, call: bool = True) -> Optional[dict]:
-    """JSON answer, cached. None when no model or an unusable answer. call=False: cache only."""
-    path = AI_CACHE_DIR / f"{hashlib.sha256((system + user).encode()).hexdigest()[:20]}.json"
+def _ask(system: str, user: str, chat: Optional[Chat], cache_key: str, call: bool = True,
+         tag: str = "") -> Optional[dict]:
+    """JSON answer, cached. None when no model or an unusable answer. call=False: cache only.
+    tag: backend + model of a non-local chat, so its answers never share a cache entry
+    with the local model's (empty for local keeps the existing cache valid)."""
+    key = (tag + "\n" if tag else "") + system + user
+    path = AI_CACHE_DIR / f"{hashlib.sha256(key.encode()).hexdigest()[:20]}.json"
     try:
         cached = json.loads(path.read_text(encoding="utf-8"))
         if isinstance(cached, dict):           # a truncated / hand-edited file is a miss
@@ -85,10 +94,13 @@ def _ask(system: str, user: str, chat: Optional[Chat], cache_key: str, call: boo
     chat = chat or _default_chat()
     if chat is None:
         return None
+    from app.music_brain.llm.claudecode import ClaudeCodeError
     from app.ui.services.autopilot_service import _extract_json
 
     try:
         data = _extract_json(chat(system, user))
+    except ClaudeCodeError:
+        raise                                   # not logged in / limit / missing CLI: say so, loudly
     except Exception:
         return None
     if not isinstance(data, dict):
@@ -170,24 +182,55 @@ def _brief(i: int, o) -> dict:
             **{k: d[k] for k in ("held_s", "hook", "order", "lead_s", "vocal_from", "repeats", "jumps", "levels_db", "drop_at") if k in d}}
 
 
-def review(observations: list, chat: Optional[Chat] = None, log: Callable[[str], None] = lambda m: None) -> dict:
+REVIEW_SCHEMA = {"type": "object", "required": ["items"], "properties": {"items": {
+    "type": "array", "items": {"type": "object", "required": ["id", "keep", "rule", "why"], "properties": {
+        "id": {"type": "integer"}, "keep": {"type": "boolean"},
+        "rule": {"type": "string"}, "why": {"type": "string"}}}}}}
+
+
+def backend_chat(schema: dict, backend: Optional[str] = None):
+    """(chat, cache tag, batch size) for the configured backend. local -> (None, "", 0):
+    the caller keeps its own default. claudecode raises ClaudeCodeError when the CLI is
+    missing, never falls back to sending nothing silently."""
+    from app.music_brain.llm import claudecode as cc
+
+    if cc.backend(backend) == "local":
+        return None, "", 0
+    cc.find_cli()
+    return cc.make_chat(schema), f"claudecode:{cc.model()}", CLAUDECODE_REVIEW_BATCH
+
+
+def review_requests(observations: list, batch: int = REVIEW_BATCH) -> List[str]:
+    """The user prompts review() would send, one per model call (for --dry-run)."""
+    return [json.dumps({"items": [_brief(i, observations[i]) for i in range(s, min(s + batch, len(observations)))]},
+                       ensure_ascii=False) for s in range(0, len(observations), batch)]
+
+
+def review(observations: list, chat: Optional[Chat] = None, log: Callable[[str], None] = lambda m: None,
+           backend: Optional[str] = None) -> dict:
     """-> {"kept": [...], "rejected": [...], "ai": "reviewed" | "skipped (...)"}.
-    Kept observations gain detail.ai_rule; with no model everything is kept."""
+    Kept observations gain detail.ai_rule; with no model everything is kept.
+    backend: "local" | "claudecode" (None: AI_REVIEW_BACKEND, default local); ignored
+    when a chat is passed."""
     if not observations:
         return {"kept": [], "rejected": [], "ai": "nothing to review"}
+    tag, batch = "", REVIEW_BATCH
+    if chat is None:
+        chat, tag, n = backend_chat(REVIEW_SCHEMA, backend)
+        batch = n or REVIEW_BATCH
+    who = "Claude Code" if tag else "local model"
     verdict: Dict[int, dict] = {}
-    for s in range(0, len(observations), REVIEW_BATCH):
-        items = [_brief(i, observations[i]) for i in range(s, min(s + REVIEW_BATCH, len(observations)))]
-        data = _ask(REVIEW_SYSTEM, json.dumps({"items": items}, ensure_ascii=False), chat, "review")
+    for s, user in zip(range(0, len(observations), batch), review_requests(observations, batch)):
+        data = _ask(REVIEW_SYSTEM, user, chat, "review", tag=tag)
         if data is None:
             if not verdict:
-                return {"kept": list(observations), "rejected": [], "ai": "skipped (no local model answering)"}
+                return {"kept": list(observations), "rejected": [], "ai": f"skipped (no {who} answering)"}
             continue
         items_ans = data.get("items")
         for x in items_ans if isinstance(items_ans, list) else []:
-            if isinstance(x, dict) and isinstance(x.get("id"), int) and s <= x["id"] < s + REVIEW_BATCH:
+            if isinstance(x, dict) and isinstance(x.get("id"), int) and s <= x["id"] < s + batch:
                 verdict[x["id"]] = x
-        log(f"ai reviewed {min(s + REVIEW_BATCH, len(observations))}/{len(observations)}")
+        log(f"ai reviewed {min(s + batch, len(observations))}/{len(observations)}")
     kept, rejected = [], []
     for i, o in enumerate(observations):
         v = verdict.get(i)
