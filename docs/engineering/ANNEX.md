@@ -258,6 +258,33 @@ Rewrites a tonal recipe to Echo Out when the key score is below KEY_SAFE_MIN.
 sits beside it in `app/music_brain/`. CLI `python -m app.music_brain.knowledge export | import`. Import resolves
 songs by name onto the local library. Code: `app/music_brain/matching/knowledge.py`.
 
+### knowledge sync
+How a pulled update to the [knowledge/ folder](#knowledge-folder) reaches an install that already seeded it.
+`import` is `sync`; auto_seed runs it on start. Code: `app/music_brain/matching/knowledge_sync.py`.
+* Version stamp per knowledge file: the newest git commit that touched it (one `git log --name-only`
+  over the folder, about 40 ms for 778 files). A file git does not vouch for (no `.git`, untracked,
+  edited since its commit) gets its sha256. Stamps of the last sync: `knowledge_files` in app.db.
+  A file whose stamp is unchanged is skipped; a new song in the library re-checks every file.
+* Provenance per seeded row (`knowledge_rows`): origin `knowledge` or `local`, source path and stamp,
+  seeded_hash (the row as written) and the published hash last seen.
+* On a changed file: a row still equal to seeded_hash is replaced (update); a new row is added; a row
+  removed upstream is dropped only if unchanged. A row the owner or the app changed is kept and the
+  published version is recorded as a conflict (`knowledge_conflicts`).
+* Macros: one per file. Learned observations: a set is one unit, replaced whole; user rules or a
+  disabled flag on its kinds block replacement (conflict). Atlas pairs: only when the published rules
+  hash equals the local code's (else nothing, retried next start); a pair the local build scored is
+  local; the owner's `played` evidence is never overwritten, the published one is kept as
+  `played_published`. Labels: by title key.
+* A local macro or learned set that predates provenance and differs from the published one is a
+  conflict; a differing local pair or label is kept silently (the local build / the model's label).
+* The user DB is never touched. Export is unchanged.
+
+```bash
+python3 -m app.music_brain.knowledge sync [--dry-run]    # files changed, rows updated / added / removed / kept
+python3 -m app.music_brain.knowledge conflicts           # store:item, local vs published summary
+python3 -m app.music_brain.knowledge take macro:NAME --published   # or --local
+```
+
 ### learn mode / learn-set
 Study a recorded DJ set: `python -m app.music_brain.agent_bridge learn-set <url|file>
 [--tracklist list.txt] [--split-minutes 60] [--keep-files]`. Stages: fetch, cut, separate,

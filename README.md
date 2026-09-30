@@ -148,7 +148,7 @@ After every learn (and after each part) the learner cleans up. First it register
 
 Only want the set as a playable macro? `learn-set <url> --tracklist tracklist.txt --macros-only` skips the set download and stem separation: it fetches the songs, imports them, updates the atlas and writes `set-<set_id>` in tracklist order.
 
-What the player knows travels with the repo: `app/music_brain/knowledge/` holds every macro, the learned observations and a slim, segmented pair atlas. Every learn-set run exports there (`python -m app.music_brain.knowledge export`), and a fresh checkout seeds its own cache from it on start, matching songs by name. Your local cache always wins.
+What the player knows travels with the repo: `app/music_brain/knowledge/` holds every macro, the learned observations and a slim, segmented pair atlas. Every learn-set run exports there (`python -m app.music_brain.knowledge export`), and a fresh checkout seeds its own cache from it on start, matching songs by name. A pull that changes a file there updates the rows you have not touched (each file is versioned by its git commit sha); a row you changed stays yours and is listed by `python -m app.music_brain.knowledge conflicts`, resolved with `knowledge take ITEM --published` or `--local`. See ANNEX, knowledge sync.
 
 Glossary of every named concept (atlas, macros, gates, recipes, sim): [ANNEX.md](docs/engineering/ANNEX.md).
 
