@@ -1342,17 +1342,24 @@ def get_merge_audition(job_id: str):
 
 
 @app.get("/api/learned/pick")
-def get_learned_pick(a: str, b: str, keylock: bool = False):
+def get_learned_pick(a: str, b: str, keylock: bool = False, profile: str = ""):
     """The move learned from studied sets to play for A -> B, as a console recipe
     ({kind, recipe, seen, source, reasons, rules}), or {"pick": null}. The console
-    only switches to it when that recipe is already allowed for the pair."""
+    only switches to it when that recipe is already allowed for the pair.
+    profile: the Punjabi scene profile level the console resolved for this pair
+    ("full" | "handover"; anything else = none, today's pick). Under "full" the pick
+    also reads the Punjabi-tagged sets (techniques.learned_pick)."""
+    from app.music_brain import scene_profile as sp
     from app.music_brain import techniques as tq
 
+    lvl = profile if profile in (sp.LEVEL_FULL, sp.LEVEL_HANDOVER) else None
     f = _pair_features_cached(a, b, keylock)
-    pick = tq.learned_pick(tq.rank(f), key_score=tq.camelot_score(f.key_a, f.key_b))
-    _song_step("learned_pick", b, phase="planning", decision=(pick or {}).get("recipe") or "none",
-               why="; ".join(map(str, (pick or {}).get("reasons") or []))[:300] or None,
-               inputs={"a_id": a, "keylock": keylock})
+    pick = tq.learned_pick(tq.rank(f, scene=sp.learned_scene(lvl)), key_score=tq.camelot_score(f.key_a, f.key_b),
+                           level=lvl, tempo_gap=f.tempo_gap if lvl else None)
+    p = pick or {}
+    why = "; ".join(map(str, [x for x in (p.get("clash"), p.get("degraded")) if x] + list(p.get("reasons") or [])))
+    _song_step("learned_pick", b, phase="planning", decision=p.get("recipe") or "none",
+               why=why[:300] or None, inputs={"a_id": a, "keylock": keylock, **({"profile": lvl} if lvl else {})})
     return {"pick": pick}
 
 

@@ -132,10 +132,18 @@ var autopilotCore = (function () {
   // when the console already allows that recipe for this pair (o: the same facts
   // scheduleTransition decides on), and never a move that outranks it (LAYER,
   // PEAK, riff over rap, mashup: user rule "mashup beats every other move").
+  // sp: scene-profile.js core, o.profile: {level} (the Punjabi profile, null = none). Under the
+  // full level (techniques.py learned_pick, same rule): a tonal learned blend on a key clash is
+  // allowed when the Punjabi sets show it on clashes often enough (sp.learnedClashOk), and a
+  // pair past the keylock cap never stretches: the move becomes the profile's Quick Cut.
   // -> {recipe, why} | null
-  function learnedRecipe(pick, o) {
+  function learnedRecipe(pick, o, sp) {
     if (!pick || !pick.recipe || o.layer || o.peak || o.riff || o.recipe === "Mashup → Transition" || o.recipe === "Stem Merge") return null;
-    const keyOk = o.keyScore == null || o.keyScore >= KEY_SAFE_MIN;   // clashing keys: no tonal learned blend
+    const lvl = (sp && o.profile && o.profile.level) || null, full = !!sp && lvl === sp.FULL;
+    const clashOk = full && sp.learnedClashOk(lvl, pick.scene_clash);
+    const keyOk = o.keyScore == null || o.keyScore >= KEY_SAFE_MIN || clashOk;   // clashing keys: no tonal learned blend
+    const cut = full && sp.PUNJABI_PROFILE.fallback_recipe;
+    const want = full && !sp.learnedTempoOk(lvl, pick.tempo_gap) ? cut : pick.recipe;
     const allowed = {
       // any beat-to-beat pair can swap the bass on a line
       "Bass Swap": !!(keyOk && (o.blend || o.oneSong)),
@@ -143,8 +151,11 @@ var autopilotCore = (function () {
       "Long Blend": !!(keyOk && o.oneSong && !o.vocalRule && (!o.blend || o.blend.clean)),
       "Mashup → Transition": !!(o.stemsBoth && o.mashupFits),
     };
-    if (!allowed[pick.recipe] || pick.recipe === o.recipe) return null;
-    return { recipe: pick.recipe, why: `learned ${pick.kind.replace("_", " ")} (seen ${pick.seen}x, ${pick.source})` };
+    // the degraded learned move: the scene's cut on the downbeat (full level only)
+    if (cut) allowed[cut] = keyOk || !/long blend|bass swap/i.test(String(pick.planned || pick.recipe));
+    if (!allowed[want] || want === o.recipe) return null;
+    const notes = full ? [pick.clash, pick.degraded || (want !== pick.recipe ? "tempo gap past the keylock cap" : null)].filter(Boolean) : [];
+    return { recipe: want, why: `learned ${pick.kind.replace("_", " ")} (seen ${pick.seen}x, ${pick.source})` + (notes.length ? `; ${notes.join("; ")}` : "") };
   }
   // A FORCED plan (macro-mode.js: a macro step, a studied combo, a FOLLOW SET pick) is
   // performed as stored: scheduleTransition books its recipe and points and never re-picks.
@@ -3131,16 +3142,20 @@ function createAutopilotEngine({ host, ai }) {
     let learned = null;
     if (!forced && !layer && !peakT && learnedOn()) {
       const facts = { layer, peak: peakT, blend, oneSong, stemsBoth, vocalRule, recipe, keyScore: keyScoreS,
-                      mashupFits: !!(stemsBoth && odS && sdS && mashupFits(odS, sdS)) };
-      fetch(`/api/learned/pick?a=${encodeURIComponent(currentId)}&b=${encodeURIComponent(nextId)}&keylock=${!!(sdS && sdS.useTempoStems)}`)
+                      mashupFits: !!(stemsBoth && odS && sdS && mashupFits(odS, sdS)),
+                      profile: profLvl ? { level: profLvl } : null };   // Punjabi profile: the scene's own learned evidence
+      fetch(`/api/learned/pick?a=${encodeURIComponent(currentId)}&b=${encodeURIComponent(nextId)}&keylock=${!!(sdS && sdS.useTempoStems)}`
+            + (profLvl ? `&profile=${encodeURIComponent(profLvl)}` : ""))
         .then((res) => (res.ok ? res.json() : null))
         .then((r) => {
           const pick = r && r.pick;
-          const ch = autopilotCore.learnedRecipe(pick, { ...facts, riff: !!riff, recipe });
+          const ch = autopilotCore.learnedRecipe(pick, { ...facts, riff: !!riff, recipe }, sceneProfile());
           if (!ch || executed || !active || currentTrackId !== currentId) return;
           learned = pick;
           recipe = ch.recipe;
           bookedRecipe = recipe;
+          // a learned move degraded to the profile's Quick Cut really cuts on the downbeat
+          bookedProfileCut = !!(profLvl && recipe === sceneProfile().PUNJABI_PROFILE.fallback_recipe);
           console.info("transition recipe (learned):", `${ch.recipe}: ${ch.why}`, pick.reasons);
           host.bus.emit("ai-activity", {
             kind: "learned", deck: activeDeck, label: `LEARNED · ${ch.recipe}`, why: ch.why });

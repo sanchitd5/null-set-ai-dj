@@ -312,12 +312,42 @@ TEMPO_GAP_SLACK = 0.02      # a learned move fits pairs up to this much further 
 KEY_SCORE_SLACK = 0.05
 
 
-def learned_techniques(store: Optional[Dict[str, dict]] = None) -> List[Technique]:
+def scene_store(store: Dict[str, dict], scene: Optional[str] = None) -> Dict[str, dict]:
+    """The store as one scene sees it. A sighting from a scene-tagged set
+    (scene_profile.SET_SCENES) counts toward that scene only: scene=None keeps the
+    global sets' sightings, scene="punjabi" adds the Punjabi sets' ones. count,
+    tempo_gap_max and key_score_min are recomputed from what is kept, so a desi key
+    clash never loosens the global rules. A store with no tagged set comes back as is.
+    Each entry also gets scene_clash: the kept scene-tagged sightings on a key clash
+    (key_score < LEARNED_MIN_KEY), and scene_sets: those sightings' set labels."""
+    from app.music_brain import scene_profile as sp
+    out = {}
+    for kind, e in (store or {}).items():
+        obs = e.get("observations") if isinstance(e, dict) else None
+        if not isinstance(obs, list) or not any(isinstance(o, dict) and sp.set_scene(o.get("set_id")) for o in obs):
+            out[kind] = e
+            continue
+        keep = [o for o in obs if isinstance(o, dict) and sp.set_scene(o.get("set_id")) in (None, scene)]
+        tagged = [o for o in keep if sp.set_scene(o.get("set_id"))]
+        clash = [o for o in tagged if o.get("key_score") is not None and o["key_score"] < LEARNED_MIN_KEY]
+        e = dict(e, observations=keep, count=len(keep),
+                 tempo_gap_max=max([o["tempo_gap"] for o in keep if o.get("tempo_gap") is not None], default=None),
+                 key_score_min=min([o["key_score"] for o in keep if o.get("key_score") is not None], default=None))
+        if scene:
+            e["scene_clash"] = len(clash)
+            e["scene_sets"] = sorted({sp.set_label(o.get("set_id")) for o in clash})
+        out[kind] = e
+    return out
+
+
+def learned_techniques(store: Optional[Dict[str, dict]] = None, scene: Optional[str] = None) -> List[Technique]:
     """Techniques observed in studied sets (app.music_brain.set_learner), each
-    fitting pairs inside the tempo gap / key score range it was seen at."""
+    fitting pairs inside the tempo gap / key score range it was seen at.
+    scene: whose scene-tagged sightings count too (scene_store); None = global only."""
     if store is None:
         from app.music_brain.set_learner import load_learned
         store = load_learned()
+    store = scene_store(store, scene)
     out = []
     for kind, e in sorted(store.items()):
         obs = e.get("observations") or []
@@ -360,10 +390,10 @@ def learned_techniques(store: Optional[Dict[str, dict]] = None) -> List[Techniqu
     return out
 
 
-def rank(f: PairFeatures, learned: Optional[Dict[str, dict]] = None) -> List[dict]:
+def rank(f: PairFeatures, learned: Optional[Dict[str, dict]] = None, scene: Optional[str] = None) -> List[dict]:
     """Every technique with fits + reasons; fitting ones first, in library order
-    (built-ins, then techniques learned from studied sets)."""
-    lib = TECHNIQUES + learned_techniques(learned)
+    (built-ins, then techniques learned from studied sets). scene: see scene_store."""
+    lib = TECHNIQUES + learned_techniques(learned, scene)
     order = {t.name: i for i, t in enumerate(lib)}
     out = [t.assess(f) | {"live": t.live} for t in lib]
     return sorted(out, key=lambda x: (not x["fits"], order[x["name"]]))
@@ -389,23 +419,32 @@ _KEY_SENSITIVE = {"learned:bass_swap", "learned:stem_intro"}   # both layer tona
 
 
 def learned_pick(ranked: List[dict], store: Optional[Dict[str, dict]] = None,
-                 key_score: Optional[float] = None) -> Optional[dict]:
+                 key_score: Optional[float] = None, level: Optional[str] = None,
+                 tempo_gap: Optional[float] = None) -> Optional[dict]:
     """The learned move to play for this pair, or None: live, fits, has a console recipe;
     among those, the one seen most often in studied sets. key_score (Camelot, 0-1) of
     the pair: below LEARNED_MIN_KEY the tonal blends (bass swap, stem intro) are skipped,
-    whatever clashing pairs they were once seen on (7 of 11 stem_intro sightings clash)."""
+    whatever clashing pairs they were once seen on (7 of 11 stem_intro sightings clash).
+    level: the Punjabi scene profile level (scene_profile.level), None = no profile, the
+    rule above as it was. rank() must have been given scene_profile.learned_scene(level).
+    Under "full": a tonal blend on a clash plays when the scene's own sets show it on
+    clashing pairs often enough (learned_clash_ok), and a pair past the keylock cap
+    (tempo_gap, octave-folded) gets the profile's fallback_recipe instead of the blend."""
+    from app.music_brain import scene_profile as sp
     if store is None:
         from app.music_brain.set_learner import load_learned
         store = load_learned()
+    store = scene_store(store, sp.learned_scene(level))
     best = None
     for r in ranked:
         rec = LEARNED_RECIPE.get(r["name"])
         if r["name"] in NEVER_PLAY or not (rec and r["fits"] and r.get("live")):
             continue
-        if key_score is not None and key_score < LEARNED_MIN_KEY and r["name"] in _KEY_SENSITIVE:
-            continue
         kind = r["name"].split(":", 1)[1]
         e = store.get(kind) or {}
+        clash = key_score is not None and key_score < LEARNED_MIN_KEY and r["name"] in _KEY_SENSITIVE
+        if clash and not sp.learned_clash_ok(level, e.get("scene_clash")):
+            continue
         if kind == "acapella_over":           # only B's voice over A's beat is the console's mashup
             froms = {o.get("detail", {}).get("vocal_from") for o in e.get("observations") or []}
             if "B" not in froms:
@@ -414,6 +453,15 @@ def learned_pick(ranked: List[dict], store: Optional[Dict[str, dict]] = None,
         if best is None or seen > best["seen"]:
             best = {"kind": kind, "recipe": rec, "seen": seen, "source": r["source"], "reasons": r["reasons"],
                     "rules": [x for x in r["reasons"] if "rule:" in x]}
+            if level:                       # profile fields only: no profile = today's pick, byte for byte
+                n = int(e.get("scene_clash") or 0)
+                best.update(level=level, scene_clash=n, tempo_gap=None if tempo_gap is None else round(tempo_gap, 4),
+                            clash=(f"learned from {', '.join(e.get('scene_sets') or [])}: {n} key-clash "
+                                   f"{kind.replace('_', ' ')}s") if clash else None, planned=None, degraded=None)
+    if best and level and not sp.learned_tempo_ok(level, tempo_gap):
+        # never stretch past the keylock cap: the scene's cut-style handover on the downbeat instead
+        best.update(planned=best["recipe"], recipe=sp.PUNJABI_PROFILE["fallback_recipe"],
+                    degraded=f"tempo gap {tempo_gap:.1%} past the {sp.PUNJABI_PROFILE['learned_tempo_cap']:.0%} keylock cap")
     return best
 
 

@@ -38,9 +38,28 @@ PUNJABI_PROFILE = {
     "cuts_skip_key_bypass": True,     # s7 "cuts skip the gate, no 0.4 bypass penalty" (GUESS)
     "bpm_octave_fold": True,          # s7 "bpm_octave_fold: true # 176 == 88" (octave reading GUESS)
     "repeat_anthems_after_min": 45,   # s7 "repeat_anthems_after_min: 45" (GUESS); not wired: history has no play times
+    # Learned moves under the FULL level (techniques.learned_pick). A tonal learned blend on a key
+    # clash is allowed once Punjabi-tagged sets show that move on clashing pairs at least this
+    # often: 3, so one mis-detected pair or one wrong key estimate cannot unlock it alone
+    # (set-study-aLWCv6MGyho.md flags a possible stem false match at 0:36). GUESS, not auditioned.
+    "learned_clash_min_obs": 3,
+    # ... and never past the keylock cap (= techniques.MAX_KEYLOCK_STRETCH, tempo-rule.js
+    # KEYLOCK_RANGE_PCT): a pair whose octave-folded gap is wider gets the fallback_recipe.
+    "learned_tempo_cap": 0.08,
 }
 
 LEVEL_FULL, LEVEL_HANDOVER = "full", "handover"
+
+# Studied sets that belong to a scene: set_id -> (scene, label for the step log). A set not
+# listed is global (its learned moves count everywhere). A hand-kept map, not a genre vote:
+# the sets are open-format (aLWCv6MGyho alternates Bollywood / Punjabi with US hip-hop,
+# reggaeton and house), so a vote over the songs' model-derived genre labels would be noisy,
+# while the set's scene is plain from its title and DJ.
+SET_SCENES = {
+    # "DJ TIMELESS PRESENTS: NYC Live Sessions 1 (Bollywood, Punjabi, Hip Hop, Dance, Pop)", an NYC
+    # South Asian DJ (research/notes/set-study-aLWCv6MGyho.md s1, SOURCED)
+    "aLWCv6MGyho": ("punjabi", "DJ Timeless NYC Live Sessions 1"),
+}
 
 
 def normalize_mode(mode) -> str:
@@ -110,6 +129,36 @@ def fold_bpm(bpm_a: float, bpm_b: float) -> float:
     if not (bpm_a and bpm_a > 0 and bpm_b and bpm_b > 0):
         return bpm_b
     return min((bpm_b * m for m in (1.0, 2.0, 0.5)), key=lambda x: abs(bpm_a / x - 1))
+
+
+def set_scene(set_id) -> Optional[str]:
+    """The scene a studied set belongs to ("punjabi"), or None: a global set."""
+    s = SET_SCENES.get(str(set_id or ""))
+    return s[0] if s else None
+
+
+def set_label(set_id) -> str:
+    s = SET_SCENES.get(str(set_id or ""))
+    return s[1] if s else str(set_id or "")
+
+
+def learned_scene(lvl) -> Optional[str]:
+    """Whose scene-tagged learned evidence a transition at this level may use: only the full level."""
+    return PUNJABI_PROFILE["name"] if lvl == LEVEL_FULL else None
+
+
+def learned_clash_ok(lvl, clash_obs) -> bool:
+    """A tonal learned blend may play on a key clash: full level and enough clashing
+    sightings of that move in the scene's own sets. Handover / no profile: never."""
+    return lvl == LEVEL_FULL and int(clash_obs or 0) >= PUNJABI_PROFILE["learned_clash_min_obs"]
+
+
+def learned_tempo_ok(lvl, folded_gap) -> bool:
+    """Under the full level a learned move plays only inside the keylock cap (octave-folded gap);
+    wider pairs get the fallback_recipe. Other levels: not this rule's call (True)."""
+    if lvl != LEVEL_FULL or folded_gap is None:
+        return True
+    return float(folded_gap) <= PUNJABI_PROFILE["learned_tempo_cap"] + 1e-9
 
 
 def vibe_score(genre_a=None, genre_b=None, era_a=None, era_b=None, lvl: str = LEVEL_FULL) -> float:
