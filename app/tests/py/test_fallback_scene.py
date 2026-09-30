@@ -114,3 +114,17 @@ def test_suggest_scene_anchor_recovers(monkeypatch):
     assert "SCENE RECOVERY" in seen[0] and "back in hip hop" in seen[0]
     assert [s["title"] for s in out] == ["Big Dawgs"]
     assert meta["current_genre"] == "electronic" and meta["scene_anchor"] == "hip hop"
+
+
+def test_fallback_fix_js_check():
+    """app/tests/js/fallback_fix_check.js: prepared wait, pending pair reject, gate reason, deck events,
+    scene anchor tracking + recovery ranking, atlas scene ranking, the session's replay rows."""
+    import shutil
+    import subprocess
+    import pytest
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node not installed")
+    check = Path(__file__).parents[1].joinpath("js", "fallback_fix_check.js")
+    res = subprocess.run([node, str(check)], capture_output=True, text=True, timeout=30)
+    assert res.returncode == 0, res.stderr or res.stdout
