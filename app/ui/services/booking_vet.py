@@ -14,15 +14,16 @@ stored=True (a macro step, a FOLLOW SET song, a studied combo: a move replayed f
   earlier_set  the song was heard in an earlier set (set_memory), the rule the picks already follow
   scene        a genre jump as the suggestion filter scores it (_filter_suggestions): both labels known and
                no shared family (genre.family_jump = hop 2 > MAX_GENRE_HOP), except the Punjabi profile's own
-               pairs while it is active (scene_profile.in_scene_pair). House <-> melodic techno is one family:
-               kept, as it is for the picks
+               pairs while it is active (scene_profile.in_scene_pair). "electronic" is split into sub-families
+               (genre.ELECTRONIC_CLUSTERS): house <-> melodic techno are neighbours, kept; trance -> downtempo
+               is a jump, refused
 Every candidate (stored or not):
   veto         the owner vetoed the pair, or the song in this scene (atlas/vetoes.py)
   scene_anchor while the console recovers from an off-scene mistake (anchor_genre given: the set's
                scene before a fallback / BAD PAIR brought A in from outside it), a candidate that
                continues A's mistaken genre (shares A's family, none of the anchor's) is refused:
                the song after the mistake goes back to the set's scene (owner, session 2026-09-30_191133)
-Each result carries B's genre families and scene_rel against the anchor (else A's label), which the
+Each result carries B's scene anchor tokens (genre.scene_keys, as `families`) and scene_rel against the anchor (else A's label), which the
 console ranks and feeds its scene anchor with.
 The energy step is not here: evaluateCandidate already runs energyStepOk on every candidate.
 An unknown genre passes, as in the suggestion filter (the studied pair is the evidence). Era is not a
@@ -34,7 +35,7 @@ from __future__ import annotations
 from typing import Iterable, List, Optional
 
 from app.music_brain.analysis import scene_profile as sp
-from app.music_brain.analysis.genre import family_jump, genre_families, scene_relation
+from app.music_brain.analysis.genre import family_jump, genre_families, scene_keys, scene_relation
 from app.music_brain.atlas import vetoes as vt
 from app.ui.services.set_memory import _key as memory_key
 
@@ -81,6 +82,6 @@ def vet(a_name: str, cands: List[dict], **kw) -> List[dict]:
         ref = kw.get("anchor_genre") or kw.get("a_genre")
         out.append({"track_id": c.get("track_id"), "name": c.get("name"), "ok": r is None,
                     "gate": r["gate"] if r else None, "why": r["why"] if r else None, "scene_clash": clash,
-                    "families": sorted(genre_families(c.get("genre"))),
+                    "families": scene_keys(c.get("genre")),
                     "scene_rel": scene_relation(ref, c.get("genre")) if ref else "unknown"})
     return out
