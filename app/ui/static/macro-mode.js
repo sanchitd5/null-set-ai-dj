@@ -376,8 +376,20 @@
     })).filter((g) => g.items.length);
   }
 
+  // $Up3R-M@SS!V3-M0v3 (super-move.js) in the MACRO list itself (owner 2026-10-01: "should be a macro button itself"):
+  // one entry per shipped variant, first in the list. Its value carries SUPER_PREFIX; PLAY STEP / PLAY MACRO with it
+  // selected press the move (superMove.press), Shift+S presses the default one. -> [{value, label, title}]
+  const SUPER_NAME = "$Up3R-M@SS!V3-M0v3", SUPER_PREFIX = "supermove:";
+  function superMoveOptions(variants) {
+    return (variants || []).filter((v) => v && v.name).map((v) => ({
+      value: `${SUPER_PREFIX}${v.name}`,
+      label: `${SUPER_NAME} ${v.name} · ${v.n || (v.songs || []).length} songs layered by stems`,
+      title: `${SUPER_NAME} ${v.name}: PLAY STEP or PLAY MACRO starts it now (Shift+S); press again to stop` }));
+  }
+  const superOf = (value) => (String(value || "").startsWith(SUPER_PREFIX) ? String(value).slice(SUPER_PREFIX.length) : null);
+
   const core = { MACRO_PREFERENCE, COMBO_MIN_WORKS, COMBO_LABEL, FOLLOW_WINDOW, artistOf, studiedLabel, followCandidates, macroOrder, comboCandidates, macroCandidate,
-                 macroRows, macroListLabel, macroGroups,
+                 macroRows, macroListLabel, macroGroups, SUPER_NAME, SUPER_PREFIX, superMoveOptions, superOf,
                  macroPrefer, streakAfter, streakLabel, applyPlan, fireAt, stepGate, editStep, setToMacro, runNowCheck, forcedOf, likedFor, storedMoveOf, stepForPair, runNext, deadlineStepOf, autoMixPick, upcomingIds,
                  createRuntime: create };   // node checks drive the runtime over a fake Host
   if (typeof module !== "undefined" && module.exports) module.exports = core;
@@ -571,20 +583,40 @@
         `</li>`)(r.step)).join("");
     }
     const fmt = (t) => (Number.isFinite(t) ? `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, "0")}` : "?");
+    let listed = [];                    // the last GET /api/macros list (renderList redraws it with the move's entries)
+    function renderList() {
+      const sel = ui.el("macro-select");
+      if (!sel) return;
+      const keep = sel.value;
+      const sm = superMoveOptions(host.mod.superMove && host.mod.superMove.variants);
+      sel.innerHTML = `<option value="">MACROS…</option>`
+        + (sm.length ? `<optgroup label="${esc(SUPER_NAME)}">` + sm.map((o) => `<option value="${esc(o.value)}" title="${esc(o.title)}">${esc(o.label)}</option>`).join("") + `</optgroup>` : "")
+        + macroGroups(listed).map((g) => `<optgroup label="${esc(g.label)}">`
+        + g.items.map((m) => `<option value="${esc(m.name)}" title="${esc(m.name)}">${esc(macroListLabel(m))}</option>`).join("")
+        + `</optgroup>`).join("");
+      if (keep) sel.value = keep;
+    }
     async function refreshList() {
       studiedSets = null;               // re-read with the macros (an import-set adds songs)
-      const sel = ui.el("macro-select");
       try {
         const list = (await getJSON("/api/macros")).macros || [];
-        if (sel) sel.innerHTML = `<option value="">MACROS…</option>` + macroGroups(list).map((g) => `<optgroup label="${esc(g.label)}">`
-          + g.items.map((m) => `<option value="${esc(m.name)}" title="${esc(m.name)}">${esc(macroListLabel(m))}</option>`).join("")
-          + `</optgroup>`).join("");
+        listed = list;
+        renderList();
         try { liked = (await getJSON("/api/liked")).liked || []; } catch (e) { liked = []; }
         macros = [];
         for (const m of macroOrder(list, 20)) { try { macros.push((await getJSON(`/api/macros/${encodeURIComponent(m.name)}`)).macro); } catch (e) { /* skip */ } }
       } catch (e) { say(`macros: ${e.message}`, false); }
     }
+    let superPick = null;               // a $Up3R-M@SS!V3-M0v3 entry selected in the list (variant name)
     async function loadMacro(name) {
+      superPick = superOf(name);
+      if (superPick) {                  // the move's entry: its songs in the step list, PLAY STEP / PLAY MACRO press it
+        loaded = null; cursor = 0;
+        const v = ((host.mod.superMove && host.mod.superMove.variants) || []).find((x) => x.name === superPick);
+        const el = ui.el("macro-steps");
+        if (el) el.innerHTML = v ? v.songs.map((s) => `<li>${esc(s.name)} <span class="macro-pts">core ${fmt(s.core && s.core.start)}-${fmt(s.core && s.core.end)}</span></li>`).join("") : "";
+        return say(`${SUPER_NAME} ${superPick}: PLAY STEP or PLAY MACRO starts it now (Shift+S); press again to stop`);
+      }
       if (!name) { loaded = null; renderMacro(); return; }
       const d = await getJSON(`/api/macros/${encodeURIComponent(name)}`);
       loaded = d.macro; cursor = 0;
@@ -599,7 +631,9 @@
       const aId = aDeck === "a" ? st.trackA : st.trackB, bId = aDeck === "a" ? st.trackB : st.trackA;
       const cs = host.mod.djMind && host.mod.djMind.core && host.mod.djMind.core.camelotScore;
       const ka = d && d.analysis && d.analysis.key && d.analysis.key.camelot, kb = o && o.analysis && o.analysis.key && o.analysis.key.camelot;
-      return { aDeck, bDeck, d, o, aId, bId, playing: !!(d && d.isPlaying !== false && d.buffer),
+      // the Deck's own flag is `playing` (deck-controller.js); `isPlaying` only in older fakes
+      const on = d && (typeof d.playing === "boolean" ? d.playing : d.isPlaying !== false);
+      return { aDeck, bDeck, d, o, aId, bId, playing: !!(on && d.buffer),
                aStems: !!(d && d.stemsReady), bStems: !!(o && o.stems), aEff: d && d.bpm ? d.bpm * (d._playbackRate ? d._playbackRate() : 1) : 0,
                bBpm: o && o.bpm, keyScore: cs && ka && kb ? cs(ka, kb) : null,
                tempoRule: host.mod.tempoRule, keySafe: host.mod.autopilot && host.mod.autopilot.core && host.mod.autopilot.core.keySafeRecipe };
@@ -654,6 +688,11 @@
       let c = deckState();
       const nx = c.playing ? runNext(loaded, cursor, c.aId) || runNext(loaded, 0, c.aId) : null;
       if (c.playing && !nx) return say(`PLAY MACRO: the playing song is not an A of ${loaded.name}; play ${loaded.steps[cursor] ? loaded.steps[cursor].a_name : "its first song"} first`, false);
+      // Never load A onto the autopilot's deck under it (session 2026-10-01_001355, 00:50:38: Proper Patola replaced
+      // the playing song behind the autopilot, which kept the old song's booking and clock, and the set held at the
+      // deadline 6 s into it). With the autopilot on, the macro starts from a song it plays.
+      const apOn = host.mod.autopilotState && host.mod.autopilotState.active;
+      if (!nx && apOn) return say(`PLAY MACRO: the autopilot is playing ${c.aId || "a song"}, not an A of ${loaded.name}; play ${loaded.steps[cursor] ? loaded.steps[cursor].a_name : "its first song"} first`, false);
       if (nx) cursor = nx.i;
       else {
         const s = loaded.steps[Math.min(cursor, loaded.steps.length - 1)];
@@ -769,11 +808,24 @@
       } catch (e) { say(`PLAN FROM PICKS: ${e.message}`, false); }
     }
 
+    // the move's entry selected: PLAY STEP / PLAY MACRO press it (start now, or stop it when it runs)
+    const pressSuper = () => {
+      const sm = host.mod.superMove;
+      if (!sm || !sm.press) return say(`${SUPER_NAME}: not loaded`, false);
+      return sm.press(superPick);
+    };
+    // A step armed for the autopilot's next booking without loading anything (super-move.js book: the autopilot then
+    // re-books and loads it through its own path, so the deck and the autopilot always agree on the song).
+    function armStep(s, label) {
+      armed = s;
+      say(`${label || "ARM"}: ${s.b_name || s.b} armed for the booking now`);
+    }
+    const disarm = () => { armed = null; };
     const ACTIONS = {
-      "macro-step": async () => (await autoMix()) || playStep(loaded && loaded.steps[cursor], "PLAY STEP"),
+      "macro-step": async () => (superPick ? pressSuper() : (await autoMix()) || playStep(loaded && loaded.steps[cursor], "PLAY STEP")),
       "macro-transition": async () => { const s = await pairStep(); return s ? playStep(s, "PLAY THIS TRANSITION") : say("PLAY THIS TRANSITION: the atlas has no stored transition for the loaded pair", false); },
       "plan-picks": () => planFromPicks(),
-      "macro-play": () => playMacro(),
+      "macro-play": () => (superPick ? pressSuper() : playMacro()),
     };
     const run = (id) => { if (ACTIONS[id]) return ACTIONS[id](); return undefined; };
     if (root.aiActions && typeof root.aiActions.register === "function") for (const id of Object.keys(ACTIONS)) root.aiActions.register(id, ACTIONS[id]);
@@ -838,6 +890,7 @@
     // the deadline's first fallback for the playing song (autopilot.js deadlineFallback)
     const deadlineStep = (aId) => deadlineStepOf({ macro: loaded, running, cursor, aId, armed: lastArmed });
     return { core, firstCandidates, deadlineStep, defaultPlan, landed, partners, planFor, loadMacro, playStep, playMacro, autoMix, upcoming, saveSet, run, ACTIONS,
+             armStep, disarm, renderList, get superPick() { return superPick; },
              storedMove, storedStep, startReplay, refreshList, get liked() { return liked; },
              get running() { return running; },
              get stats() { return Object.assign({ streak: streak.n }, stats); }, get streak() { return streak; }, get loaded() { return loaded; } };

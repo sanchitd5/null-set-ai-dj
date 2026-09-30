@@ -160,13 +160,36 @@
   100% { transform: scale(1) rotate(0); }
 }
 
-/* $Up3R-M@SS!V3-M0v3 (super-move.js): NULL IN FRONT from the move's first transition to its end. #nul-super gets
-   .nul-front: visible, above every console layer (the highest is 1000), in the dock pose (bottom-left, small).
-   The SUPER takeover (.nul-sm-on) still runs over it on the move's first hit. To change what "in front" means,
-   edit these rules (and FRONT_CLASS in super-move.js); nothing else reads the class. */
-.nul-super.nul-front { visibility: visible; z-index: 1100; }
-.nul-front:not(.nul-sm-on) .nul-sm-bot {
-  transform: translate(calc(-50vw + min(22vmin, 190px) * 0.4 + 24px), calc(50vh - min(22vmin, 190px) * 0.4 - 24px)) scale(0.4);
-  filter: drop-shadow(0 0 10px color-mix(in srgb, var(--sm-glow) 60%, transparent));
+/* $Up3R-M@SS!V3-M0v3 (super-move.js): NULL IN FRONT from the move's first transition to its end (owner 2026-10-01:
+   "should always have the dancing bot saying $Up3R-M@SS!V3-M0v3 in center of screen"). #nul-super gets .nul-front:
+   visible above every console layer (the highest is 1000), the bot in the CENTRE, dancing on the plan's beat
+   (--front-beat, set by super-move.js), its caption from the data-front-cap attribute. pointer-events stay none
+   (.nul-super above), so every deck control under it keeps working; the class and the attribute go when the move
+   ends or is stopped. The SUPER takeover (.nul-sm-on) still runs over it on the move's first hit. To change what
+   "in front" means, edit these rules (and FRONT_CLASS / FRONT_CAP in super-move.js); nothing else reads them. */
+.nul-super.nul-front { visibility: visible; z-index: 1100; pointer-events: none; --front-beat: 484ms; }
+.nul-super.nul-front:not(.nul-sm-on) .nul-sm-bot {
+  transform: scale(0.7);
+  filter: drop-shadow(0 0 16px color-mix(in srgb, var(--sm-glow) 70%, transparent));
 }
 .nul-front:not(.nul-sm-on) .nul-sm-cap, .nul-front:not(.nul-sm-on) .nul-sm-scrim { opacity: 0; }
+.nul-super.nul-front[data-front-cap]::after {
+  content: attr(data-front-cap);
+  position: absolute; left: 50%; top: calc(50% + min(44vmin, 380px) * 0.38); transform: translateX(-50%);
+  white-space: nowrap; font: 800 clamp(20px, 4.5vmin, 44px) var(--mono, monospace); letter-spacing: 0.08em;
+  color: #fff; text-shadow: 0 0 14px var(--sm-glow), 0 0 3px var(--sm-glow); pointer-events: none;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .nul-front:not(.nul-sm-on) .nul-sm-bot { animation: nul-front-dance calc(var(--front-beat) * 2) ease-in-out infinite; }
+  .nul-front:not(.nul-sm-on) .nul-head { animation: nul-sm-nod var(--front-beat) ease-out infinite; }
+  .nul-front:not(.nul-sm-on) .nul-phones { animation: nul-sm-bounce var(--front-beat) ease-out infinite; }
+  .nul-front:not(.nul-sm-on) .nul-eye { animation: nul-sm-flash var(--front-beat) steps(1, end) infinite; }
+  .nul-front:not(.nul-sm-on) .nul-mouth { animation: nul-sm-mouth var(--front-beat) ease-out infinite; }
+  .nul-front:not(.nul-sm-on) .nul-sm-halo { opacity: 0.5; animation: nul-sm-throb var(--front-beat) ease-out infinite; }
+}
+@keyframes nul-front-dance {
+  0%, 100% { transform: scale(0.7) rotate(-4deg) translateY(0); }
+  25%      { transform: scale(0.72) rotate(0) translateY(-3%); }
+  50%      { transform: scale(0.7) rotate(4deg) translateY(0); }
+  75%      { transform: scale(0.72) rotate(0) translateY(-3%); }
+}
