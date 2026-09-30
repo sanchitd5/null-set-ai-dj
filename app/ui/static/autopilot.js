@@ -441,6 +441,27 @@ var autopilotCore = (function () {
       || (y.works - x.works) || (x.track_id < y.track_id ? -1 : x.track_id > y.track_id ? 1 : 0));
     return { list, skipped };
   }
+  // ---- booking vet (server booking_vet.py) ----
+  // A stored move replayed from memory (a macro step, a FOLLOW SET song, a studied combo) obeys the picks'
+  // repeat / earlier-set / scene rules; a step the owner armed by hand is his call (only his veto
+  // applies to it, as to every candidate).
+  function storedMove(cand) {
+    if (!cand || (cand._macro && cand._macro.byUser)) return false;
+    return !!(cand._macro || cand._follow || (cand._combo && cand._combo.studied));
+  }
+  // the server's answer for the first candidate -> {gate, why} when refused, else null
+  function vetRefusal(res) {
+    const r = res && Array.isArray(res.results) ? res.results[0] : null;
+    return r && r.ok === false ? { gate: r.gate || "vet", why: r.why || r.gate || "refused" } : null;
+  }
+  // how a refusal is logged: the stored move's own step kind (studied / macro) or a candidate reject;
+  // keep: a pairwise refusal may fit after another song, a repeat never does
+  function vetStep(cand, v) {
+    const kind = cand && cand._macro ? "macro" : cand && (cand._follow || cand._combo) ? "studied" : "candidate_reject";
+    const src = cand && cand._macro ? "macro step" : cand && cand._follow ? "follow set" : cand && cand._combo ? "studied combo" : "pick";
+    return { kind, decision: v.gate === "veto" ? "owner veto" : "refused", why: `${src} refused (${v.gate}): ${v.why}`,
+             keep: !(v.gate === "repeat" || v.gate === "earlier_set") };
+  }
   // Mashup → Transition (B's vocal over A's instrumental), narrow: refused when B's vocal would sing over A's
   // drop window / the sung line into it (busy: drop-line.js dropLineBusy). o: {busy} -> {gate, why} | null
   function mashupGate(o) {
@@ -760,7 +781,7 @@ var autopilotCore = (function () {
     emptyRetryMs, useLibraryFallback, searchPlan, DEADLINE_LEAD_S, rankAtlasBackups, backupStale, backupNeedsStems, rememberPairReject, pairRejected, awaitJob, keySafeRecipe, KEY_SAFE_MIN, energyStepOk, hybridWindowKey, highSpans, quantileLinear, median, exitPastHigh, learnedRecipe, vocalRecipe, stemBlendBars, stemBlendFader, phraseWaitS, introBars, FADER_PARK_BARS, homePlan, maskedGlideBars, maskedDropAt, HOME_DROP_PCT, LADDER_STEP_PCT,
     tempoLockableAt, recipeKind, decideRecipe, planSkipReason, WINDOWS, playWindowFor, exitBounds, exitPick, exitTiming, exitHighPush, audibleEnd, entryClamp, SILENT_FLOOR,
     breakdownSpans, exitOutOfBreakdown, exitBreakdownPush, energyAtTarget, FINISH_MAX_S, forcedExit, forcedRecipe, forcedLine, forcedBooking,
-    badPairOf, mashupGate, mashupBars };
+    storedMove, vetRefusal, vetStep, badPairOf, mashupGate, mashupBars };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   return api;
 })();
@@ -2359,6 +2380,21 @@ function createAutopilotEngine({ host, ai }) {
     return res;
   }
 
+  // POST /api/autopilot/vet (app/ui/services/booking_vet.py) for one candidate -> {gate, why} | null.
+  // An unreachable server leaves today's behaviour (logged): the live gates below still run.
+  async function vetCandidate(currentId, cand) {
+    try {
+      const res = await fetch("/api/autopilot/vet", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ a_id: currentId, a_name: history[history.length - 1] || "", history: history.slice(-400), set_id: setId || "",
+          punjabi_profile: punjabiMode(), cands: [{ track_id: cand.track_id || null, name: cand.name || "", stored: autopilotCore.storedMove(cand) }] }),
+      });
+      if (!res.ok) { console.warn("vet: HTTP", res.status); return null; }
+      const j = await res.json();
+      return autopilotCore.vetRefusal(j);
+    } catch (e) { console.warn("vet:", e && e.message); return null; }
+  }
+
   async function evaluateCandidate(currentId, cand, gen) {
     if (!active || !cand) return false;
     const nextId = cand.track_id;
@@ -2393,6 +2429,20 @@ function createAutopilotEngine({ host, ai }) {
       apStatus(`Skipping ${nextName}: ${fmtTime(cand.duration)} is too short for a ${setMode().toUpperCase()} set`);
       return false;
     }
+
+    // Booking vet: the owner's vetoes for every candidate; a stored move also obeys the picks' repeat,
+    // earlier-set and scene rules ("a studied pair is evidence, not an override of the vibe rules")
+    const vetoed = await vetCandidate(currentId, cand);
+    if (vetoed) {
+      const vs = autopilotCore.vetStep(cand, vetoed);
+      console.warn(`[vet] ${nextName}: ${vs.why}`);
+      host.log.step(vs.kind, { track_id: nextId, phase: "selection", decision: vs.decision, why: vs.why, result: { gate: vetoed.gate } });
+      apStatus(`Not after this song: ${nextName} (${vetoed.why})`);
+      autopilotCore.rememberPairReject(pairRejects, currentId, nextId, vs.why, true);
+      cand.keep = vs.keep;
+      return false;
+    }
+    if (!active) return false;
 
     const known = autopilotCore.pairRejected(pairRejects, currentId, nextId, forceJump);
     if (known) {

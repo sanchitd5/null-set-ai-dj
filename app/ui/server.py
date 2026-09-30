@@ -2247,6 +2247,51 @@ def post_veto(req: VetoRequest):
     return {"added": added, "veto": e}
 
 
+class VetCand(BaseModel):
+    track_id: Optional[str] = Field(default=None, max_length=64)
+    name: str = Field(default="", max_length=300)
+    stored: bool = False                        # a macro step / FOLLOW SET song / studied combo
+
+
+class VetRequest(BaseModel):
+    a_id: Optional[str] = Field(default=None, max_length=64)
+    a_name: str = Field(default="", max_length=300)
+    history: List[str] = Field(default_factory=list, max_length=400)
+    set_id: str = Field(default="", max_length=64)
+    punjabi_profile: str = "off"
+    cands: List[VetCand] = Field(default_factory=list, max_length=60)
+
+
+@app.post("/api/autopilot/vet")
+def autopilot_vet(req: VetRequest):
+    """Every candidate the console is about to book, whatever path found it (booking_vet.py)."""
+    from app.ui.services import booking_vet as bv
+    from app.ui.services.set_memory import MAX_SONGS, SetMemory
+
+    global _set_memory
+    a_name = req.a_name or (_name_of(req.a_id) if req.a_id else "")
+    av = _track_vibe(req.a_id) if req.a_id else _vibe_by_name(a_name)
+    if not av["genre"] and a_name:
+        av = _vibe_by_name(a_name)
+    earlier: List[str] = []
+    if any(c.stored for c in req.cands):
+        if _set_memory is None:
+            _set_memory = SetMemory(CACHE_DIR / "set_memory.json")
+        earlier = _set_memory.earlier_sets(list(req.history), set_id=_clean_set_id(req.set_id), limit=MAX_SONGS)
+    rows = []
+    for c in req.cands:
+        name = c.name or (_name_of(c.track_id) if c.track_id else "")
+        v = _track_vibe(c.track_id) if c.track_id else {"genre": None, "era": None}
+        if not v["genre"]:
+            v = _vibe_by_name(name)
+        rows.append({"track_id": c.track_id, "name": name, "genre": v["genre"], "era": v["era"], "stored": c.stored})
+    res = bv.vet(a_name, rows, a_genre=av["genre"], a_era=av["era"], history=req.history, earlier=earlier,
+                 vetoes=_vetoes(), punjabi_profile=req.punjabi_profile)
+    for r, row in zip(res, rows):
+        r["genre"], r["era"] = row["genre"], row["era"]
+    return {"a_name": a_name, "a_genre": av["genre"], "a_era": av["era"], "results": res}
+
+
 def _pair_vibe(track_a_id: str, track_b_id: str) -> Dict[str, Optional[str]]:
     """Genre/era kwargs for RecipeMatcher.match / resolve_candidate."""
     a, b = _track_vibe(track_a_id), _track_vibe(track_b_id)
