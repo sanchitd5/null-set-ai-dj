@@ -43,8 +43,10 @@ def load_panel(path: Path = PANEL) -> list:
     return json.loads(path.read_text(encoding="utf-8"))["runs"]
 
 
-def _run(entry: dict, out: Path) -> dict:
+def _run(entry: dict, out: Path, punjabi: str = None) -> dict:
     cmd = [sys.executable, "-m", "app.sim.virtual_set", "--replay", entry["name"], "--out", str(out / entry["name"])]
+    if punjabi:
+        cmd += ["--punjabi", punjabi]   # the Punjabi scene profile setting, passed to every replay
     p = subprocess.run(cmd, cwd=SIM.parent.parent, capture_output=True, text=True)
     rep = out / entry["name"] / "report.json"
     if p.returncode != 0 or not rep.exists():
@@ -89,10 +91,10 @@ def feature_union(reports: dict) -> dict:
             "never_triggered": sorted(k for k in features.CATALOG if not trig.get(k)), "viable_recipes": sorted(viable)}
 
 
-def run_panel(panel: list, out: Path, jobs: int = 4) -> dict:
+def run_panel(panel: list, out: Path, jobs: int = 4, punjabi: str = None) -> dict:
     out.mkdir(parents=True, exist_ok=True)
     with ThreadPoolExecutor(max_workers=max(1, jobs)) as ex:
-        results = list(ex.map(lambda e: _run(e, out), panel))
+        results = list(ex.map(lambda e: _run(e, out, punjabi), panel))
     reports = {e["name"]: r for e, r in zip(panel, results)}
     suite = {"version": 2, "score_direction": "lower is better", "aggregate": aggregate(reports),
              "runs": {n: {"score": r["score"], "metrics": r["metrics"], "worst": r["worst"][:3], "fixture_source": (r.get("meta") or {}).get("fixture_source"),
@@ -191,7 +193,11 @@ def main(argv=None) -> int:
     ap.add_argument("--build-panel", action="store_true", help="(re)record the panel offline first (library world, StubLLM)")
     ap.add_argument("--record-panel", action="store_true", help="(re)record the panel with the real model + YouTube first")
     ap.add_argument("--allow-stub", action="store_true", help="let --update-baseline accept a panel recorded with the StubLLM")
+    ap.add_argument("--punjabi", choices=("auto", "on", "off"), default=None,
+                    help="Punjabi scene profile for every replay (default: the virtual set's own default)")
     a = ap.parse_args(argv)
+    if a.punjabi and a.update_baseline:
+        ap.error("--punjabi is a comparison run; never write baseline.json from it")
     panel = load_panel(Path(a.panel))
     if a.record_panel:
         rc = record_panel(panel)
@@ -199,7 +205,7 @@ def main(argv=None) -> int:
             return rc
     if a.build_panel:
         build_panel(panel, jobs=min(a.jobs, 2))
-    suite = run_panel(panel, Path(a.out), a.jobs)
+    suite = run_panel(panel, Path(a.out), a.jobs, a.punjabi)
     base = json.loads(BASELINE.read_text(encoding="utf-8")) if BASELINE.exists() else None
     out = Path(a.out)
     (out / "suite.json").write_text(json.dumps(suite, indent=1, sort_keys=True) + "\n", encoding="utf-8")
