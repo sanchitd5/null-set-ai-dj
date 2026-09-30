@@ -83,11 +83,13 @@ Status legend:
 | learn-set (study a recorded set) | Working | `set_learner.py`, `agent_bridge learn-set` | `--split-minutes` checkpointed parts, cleanup after each part, `--macros-only`, `--keep-files`. Study clips cut as FLAC |
 | Learning progress panel | Working | `learn_progress.py`, `learn-progress.js`, `GET /api/learn/progress` | |
 | Learned moves | Working | `techniques.py` `learned_pick` / `learned_moves`, `learned-moves.js`, `dj-mind.js` `learnedNow` | Scene-tagged sets count toward their scene only |
-| Pair atlas (segmented) | Working | `pair_atlas.py` `build`, `pair_atlas_rules.js`, `GET /api/atlas/pair` | Every library pair scored by the console's own rules |
+| Pair atlas | Working | `pair_atlas.py` `build`, `atlas_store.py`, `pair_atlas_rules.js`, `GET /api/atlas/pair` | Every library pair scored by the console's own rules; SQLite rows in `CACHE_DIR/app.db`, a build writes only changed rows |
 | Studied combos | Working | `studied_combos.py`, `GET /api/studied/sets` | Ranked first as atlas evidence |
 | Macros, macro mode, PLAY MACRO, FOLLOW SET | Working | `macros.py`, `set_import.py`, `macro-mode.js` `playMacro`, `/api/macros` | |
 | Knowledge export and seed | Working | `knowledge.py` `export` / `seed` / `auto_seed` | Slim atlas, privacy check before export |
-| Persisted genre labels | Working | `genre_labels.py` | Stored in `CACHE_DIR/genre_labels.json`, travel in the export |
+| Persisted genre labels | Working | `genre_labels.py` | Stored in `CACHE_DIR/app.db`, travel in the export |
+| Local stores in SQLite | Working | `db.py`, `history.py`, `user_marks.py` | `app.db` (atlas, macros, learned, labels; exported as JSON) and `user.db` (set history, set memory, marks; private); old JSON migrates once, kept as `.migrated` |
+| Set history | Working (API only) | `history.py` `sessions` / `timeline` / `state_at` / `pair_plays` | Every set in `user.db`, indexed from the session logs as they are written; for replay / time travel |
 | Punjabi scene profile | Working | `scene_profile.py`, `scene-profile.js` | auto/on/off setting; scene-tagged learned moves |
 
 ## 6. Library, browser and downloads

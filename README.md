@@ -140,7 +140,7 @@ python -m app.music_brain.agent_bridge learn-set "https://www.youtube.com/watch?
 python -m app.music_brain.agent_bridge learn-status
 ```
 
-It clips every tracklist boundary, separates stems, matches each song, detects the techniques (bass swaps, stem intros, acapella overs, vocal loops and re-cuts, loop extends), has the local model review them, and merges them into `data/cache/learned_techniques.json`. Then it imports the set's songs into your library and rebuilds the pair atlas incrementally, which writes the set's macros (`studied-<set_id>-<n>` per transition, `studied-set-<set_id>` for the whole set). The JSON result reports that step under `macros`. To redo it by hand: `python -m app.music_brain.pair_atlas import-set <set_id>` then `python -m app.music_brain.pair_atlas build`.
+It clips every tracklist boundary, separates stems, matches each song, detects the techniques (bass swaps, stem intros, acapella overs, vocal loops and re-cuts, loop extends), has the local model review them, and merges them into the learned store (`data/cache/app.db`). Then it imports the set's songs into your library and rebuilds the pair atlas incrementally, which writes the set's macros (`studied-<set_id>-<n>` per transition, `studied-set-<set_id>` for the whole set). The JSON result reports that step under `macros`. To redo it by hand: `python -m app.music_brain.pair_atlas import-set <set_id>` then `python -m app.music_brain.pair_atlas build`.
 
 Long sets are learned in parts. A set longer than `--split-minutes` (default 60, `0` never splits) is cut at tracklist boundaries into parts of about that length; neighbouring parts share one song, so each handover is studied once. Every finished part is checkpointed under `data/cache/sets/<set_id>/parts/`, and a run that crashes or is killed picks up at the next part when started again with the same tracklist. The result has the same shape as an unsplit run, and macros, ID cuts and the atlas build run once at the end.
 
@@ -225,11 +225,33 @@ python3 -m app.music_brain.analysis.genre_labels label --missing-only --backend 
 python3 -m app.music_brain.analysis.genre_labels label --missing-only --backend claudecode
 ```
 
-`learned-review` merges the kept moves back per set under the store lock and saves rejected ones,
+`learned-review` merges the kept moves back per set in one store transaction and saves rejected ones,
 with the model's reason, to `data/cache/learned_review/<set id>.json`. Labels never replace a
 label you already have unless you pass `--overwrite`.
 
 Disk use: stems (`data/cache/stems/`) are 16-bit FLAC and key-locked renders (`data/cache/keylock/`) are 24-bit FLAC, both lossless. An older WAV cache keeps working; convert it in place with `python3 -m app.music_brain.audio_convert` (dry run, prints the projected saving) and then `--apply` while the app is idle. Add `--jobs N` to convert N folders in parallel (default min(4, cpus / 2); `--max-mem-gb` lowers N to fit memory).
+
+### Data layout: two SQLite files
+
+The stores that change often live in two SQLite files in `data/cache/` (WAL mode, one short
+transaction per write, readers never wait for a writer). Both are gitignored like the rest of `data/`.
+
+| File | Holds | Leaves the machine? |
+|---|---|---|
+| `app.db` | the player's knowledge: pair atlas, macros (every kind), learned techniques, genre / era labels | only through `knowledge export`, as the deterministic JSON in `app/music_brain/knowledge/` |
+| `user.db` | your own listening: set history (sessions, plays, transitions, moves, set logs), set memory, vetoes and liked marks | never: not exported, not in git |
+
+"Git linked" means through the export, never the `.db` file: the atlas alone is hundreds of MB,
+GitHub refuses files over 100 MB and binary diffs are unreadable. `knowledge seed` fills `app.db`
+back from the tracked JSON. The append-only logs stay files (`sessions/*/events.jsonl`, songs'
+`meta.json` / `steps.jsonl`, `set_logs/`); `user.db` is an index over them, rebuilt with
+`history.rebuild()`, and it keeps a session even after its log folder is pruned.
+
+First start after the switch migrates each old store once (well under a second each; the atlas
+about 10 s for 306k pairs) and renames the source with a `.migrated` suffix:
+`pair_atlas.migrated/` (or `pair_atlas.json.migrated`), `macros.migrated/`,
+`learned_techniques.json.migrated`, `genre_labels.json.migrated`, `set_memory.json.migrated`.
+To roll back: stop the app, delete `app.db*` / `user.db*`, and rename the `.migrated` copies back.
 
 ---
 

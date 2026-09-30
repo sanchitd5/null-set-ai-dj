@@ -19,7 +19,7 @@ DJ theory lives in the Obsidian vault, not here. Entries point at notes by name,
    sets marks a pair as studied.
 4. **Learning from real sets.** `learn-set` cuts a recorded DJ set at tracklist boundaries,
    separates it, finds which song plays where and detects techniques. The local model reviews
-   them (AI review) and they merge into `learned_techniques.json`. The owner can add user rules.
+   them (AI review) and they merge into the [learned store](#learned_techniquesjson). The owner can add user rules.
 5. **Macros and knowledge.** The atlas and the studied sets produce macros (replayable sets and
    transitions). `knowledge/` exports a slim copy into git so a fresh checkout starts strong.
 6. **Autopilot plays with gates.** In the browser console the autopilot picks the next song
@@ -138,9 +138,15 @@ Offline, deterministic pre-knowledge of which library songs go well together and
 ordered pair (A to B) with cached analysis is judged by the console's own rules (Camelot score,
 tempo lock, energy step, vocals, recipe, merge-hold, riff, mashup, supermove) and gets a
 [works score](#works-score). Played evidence from sessions, set logs and studied sets is
-attached, so a studied pair becomes a [combo](#combo). Stored in `data/cache/pair_atlas.json`;
-a pair is rescored only when its inputs or the [rules hash](#rules-hash) change. Code:
-`app/music_brain/atlas/pair_atlas.py`, node half `app/music_brain/pair_atlas_rules.js`. CLI:
+attached, so a studied pair becomes a [combo](#combo). Stored in the [app DB](#app-db-and-user-db)
+(tables `atlas_meta`, `atlas_tracks`, `atlas_pairs`, indexed on (a, works desc), combo and
+studied); a build upserts only the rows whose JSON changed, in one transaction, and a pair is
+rescored only when its inputs or the [rules hash](#rules-hash) change. `load()` still returns
+the whole atlas as one dict; request paths use `pairs_for` / `track` / `load_for` /
+`cached_index`. The old `pair_atlas/` folder (or older `pair_atlas.json`) migrates on first
+open and is kept as `<name>.migrated`. Code: `app/music_brain/atlas/pair_atlas.py` (rules),
+`app/music_brain/atlas/atlas_store.py` (storage, deliberately not a rule file), node half
+`app/music_brain/pair_atlas_rules.js`. CLI:
 `python -m app.music_brain.pair_atlas build | show | best | studied | import-set`. REST:
 `app/ui/services/atlas_api.py` (`/api/atlas/status`, `/api/atlas/partners`, `/api/atlas/pair`). Feeds
 [macros](#macro) and the autopilot's combo list.
@@ -245,7 +251,8 @@ Rewrites a tonal recipe to Echo Out when the key score is below KEY_SAFE_MIN.
 `app/ui/static/autopilot.js:keySafeRecipe`; Python side `app/music_brain/matching/techniques.py:learned_pick`.
 
 ### knowledge/ folder
-`app/music_brain/knowledge/`, tracked in git: macros, the learner's observations and a
+`app/music_brain/knowledge/`, tracked in git: the deterministic JSON form of the
+[app DB](#app-db-and-user-db) (never the `.db` itself, and never the user DB): macros, the learner's observations and a
 [slim atlas](#slim-atlas), JSON only (no audio, stems, paths or e-mail addresses). Files:
 `macros/<name>.json`, `learned_techniques.json`, `pair_atlas.json.gz`, `names.json`. The owner's `seed_combos.json`
 sits beside it in `app/music_brain/`. CLI `python -m app.music_brain.knowledge export | import`. Import resolves
@@ -273,8 +280,24 @@ not disabled, seen in a studied set, user toggles). `app/ui/static/learned-moves
 
 ### learned_techniques.json
 The learner's store: per technique kind, its observations, count, the tempo gap and key ranges
-it was seen at, and [user rules](#user-rules). Path `data/cache/learned_techniques.json`
-(`app/music_brain/learning/set_learner.py:LEARNED_PATH`); a copy is exported to `knowledge/`.
+it was seen at, and [user rules](#user-rules). Lives in the [app DB](#app-db-and-user-db)
+(`learned_entries`, one row per kind; `learned_obs`, one row per observation, indexed by set);
+`load_learned()` returns the same dict as the old JSON file, key order included. `merge`,
+`add_user_rule` and `review_learned` run load then save inside one write transaction (the
+old flock is gone). The old `data/cache/learned_techniques.json` migrates once and is kept as
+`.migrated` (`app/music_brain/learning/set_learner.py:LEARNED_PATH` still names the store);
+a copy is exported to `knowledge/`.
+
+### app DB and user DB
+Two SQLite files in `data/cache/`, WAL mode, one short transaction per write, schema versions
+per store (`app/music_brain/db.py`: `connect`, `tx`, `ensure`, `retire`). `app.db`: the
+player's knowledge ([atlas](#atlas-pair_atlas), [macros](#macro), [learned store](#learned_techniquesjson),
+genre / era labels), carried to git only by the [knowledge export](#knowledge-folder).
+`user.db`: private and never exported: set history (`app/music_brain/history.py`: sessions,
+plays, transitions with their source, moves, set logs; an index over the session JSONL,
+rebuildable, never pruned; read API `sessions`, `timeline`, `state_at`, `pair_plays`,
+`sessions_with`), set memory, and the owner's marks (`app/music_brain/user_marks.py`:
+vetoes, likes). A test guards that the export never opens `user.db`.
 
 ### list-recipes
 CLI and `GET /api/recipes`: every parsed cookbook recipe with its 17-part fields plus
@@ -300,7 +323,8 @@ set is never overwritten. `app/music_brain/matching/knowledge.py`.
 ### macro
 A fully specified, replayable set or transition: ordered track ids and per transition the
 recipe, A's exit and B's entry, the merge-hold plan, the tempo decision and any learned move.
-Stored in `data/cache/macros/<name>.json`. A stored decision that is no longer valid is logged
+Stored in the `macros` table of the [app DB](#app-db-and-user-db) (the old
+`data/cache/macros/<name>.json` folder migrates once, kept as `macros.migrated/`). A stored decision that is no longer valid is logged
 and falls back. Sources: the current set, a past session, atlas-ordered picks or the CLI
 (`python -m app.music_brain.macros list | show | from-session | picks`). Code:
 `app/music_brain/atlas/macros.py`; REST `/api/macros` (`app/ui/services/atlas_api.py`).
