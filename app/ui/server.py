@@ -1119,6 +1119,9 @@ def _song_step(kind: str, track_id: Optional[str], **fields) -> None:
         pass
 
 
+SESSION_EVENT_KINDS = ("track", "ear_flush", "note", "glitch", "move", "deck_load", "deck_unload", "veto")
+
+
 class SessionEvent(BaseModel):
     kind: str
     data: Dict = {}
@@ -1129,8 +1132,10 @@ def post_session_event(ev: SessionEvent):
     """The console's side of this session's log (track changes, ear flushes)."""
     from app.ui.services import session_log
 
-    if ev.kind not in ("track", "ear_flush", "note", "glitch", "move"):
-        raise HTTPException(status_code=400, detail="kind must be track, ear_flush, glitch, move or note")
+    # deck_load / deck_unload: a song loaded on the staging deck and why it backed off (191133 had no
+    # trace of Hanumankind loading); veto: BAD PAIR (the console sent it, the whitelist refused it)
+    if ev.kind not in SESSION_EVENT_KINDS:
+        raise HTTPException(status_code=400, detail=f"kind must be one of {', '.join(SESSION_EVENT_KINDS)}")
     # the event's own fields may reuse the log's names (a glitch report has its own "kind"):
     # those are kept as "<name>_" instead of clashing
     fields = {(f"{k}_" if k in ("kind", "t", "at") else k): v for k, v in list(ev.data.items())[:20] if isinstance(k, str)}

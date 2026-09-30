@@ -116,6 +116,27 @@ def test_suggest_scene_anchor_recovers(monkeypatch):
     assert meta["current_genre"] == "electronic" and meta["scene_anchor"] == "hip hop"
 
 
+def test_session_event_takes_deck_load_unload(monkeypatch):
+    """events.jsonl had no trace of Hanumankind loading and backing off: the console now posts
+    deck_load / deck_unload (and its BAD PAIR veto, which the whitelist used to refuse)."""
+    import app.ui.server as srv
+    from fastapi import HTTPException
+    from app.ui.services import session_log
+    seen = []
+    monkeypatch.setattr(session_log, "log", lambda kind, **f: seen.append((kind, f)))
+    monkeypatch.setattr(srv, "_host", lambda: type("H", (), {"session_event": lambda self, k, f: None})())
+    for kind in ("deck_load", "deck_unload", "veto"):
+        srv.post_session_event(srv.SessionEvent(kind=kind, data={"deck": "a", "song": "Hanumankind & Kalmi - Big Dawgs",
+                                                                 "reason": "stems not ready"}))
+    assert [k for k, _ in seen] == ["deck_load", "deck_unload", "veto"]
+    assert seen[1][1]["reason"] == "stems not ready"
+    try:
+        srv.post_session_event(srv.SessionEvent(kind="nope", data={}))
+        raise AssertionError("unknown kind accepted")
+    except HTTPException as exc:
+        assert exc.status_code == 400
+
+
 def test_fallback_fix_js_check():
     """app/tests/js/fallback_fix_check.js: prepared wait, pending pair reject, gate reason, deck events,
     scene anchor tracking + recovery ranking, atlas scene ranking, the session's replay rows."""
