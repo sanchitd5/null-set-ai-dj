@@ -35,9 +35,11 @@ null-set-ai-dj/
 │   └── tests/                  # Automated test suite (112+ tests)
 ├── downloader/                 # High-quality 320kbps YouTube to MP3 audio downloader (downloader.py)
 ├── DJ/                         # The Interconnected DJ Knowledge Base & Musical Wiki (78+ Notes)
-├── IDEAS.md                    # Master architectural blueprints (AI Transition Maker, DDJ-FLX4, Set Logs)
-├── PERFORMANCE_AUDIT.md        # Real-time efficiency, zero-lag & 60 FPS performance audit
-├── FEATURES.md                 # Reality check: implemented vs stubbed vs planned features
+├── docs/
+│   ├── product/                # IDEAS.md (blueprints), FEATURES.md (built vs stubbed), PRODUCT.md
+│   ├── engineering/            # PERFORMANCE_AUDIT.md (60 FPS / zero-lag audit), ANNEX.md (glossary)
+│   ├── archive/                # Stale handoffs and one-off prompts/audits
+│   └── images/                 # Screenshots
 ├── data/                       # Runtime artifacts: songs/, output/, cache/ (gitignored)
 └── .obsidian/                  # Native Obsidian vault configuration
 ```
@@ -47,7 +49,7 @@ null-set-ai-dj/
 ## 2. The Knowledge Base & Docs as the DJ Wiki for Agents
 
 ### A. The Core Principle: Ground Every Feature in DJ Theory
-The `./DJ/` knowledge base and project documentation (`IDEAS.md`, `PERFORMANCE_AUDIT.md`, `FEATURES.md`) serve as the **authoritative musical and architectural wiki** for all AI agents.
+The `./DJ/` knowledge base and project documentation (`docs/product/IDEAS.md`, `docs/engineering/PERFORMANCE_AUDIT.md`, `docs/product/FEATURES.md`) serve as the **authoritative musical and architectural wiki** for all AI agents.
 * **Never build DJ features in an acoustic vacuum.** 
 * When implementing or refactoring features (such as EQ cuts, crossfader curves, phrase snapping, stem isolation, track recommendations, or emergency panic buttons), agents must understand **DJing as a discipline** by referencing the corresponding notes in `./DJ/`.
 * The code implements the DSP and UI; the knowledge base defines **why** it must behave that way to sound like a world-class DJ rather than a naive linear crossfade.
@@ -58,9 +60,9 @@ Agents must manage context windows and token usage strictly when querying the kn
 2. **Step 1 — Index Lookup:** Use the navigation matrix in Section 3 below to pinpoint the single relevant note (e.g. `Bass Swap.md` or `Track Selection Framework.md`).
 3. **Step 2 — Targeted Reading:** Use `view_file` with precise line ranges (e.g. viewing the 17-part recipe's *Musical Principle* and *Step-by-step* sections only), or run `grep_search` for exact technical parameters (such as crossover frequencies or Camelot rules).
 4. **Step 3 — Engineering Alignment:**
-   * Consult `FEATURES.md` first to confirm what is currently built vs. stubbed.
-   * Consult `IDEAS.md` for planned UX interactions and hardware mappings before architecting new features.
-   * Consult `PERFORMANCE_AUDIT.md` before touching real-time audio code or animation loops to avoid introducing main-thread jank, GC pauses, or layout thrashing.
+   * Consult `docs/product/FEATURES.md` first to confirm what is currently built vs. stubbed.
+   * Consult `docs/product/IDEAS.md` for planned UX interactions and hardware mappings before architecting new features.
+   * Consult `docs/engineering/PERFORMANCE_AUDIT.md` before touching real-time audio code or animation loops to avoid introducing main-thread jank, GC pauses, or layout thrashing.
 
 ---
 

@@ -1,21 +1,32 @@
 myenv
+.venv*/
 .env
 .cache
 __pycache__
+*.pyc
+.DS_Store
 data/songs/
 downloader/downloads/
 extra/
 data/output/
-research/notes/
 data/cache/
 .pytest_tmp/
 .pytest_cache/
 node_modules/
 test-results/
 playwright-report/
-# mix.mp3
-# analyzed_setlist.json
-# mixing_plan.json
+.claude/worktrees/
 AI DJ Brief.pdf
 # virtual set output (app/sim)
 app/sim/out/
+# research audio: generated mixes and source songs stay local, never in git
+research/**/*.wav
+research/**/*.mp3
+research/**/*.flac
+# research notes are private; only these 5 are tracked on purpose
+research/notes/*
+!research/notes/anyma-visual-brief.md
+!research/notes/performance-pads-brief.md
+!research/notes/set-study-gfF8jzBVWvM.md
+!research/notes/set-study-mDtud5fLgFQ.md
+!research/notes/set_study_analyze.py

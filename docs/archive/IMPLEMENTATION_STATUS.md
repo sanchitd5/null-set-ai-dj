@@ -4,7 +4,7 @@ Implementation resumed on 2026-09-10. This document records the completed founda
 
 ## Completed foundation work
 
-- Added `PRODUCT.md` with the confirmed local, personal/educational Pulse DJ Console product constraints and accessibility baseline.
+- Added `docs/product/PRODUCT.md` with the confirmed local, personal/educational Pulse DJ Console product constraints and accessibility baseline.
 - Restored normal main-waveform seeking. A click now seeks; Shift-click pins the outgoing/incoming AI transition point.
 - Reduced hot-loop UI work in `deck-controller.js`: cached overview/readout nodes, dirty-checked clock and BPM labels, and GPU-composited overview progress/playhead transforms. The AudioContext now requests interactive latency.
 - Added a shared browser DJ event bus and exposed deck/FX objects to integration modules.

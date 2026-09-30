@@ -11,7 +11,7 @@
 //     the model is off or wrong. The move lands through djMind.holdLoopAct on
 //     the next loop wrap.
 //
-// Capture runs in an AudioWorklet (off the main thread, PERFORMANCE_AUDIT.md);
+// Capture runs in an AudioWorklet (off the main thread, docs/engineering/PERFORMANCE_AUDIT.md);
 // the main thread only copies 4096-sample chunks into the ring.
 // Depends on globals: audioCtx, masterGain, decks (deck-controller.js), djMind.
 (function (root) {

@@ -6,7 +6,7 @@ thing is, where it lives in code (`file:symbol`, no line numbers because they dr
 meet it, and what it touches next. Anything the code did not confirm is marked **UNVERIFIED**.
 
 DJ theory lives in the Obsidian vault, not here. Entries point at notes by name, for example
-[[Bass Swap]] in `DJ/05 - Transition Cookbook/`. See also `README.md`, `FEATURES.md`,
+[[Bass Swap]] in `DJ/05 - Transition Cookbook/`. See also `README.md`, `docs/product/FEATURES.md`,
 `app/sim/README.md` and `CLAUDE.md`.
 
 ## How it fits together

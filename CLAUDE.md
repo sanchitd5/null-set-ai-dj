@@ -32,9 +32,9 @@ app/                 The main player: music_brain/ engine, ui/ (FastAPI + consol
                       tests/, and legacy_pipeline/ (the older end-to-end batch scripts below)
 downloader/           YouTube -> MP3 downloader (downloader.py)
 DJ/                   Obsidian knowledge base (unchanged, see Section 3)
-research/             Experimental / superseded code: older_way/, research_stuff/, notes/
+research/             Experimental code: research_stuff/, notes/
 data/                 Runtime artifacts, not source: songs/, output/, cache/ (all gitignored)
-assets/               Reference screenshots
+docs/                 product/, engineering/, archive/ docs; images/ screenshots
 ```
 
 ### Execution Commands
@@ -126,16 +126,16 @@ It cannot judge sound quality or real vocal clash; `baseline.json` is stub-LLM e
 
 ## 3. The Obsidian DJ Knowledge Base (`./DJ/`) as the DJ Wiki
 
-The `./DJ/` directory contains ground-truth musical theory and transition specifications that inform all audio engineering in this repository. Together with `IDEAS.md`, `PERFORMANCE_AUDIT.md`, and `FEATURES.md`, it forms the **central DJ Wiki**.
+The `./DJ/` directory contains ground-truth musical theory and transition specifications that inform all audio engineering in this repository. Together with `docs/product/IDEAS.md`, `docs/engineering/PERFORMANCE_AUDIT.md`, and `docs/product/FEATURES.md`, it forms the **central DJ Wiki**.
 
 ### Conceptual Grounding & Token Efficiency Rules for Agents
 1. **Understand DJing as a Discipline:** The knowledge base exists so AI assistants understand *why* DJ moves work musically. When building features (crossfader curves, EQ hand-offs, phrase detection, stem isolation, track recommendations), always ground implementation details in the relevant `./DJ/` note.
 2. **Surgical Token Usage:** **Do not dump entire directories or huge markdown files into context.**
    * Use the index below to identify the exact 1–2 notes needed.
    * View only the necessary line ranges or grep for specific rules/crossover frequencies.
-   * Consult `FEATURES.md` for what's currently working vs. stubbed.
-   * Consult `IDEAS.md` for planned UX interactions and hardware mappings.
-   * Consult `PERFORMANCE_AUDIT.md` before touching real-time audio or animation loops to avoid main-thread jank and dropouts.
+   * Consult `docs/product/FEATURES.md` for what's currently working vs. stubbed.
+   * Consult `docs/product/IDEAS.md` for planned UX interactions and hardware mappings.
+   * Consult `docs/engineering/PERFORMANCE_AUDIT.md` before touching real-time audio or animation loops to avoid main-thread jank and dropouts.
 
 ### Quick Directory Navigation:
 * `DJ/00 - Dashboard/` $\to$ [[DJ Wiki.md]], [[DJ - Start Here.md]], [[DJ - Learning Roadmap.md]], [[DJ - Wiki Overview.md]].

@@ -10,7 +10,7 @@
 
 ## 1. Executive Summary
 
-This audit validates the frontend implementation of the **Live Transition Foundation** and **Interactive DJ Workbench** as specified in `TESTING_HANDOFF.md` and `MUSIC_BRAIN_IMPLEMENTATION_PROMPT.md`.
+This audit validates the frontend implementation of the **Live Transition Foundation** and **Interactive DJ Workbench** as specified in `docs/archive/TESTING_HANDOFF.md` and `docs/archive/MUSIC_BRAIN_IMPLEMENTATION_PROMPT.md`.
 
 Testing was performed using automated browser instrumentation via Playwright on Chromium across both desktop (`1440×900`) and mobile (`390×844`, iPhone 13 profile) viewports, alongside backend API contract verification and unit tests.
 
@@ -66,10 +66,10 @@ pytest app/tests/test_library_service.py app/tests/test_set_log.py app/tests/tes
 
 ## 3. Detailed Audit Findings & Resolved Issues
 
-During testing, several real-world edge cases and browser integration risks highlighted in `TESTING_HANDOFF.md` were discovered and fixed:
+During testing, several real-world edge cases and browser integration risks highlighted in `docs/archive/TESTING_HANDOFF.md` were discovered and fixed:
 
 ### Finding 1: WaveSurfer v7 Pointer Event Modifier Key Loss
-* **Issue:** `TESTING_HANDOFF.md` flagged that WaveSurfer v7’s `interaction` callback emits only `(newTime: number)` and does not pass the native `MouseEvent` or `PointerEvent`. As a result, Shift-clicking to pin an exit/entry point was intercepted as an ordinary seek event.
+* **Issue:** `docs/archive/TESTING_HANDOFF.md` flagged that WaveSurfer v7’s `interaction` callback emits only `(newTime: number)` and does not pass the native `MouseEvent` or `PointerEvent`. As a result, Shift-clicking to pin an exit/entry point was intercepted as an ordinary seek event.
 * **Root Cause:** WaveSurfer internal event dispatch decouples canvas interaction from DOM mouse events.
 * **Resolution in `app/ui/static/app.js`:** Added container-level `pointerdown` and `click` event listeners on the waveform wrapper, coupled with a global window `keydown`/`keyup` tracker. When `Shift` is held, any waveform click is intercepted immediately before WaveSurfer seeks, updating the transition pin point and preserving playback position.
 
@@ -92,19 +92,19 @@ During testing, several real-world edge cases and browser integration risks high
 
 ## 4. UI Explainer Visual Assets
 
-As part of the verification process, clean UI explainer screenshots illustrating features were captured and archived in `assets/`:
+As part of the verification process, clean UI explainer screenshots illustrating features were captured and archived in `docs/images/`:
 
-1. **`assets/ui-workbench-overview.png`** (360 KB): High-fidelity overview of the complete DJ console, showing PULSE AI engine bar, dual waveforms, AI transition brain, CDJ decks, 2-channel mixer, 8-slot sampler, and track browser.
-2. **`assets/ui-waveform-stage.png`** (21 KB): Dual-stacked waveform viewport, downbeat alignment, trim handles, and transition telemetry.
-3. **`assets/ui-ai-transition-brain.png`** (32 KB): AI candidate cards (*Bass Swap 95%*, *Drop Swap 88%*, *Echo Out 82%*), ghost cue markers, and Live Maker controls (`ARM ON CONSOLE`, `CANCEL LIVE RUN`).
-4. **`assets/ui-decks-and-mixer.png`** (176 KB): Hardware CDJ controllers with jog wheels, pitch sliders (±8%), 3-band kill EQs, level meters, crossfader, and recorder.
-5. **`assets/ui-mobile-view.png`** (1.8 MB): Full vertical rendering on mobile (390px viewport) confirming zero horizontal overflow and responsive component stacking.
+1. **`docs/images/ui-workbench-overview.png`** (360 KB): High-fidelity overview of the complete DJ console, showing PULSE AI engine bar, dual waveforms, AI transition brain, CDJ decks, 2-channel mixer, 8-slot sampler, and track browser.
+2. **`docs/images/ui-waveform-stage.png`** (21 KB): Dual-stacked waveform viewport, downbeat alignment, trim handles, and transition telemetry.
+3. **`docs/images/ui-ai-transition-brain.png`** (32 KB): AI candidate cards (*Bass Swap 95%*, *Drop Swap 88%*, *Echo Out 82%*), ghost cue markers, and Live Maker controls (`ARM ON CONSOLE`, `CANCEL LIVE RUN`).
+4. **`docs/images/ui-decks-and-mixer.png`** (176 KB): Hardware CDJ controllers with jog wheels, pitch sliders (±8%), 3-band kill EQs, level meters, crossfader, and recorder.
+5. **`docs/images/ui-mobile-view.png`** (1.8 MB): Full vertical rendering on mobile (390px viewport) confirming zero horizontal overflow and responsive component stacking.
 
 ---
 
 ## 5. Audit Conclusion & Sign-Off
 
-The **Live Transition Foundation** satisfies all functional and non-functional requirements outlined in `TESTING_HANDOFF.md`:
+The **Live Transition Foundation** satisfies all functional and non-functional requirements outlined in `docs/archive/TESTING_HANDOFF.md`:
 * Audio decoding, transport animation, live recipe automation, and set-log recording function without errors or regressions.
 * E2E browser tests pass deterministically on both desktop and mobile viewports.
 * Documentation, agent guidelines, and UI explainer visual assets are complete and verified.

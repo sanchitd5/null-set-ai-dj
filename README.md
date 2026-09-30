@@ -18,7 +18,7 @@
 ![local](https://img.shields.io/badge/runs-100%25%20local-ff2bd6?style=for-the-badge&labelColor=0a0f0d)
 ![license](https://img.shields.io/badge/license-MIT-8a8f8c?style=for-the-badge&labelColor=0a0f0d)
 
-<img src="assets/null-set-v1-console.png" alt="NULL::SET console: two decks mid-set, stem-shaded waveforms, a studied Anyma combo streak on the VIBE strip" width="100%"/>
+<img src="docs/images/null-set-v1-console.png" alt="NULL::SET console: two decks mid-set, stem-shaded waveforms, a studied Anyma combo streak on the VIBE strip" width="100%"/>
 
 <sub>▲ mid-set: Dom Dolla ft Daya "Dreamin (Anyma Remix)" into Kevin de Vries & Add-us "Nami", a <b>COMBO x3</b> of studied Anyma-set transitions</sub>
 
@@ -129,7 +129,7 @@ Only want the set as a playable macro? `learn-set <url> --tracklist tracklist.tx
 
 What the player knows travels with the repo: `app/music_brain/knowledge/` holds every macro, the learned observations and a slim, segmented pair atlas. Every learn-set run exports there (`python -m app.music_brain.knowledge export`), and a fresh checkout seeds its own cache from it on start, matching songs by name. Your local cache always wins.
 
-Glossary of every named concept (atlas, macros, gates, recipes, sim): [ANNEX.md](ANNEX.md).
+Glossary of every named concept (atlas, macros, gates, recipes, sim): [ANNEX.md](docs/engineering/ANNEX.md).
 
 ---
 
