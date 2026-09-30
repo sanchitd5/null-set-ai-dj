@@ -118,7 +118,9 @@ def test_announce_lines(tmp_path):
 def test_state_running_stale_done_error():
     base = {"pid": 4242, "started_at": 0, "updated_at": 1000, "stage": "separate", "counts": {}}
     dead, live = (lambda pid: False), (lambda pid: True)
-    assert lp.derive(base, now=1030, alive=dead)["state"] == "running"        # fresh heartbeat
+    assert lp.derive(base, now=1030, alive=live)["state"] == "running"        # fresh heartbeat
+    assert lp.derive(base, now=1030, alive=dead)["state"] == "stale"          # pid gone: dead at once
+    assert lp.derive(base | {"pid": None}, now=1030, alive=dead)["state"] == "running"   # no pid: heartbeat decides
     assert lp.derive(base, now=1000 + lp.STALE_S + 1, alive=dead)["state"] == "stale"
     assert lp.derive(base, now=1000 + lp.STALE_S + 1, alive=live)["state"] == "running"   # slow, not dead
     assert lp.derive(base | {"stage": "done", "finished_at": 1500}, now=9999, alive=dead)["state"] == "done"

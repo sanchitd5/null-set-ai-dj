@@ -16,7 +16,7 @@
   const POLL_IDLE_MS = 30000;                 // nothing to show
   const MAX_SHOWN = 3;
   const STAGE_LABEL = { fetch: "fetching songs", cut: "cutting clips", separate: "separating songs", analyze: "locating stems",
-    detect: "detecting moves", lyrics: "lyrics", ai_review: "AI review", merge: "merging", done: "done", error: "failed" };
+    detect: "detecting moves", lyrics: "lyrics", ai_review: "AI review", merge: "merging", cleanup: "cleaning up", done: "done", error: "failed" };
 
   // ---- core ------------------------------------------------------------------------------------------------------------------
   // when the study last mattered: its end for done/error, its last heartbeat for stale
@@ -57,6 +57,7 @@
       title: s.title || s.id,
       stage: s.state === "stale" ? "stopped (no heartbeat)" : (STAGE_LABEL[s.stage] || s.stage || ""),
       count: c && total > 0 ? `${c.done}/${total}` : "",
+      part: s.parts > 1 ? `part ${s.part}/${s.parts}` : "",
       pct,
       current: running && s.current ? String(s.current) : "",
       elapsed: fmtDuration(s.elapsed_s),
@@ -136,7 +137,7 @@
     function paint(r, v) {
       r.root.className = `lp-row lp-${v.state}`;
       setText(r.title, v.title);
-      setText(r.stage, v.count ? `${v.stage} ${v.count}` : v.stage);
+      setText(r.stage, [v.stage, v.count, v.part && `(${v.part})`].filter(Boolean).join(" "));
       if (v.pct === null) { r.fill.classList.add("indeterminate"); r.fill.style.width = ""; r.bar.removeAttribute("aria-valuenow"); }
       else { r.fill.classList.remove("indeterminate"); r.fill.style.width = `${v.pct}%`; r.bar.setAttribute("aria-valuenow", String(v.pct)); }
       setText(r.meta, [v.current, v.elapsed && `${v.elapsed} elapsed`, v.eta].filter(Boolean).join(" · "));

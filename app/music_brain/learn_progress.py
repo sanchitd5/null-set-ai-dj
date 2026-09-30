@@ -27,7 +27,7 @@ THROTTLE_S = 1.0          # at most one write a second (stage changes and the en
 HEARTBEAT_S = 15.0
 STALE_S = 120.0           # heartbeat older than this and the pid gone: the run died
 MAX_WARNINGS = 20
-STAGES = ("fetch", "cut", "separate", "analyze", "detect", "lyrics", "ai_review", "merge", "done", "error")
+STAGES = ("fetch", "cut", "separate", "analyze", "detect", "lyrics", "ai_review", "merge", "cleanup", "done", "error")
 _WARN = re.compile(r"^failed |NOT FOUND|probably the wrong|failed \(|skipped|no artist known|could not", re.I)
 
 
@@ -226,7 +226,9 @@ def derive(doc: dict, now: Optional[float] = None, alive: Callable[[object], boo
         state = "done"
     elif stage == "error":
         state = "error"
-    elif now - float(doc.get("updated_at") or 0) > STALE_S and not alive(doc.get("pid")):
+    elif (doc.get("pid") is not None and not alive(doc.get("pid"))) \
+            or (now - float(doc.get("updated_at") or 0) > STALE_S and not alive(doc.get("pid"))):
+        # a run killed mid-stage (its pid gone) is stale at once, however fresh its last write
         state = "stale"
     else:
         state = "running"
@@ -263,6 +265,8 @@ def summary(d: dict) -> str:
     """One human line for a derived doc."""
     c = (d.get("counts") or {}).get(d.get("stage")) or {}
     n = f" {c.get('done', 0)}/{c.get('total', 0)}" if c else ""
+    if (d.get("parts") or 0) > 1:
+        n += f" (part {d.get('part')}/{d['parts']})"
     eta = f", ~{int(d['eta_s'] // 60)} min left" if d.get("eta_s") else ""
     found = ", ".join(f"{k} {v}" for k, v in sorted((d.get("techniques_found") or {}).items()))
     err = f" ERROR {d['error']}" if d.get("error") else ""
