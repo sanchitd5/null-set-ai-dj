@@ -250,8 +250,9 @@ def qc(out: np.ndarray, sr: int, layers, norm: float, slots) -> dict:
 
 
 def select_chain(cache_dir: str, n: int = 12, lanes: Optional[Dict[str, int]] = None,
-                 bpm_lo: float = 124.5, bpm_hi: float = 129.5) -> List[dict]:
-    """Best-`works` path of n songs through the pair atlas that passes the live gates (Bass / Drop Swap only)."""
+                 bpm_lo: float = 124.5, bpm_hi: float = 129.5, key_min: float = KEY_SAFE_MIN) -> List[dict]:
+    """Best-`works` path of n songs through the pair atlas that passes the live gates (Bass / Drop Swap only).
+    key_min: KEY_SAFE_MIN for handovers, mashup.MIN_KEY_SCORE when the pair's melodic stems are layered."""
     import sqlite3
     from app.music_brain.analysis.genre import family_jump
     from app.music_brain.analysis.genre_labels import name_key, title_key
@@ -281,7 +282,7 @@ def select_chain(cache_dir: str, n: int = 12, lanes: Optional[Dict[str, int]] = 
             f"select a, b, works, data from atlas_pairs where a in ({marks}) and b in ({marks})", ids + ids):
         A, B = cand[a], cand[b]
         key = camelot_score(A["cam"], B["cam"])
-        if key < KEY_SAFE_MIN or abs(A["bpm"] / B["bpm"] - 1) > TEMPO_GATE or family_jump(A["genre"], B["genre"]):
+        if key < key_min or abs(A["bpm"] / B["bpm"] - 1) > TEMPO_GATE or family_jump(A["genre"], B["genre"]):
             continue
         if V.blocked(vet, A["name"], B["name"], A["genre"]):
             continue
