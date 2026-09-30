@@ -1,17 +1,24 @@
-"""The local SQLite store: one file, CACHE_DIR/null_set.db, for the frequently written stores
-(pair atlas, learned techniques, genre labels, set memory). Git-tracked JSON (the knowledge export,
-macros) stays JSON.
+"""The local SQLite stores: TWO files in CACHE_DIR (gitignored, like all of data/).
 
-A store at a legacy JSON path P lives in P's folder's database (P.parent / DB_NAME), so every
-store keeps taking the same path argument it always did and a test's tmp_path gets its own DB.
+* APP DB, CACHE_DIR/app.db: the player's shared knowledge. Pair atlas, macros (every kind),
+  learned techniques, genre / era labels. This is what `knowledge export` carries to git, as the
+  deterministic JSON in app/music_brain/knowledge/ (a multi-hundred-MB binary DB cannot go in
+  git: GitHub refuses files over 100 MB and binary diffs are unreadable); `knowledge seed` fills
+  the app DB back from that JSON. "Git linked" means via the export, never the .db file.
+* USER DB, CACHE_DIR/user.db: private, never exported, never in git. Set history (sessions,
+  plays, transitions, moves, set logs), set memory, vetoes / liked marks: anything tied to the
+  owner's own listening. The knowledge export never opens it (guard test).
+
+A store at a legacy JSON path P lives in P's folder's database (P.parent / APP_DB or USER_DB), so
+every store keeps taking the same path argument it always did and a test's tmp_path gets its own.
 
 Concurrency: WAL (readers never block the one writer), busy_timeout, one connection per
 process + thread + file, short transactions (`tx` = BEGIN IMMEDIATE ... COMMIT). Crash safety is
 the transaction: no tmp-file + rename.
 
-Schema versions: each store registers its migrations with `ensure(conn, store, steps)`: steps[i]
-takes the store from version i to i + 1, run once, in order, inside one transaction, recorded in
-the `schema_version` table.
+Schema versions: per DB file, each store registers its migrations with
+`ensure(conn, store, steps)`: steps[i] takes the store from version i to i + 1, run once, in
+order, inside one transaction, recorded in that file's `schema_version` table.
 """
 from __future__ import annotations
 
@@ -22,7 +29,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable, Dict, Iterator, Sequence, Tuple, Union
 
-DB_NAME = "null_set.db"
+APP_DB = "app.db"
+USER_DB = "user.db"
 BUSY_MS = 30000
 
 Step = Union[str, Callable[[sqlite3.Connection], None]]
@@ -30,17 +38,17 @@ Step = Union[str, Callable[[sqlite3.Connection], None]]
 _local = threading.local()
 
 
-def db_path(cache_dir: Union[str, Path, None] = None) -> Path:
-    """CACHE_DIR/null_set.db (or <cache_dir>/null_set.db)."""
+def db_path(cache_dir: Union[str, Path, None] = None, name: str = APP_DB) -> Path:
+    """CACHE_DIR/app.db (name=USER_DB: CACHE_DIR/user.db)."""
     if cache_dir is None:
         from app.music_brain.config import CACHE_DIR
         cache_dir = CACHE_DIR
-    return Path(cache_dir) / DB_NAME
+    return Path(cache_dir) / name
 
 
-def beside(legacy: Union[str, Path]) -> Path:
+def beside(legacy: Union[str, Path], name: str = APP_DB) -> Path:
     """The database a store whose legacy JSON file is `legacy` lives in."""
-    return Path(legacy).expanduser().resolve().parent / DB_NAME
+    return Path(legacy).expanduser().resolve().parent / name
 
 
 def connect(path: Union[str, Path]) -> sqlite3.Connection:

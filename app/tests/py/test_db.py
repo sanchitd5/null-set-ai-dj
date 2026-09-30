@@ -7,7 +7,7 @@ from app.music_brain import db
 
 
 def test_connect_is_wal_and_per_thread(tmp_path):
-    p = tmp_path / db.DB_NAME
+    p = tmp_path / db.APP_DB
     c = db.connect(p)
     assert c.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
     assert db.connect(p) is c
@@ -16,12 +16,12 @@ def test_connect_is_wal_and_per_thread(tmp_path):
     t.start()
     t.join()
     assert other[0] is not c, "one connection per thread"
-    assert db.db_path(tmp_path) == tmp_path / db.DB_NAME
-    assert db.beside(tmp_path / "x.json") == tmp_path.resolve() / db.DB_NAME
+    assert db.db_path(tmp_path) == tmp_path / db.APP_DB
+    assert db.beside(tmp_path / "x.json") == tmp_path.resolve() / db.APP_DB
 
 
 def test_schema_steps_run_once_in_order_and_upgrade(tmp_path):
-    c = db.connect(tmp_path / db.DB_NAME)
+    c = db.connect(tmp_path / db.APP_DB)
     v1 = ("CREATE TABLE t (a INTEGER)",)
     assert db.ensure(c, "s", v1) == 1 and db.ensure(c, "s", v1) == 1
     calls = []
@@ -32,7 +32,7 @@ def test_schema_steps_run_once_in_order_and_upgrade(tmp_path):
 
 
 def test_a_newer_db_is_refused_and_a_failed_step_rolls_back(tmp_path):
-    c = db.connect(tmp_path / db.DB_NAME)
+    c = db.connect(tmp_path / db.APP_DB)
     db.ensure(c, "s", ("CREATE TABLE t (a INTEGER)", "CREATE TABLE u (a INTEGER)"))
     with pytest.raises(ValueError, match="newer"):
         db.ensure(c, "s", ("CREATE TABLE t (a INTEGER)",))
@@ -43,7 +43,7 @@ def test_a_newer_db_is_refused_and_a_failed_step_rolls_back(tmp_path):
 
 
 def test_tx_nests_and_rolls_back(tmp_path):
-    c = db.connect(tmp_path / db.DB_NAME)
+    c = db.connect(tmp_path / db.APP_DB)
     db.ensure(c, "s", ("CREATE TABLE t (a INTEGER)",))
     with pytest.raises(RuntimeError):
         with db.tx(c):
@@ -52,6 +52,11 @@ def test_tx_nests_and_rolls_back(tmp_path):
                 c.execute("INSERT INTO t VALUES (2)")
             raise RuntimeError
     assert c.execute("SELECT count(*) FROM t").fetchone()[0] == 0
+
+
+def test_app_and_user_db_are_separate_files(tmp_path):
+    assert db.db_path(tmp_path, db.USER_DB) == tmp_path / "user.db" != db.db_path(tmp_path)
+    assert db.connect(tmp_path / db.APP_DB) is not db.connect(tmp_path / db.USER_DB)
 
 
 def test_retire_never_overwrites(tmp_path):
