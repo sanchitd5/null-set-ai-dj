@@ -32,7 +32,8 @@ const base = (o) => Object.assign({ variants: [summary], curId: ID[0], pos: 5, r
   assert.deepStrictEqual(smv.decide(base()), smv.decide(base()), "same seed, same answer");
   assert.ok(!smv.decide(base({ fired: new Set(["v1"]) })).fire, "once per variant per set");
   assert.ok(!smv.decide(base({ curId: "0000000000000000" })).fire, "a song in no variant");
-  assert.ok(!smv.decide(base({ pos: 30 })).fire, "the first lead-in too close (< MIN_LEAD_S)");
+  const near = smv.decide(base({ pos: 30 }));   // planned lead-in 29.6 s away: moved to the next free 8-bar line, never deferred
+  assert.ok(near.fire && near.anchor === smv.nextAnchor(analyses[ID[0]], 30 + smv.MIN_LEAD_S, 30.72) && /8-bar line/.test(near.why), near.why);
   let hits = 0;
   for (let i = 0; i < 2000; i++) if (smv.chance(`x${i}|v1|${ID[0]}`) < smv.P_FIRE) hits++;
   assert.ok(Math.abs(hits / 2000 - smv.P_FIRE) < 0.04, `seeded chance ~ P_FIRE (${hits / 2000})`);
@@ -266,17 +267,17 @@ function world(o = {}) {
   {
     const w = world();
     await w.until(0.1);
-    w.els["smv-go"].on.click();
+    w.rt.press();
     await w.until(1);
     assert.ok(w.rt.running, "pressed: plays from the playing song");
-    w.els["smv-go"].on.click();
+    w.rt.press();
     await w.until(2);
     assert.strictEqual(w.rt.state, "idle", "pressed again: stopped");
     const wb = world();
     wb.decks.a.analysis = wb.decks.a.analysis;
     Object.assign(analyses[ID[0]], { sections: [{ label: "build", start: 0, end: 15.36 }] });
     await wb.until(0.1);
-    wb.els["smv-go"].on.click();
+    wb.rt.press();
     await wb.until(1);
     assert.strictEqual(wb.rt.state, "waiting", "a press during a build waits");
     await wb.until(16);
