@@ -855,7 +855,8 @@ def _learned_db(path: Path):
     still on disk migrates it (once) and renames it .migrated."""
     from app.music_brain import db
 
-    path = Path(path)
+    # None = the module's LEARNED_PATH read now (not bound at def time), so tests can move it
+    path = Path(path if path is not None else LEARNED_PATH)
     conn = db.connect(db.beside(path))
     db.ensure(conn, "learned", LEARNED_STEPS)
     f = path.name
@@ -908,7 +909,7 @@ def _write_store(conn, f: str, store: Dict[str, dict]) -> None:
     conn.execute("INSERT OR IGNORE INTO learned_files (file, migrated_at) VALUES (?, ?)", (f, _time.time()))
 
 
-def load_learned(path: Path = LEARNED_PATH) -> Dict[str, dict]:
+def load_learned(path: Optional[Path] = None) -> Dict[str, dict]:
     """{kind: {kind, what, stems, live, observations[], tempo_gap_max, key_score_min}}; {} if none/corrupt."""
     import sqlite3
 
@@ -922,7 +923,7 @@ def load_learned(path: Path = LEARNED_PATH) -> Dict[str, dict]:
         return {}
 
 
-def merge(observations: List[Observation], path: Path = LEARNED_PATH,
+def merge(observations: List[Observation], path: Optional[Path] = None,
           set_ids: Sequence[str] = ()) -> Dict[str, dict]:
     """Merge into the store. Re-learning the same set replaces its old observations;
     set_ids names the sets being re-learned, so a re-study that now finds nothing
@@ -971,7 +972,7 @@ def _stored_by_set(store: Dict[str, dict]) -> Dict[str, List[dict]]:
 
 
 def review_learned(set_id: Optional[str] = None, backend: Optional[str] = None, dry_run: bool = False,
-                   path: Path = LEARNED_PATH, sidecar_dir: Optional[Path] = None,
+                   path: Optional[Path] = None, sidecar_dir: Optional[Path] = None,
                    log: Callable[[str], None] = lambda m: None) -> dict:
     """Re-review stored observations, one set at a time (set_id=None: every set).
     Load -> review (no lock: calls are slow) -> under the store lock, if the set is
@@ -1041,7 +1042,7 @@ def _save(store: Dict[str, dict], path: Path) -> None:
         _write_store(conn, f, store)
 
 
-def add_user_rule(kind: str, text: str = "", disable: Optional[bool] = None, path: Path = LEARNED_PATH) -> dict:
+def add_user_rule(kind: str, text: str = "", disable: Optional[bool] = None, path: Optional[Path] = None) -> dict:
     """The user's refinement of a learned technique, after hearing it live.
 
     Same loop as the USB002 study: the set is the evidence, the user's ear is
@@ -1225,7 +1226,7 @@ SPLIT_MIN = 60.0           # a set longer than this is learned in parts of about
 
 
 def learn_set(source: str, tracklist: Optional[str] = None, download: bool = True,
-              store_path: Path = LEARNED_PATH, log: Callable[[str], None] = lambda m: None,
+              store_path: Optional[Path] = None, log: Callable[[str], None] = lambda m: None,
               jobs: int = DEFAULT_JOBS, ai: bool = True, split_minutes: float = SPLIT_MIN,
               keep_files: bool = False) -> dict:
     """Study one set. tracklist: text or a path to a text file. jobs: Demucs runs at once.

@@ -2153,10 +2153,14 @@ def _load_labels() -> int:
     return gl.backfill(_suggested_genres, _suggested_eras, tracked, names)
 
 
-try:
-    _load_labels()
-except Exception as _exc:  # noqa: BLE001 -- a bad label file must not stop the server
-    print(f"WARNING [labels] not loaded: {type(_exc).__name__}: {_exc}", flush=True)
+@app.on_event("startup")
+def _startup_labels() -> None:
+    # at startup, not at import: importing the server (tests, tools) must never open or
+    # migrate the real label store (it did, and renamed the owner's live genre_labels.json)
+    try:
+        _load_labels()
+    except Exception as exc:  # noqa: BLE001 -- a bad label file must not stop the server
+        print(f"WARNING [labels] not loaded: {type(exc).__name__}: {exc}", flush=True)
 _set_memory = None  # app.ui.services.set_memory.SetMemory, created on first suggest
 
 

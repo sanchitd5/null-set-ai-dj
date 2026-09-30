@@ -14,7 +14,9 @@ from app.ui.services import booking_vet as bv
 ROOT = Path(__file__).resolve().parents[3]
 REPLAY = json.loads((ROOT / "app/tests/fixtures/live_set_154332.json").read_text())
 SONGS = REPLAY["songs"]
-SEED = vt.load(None)          # the tracked seed (the conftest keeps the cache file private and empty)
+def _seed():
+    """The tracked veto seed, loaded when a test runs (the conftest keeps the cache private), never at import."""
+    return vt.load(None)
 BODYROCK, WORK = "TH;EN - Bodyrock", "Masters At Work - Work (Skytech Remix)"
 HACKNEY, SANTI = "Sammy Virji - Hackney Pigeon", "Santigold - You’ll Find a Way (Official Audio)"
 
@@ -51,9 +53,9 @@ def test_replay_1637_follow_set_refuses_work_heard_in_the_earlier_set():
 
 def test_replay_1608_the_seeded_veto_refuses_bodyrock_to_work():
     th, w = _song("TH;EN"), _song("Masters At Work")
-    r = bv.vet_one(th["name"], w["name"], a_genre=th["genre"], b_genre=w["genre"], vetoes=SEED, stored=True)
+    r = bv.vet_one(th["name"], w["name"], a_genre=th["genre"], b_genre=w["genre"], vetoes=_seed(), stored=True)
     assert r["gate"] == "veto" and "vibe killer" in r["why"]
-    r = bv.vet_one(HACKNEY, SANTI, vetoes=SEED)      # any path (the 16:40 atlas backup was not a stored move)
+    r = bv.vet_one(HACKNEY, SANTI, vetoes=_seed())      # any path (the 16:40 atlas backup was not a stored move)
     assert r["gate"] == "veto"
 
 
