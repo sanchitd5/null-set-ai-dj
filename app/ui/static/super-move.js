@@ -1,4 +1,4 @@
-// $Up3R-M@SS!V3-M0v3: the owner's saved stem-mashup variants (app/music_brain/supermove.py, USER DB) played
+// $Up3R-M@SS!V3-M0v3: the owner's saved stem-mashup variants (app/music_brain/supermove/variants/*.json, shipped in git) played
 // live on the console's real decks, then handed back to the normal set.
 //
 // TRIGGER (owner): automatic and random, when the set energy is high (autopilot setEnergy level >= HIGH_MIN,

@@ -6,7 +6,7 @@ const path = require("path");
 const smv = require("../../ui/static/super-move.js");
 const ap = require("../../ui/static/autopilot.js");
 
-const plan = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "fixtures", "supermove_variant_1.json"), "utf8"));
+const plan = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "..", "music_brain", "supermove", "variants", "v1.json"), "utf8"));
 const summary = { name: "v1", title: smv.NAME, n: plan.songs.length,
   songs: plan.songs.map((s) => ({ i: s.i, id: s.id, name: s.name, level: s.level, bpm: s.bpm, core: { start: s.core.start, end: s.core.end }, enter_bars: s.enter_bars })) };
 const ID = plan.songs.map((s) => s.id);

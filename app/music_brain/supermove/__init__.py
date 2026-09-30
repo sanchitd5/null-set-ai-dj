@@ -2,14 +2,15 @@
 plan maths the live console needs to play one from any of its songs.
 
 A variant is a whole build_plan plan (JSON: songs with their cores, parts and output clock, 8-bar sections).
-Stored in the USER DB (CACHE_DIR/user.db, owner data like the liked / veto marks), own table
-`supermove_variants` under its own schema_version store "supermoves": no existing table or row is touched.
+Variants ship WITH THE APP: one file per variant in app/music_brain/supermove/variants/<name>.json, tracked in
+git, read once at start (load_all). No database, no runtime writes: adding a variant = committing a file.
+Track ids are content hashes; stems_dir is relative to the cache dir ("stems/<hash>_htdemucs_ft").
 
     from app.music_brain import supermove as smv
-    smv.save_variant(plan, "v1");  smv.list_variants();  smv.load_variant("v1", start=2)
+    smv.list_variants();  smv.load_variant("v1", start=2)
 
-CLI (writes the live DB only after a backup copy of it):
-    python3 -m app.music_brain.supermove save --plan PLAN.json --drop-first 1 --name v1 [--fixture OUT.json]
+CLI (writes the JSON file into variants/, nothing else):
+    python3 -m app.music_brain.supermove save --plan PLAN.json --drop-first 1 --name v1
 """
 from __future__ import annotations
 
@@ -19,19 +20,14 @@ import json
 import re
 import sqlite3
 import sys
-import time
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 NAME = "$Up3R-M@SS!V3-M0v3"
 MIN_SONGS = 4
 VARIANT_RE = re.compile(r"^[a-z0-9_-]{1,40}$")
 TRACK_ID_RE = re.compile(r"^[0-9a-f]{16}$")
-
-STEPS = (
-    """CREATE TABLE supermove_variants (move TEXT NOT NULL, name TEXT NOT NULL, title TEXT, plan TEXT NOT NULL,
-        t REAL NOT NULL, PRIMARY KEY (move, name))""",
-)
+VARIANTS_DIR = Path(__file__).resolve().parent / "variants"
 
 
 # ---- pure plan maths ------------------------------------------------------------------------------------------------
@@ -113,70 +109,70 @@ def summary(move: str, name: str, title: Optional[str], plan: dict, t: float) ->
                       for s in songs]}
 
 
-# ---- store (USER DB) ------------------------------------------------------------------------------------------------
+# ---- the shipped variant files --------------------------------------------------------------------------------------
 
-def _conn(cache_dir: Optional[Path] = None):
-    from app.music_brain import db
+def portable(plan: dict) -> dict:
+    """A copy safe to ship: stems_dir made relative to the cache dir; raises ValueError on any other absolute path."""
+    out = copy.deepcopy(plan)
+    for s in out.get("songs") or []:
+        d = s.get("stems_dir")
+        if d and Path(d).is_absolute():
+            s["stems_dir"] = f"stems/{Path(d).name}"
+    raw = json.dumps(out, ensure_ascii=False)
+    if re.search(r'"(/Users|/home|[A-Za-z]:\\\\)', raw):
+        raise ValueError("variant holds an absolute path")
+    return out
 
-    conn = db.connect(db.db_path(cache_dir, db.USER_DB))
-    db.ensure(conn, "supermoves", STEPS)
-    return conn
+
+def _read_dir(d: Path) -> Dict[str, dict]:
+    out = {}
+    for f in sorted(Path(d).glob("*.json")):
+        if not VARIANT_RE.match(f.stem):
+            continue
+        try:
+            plan = json.loads(f.read_text())
+        except (OSError, ValueError):
+            continue
+        if not validate(plan):
+            out[f.stem] = plan
+    return out
 
 
-def save_variant(plan: dict, name: str, title: Optional[str] = None, move: str = NAME,
-                 cache_dir: Optional[Path] = None) -> dict:
-    """Insert or replace one variant. -> its summary."""
-    from app.music_brain import db
+_LOADED: Dict[str, Dict[str, dict]] = {}
 
+
+def load_all(d: Optional[Path] = None, fresh: bool = False) -> Dict[str, dict]:
+    """{name: plan} of the shipped variants, file name order (the first is the default). Read once per dir."""
+    key = str(Path(d or VARIANTS_DIR).resolve())
+    if fresh or key not in _LOADED:
+        _LOADED[key] = _read_dir(Path(key))
+    return _LOADED[key]
+
+
+def list_variants(d: Optional[Path] = None) -> List[dict]:
+    return [summary(NAME, n, p.get("title"), p, 0.0) for n, p in load_all(d).items()]
+
+
+def load_variant(name: str, start: int = 0, d: Optional[Path] = None) -> dict:
+    """The shipped plan, from its song `start` on (from_song). KeyError when there is no such variant."""
+    plan = load_all(d).get(name)
+    if plan is None:
+        raise KeyError(name)
+    return from_song(plan, start) if start else copy.deepcopy(plan)
+
+
+def save_variant(plan: dict, name: str, d: Optional[Path] = None) -> Path:
+    """Write variants/<name>.json (commit it to ship it). -> the file."""
     if not VARIANT_RE.match(name or ""):
         raise ValueError("variant name: 1-40 of a-z 0-9 _ -")
     bad = validate(plan)
     if bad:
         raise ValueError("; ".join(bad))
-    t = time.time()
-    conn = _conn(cache_dir)
-    with db.tx(conn):
-        conn.execute("INSERT OR REPLACE INTO supermove_variants (move, name, title, plan, t) VALUES (?, ?, ?, ?, ?)",
-                     (move, name, title, json.dumps(plan, ensure_ascii=False), t))
-    return summary(move, name, title, plan, t)
-
-
-def list_variants(cache_dir: Optional[Path] = None, move: str = NAME) -> List[dict]:
-    """Saved variants of `move`, oldest first (the first saved is the default)."""
-    from app.music_brain import db
-
-    conn = _conn(cache_dir)
-    with db.read(conn):
-        rows = conn.execute("SELECT name, title, plan, t FROM supermove_variants WHERE move = ? ORDER BY t, name",
-                            (move,)).fetchall()
-    out = []
-    for name, title, raw, t in rows:
-        try:
-            out.append(summary(move, name, title, json.loads(raw), t))
-        except (ValueError, KeyError, TypeError):
-            continue
-    return out
-
-
-def load_variant(name: str, start: int = 0, cache_dir: Optional[Path] = None, move: str = NAME) -> dict:
-    """The stored plan, from its song `start` on (from_song). KeyError when there is no such variant."""
-    from app.music_brain import db
-
-    conn = _conn(cache_dir)
-    with db.read(conn):
-        row = conn.execute("SELECT plan FROM supermove_variants WHERE move = ? AND name = ?", (move, name)).fetchone()
-    if not row:
-        raise KeyError(name)
-    plan = json.loads(row[0])
-    return from_song(plan, start) if start else plan
-
-
-def delete_variant(name: str, cache_dir: Optional[Path] = None, move: str = NAME) -> bool:
-    from app.music_brain import db
-
-    conn = _conn(cache_dir)
-    with db.tx(conn):
-        return conn.execute("DELETE FROM supermove_variants WHERE move = ? AND name = ?", (move, name)).rowcount > 0
+    f = Path(d or VARIANTS_DIR) / f"{name}.json"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(json.dumps(portable(plan), indent=1, ensure_ascii=False) + "\n")
+    load_all(d, fresh=True)
+    return f
 
 
 # ---- hand back ------------------------------------------------------------------------------------------------------
@@ -218,51 +214,23 @@ def handback_pick(a: str, level: Optional[int], played: Optional[set] = None, ca
 
 # ---- CLI -----------------------------------------------------------------------------------------------------------
 
-def backup_user_db(cache_dir: Path) -> Optional[Path]:
-    """A consistent copy of CACHE_DIR/user.db (sqlite backup API, WAL included) beside it. None: no DB yet."""
-    src = Path(cache_dir) / "user.db"
-    if not src.exists():
-        return None
-    dest = src.with_name(f"user.db.bak-supermove-{time.strftime('%Y%m%d-%H%M%S')}")
-    a = sqlite3.connect(f"file:{src}?mode=ro", uri=True)
-    b = sqlite3.connect(str(dest))
-    try:
-        a.backup(b)
-    finally:
-        a.close()
-        b.close()
-    return dest
-
-
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(description=f"{NAME} variants")
+    ap = argparse.ArgumentParser(description=f"{NAME} variants (files shipped in {VARIANTS_DIR})")
     sub = ap.add_subparsers(dest="cmd", required=True)
-    s = sub.add_parser("save", help="store a build_plan plan (optionally without its first songs) as a variant")
+    s = sub.add_parser("save", help="write a build_plan plan (optionally without its first songs) as variants/<name>.json")
     s.add_argument("--plan", required=True)
     s.add_argument("--drop-first", type=int, default=0)
     s.add_argument("--name", required=True)
-    s.add_argument("--title", default=None)
-    s.add_argument("--cache", default=None, help="cache dir (default: the app's CACHE_DIR)")
-    s.add_argument("--fixture", default=None, help="also write the stored plan to this JSON file")
-    sub.add_parser("list").add_argument("--cache", default=None)
+    sub.add_parser("list")
     args = ap.parse_args(argv)
-    from app.music_brain.config import CACHE_DIR
-
-    cache = Path(args.cache) if args.cache else CACHE_DIR
     try:
         if args.cmd == "list":
-            print(json.dumps(list_variants(cache), indent=1))
+            print(json.dumps(list_variants(), indent=1, ensure_ascii=False))
             return 0
         plan = json.loads(Path(args.plan).read_text())
         if args.drop_first:
             plan = from_song(plan, args.drop_first)
-        if args.fixture:
-            Path(args.fixture).write_text(json.dumps(plan, indent=1, ensure_ascii=False) + "\n")
-        bak = backup_user_db(cache)
-        out = save_variant(plan, args.name, args.title, cache_dir=cache)
-        out["backup"] = str(bak) if bak else None
-        out["db"] = str(cache / "user.db")
-        print(json.dumps(out, indent=1, ensure_ascii=False))
+        print(json.dumps({"file": str(save_variant(plan, args.name))}))
         return 0
     except (ValueError, KeyError, OSError) as e:
         print(json.dumps({"error": str(e)}))

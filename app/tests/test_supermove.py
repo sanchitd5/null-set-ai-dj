@@ -1,4 +1,4 @@
-"""$Up3R-M@SS!V3-M0v3: the saved variant (fixture), from_song slicing, the USER DB store, the handback pick, the
+"""$Up3R-M@SS!V3-M0v3: the shipped variant file, from_song slicing, no user.db, the handback pick, the
 strict generator gates, the API, and the JS twin's view of the fixture."""
 import json
 import sqlite3
@@ -10,7 +10,7 @@ from app.music_brain import supermove as smv
 from app.music_brain.render import mashup_mix as mm
 from app.tests.test_mashup_mix import _chain
 
-FIX = Path(__file__).parent / "fixtures" / "supermove_variant_1.json"
+FIX = smv.VARIANTS_DIR / "v1.json"          # the shipped variant file is the fixture
 
 
 @pytest.fixture
@@ -62,31 +62,45 @@ def test_from_song_slices_and_shifts(variant):
     assert smv.from_song(variant, 0) == variant
 
 
-def test_store_own_table_only(tmp_path, variant):
-    db = sqlite3.connect(tmp_path / "user.db")          # an owner DB with its own marks already in it
-    db.execute("CREATE TABLE marks (kind TEXT, subject TEXT, data TEXT, t REAL, PRIMARY KEY (kind, subject))")
-    db.execute("INSERT INTO marks VALUES ('liked', 'x', '{}', 1.0)")
-    db.commit()
-    db.close()
-    s = smv.save_variant(variant, "v1", cache_dir=tmp_path)
-    assert s["n"] == 7 and s["first_half"] == 3 and s["songs"][0]["core"]["start"] == variant["songs"][0]["core"]["start"]
-    assert [v["name"] for v in smv.list_variants(tmp_path)] == ["v1"]
-    assert smv.load_variant("v1", cache_dir=tmp_path) == variant
-    assert smv.load_variant("v1", start=3, cache_dir=tmp_path)["songs"][0]["name"] == variant["songs"][3]["name"]
+def test_shipped_variant_is_the_default_and_portable(variant):
+    assert FIX.is_file() and FIX.parent == Path(smv.__file__).parent / "variants"
+    got = smv.list_variants()
+    assert got[0]["name"] == "v1" and got[0]["n"] == 7 and got[0]["first_half"] == 3
+    assert smv.load_variant("v1") == variant
+    assert smv.load_variant("v1", start=3)["songs"][0]["name"] == variant["songs"][3]["name"]
+    raw = FIX.read_text()
+    assert "/Users" not in raw and "/home" not in raw
+    assert all(s["stems_dir"].startswith("stems/") for s in variant["songs"])
     with pytest.raises(KeyError):
-        smv.load_variant("nope", cache_dir=tmp_path)
+        smv.load_variant("nope")
+
+
+def test_save_writes_a_file_only(tmp_path, variant):
+    abs_plan = json.loads(json.dumps(variant))
+    abs_plan["songs"][0]["stems_dir"] = "/Users/x/data/cache/stems/abc_htdemucs_ft"
+    f = smv.save_variant(abs_plan, "v2", d=tmp_path)
+    assert f == tmp_path / "v2.json" and sorted(p.name for p in tmp_path.iterdir()) == ["v2.json"]
+    assert json.loads(f.read_text())["songs"][0]["stems_dir"] == "stems/abc_htdemucs_ft"
+    assert [v["name"] for v in smv.list_variants(tmp_path)] == ["v2"]
     with pytest.raises(ValueError):
-        smv.save_variant({"kind": "stem_mashup", "songs": []}, "bad", cache_dir=tmp_path)
-    ro = sqlite3.connect(tmp_path / "user.db")
-    assert ro.execute("SELECT kind, subject FROM marks").fetchall() == [("liked", "x")]
-    assert ro.execute("SELECT version FROM schema_version WHERE store = 'supermoves'").fetchone() == (1,)
+        smv.save_variant({"kind": "stem_mashup", "songs": []}, "bad", d=tmp_path)
+    bad = json.loads(json.dumps(variant))
+    bad["songs"][0]["name"] = "/Users/someone/song.mp3"
+    with pytest.raises(ValueError, match="absolute path"):
+        smv.save_variant(bad, "v3", d=tmp_path)
 
 
-def test_backup_then_save(tmp_path, variant):
-    assert smv.backup_user_db(tmp_path) is None
-    smv.save_variant(variant, "v1", cache_dir=tmp_path)
-    bak = smv.backup_user_db(tmp_path)
-    assert bak and bak.exists() and sqlite3.connect(bak).execute("SELECT name FROM supermove_variants").fetchall() == [("v1",)]
+def test_no_user_db_for_supermove(monkeypatch, variant):
+    """The variants never touch user.db: no code path names it, and loading opens no database."""
+    root = Path(smv.__file__).parent
+    api = Path(__file__).resolve().parents[1] / "ui" / "services" / "supermove_api.py"
+    for f in [*root.glob("*.py"), api]:
+        t = f.read_text()
+        assert "user.db" not in t and "USER_DB" not in t and "supermove_variants" not in t, f
+    opened = []
+    monkeypatch.setattr(sqlite3, "connect", lambda *a, **k: opened.append(a) or (_ for _ in ()).throw(AssertionError("db")))
+    smv.load_all(fresh=True)
+    assert smv.load_variant("v1", start=1)["songs"][0]["name"] == variant["songs"][1]["name"] and not opened
 
 
 def _atlas(tmp_path, rows, levels):
@@ -157,9 +171,9 @@ def test_build_plan_strict_mode():
 def test_api_lists_and_slices(tmp_path, variant, monkeypatch):
     from app.ui.services import supermove_api as api
 
-    monkeypatch.setattr(api, "SUPERMOVE_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(api, "VARIANTS_DIR", tmp_path)
     assert api.supermoves() == {"move": smv.NAME, "variants": []}
-    smv.save_variant(variant, "v1", cache_dir=tmp_path)
+    smv.save_variant(variant, "v1", d=tmp_path)
     got = api.supermoves()["variants"]
     assert [v["name"] for v in got] == ["v1"] and got[0]["title"] == smv.NAME
     assert api.supermove_plan("v1", start=2)["plan"]["songs"][0]["name"] == variant["songs"][2]["name"]

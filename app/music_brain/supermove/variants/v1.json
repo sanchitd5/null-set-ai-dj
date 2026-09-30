@@ -47,7 +47,7 @@
    "bpm": 125.0,
    "ratio": 1.0080645161290323,
    "stretch_pct": -0.8,
-   "stems_dir": "/Users/sanchitdang/dev/AI-DJ-Mixing-System/data/cache/stems/f7533130d3a1fbd8c661cfb279dd1893307afafbf2afe7290f1f5ca5f93ce1f2_htdemucs_ft",
+   "stems_dir": "stems/f7533130d3a1fbd8c661cfb279dd1893307afafbf2afe7290f1f5ca5f93ce1f2_htdemucs_ft",
    "core": {
     "start": 59.606,
     "end": 90.326,
@@ -197,7 +197,7 @@
    "bpm": 125.0,
    "ratio": 1.0080645161290323,
    "stretch_pct": -0.8,
-   "stems_dir": "/Users/sanchitdang/dev/AI-DJ-Mixing-System/data/cache/stems/932af8d76ab4e19b7571a4412cf460013eba39edc5e066251432e156895ffff6_htdemucs_ft",
+   "stems_dir": "stems/932af8d76ab4e19b7571a4412cf460013eba39edc5e066251432e156895ffff6_htdemucs_ft",
    "core": {
     "start": 189.196,
     "end": 219.916,
@@ -387,7 +387,7 @@
    "bpm": 124.0,
    "ratio": 1.0,
    "stretch_pct": 0.0,
-   "stems_dir": "/Users/sanchitdang/dev/AI-DJ-Mixing-System/data/cache/stems/a955f9369451bfdc28b11b06b44dd383765823b6c3a651e0a3371d12dc47055a_htdemucs_ft",
+   "stems_dir": "stems/a955f9369451bfdc28b11b06b44dd383765823b6c3a651e0a3371d12dc47055a_htdemucs_ft",
    "core": {
     "start": 334.901,
     "end": 365.86874193548385,
@@ -577,7 +577,7 @@
    "bpm": 125.99,
    "ratio": 1.0160483870967743,
    "stretch_pct": -1.58,
-   "stems_dir": "/Users/sanchitdang/dev/AI-DJ-Mixing-System/data/cache/stems/7922a419da56967bd9d0fef5e39583577802d3fb3736581a3617279e654a417a_htdemucs_ft",
+   "stems_dir": "stems/7922a419da56967bd9d0fef5e39583577802d3fb3736581a3617279e654a417a_htdemucs_ft",
    "core": {
     "start": 45.627,
     "end": 76.1056094134455,
@@ -767,7 +767,7 @@
    "bpm": 124.0,
    "ratio": 1.0,
    "stretch_pct": 0.0,
-   "stems_dir": "/Users/sanchitdang/dev/AI-DJ-Mixing-System/data/cache/stems/c856810defd7dc3b968c14dd4ae78bcc04a37285552911cba83418152b9ee93e_htdemucs_ft",
+   "stems_dir": "stems/c856810defd7dc3b968c14dd4ae78bcc04a37285552911cba83418152b9ee93e_htdemucs_ft",
    "core": {
     "start": 38.986,
     "end": 69.95374193548386,
@@ -957,7 +957,7 @@
    "bpm": 124.0,
    "ratio": 1.0,
    "stretch_pct": 0.0,
-   "stems_dir": "/Users/sanchitdang/dev/AI-DJ-Mixing-System/data/cache/stems/50a2fe4b550f165136c8885876425a9bfb5ce52dc7d3bc15638fa2bfaed2aa7c_htdemucs_ft",
+   "stems_dir": "stems/50a2fe4b550f165136c8885876425a9bfb5ce52dc7d3bc15638fa2bfaed2aa7c_htdemucs_ft",
    "core": {
     "start": 233.105,
     "end": 264.07274193548386,
@@ -1147,7 +1147,7 @@
    "bpm": 121.0,
    "ratio": 0.9758064516129032,
    "stretch_pct": 2.48,
-   "stems_dir": "/Users/sanchitdang/dev/AI-DJ-Mixing-System/data/cache/stems/c0309e3905fec60beab4b8935b1c5f0086bf1d51ac6fb6b2f61fd62383d6a487_htdemucs_ft",
+   "stems_dir": "stems/c0309e3905fec60beab4b8935b1c5f0086bf1d51ac6fb6b2f61fd62383d6a487_htdemucs_ft",
    "core": {
     "start": 126.897,
     "end": 158.63253719008264,
