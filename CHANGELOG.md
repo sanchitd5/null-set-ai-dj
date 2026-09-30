@@ -9,7 +9,7 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ### ✨ Highlights
 
-- **$Up3R-M@SS!V3-M0v3.** A live multi-song stem mashup on the real decks: the cores of several songs layered by stem, with rolling Bass Swap handovers, key-locked tempo and one owner of the sub-bass at all times. Variant `v1` ships with the app. The autopilot may fire it by itself at a high-energy moment, or you press **$Up3R-M@SS!V3-M0v3** in the MACROS panel (or `Shift+S`). NULL-BOT flies in front of the console for the whole move.
+- **$Up3R-M@SS!V3-M0v3.** A live multi-song stem mashup on the real decks: the cores of several songs layered by stem, with rolling Bass Swap handovers, key-locked tempo and one owner of the sub-bass at all times. Variant `v1` ships with the app. The autopilot may fire it by itself at a high-energy moment, or you pick it from the MACRO list and press PLAY MACRO (or `Shift+S`). NULL-BOT dances in the centre of the screen with its name for the whole move.
 - **Analysis v6: sections, drops and the main drop.** Every song is cut into sections on the 8-bar phrase grid, with drops found from the drums and bass stems, and one main drop chosen by the deepest, longest dip before it. Upgrade once with `python3 -m app.music_brain.analysis.reanalyse --all`.
 - **Electronic music is no longer one genre.** House, melodic, trance, techno, bass music, drum and bass, chill, festival EDM and breaks are sub-families with a neighbour table, so the autopilot knows melodic techno next to techno is a normal move and trance into downtempo is a jump.
 - **Studied sets play as studied.** A running studied-set macro's next song is the first fallback when a deadline hits, and its own steps are booked past the measured gates. A stuck deadline no longer drops to a hold loop while a known-good pair is waiting.
@@ -68,7 +68,7 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ### 🖥️ Console
 
-- **$Up3R-M@SS!V3-M0v3 button** in the MACROS panel (`Shift+S`), with NULL-BOT in front for the whole move.
+- **$Up3R-M@SS!V3-M0v3 in the MACRO list** (`Shift+S`): it starts on the press, with a countdown to the first layer, and NULL-BOT dances in the centre of the screen with the move's name.
 - **HISTORY view.** Replay from here, replay this transition, time travel, like.
 - **Deck title marquee.** A long title scrolls instead of stretching the deck column.
 - **BAD PAIR** veto button.
@@ -87,6 +87,7 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ### 🩹 Fixes
 
+- PLAY MACRO never loads a song onto the deck the autopilot is playing.
 - `stem-preview --full` renders are no longer silent at the start (A plays from 0:00).
 - Tests never open or migrate the real cache's stores.
 - Genre labels merge with the file on save instead of overwriting a newer run.

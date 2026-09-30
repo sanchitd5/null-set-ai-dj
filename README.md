@@ -86,8 +86,8 @@ When the gates say no, it falls back to the move that fits the pair:
 A whole chain of songs layered by stem on the two real decks: each song enters by one stem and leaves by another, the cores are key-locked to one tempo, the handovers are Bass Swaps on the phrase line, and only one song ever owns the sub-bass or sings. Variants ship with the app as files in `app/music_brain/supermove/variants/` (`v1` is included).
 
 - **Automatic**: when the set energy is high and the playing song is in the first half of a variant, the autopilot may fire it at a booking point (seeded, at most once per variant per set). It never starts inside a build; it waits for the build to end.
-- **By hand**: the **$Up3R-M@SS!V3-M0v3** button in the MACROS panel or `Shift+S`; press again to stop it.
-- **NULL-BOT** sits in front of the console for the whole move, then the normal set takes over.
+- **By hand**: pick **$Up3R-M@SS!V3-M0v3 v1** at the top of the MACRO list and press PLAY MACRO (or `Shift+S`); the status line counts down to the first layer; press again to stop it.
+- **NULL-BOT** dances in the centre of the screen with the move's name for the whole move (clicks pass through to the decks), then the normal set takes over.
 
 ### Inside a song
 
