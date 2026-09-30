@@ -2122,7 +2122,7 @@ def _load_labels() -> int:
     """Startup: the stored labels, then the knowledge export's for songs that have none
     (matched by name; no model call). Returns how many came from the export."""
     from app.music_brain.analysis import genre_labels as gl
-    from app.music_brain import knowledge
+    from app.music_brain.matching import knowledge
 
     g, e = gl.load(LABELS_PATH)
     _suggested_genres.update(g)

@@ -154,7 +154,7 @@ def learn_set(source: str, tracklist: Optional[str] = None, download: bool = Tru
             from app.music_brain.set_import import learn_macros
 
             report["macros"] = learn_macros(report["set_id"], log=log)
-    from app.music_brain import knowledge
+    from app.music_brain.matching import knowledge
 
     report["knowledge"] = knowledge.export_safe(log=log)
     return report

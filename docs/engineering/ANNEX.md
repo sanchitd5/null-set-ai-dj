@@ -229,7 +229,7 @@ Rewrites a tonal recipe to Echo Out when the key score is below KEY_SAFE_MIN.
 [slim atlas](#slim-atlas), JSON only (no audio, stems, paths or e-mail addresses). Files:
 `macros/<name>.json`, `learned_techniques.json`, `pair_atlas.json.gz`, `names.json`. The owner's `seed_combos.json`
 sits beside it in `app/music_brain/`. CLI `python -m app.music_brain.knowledge export | import`. Import resolves
-songs by name onto the local library. Code: `app/music_brain/knowledge.py`.
+songs by name onto the local library. Code: `app/music_brain/matching/knowledge.py`.
 
 ### learn mode / learn-set
 Study a recorded DJ set: `python -m app.music_brain.agent_bridge learn-set <url|file>
@@ -266,7 +266,7 @@ too long). `app/ui/services/live_ear.py`, console side `app/ui/static/live-ear.j
 
 ### local wins
 When importing `knowledge/`, the local cache always wins: a local macro, atlas pair or studied
-set is never overwritten. `app/music_brain/knowledge.py`.
+set is never overwritten. `app/music_brain/matching/knowledge.py`.
 
 ### macro
 A fully specified, replayable set or transition: ordered track ids and per transition the
@@ -358,7 +358,7 @@ merged into main (commit c28f1ee), so this entry describes main.
 
 ### seed combos / auto_seed
 `app/music_brain/seed_combos.json` (beside `knowledge/`) holds the owner's committed combos for pairs the atlas
-does not serve yet. `app/music_brain/knowledge.py:auto_seed` imports `knowledge/` when it or the
+does not serve yet. `app/music_brain/matching/knowledge.py:auto_seed` imports `knowledge/` when it or the
 local library changes.
 
 ### set_learner
@@ -367,7 +367,7 @@ The learning pipeline behind [learn-set](#learn-mode--learn-set), plus the user-
 
 ### slim atlas
 A compact copy of the atlas (the best partners per song and per move) for git.
-`app/music_brain/knowledge.py:slim_atlas`.
+`app/music_brain/matching/knowledge.py:slim_atlas`.
 
 ### stem intro
 Bringing B in stem by stem (for example synths first) instead of a full-track fade. A learned stem

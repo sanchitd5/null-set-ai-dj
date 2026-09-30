@@ -4,7 +4,7 @@ so after a restart the library fallback had no labelled Punjabi song."""
 import json
 
 from app.music_brain.analysis import genre_labels as gl
-from app.music_brain import knowledge as kn
+from app.music_brain.matching import knowledge as kn
 
 
 def test_save_load_round_trip(tmp_path):

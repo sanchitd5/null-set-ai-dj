@@ -12,7 +12,7 @@ REPORT = {"set_id": SID, "set_path": "/x", "observations": [], "learned": {}}
 
 @pytest.fixture
 def learned(monkeypatch):
-    from app.music_brain import knowledge
+    from app.music_brain.matching import knowledge
 
     exported = []
     monkeypatch.setattr(set_learner, "learn_set", lambda source, **kw: dict(REPORT))

@@ -28,7 +28,7 @@ ATLAS_CACHE_DIR: Path = CACHE_DIR      # tests point this at tmp_path
 
 def _seed() -> None:
     """Tracked knowledge/ into the cache when either changed (a few stats otherwise)."""
-    from app.music_brain import knowledge
+    from app.music_brain.matching import knowledge
     knowledge.auto_seed(ATLAS_CACHE_DIR)
 
 

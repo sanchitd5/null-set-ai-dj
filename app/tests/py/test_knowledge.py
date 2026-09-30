@@ -4,7 +4,8 @@ import json
 
 import pytest
 
-from app.music_brain import knowledge as kn, macros as mc, pair_atlas as pa
+from app.music_brain.matching import knowledge as kn
+from app.music_brain import macros as mc, pair_atlas as pa
 
 A, B, C = "a" * 16, "b" * 16, "c" * 16
 NAMES = {A: "Anyma - Eternity", B: "Cassian - SOS", C: "Argy - WIND"}

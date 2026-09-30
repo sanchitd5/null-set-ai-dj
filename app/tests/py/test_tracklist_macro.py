@@ -86,7 +86,7 @@ def test_error_without_a_tracklist(world, capsys, monkeypatch):
     with pytest.raises(ValueError, match="tracklist"):
         _run(world, text="just a description, no timestamps")
     monkeypatch.setattr(set_learner, "set_info", lambda s: (SID, "t", ""))
-    from app.music_brain import knowledge
+    from app.music_brain.matching import knowledge
     monkeypatch.setattr(knowledge, "export_safe", lambda **kw: {})
     assert ab.main(["learn-set", "https://youtu.be/" + SID, "--macros-only"]) == 1
     assert "tracklist" in json.loads(capsys.readouterr().out)["error"]

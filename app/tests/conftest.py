@@ -33,7 +33,7 @@ def _private_genre_labels(tmp_path_factory, monkeypatch):
 @pytest.fixture(autouse=True)
 def _no_tracked_knowledge(tmp_path_factory, monkeypatch):
     """Tests never seed from, or export into, the tracked app/music_brain/knowledge/."""
-    from app.music_brain import knowledge
+    from app.music_brain.matching import knowledge
     monkeypatch.setattr(knowledge, "KNOWLEDGE_DIR", tmp_path_factory.mktemp("knowledge"))
     knowledge._SEEN.clear()
 
