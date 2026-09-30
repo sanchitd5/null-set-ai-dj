@@ -10,8 +10,9 @@ CACHE_DIR/maintain/<timestamp>.json.
 
 Running app policy: stems and flac REFUSE while the app answers on 127.0.0.1:$PORT (default
 8000). The server's own stem worker writes the same stem folders, and flac deletes WAVs the
-server may be streaming. labels, review, atlas and export run anyway: each takes its
-existing lock (genre_labels merge_save lock, learned store lock, atlas lock).
+server may be streaming. labels, review, atlas and export run anyway: each writes in its own
+short SQLite transaction (app.db) and the atlas build holds the atlas lock. --dry-run reads the
+stores through db.sandbox (an in-memory copy): nothing in the cache changes.
 
 stems: (a) removes the non-ft folders (<hash>_htdemucs, <hash>_htdemucs_vocals, ...) of every song
 that already has a complete htdemucs_ft 4-stem set, (b) separates with htdemucs_ft every song with
@@ -78,7 +79,15 @@ def _duration(analysis_path: Optional[str]) -> Optional[float]:
 
 
 def counts(cache: Path) -> dict:
-    """Read-only snapshot for the before / after report (never migrates or writes)."""
+    """Read-only snapshot for the before / after report (never migrates or writes: the stores are
+    read through a db.sandbox, an in-memory copy of app.db)."""
+    from app.music_brain import db
+
+    with db.sandbox():
+        return _counts(cache)
+
+
+def _counts(cache: Path) -> dict:
     from app.music_brain.analysis import genre_labels as gl
     from app.music_brain.atlas import pair_atlas as pa
     from app.music_brain.learning import set_learner as sl
@@ -95,7 +104,7 @@ def counts(cache: Path) -> dict:
         st["fast_vocals_on_4stem"] += voc in vs and (ft in vs or fast in vs)
     out["stem_sets"] = st
     root = pa._root(cache, None)
-    meta = pa._meta(root) or {}
+    meta = pa.load_meta(path=root) or {}
     c = {"pairs": 0, "merge": 0, "mashup": 0, "riff": 0, "double_drop": 0, "combos": 0, "merge_blocked_by_stems": 0}
     for a in meta.get("shards") or []:
         for p in pa.pairs_for(a, path=root).values():
@@ -282,7 +291,7 @@ def step_review(ctx: dict) -> dict:
 def step_atlas(ctx: dict) -> dict:
     from app.music_brain.atlas import pair_atlas as pa
 
-    meta = pa._meta(pa._root(ctx["cache"], None)) or {}
+    meta = pa.load_meta(path=pa._root(ctx["cache"], None)) or {}
     rh = pa.rules_hash()
     plan = {"rules_changed": meta.get("rules") != rh,
             "rescore": "every pair" if meta.get("rules") != rh else "new or changed pairs only",
@@ -341,7 +350,13 @@ def run(steps: Sequence[str], cache: Optional[Path] = None, dry_run: bool = Fals
         _log(f"== {s}")
         t = time.monotonic()
         try:
-            res = STEP_FNS[s](ctx)
+            if dry_run:
+                from app.music_brain import db
+
+                with db.sandbox():             # store reads may migrate / create: in memory only
+                    res = STEP_FNS[s](ctx)
+            else:
+                res = STEP_FNS[s](ctx)
         except Exception as exc:  # noqa: BLE001 -- a failed step is reported, the next ones still run
             res = {"error": f"{type(exc).__name__}: {exc}"[:300]}
         res["seconds"] = round(time.monotonic() - t, 1)

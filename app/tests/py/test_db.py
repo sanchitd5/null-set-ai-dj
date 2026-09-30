@@ -59,6 +59,19 @@ def test_app_and_user_db_are_separate_files(tmp_path):
     assert db.connect(tmp_path / db.APP_DB) is not db.connect(tmp_path / db.USER_DB)
 
 
+def test_sandbox_reads_and_writes_in_memory_only(tmp_path):
+    import json
+    from app.music_brain.learning import set_learner as sl
+    p = tmp_path / "learned_techniques.json"
+    p.write_text(json.dumps({"k": {"kind": "k", "observations": []}}))
+    with db.sandbox():
+        assert sl.load_learned(p) == {"k": {"kind": "k", "observations": []}}   # migrated in memory
+        sl._save({}, p)
+        assert sl.load_learned(p) == {}
+    assert sorted(x.name for x in tmp_path.iterdir()) == ["learned_techniques.json"], "nothing on disk changed"
+    assert sl.load_learned(p) == {"k": {"kind": "k", "observations": []}}
+
+
 def test_retire_never_overwrites(tmp_path):
     a = tmp_path / "x.json"
     a.write_text("1")

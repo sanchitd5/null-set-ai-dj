@@ -150,4 +150,4 @@ A local, personal and educational tool, not a product. These are not gaps:
 - **Replay is only as exact as the session log.** Not logged: the FX rack state, the keylock
   decision when no macro drove the step, a merge's hold plan when only its audition was logged,
   and exact call times for artist moves (they fire on the next line after the stored time minus
-  their lead). The replay lists these per step (`gaps`). Session logs are pruned to the newest 60.
+  their lead). The replay lists these per step (`gaps`). Session logs are never pruned (every set stays).

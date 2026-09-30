@@ -27,7 +27,7 @@ import sqlite3
 import threading
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Callable, Dict, Iterator, Sequence, Tuple, Union
+from typing import Callable, Dict, Iterator, Optional, Sequence, Tuple, Union
 
 APP_DB = "app.db"
 USER_DB = "user.db"
@@ -62,6 +62,8 @@ def connect(path: Union[str, Path]) -> sqlite3.Connection:
     conn = cache.get(key)
     if conn is not None:
         return conn
+    if _SANDBOX is not None:
+        return _sandboxed(p)
     Path(p).parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(p, timeout=BUSY_MS / 1000, isolation_level=None, check_same_thread=True)
     conn.execute(f"PRAGMA busy_timeout={BUSY_MS}")
@@ -76,6 +78,46 @@ def connect(path: Union[str, Path]) -> sqlite3.Connection:
                                 "(store TEXT PRIMARY KEY, version INTEGER NOT NULL)"))
     cache[key] = conn
     return conn
+
+
+# ------------------------------------------------------------------------------------ dry runs
+_SANDBOX: Optional[Dict[str, sqlite3.Connection]] = None
+_sandbox_lock = threading.Lock()
+
+
+@contextmanager
+def sandbox() -> Iterator[None]:
+    """Dry runs (maintain --dry-run): every connect() inside gets a private in-memory copy of the
+    database (empty when the file does not exist), migrations run in that copy and retire() renames
+    nothing, so the cache stays byte-identical. Writes are thrown away on exit. Process-wide."""
+    global _SANDBOX
+    with _sandbox_lock:
+        outer, _SANDBOX = _SANDBOX, (_SANDBOX if _SANDBOX is not None else {})
+    try:
+        yield
+    finally:
+        if outer is None:
+            with _sandbox_lock:
+                for c in (_SANDBOX or {}).values():
+                    c.close()
+                _SANDBOX = None
+            close_all()
+
+
+def _sandboxed(p: str) -> sqlite3.Connection:
+    with _sandbox_lock:
+        conn = _SANDBOX.get(p)
+        if conn is None:
+            conn = sqlite3.connect(":memory:", isolation_level=None, check_same_thread=False)
+            if Path(p).is_file():
+                src = sqlite3.connect(f"file:{p}?mode=ro", uri=True, timeout=BUSY_MS / 1000)
+                try:
+                    src.backup(conn)
+                finally:
+                    src.close()
+            conn.execute("CREATE TABLE IF NOT EXISTS schema_version (store TEXT PRIMARY KEY, version INTEGER NOT NULL)")
+            _SANDBOX[p] = conn
+        return conn
 
 
 def _raise_locked():
@@ -170,8 +212,11 @@ def checkpoint(conn: sqlite3.Connection) -> None:
 
 def retire(legacy: Path) -> Path:
     """Rename a migrated legacy JSON file / folder to <name>.migrated (never deleted); an existing
-    .migrated gets a timestamped name instead of being overwritten."""
+    .migrated gets a timestamped name instead of being overwritten. In a sandbox: nothing moves."""
     import time
+
+    if _SANDBOX is not None:
+        return legacy
 
     dest = legacy.with_name(legacy.name + ".migrated")
     if dest.exists():

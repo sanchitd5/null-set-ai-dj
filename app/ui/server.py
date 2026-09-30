@@ -2197,11 +2197,10 @@ _VETO_MEMO: dict = {}
 
 
 def _vetoes() -> list:
-    """The owner's vetoes (seed + CACHE_DIR/vetoes.json), re-read when the file changes."""
+    """The owner's vetoes (seed + the user DB), re-read when a veto is stored."""
     from app.music_brain.atlas import vetoes as vt
 
-    p = vt.path(CACHE_DIR)
-    stamp = (str(p), p.stat().st_mtime_ns if p.exists() else None)
+    stamp = vt.stamp(CACHE_DIR)
     if _VETO_MEMO.get("stamp") != stamp:
         _VETO_MEMO.update(stamp=stamp, rows=vt.load(CACHE_DIR))
     return _VETO_MEMO["rows"]

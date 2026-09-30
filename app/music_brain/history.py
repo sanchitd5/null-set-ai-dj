@@ -59,7 +59,13 @@ STEPS = (
     CREATE INDEX moves_time ON moves (session, t);
     CREATE TABLE set_logs (id TEXT PRIMARY KEY, created TEXT, duration REAL, track_a TEXT, track_b TEXT,
         events INTEGER, data TEXT NOT NULL);
-    CREATE TABLE history_meta (key TEXT PRIMARY KEY, value TEXT)""",
+    CREATE TABLE history_meta (key TEXT PRIMARY KEY, value TEXT);
+    CREATE TABLE events (session TEXT NOT NULL, seq INTEGER NOT NULL, t REAL, kind TEXT, data TEXT NOT NULL,
+        PRIMARY KEY (session, seq));
+    CREATE TABLE song_meta (session TEXT NOT NULL, folder TEXT NOT NULL, nn INTEGER, meta TEXT NOT NULL,
+        steps_offset INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (session, folder));
+    CREATE TABLE song_steps (session TEXT NOT NULL, folder TEXT NOT NULL, seq INTEGER NOT NULL, data TEXT NOT NULL,
+        PRIMARY KEY (session, folder, seq))""",
 )
 
 _ingested: set = set()                  # cache dirs whose first-open ingest ran in this process
@@ -104,6 +110,9 @@ def _text(v) -> Optional[str]:
 # ------------------------------------------------------------------------------------ ingest
 def _index_event(conn, session: str, seq: int, ev: dict) -> None:
     """One events.jsonl line into its table (inside the caller's transaction). Idempotent."""
+    conn.execute("INSERT OR IGNORE INTO events (session, seq, t, kind, data) VALUES (?, ?, ?, ?, ?)",
+                 (session, seq, _num(ev.get("t")), _text(ev.get("kind")),
+                  json.dumps(ev, ensure_ascii=False, default=str)))
     t = _num(ev.get("t"))
     if t is None:
         return
@@ -135,6 +144,42 @@ def _label(name: str, labels) -> tuple:
     except Exception:  # noqa: BLE001 -- a label is a nicety, never blocks indexing
         return None, None
     return labels[0].get(k), labels[1].get(k)
+
+
+def _sync_steps(conn, session: str, folder: Path) -> int:
+    """steps.jsonl lines of one song past its stored byte offset (caller's transaction)."""
+    row = conn.execute("SELECT steps_offset FROM song_meta WHERE session = ? AND folder = ?",
+                       (session, folder.name)).fetchone()
+    if row is None:
+        return 0
+    try:
+        with open(folder / "steps.jsonl", "rb") as f:
+            f.seek(row[0])
+            data = f.read()
+    except OSError:
+        return 0
+    end = data.rfind(b"\n") + 1
+    pos, n = row[0], 0
+    for raw in data[:end].split(b"\n")[:-1] if end else []:
+        try:
+            if isinstance(json.loads(raw), dict):
+                conn.execute("INSERT OR IGNORE INTO song_steps (session, folder, seq, data) VALUES (?, ?, ?, ?)",
+                             (session, folder.name, pos, raw.decode("utf-8")))
+                n += 1
+        except ValueError:
+            pass
+        pos += len(raw) + 1
+    conn.execute("UPDATE song_meta SET steps_offset = ? WHERE session = ? AND folder = ?",
+                 (row[0] + end, session, folder.name))
+    return n
+
+
+def _index_meta(conn, session: str, meta: dict, folder: Path) -> None:
+    conn.execute("INSERT INTO song_meta (session, folder, nn, meta) VALUES (?, ?, ?, ?) ON CONFLICT(session, folder) "
+                 "DO UPDATE SET nn = excluded.nn, meta = excluded.meta",
+                 (session, folder.name, meta.get("nn") if isinstance(meta.get("nn"), int) else None,
+                  json.dumps(meta, ensure_ascii=False, default=str)))
+    _sync_steps(conn, session, folder)
 
 
 def _index_play(conn, session: str, meta: dict, folder: str = "", labels=None) -> None:
@@ -237,6 +282,7 @@ def sync_session(session: str, cache_dir=None, labels=None, _conn_=None) -> dict
             except (OSError, ValueError):
                 continue
             if isinstance(meta, dict):
+                _index_meta(conn, session, meta, m.parent)
                 _index_play(conn, session, meta, m.parent.name, labels)
                 sources[meta.get("nn")] = _selection(m.parent / "steps.jsonl")
                 rep["plays"] += 1
@@ -277,7 +323,7 @@ def rebuild(cache_dir=None) -> dict:
     live = [d.name for d in sroot.iterdir()] if sroot.is_dir() else []
     with db.tx(conn):
         for s in live:
-            for tbl in ("plays", "transitions", "moves"):
+            for tbl in ("plays", "transitions", "moves", "events", "song_meta", "song_steps"):
                 conn.execute(f"DELETE FROM {tbl} WHERE session = ?", (s,))
             conn.execute("DELETE FROM sessions WHERE id = ?", (s,))
         conn.execute("DELETE FROM set_logs")
@@ -358,21 +404,78 @@ def on_play(session: str, meta: dict, folder: Path) -> None:
     are skipped here)."""
     try:
         cache_dir = Path(folder).parents[3]            # <cache>/<sessions>/<session>/songs/<folder>
+        from app.music_brain import db
+
+        conn = _conn(cache_dir)
+        with db.tx(conn):
+            _index_meta(conn, session, meta, Path(folder))
         key = (str(cache_dir), session, meta.get("nn"))
         sig = tuple(sorted((k, str(v)) for k, v in meta.items() if k not in ("steps", "dropped")))
         if _last_play.get(key) == sig or meta.get("entry_t") is None:
-            return
+            return                                    # the play row is unchanged: skip the label lookup
         _last_play[key] = sig
-        from app.music_brain import db
         from app.music_brain.analysis import genre_labels as gl
 
-        conn = _conn(cache_dir)
         labels = gl.load(gl.path(_cache(cache_dir)))
         with db.tx(conn):
             _index_play(conn, session, meta, Path(folder).name, labels)
             _link(conn, session, {meta.get("nn"): _selection(Path(folder) / "steps.jsonl")})
     except Exception:  # noqa: BLE001 -- logging must not break a live set
         pass
+
+
+def on_step(session: str, folder: Path) -> None:
+    """song_log appended a line to <folder>/steps.jsonl: index it (by byte offset)."""
+    try:
+        from app.music_brain import db
+
+        conn = _conn(Path(folder).parents[3])
+        with db.tx(conn):
+            _sync_steps(conn, session, Path(folder))
+    except Exception:  # noqa: BLE001 -- logging must not break a live set
+        pass
+
+
+# ---------------------------------------------------------------------------------- raw reads
+# history_api (replay / time travel / HISTORY view) derives its shapes from the raw logs; these give
+# it the same rows from the DB, including sessions whose log folder is gone.
+
+def exists(cache_dir=None) -> bool:
+    from app.music_brain import db
+
+    return (_cache(cache_dir) / db.USER_DB).is_file()
+
+
+def session_ids(cache_dir=None) -> List[str]:
+    """Every indexed session id, newest first (catches up with the logs first)."""
+    cache = _cache(cache_dir)
+    conn = _conn(cache)
+    ingest_all(cache)
+    return [s for (s,) in conn.execute("SELECT id FROM sessions ORDER BY id DESC")]
+
+
+def raw_events(session: str, cache_dir=None, sync: bool = True) -> List[dict]:
+    """The session's events.jsonl rows in file order."""
+    cache = _cache(cache_dir)
+    conn = _conn(cache)
+    if sync and (cache / "sessions" / session).is_dir():
+        sync_session(session, cache, None, conn)
+    return [json.loads(d) for (d,) in conn.execute(
+        "SELECT data FROM events WHERE session = ? ORDER BY seq", (session,))]
+
+
+def raw_songs(session: str, cache_dir=None, sync: bool = True) -> List[tuple]:
+    """[(folder, meta, steps)] of the session's songs in folder order."""
+    cache = _cache(cache_dir)
+    conn = _conn(cache)
+    if sync and (cache / "sessions" / session).is_dir():
+        sync_session(session, cache, None, conn)
+    steps: Dict[str, list] = {}
+    for folder, d in conn.execute("SELECT folder, data FROM song_steps WHERE session = ? ORDER BY folder, seq",
+                                  (session,)):
+        steps.setdefault(folder, []).append(json.loads(d))
+    return [(folder, json.loads(m), steps.get(folder, [])) for folder, m in conn.execute(
+        "SELECT folder, meta FROM song_meta WHERE session = ? ORDER BY folder", (session,))]
 
 
 # ---------------------------------------------------------------------------------- read API

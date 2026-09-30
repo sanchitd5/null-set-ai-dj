@@ -163,8 +163,16 @@ def test_liked_file_is_atomic_and_tolerant(tmp_path):
     (tmp_path / "liked.json").write_text("{broken", encoding="utf-8")
     assert lk.load(tmp_path) == {}
     lk.like({"a": NEVER, "b": NOCT, "recipe": "Echo Out", "a_time": 1, "b_time": 2}, "t", cache_dir=tmp_path, save_macro=False)
-    assert json.loads((tmp_path / "liked.json").read_text())["liked"][f"{NEVER}>{NOCT}"]["step"]["recipe"] == "Echo Out"
-    assert not list(tmp_path.glob("*.tmp"))
+    assert lk.load(tmp_path)[f"{NEVER}>{NOCT}"]["step"]["recipe"] == "Echo Out"
+    assert not list(tmp_path.glob("*.tmp")) and (tmp_path / "liked.json").exists(), "the broken old file is left alone"
+
+
+def test_old_liked_json_migrates_into_the_user_db(tmp_path):
+    e = {"a": NEVER, "b": NOCT, "step": {"a": NEVER, "b": NOCT, "recipe": "Echo Out"}, "replay": True, "at": 1.0}
+    (tmp_path / "liked.json").write_text(json.dumps({"schema": 1, "liked": {f"{NEVER}>{NOCT}": e}}))
+    assert lk.load(tmp_path) == {f"{NEVER}>{NOCT}": e}
+    assert not (tmp_path / "liked.json").exists() and (tmp_path / "liked.json.migrated").is_file()
+    assert (tmp_path / "user.db").is_file()
     with pytest.raises(ValueError):
         lk.like({"a": "x", "b": NOCT}, "t", cache_dir=tmp_path)
 
@@ -184,7 +192,7 @@ def test_api(tmp_path, monkeypatch):
     assert c.get("/api/sessions/nope/timeline").status_code == 404
     assert c.get(f"/api/sessions/{SID}/state", params={"at": "187"}).json()["in_transition"] == 1
     r = c.post("/api/replay", json={"session": SID, "step": 2, "to": 2}).json()
-    assert r["replay"]["macro"]["source"] == f"replay:{SID}" and (tmp_path / "macros" / f"{r['replay']['macro']['name']}.json").exists()
+    assert r["replay"]["macro"]["source"] == f"replay:{SID}" and mc.exists(r['replay']['macro']['name'], tmp_path)
     assert r["load"]["track_id"] == NEVER
     r = c.post("/api/replay", json={"session": SID, "at": X2 + 2, "save": False}).json()
     assert r["restarted_transition"] and r["start_step"] == 2

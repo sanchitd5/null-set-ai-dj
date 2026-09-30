@@ -118,6 +118,18 @@ def test_live_play_hook_and_never_pruned(tmp_path):
     assert [s["id"] for s in history.sessions(cache)] == [S], "every set stays"
 
 
+def test_history_api_reads_the_db_and_keeps_a_pruned_session(tmp_path):
+    import shutil
+    from app.music_brain.learning import history_api as ha
+    cache = _cache(tmp_path)
+    tl = ha.timeline(S, cache)                                     # indexed from the logs on first read
+    assert (cache / db.USER_DB).is_file() and len(tl["transitions"]) == 2
+    st = ha.state_at(S, T0 + 110, cache)
+    shutil.rmtree(cache / "sessions" / S)                          # the log folder is gone
+    assert ha.timeline(S, cache) == tl and ha.state_at(S, T0 + 110, cache) == st
+    assert [s["id"] for s in ha.sessions(cache)] == [S]
+
+
 def test_user_marks_live_in_the_user_db(tmp_path):
     import pytest
     from app.music_brain import user_marks as um
@@ -129,6 +141,17 @@ def test_user_marks_live_in_the_user_db(tmp_path):
     assert (tmp_path / db.USER_DB).is_file() and not (tmp_path / db.APP_DB).exists()
     with pytest.raises(ValueError):
         um.mark("", "x", None, tmp_path)
+
+
+def test_session_folders_are_never_pruned(tmp_path, monkeypatch):
+    from app.ui.services import session_log
+    root = tmp_path / "c3" / "sessions"
+    for i in range(70):
+        (root / f"2026-01-01_{i:06d}").mkdir(parents=True)
+        (root / f"2026-01-01_{i:06d}" / "events.jsonl").write_text(_ev(T0 + i, "llm"))
+    monkeypatch.setattr(session_log, "SESSIONS_DIR", root)
+    session_log._write("llm", call="suggest")
+    assert len(list(root.iterdir())) == 71, "owner: always have all sets"
 
 
 def test_session_log_appends_into_history(tmp_path, monkeypatch):

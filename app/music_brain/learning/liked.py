@@ -1,7 +1,7 @@
 """LIKED transitions: the owner's favourite moves, kept exactly as they played.
 
-The positive twin of the "bad pair" veto. One entry per pair A -> B (CACHE_DIR/liked.json, user
-data, never exported to knowledge/; it moves into user.db with the set-history store):
+The positive twin of the "bad pair" veto. One entry per pair A -> B (CACHE_DIR/user.db, marks of kind
+"liked": user data, never exported to knowledge/; the pre-DB liked.json migrates once, .migrated):
 
     {"a", "b", "a_name", "b_name", "step": <macro step as played>, "replay": bool,
      "source": "session:<id>#<n>" | "seed", "note", "at"}
@@ -21,10 +21,8 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import re
 import sys
-import threading
 import time
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -32,30 +30,45 @@ from typing import Dict, List, Optional
 TRACK_ID_RE = re.compile(r"^[0-9a-f]{16}$")
 SEED_FILE = Path(__file__).with_name("liked_seed.json")
 MAX_LIKED = 500
-_lock = threading.Lock()
+
+
+MARK = "liked"
 
 
 def _file(cache_dir: Optional[Path]) -> Path:
+    """The pre-DB CACHE_DIR/liked.json (migration source); its folder holds user.db."""
     from app.music_brain.config import CACHE_DIR
     return Path(cache_dir or CACHE_DIR) / "liked.json"
 
 
-def load(cache_dir: Optional[Path] = None) -> Dict[str, dict]:
-    """{"A>B": entry}; a missing or broken file is empty."""
+def _parse(p: Path):
     try:
-        doc = json.loads(_file(cache_dir).read_text(encoding="utf-8"))
+        doc = json.loads(p.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return {}
+        return None                                   # broken: left alone, tried again next open
     items = doc.get("liked") if isinstance(doc, dict) else None
-    return {k: v for k, v in (items or {}).items() if isinstance(v, dict)}
+    return [(k, v) for k, v in (items or {}).items() if isinstance(v, dict)]
 
 
-def _write(items: Dict[str, dict], cache_dir: Optional[Path]) -> None:
+def _dir(cache_dir: Optional[Path]) -> Path:
+    """The folder whose user.db holds the liked marks (migrates liked.json there once)."""
+    from app.music_brain import user_marks as um
+
     p = _file(cache_dir)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_suffix(f".{os.getpid()}.{threading.get_ident()}.tmp")
-    tmp.write_text(json.dumps({"schema": 1, "liked": items}, indent=1, ensure_ascii=False), encoding="utf-8")
-    os.replace(tmp, p)          # atomic: a reader never sees half a file
+    um.migrate_json(MARK, p, _parse)
+    return p.parent
+
+
+def load(cache_dir: Optional[Path] = None) -> Dict[str, dict]:
+    """{"A>B": entry}, oldest first; empty when the store cannot be read."""
+    import sqlite3
+
+    from app.music_brain import user_marks as um
+
+    try:
+        return {k: v for k, v in um.rows(MARK, _dir(cache_dir)) if isinstance(v, dict)}
+    except (sqlite3.Error, OSError):
+        return {}
 
 
 def _clean(step: dict) -> dict:
@@ -69,30 +82,29 @@ def _clean(step: dict) -> dict:
 def like(step: dict, source: str, note: str = "", replay: bool = True, cache_dir: Optional[Path] = None,
          save_macro: bool = True) -> dict:
     """Keep A -> B exactly as `step` (a macro step: recipe, exit, entry, merge, tempo, moves)."""
+    from app.music_brain import db
+    from app.music_brain import user_marks as um
+
     s = _clean(step)
     key = f"{s['a']}>{s['b']}"
     entry = {"a": s["a"], "b": s["b"], "a_name": s.get("a_name"), "b_name": s.get("b_name"), "step": s,
              "replay": bool(replay), "source": str(source or "console")[:80], "note": str(note or "")[:300],
              "at": time.time()}
-    with _lock:
-        items = load(cache_dir)
-        items[key] = entry
-        if len(items) > MAX_LIKED:
-            for k in sorted(items, key=lambda k: items[k].get("at") or 0)[: len(items) - MAX_LIKED]:
-                items.pop(k)
-        _write(items, cache_dir)
+    d = _dir(cache_dir)
+    conn = um._conn(d)
+    with db.tx(conn):                                 # set + prune in one transaction
+        um.mark(MARK, key, entry, d)
+        conn.execute("DELETE FROM marks WHERE kind = ? AND rowid NOT IN (SELECT rowid FROM marks "
+                     "WHERE kind = ? ORDER BY t DESC, rowid DESC LIMIT ?)", (MARK, MARK, MAX_LIKED))
     if save_macro:
         entry["macro"] = _save_macro(entry, cache_dir)
     return entry
 
 
 def unlike(a: str, b: str, cache_dir: Optional[Path] = None) -> bool:
-    with _lock:
-        items = load(cache_dir)
-        gone = items.pop(f"{a}>{b}", None) is not None
-        if gone:
-            _write(items, cache_dir)
-    return gone
+    from app.music_brain import user_marks as um
+
+    return um.unmark(MARK, f"{a}>{b}", _dir(cache_dir))
 
 
 def get(a: str, b: str, cache_dir: Optional[Path] = None) -> Optional[dict]:

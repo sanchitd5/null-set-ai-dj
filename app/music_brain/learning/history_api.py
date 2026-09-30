@@ -1,12 +1,13 @@
 """HISTORY API: the thin read interface over past sessions (replay, time travel, liked).
 
-Four functions, the same ones the set-history store (sqlite, sqlite-store branch) exposes:
+Four functions over the set-history store (app/music_brain/history.py, CACHE_DIR/user.db):
     sessions()               every logged session, newest first
     timeline(session)        its songs and transitions in play order (with in-transition moves)
     state_at(session, t)     each deck's song and song position at moment t
     pair_plays(a, b)         every time the pair A -> B was played, across sessions
-They read data/cache/sessions/<id>/ (events.jsonl + songs/*/meta.json + steps.jsonl) directly
-for now; after the merge this module is swapped for the DB-backed one, callers stay unchanged.
+They read the raw rows history.py indexed from data/cache/sessions/<id>/ (events.jsonl +
+songs/*/meta.json + steps.jsonl; caught up incrementally on every read), so a session whose log
+folder is gone is still served. Only when the DB cannot be opened do they read the JSONL directly.
 """
 
 from __future__ import annotations
@@ -59,6 +60,42 @@ def _num(v) -> Optional[float]:
     return f if f == f and abs(f) < 1e12 else None
 
 
+def _db_ok(cache_dir: Optional[Path]) -> bool:
+    import sqlite3
+
+    from app.music_brain import history
+
+    try:
+        history._conn(_cache(cache_dir))
+        return True
+    except (sqlite3.Error, OSError):
+        return False
+
+
+def _events(session: str, cache_dir: Optional[Path], sync: bool = True) -> List[dict]:
+    from app.music_brain import history
+
+    if _db_ok(cache_dir):
+        return history.raw_events(session, _cache(cache_dir), sync=sync)
+    return _jsonl(_sdir(session, cache_dir) / "events.jsonl")
+
+
+def _metas(session: str, cache_dir: Optional[Path], sync: bool = True) -> List[dict]:
+    """_songs() for one session, from the DB (JSONL fallback)."""
+    from app.music_brain import history
+
+    if not _db_ok(cache_dir):
+        return _songs(_sdir(session, cache_dir))
+    out = []
+    for folder, meta, steps in history.raw_songs(session, _cache(cache_dir), sync=sync):
+        if isinstance(meta, dict) and TRACK_ID_RE.match(str(meta.get("track_id") or "")):
+            meta["_steps"] = [x for x in steps if isinstance(x, dict)]
+            meta["_dir"] = folder
+            out.append(meta)
+    out.sort(key=lambda x: x.get("nn") or 0)
+    return out
+
+
 def _songs(sdir: Path) -> List[dict]:
     """Song metas in folder (first-load) order, each with its AI steps under "_steps"."""
     out = []
@@ -77,17 +114,23 @@ def _songs(sdir: Path) -> List[dict]:
 
 def sessions(cache_dir: Optional[Path] = None) -> List[dict]:
     """Every session with a log, newest first: id, songs, transitions, start/end epoch."""
+    from app.music_brain import history
+
     root = _cache(cache_dir) / "sessions"
+    if _db_ok(cache_dir):
+        ids = history.session_ids(_cache(cache_dir))      # every set ever indexed, newest first
+    else:
+        ids = [d.name for d in sorted(root.iterdir(), reverse=True) if d.is_dir()] if root.is_dir() else []
     out = []
-    for d in sorted(root.iterdir(), reverse=True) if root.is_dir() else []:
-        if not d.is_dir() or not SESSION_RE.match(d.name):
+    for sid in ids:
+        if not SESSION_RE.match(sid):
             continue
-        events = _jsonl(d / "events.jsonl")
-        songs = _songs(d)
+        events = _events(sid, cache_dir, sync=False)
+        songs = _metas(sid, cache_dir, sync=False)
         if not events and not songs:
             continue
         ts = [e["t"] for e in events if _num(e.get("t")) is not None]
-        out.append({"id": d.name, "songs": len(songs),
+        out.append({"id": sid, "songs": len(songs),
                     "transitions": sum(1 for e in events if e.get("kind") == "track" and e.get("event") == "transition_start"),
                     "start_t": min(ts) if ts else None, "end_t": max(ts) if ts else None,
                     "first": songs[0].get("name") if songs else None})
@@ -134,9 +177,9 @@ def _play_order(songs: List[dict], starts: List[dict]) -> List[tuple]:
 def timeline(session: str, cache_dir: Optional[Path] = None) -> dict:
     """The session in play order: songs (entry/exit, song seconds) and transitions, each with
     the recipe that ran, A's exit and B's entry (song s), the merge, and its in-transition moves."""
-    sdir = _sdir(session, cache_dir)
-    events = _jsonl(sdir / "events.jsonl")
-    songs = _songs(sdir)
+    _sdir(session, cache_dir)                          # validates the id
+    events = _events(session, cache_dir)
+    songs = _metas(session, cache_dir, sync=False)
     if not events and not songs:
         raise KeyError(f"no session {session}")
     starts = [e for e in events if e.get("kind") == "track" and e.get("event") == "transition_start"]
@@ -245,7 +288,8 @@ def state_at(session: str, at: Union[str, float, int], cache_dir: Optional[Path]
     Positions are interpolated between logged events by elapsed time (playback rate 1)."""
     tl = tl or timeline(session, cache_dir)
     t = resolve_t(session, at, tl["start_t"])
-    events = _jsonl(_sdir(session, cache_dir) / "events.jsonl")
+    _sdir(session, cache_dir)
+    events = _events(session, cache_dir, sync=False)
     songs = tl["songs"]
     if not songs:
         raise KeyError("no songs logged in that session")
