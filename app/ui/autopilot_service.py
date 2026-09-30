@@ -759,10 +759,12 @@ def _filter_suggestions(
         if not (steering_any or allow_genre_change):
             if era_jump:
                 s["rejected_reason"] = f"era jump ({s.get('era')} after {cur_era})"
+                note_rejects([s], s["rejected_reason"])
                 genre_jumps.append((max(hop or 0.0, float(egap)), s))
                 continue
             if hop is not None and hop > MAX_GENRE_HOP:
                 s["rejected_reason"] = f"genre jump ({hop:.0f})"
+                note_rejects([s], s["rejected_reason"])
                 genre_jumps.append((hop, s))
                 continue
         fit = _num(s.get("occasion_fit"))
@@ -775,6 +777,7 @@ def _filter_suggestions(
         key_reason = None if steer else _key_clash_reason(current_key, s.get("expected_key"))
         if key_reason:
             s["rejected_reason"] = key_reason
+            note_rejects([s], s["rejected_reason"])
             key_clashes.append(s)
             continue
         reason = _artist_clash(current_artist, s.get("artist", ""))
@@ -783,6 +786,7 @@ def _filter_suggestions(
         (clashes if reason else ok).append(s)
         if reason:
             s["rejected_reason"] = reason
+            note_rejects([s], s["rejected_reason"])
     if ok:
         return ok
     if genre_jumps:  # only genre jumps left: the smallest one, rather than nothing
@@ -976,6 +980,22 @@ def note_retry(kind: str, reason: str, attempt: int = 1) -> None:
     from app.ui import session_log
 
     session_log.log("llm_retry", call=kind, reason=reason, attempt=attempt)
+
+
+def note_rejects(picks, reason: str) -> None:
+    """One `suggest_reject` session event per dropped suggestion, with why.
+
+    Without it a HOLD LOOP after a run of ok suggest calls cannot say which
+    filter ate the picks (session 2026-09-30_102327). Never raises."""
+    try:
+        from app.ui import session_log
+
+        for s in picks or []:
+            if isinstance(s, dict):
+                song = f"{s.get('artist', '')} - {s.get('title', '')}"[:160]
+                session_log.log("suggest_reject", song=song, reason=str(reason)[:160])
+    except Exception:  # logging must never break a suggest call
+        pass
 
 
 CONTEXT_PLAYED = int(os.environ.get("AUTOPILOT_CONTEXT_PLAYED", "3") or 3)
@@ -1355,6 +1375,7 @@ def suggest_next_tracks(
             far = "; ".join(f"{x.get('artist', '')} - {x.get('title', '')} ({x.get('expected_bpm')} BPM)"
                             for x in suggestions)[:400]
             print(f"[suggest] tempo: all picks off {target:.0f} BPM: {far}", flush=True)
+            note_rejects(suggestions, f"tempo off the {target:.0f} BPM window")
             retry_msg = (user_msg + f"\n\nREJECTED - wrong tempo for {target:.0f} BPM: {far}. "
                          f"Every song MUST be inside the TEMPO WINDOW ({tempo_window(target)}). "
                          "Keep the same mood, vocals and energy as the current song.")
@@ -1384,6 +1405,7 @@ def suggest_next_tracks(
     if fake and not real:
         names = "; ".join(f"{x.get('artist', '')} - {x.get('title', '')}" for x in fake)[:400]
         print(f"[suggest] not real songs: {names}", flush=True)
+        note_rejects(fake, "not a real song (lookup failed)")
         retry_msg = (user_msg + f"\n\nREJECTED - these songs do not exist: {names}. "
                      "Suggest real released songs you are sure of, credited to their real artist.")
         try:
@@ -1403,6 +1425,7 @@ def suggest_next_tracks(
     elif fake:
         print(f"[suggest] dropped {len(fake)} invented song(s): "
               + "; ".join(f"{x.get('artist', '')} - {x.get('title', '')}" for x in fake)[:300], flush=True)
+        note_rejects(fake, "not a real song (lookup failed)")
     suggestions = real
     # Songs from EARLIER sets are dropped whenever a fresh alternative exists:
     # the soft prompt hint alone let "Lane 8 - Little By Little" follow Fred
@@ -1426,6 +1449,7 @@ def suggest_next_tracks(
     if suggestions and not fresh:
         names = "; ".join(f"{x.get('artist', '')} - {x.get('title', '')}" for x in suggestions)[:400]
         print(f"[suggest] all picks from earlier sets: {names}", flush=True)
+        note_rejects(suggestions, "played in an earlier set")
         try:
             data3 = _extract_json(chat_raw(system_msg, user_msg + (
                 f"\n\nREJECTED - played in earlier sets: {names}. Suggest different songs."),
@@ -1447,6 +1471,7 @@ def suggest_next_tracks(
     if pool and not spaced and can_retry():
         names = "; ".join(f"{x.get('artist', '')} - {x.get('title', '')}" for x in pool)[:400]
         print(f"[suggest] every pick repeats a recent artist: {names}", flush=True)
+        note_rejects(pool, "artist played too recently")
         try:
             data4 = _extract_json(chat_raw(system_msg, user_msg + (
                 f"\n\nREJECTED - too many songs by the same artist lately: {names}. "

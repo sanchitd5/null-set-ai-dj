@@ -131,6 +131,30 @@ def test_library_lockable_under_profile(monkeypatch):
     assert names(punjabi_profile="auto") == ["A - One", "B - Two"]
 
 
+def test_library_lockable_unlabelled_under_profile(monkeypatch):
+    """Session 2026-09-30_102327: genre labels are in memory only, so after a server
+    restart the deadline fallback had nothing. Under the profile an unlabelled song
+    is kept, ranked after the labelled ones; off the profile it is still left out.
+    A cached energy level within MAX_STEP of the playing song ranks first."""
+    import app.ui.server as srv
+    from app.music_brain import energy as en
+    from app.music_brain.analyzer import KeyEstimate
+    tracks = {"t1": Path("/x/a - One.mp3"), "t2": Path("/x/b - Two.mp3"), "t3": Path("/x/c - Three.mp3")}
+    monkeypatch.setattr(srv, "_tracks", tracks)
+    monkeypatch.setattr(srv, "_track_names", {"t1": "A - One", "t2": "B - Two", "t3": "C - Three"})
+    monkeypatch.setattr(srv, "_suggested_genres", {srv._genre_key("Three"): "punjabi pop"})
+    monkeypatch.setattr(srv, "_suggested_eras", {})
+    fake = type("T", (), {"bpm": 88.0, "duration": 200.0, "key": KeyEstimate("8A", "", False, 0.9)})()
+    monkeypatch.setattr(srv, "analyze_track", lambda p: fake)
+    names = lambda **kw: [t["name"] for t in srv.get_library_lockable(bpm=88.0, genre="punjabi pop", **kw)["tracks"]]
+    assert names() == ["C - Three"]                                      # off: today's filter
+    assert names(punjabi_profile="auto") == ["C - Three", "A - One", "B - Two"]
+    levels = {"/x/a - One.mp3": 4, "/x/b - Two.mp3": 7}
+    monkeypatch.setattr(en, "_cache", lambda p: type("C", (), {"exists": lambda self: True})())
+    monkeypatch.setattr(en, "level", lambda p, bpm: {"level": levels.get(str(p), 8)})
+    assert names(punjabi_profile="auto", energy=8) == ["C - Three", "B - Two", "A - One"]
+
+
 def test_match_endpoint_passes_profile(monkeypatch):
     import app.ui.server as srv
     seen = []

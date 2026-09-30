@@ -808,9 +808,24 @@ def get_vocal_entry(track_id: str):
     return res
 
 
+def _cached_energy_fit(path, bpm: float, cur: int) -> int:
+    """1 when the song's cached level is within energy.MAX_STEP of `cur`,
+    -1 when outside, 0 when unknown (no level asked, or not measured yet)."""
+    if not cur:
+        return 0
+    try:
+        from app.music_brain import energy as en
+
+        if not en._cache(Path(path)).exists():
+            return 0
+        return 1 if abs(en.level(path, bpm)["level"] - int(cur)) <= en.MAX_STEP else -1
+    except Exception:
+        return 0
+
+
 @app.get("/api/library/lockable")
 def get_library_lockable(bpm: float, key: str = "", exclude: str = "", limit: int = 6, max_gap: float = 0.08,
-                         genre: str = "", era: str = "", punjabi_profile: str = "off"):
+                         genre: str = "", era: str = "", punjabi_profile: str = "off", energy: int = 0):
     """Library songs whose analysed tempo locks to `bpm` (half / double time
     count) within max_gap, best key match first. The autopilot's fallback
     before it would force a tempo jump.
@@ -823,7 +838,18 @@ def get_library_lockable(bpm: float, key: str = "", exclude: str = "", limit: in
 
     `era` = the playing song's release decade: a library song more than one
     decade away is left out (Barbie Girl 1997 -> Glue 2017). Unknown era is
-    allowed; genre already gates the unlabelled ones."""
+    allowed; genre already gates the unlabelled ones.
+
+    Under an active Punjabi profile a song whose genre is not known yet is
+    kept but ranked after the known ones: genre labels live in memory and only
+    for songs the model named this server run, so after a restart the
+    deadline fallback found nothing and the set sat in HOLD LOOP (session
+    2026-09-30_102327). The console's vibe and energy gates still check it.
+
+    `energy` = the playing song's measured level (1-10, 0 = unknown). Songs
+    whose already-measured level sits within energy.MAX_STEP go first: in
+    102327 every candidate died on "energy drop 8 -> 5". Nothing is measured
+    here; unmeasured songs rank in between."""
     from app.music_brain import techniques as tq
     from app.music_brain.genre import MAX_ERA_GAP, era_gap, genre_near
     from app.ui.download_service import _is_live, _is_mix
@@ -845,8 +871,9 @@ def get_library_lockable(bpm: float, key: str = "", exclude: str = "", limit: in
             continue
         lib_key = _genre_key(clean_identity(name)[1])
         lib_genre = _suggested_genres.get(lib_key, "")
-        if genre and (_sp.scene_near(genre, lib_genre, True) if sp_active
-                      else genre_near(genre, lib_genre)) is not True:
+        near = (_sp.scene_near(genre, lib_genre, True) if sp_active
+                else genre_near(genre, lib_genre)) if genre else True
+        if near is not True and not (sp_active and not lib_genre):
             continue
         lib_era = _suggested_eras.get(lib_key, "")
         if sp_active:
@@ -869,8 +896,9 @@ def get_library_lockable(bpm: float, key: str = "", exclude: str = "", limit: in
         ks = tq.camelot_score(key, k) if key and k else 0.5
         out.append({"track_id": tid, "name": name, "bpm": a.bpm, "key": k, "gap": round(gap, 4),
                     "key_score": ks, "duration": a.duration, "stems": _stem_cache.get(tid) is not None,
-                    "genre": lib_genre, "era": lib_era})
-    out.sort(key=lambda x: (-x["key_score"], x["gap"]))
+                    "genre": lib_genre, "era": lib_era, "genre_known": near is True,
+                    "energy_fit": _cached_energy_fit(path, a.bpm, energy)})
+    out.sort(key=lambda x: (not x["genre_known"], -x["energy_fit"], -x["key_score"], x["gap"]))
     return {"tracks": out[: max(1, min(limit, 20))]}
 
 
@@ -2061,6 +2089,53 @@ _suggested_genres: Dict[str, str] = {}
 # Normalised title -> release era the model gave it ("1990s"), same lifetime
 # as _suggested_genres: the library fallback holds the set's decade too.
 _suggested_eras: Dict[str, str] = {}
+# Both persist in CACHE_DIR/genre_labels.json (app.music_brain.genre_labels): lost on a
+# restart, the library fallback had no labelled Punjabi song (session 2026-09-30_102327).
+LABELS_PATH: Optional[Path] = None        # None: genre_labels.path(); tests point it at tmp_path
+_labels_dirty = False
+
+
+def _set_label(store: Dict[str, str], key: str, value) -> None:
+    """Newest label last (the store keeps the newest genre_labels.MAX_LABELS)."""
+    global _labels_dirty
+    v = str(value)
+    if key and store.get(key) != v:
+        store.pop(key, None)
+        store[key] = v
+        _labels_dirty = True
+
+
+def _save_labels() -> None:
+    global _labels_dirty
+    if not _labels_dirty:
+        return
+    from app.music_brain import genre_labels as gl
+
+    if gl.save(_suggested_genres, _suggested_eras, LABELS_PATH):
+        _labels_dirty = False
+
+
+def _load_labels() -> int:
+    """Startup: the stored labels, then the knowledge export's for songs that have none
+    (matched by name; no model call). Returns how many came from the export."""
+    from app.music_brain import genre_labels as gl
+    from app.music_brain import knowledge
+
+    g, e = gl.load(LABELS_PATH)
+    _suggested_genres.update(g)
+    _suggested_eras.update(e)
+    try:
+        tracked = json.loads((knowledge.KNOWLEDGE_DIR / knowledge.LABELS).read_text(encoding="utf-8"))
+        names = json.loads((knowledge.KNOWLEDGE_DIR / knowledge.NAMES).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return 0
+    return gl.backfill(_suggested_genres, _suggested_eras, tracked, names)
+
+
+try:
+    _load_labels()
+except Exception as _exc:  # noqa: BLE001 -- a bad label file must not stop the server
+    print(f"WARNING [labels] not loaded: {type(_exc).__name__}: {_exc}", flush=True)
 _set_memory = None  # app.ui.set_memory.SetMemory, created on first suggest
 
 
@@ -2274,15 +2349,16 @@ def _autopilot_suggest_impl(req: AutopilotSuggestRequest):
         raise HTTPException(status_code=500, detail=f"LLM suggest error: {exc}") from exc
     for s in suggestions:
         if s.get("title") and s.get("genre"):
-            _suggested_genres[_genre_key(s["title"])] = str(s["genre"])
+            _set_label(_suggested_genres, _genre_key(s["title"]), s["genre"])
         if s.get("title") and s.get("era"):
-            _suggested_eras[_genre_key(s["title"])] = str(s["era"])
+            _set_label(_suggested_eras, _genre_key(s["title"]), s["era"])
     # The playing song's own genre (the model's current_genre): library songs
     # get labels as they play, so the library fallback can check genre.
     if meta.get("current_genre") and not req.lookahead:
-        _suggested_genres[_genre_key(title_part)] = str(meta["current_genre"])
+        _set_label(_suggested_genres, _genre_key(title_part), meta["current_genre"])
     if meta.get("current_era") and not req.lookahead:
-        _suggested_eras[_genre_key(title_part)] = str(meta["current_era"])
+        _set_label(_suggested_eras, _genre_key(title_part), meta["current_era"])
+    _save_labels()
     _song_step("suggest", req.track_id,
                decision=f"{len(suggestions)} next-song pick(s)" + (" (look-ahead)" if req.lookahead else ""),
                why=meta.get("current_genre"),

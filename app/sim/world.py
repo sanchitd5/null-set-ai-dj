@@ -63,6 +63,22 @@ def reply_quality(kind: str, reply: str) -> str:
     return "ok" if d else "empty"
 
 
+def invent_picks(reply: str) -> str:
+    """SIM_REJECT_PICKS=1: every suggested song renamed to one nobody can download, the way the
+    Punjabi set 2026-09-30_102327 got only unreal / earlier-set picks back from 17 ok calls. The
+    console must then book from its library fallback instead of sitting in HOLD LOOP.
+    SIM_REJECT_AFTER=N lets the first N suggest calls through, so the run's library holds songs
+    (a replay world's library is only what the run downloaded)."""
+    try:
+        d = json.loads(reply)
+    except (TypeError, ValueError):
+        return reply
+    for i, sug in enumerate(d.get("suggestions") or []):
+        if isinstance(sug, dict):
+            sug["artist"], sug["title"] = "Nobody", f"Invented Song {i}"
+    return json.dumps(d)
+
+
 class WorldError(RuntimeError):
     """A real dependency the run needs is unreachable (fail clearly, never silently stub)."""
 
@@ -351,6 +367,10 @@ class World:
                                         "start the model server or use --replay")
                 raise self.fatal from exc
             latency = round(time.monotonic() - t0, 2)
+        if os.environ.get("SIM_REJECT_PICKS") == "1" and kind in ("suggest", "lookahead"):
+            self._suggests_seen = getattr(self, "_suggests_seen", 0) + 1
+            if self._suggests_seen > int(os.environ.get("SIM_REJECT_AFTER", "0") or 0):
+                reply = invent_picks(reply)
         quality = reply_quality(kind, reply)
         self.llm_calls.append({"kind": kind, "cur": info["cur"], "quality": quality, "latency_s": latency})
         if latency is not None:
