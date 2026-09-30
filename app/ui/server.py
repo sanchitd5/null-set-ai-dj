@@ -2553,6 +2553,9 @@ def get_track_audio(track_id: str):
 from app.ui.services.atlas_api import router as _atlas_router  # noqa: E402 -- pair atlas + macros (/api/atlas, /api/macros)
 
 app.include_router(_atlas_router)
+from app.ui.services.replay_api import router as _replay_router  # noqa: E402 -- set history, replay, time travel, liked
+
+app.include_router(_replay_router)
 
 class _RevalidatingStatic(StaticFiles):
     """The console's own JS/CSS/HTML: always revalidated (ETag -> cheap 304), never taken from the

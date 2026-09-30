@@ -406,6 +406,16 @@ Source: `app/sim/LEARNINGS.md` section (d). Unbuilt; ranked by expected audible 
 7. **Real-LLM sim baseline** so stall and empty-pick terms reflect selection quality, not the stub.
 
 
+## Owner taste notes (preferences, not rules)
+
+- **Loves the vocal throw** (2026-09-30: "i also like vocal throw a lot"). Favourite transitions so far:
+  Neverland -> Nocturnal (Echo Out + vocal throw), No Control -> Neverland, Catchaman -> No Control
+  (kept as liked, see `learning/liked_seed.json`). Mixing style is frozen for v1: the throw's rate and
+  gates stay as they are; the note is here for when style tuning reopens (for example a small
+  preference for Echo Out exits that leave room for a throw).
+- Catchaman -> No Control: Long Blend vs Bass Swap is open; the owner decides after stem renders of
+  both. The liked entry is a record only (`replay: false`).
+
 ## Future: automatic learning loop and community knowledge (not scheduled)
 
 The player learns from its own live sets, not only from studied DJ sets, and shares what it learned upstream.

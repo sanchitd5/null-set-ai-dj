@@ -284,6 +284,15 @@ CLI and `GET /api/recipes`: every parsed cookbook recipe with its 17-part fields
 The local omni model listening to the master during a set (for example a loop that has gone on
 too long). `app/ui/services/live_ear.py`, console side `app/ui/static/live-ear.js`. Advisory.
 
+### liked
+The owner's kept transitions, the positive twin of the "bad pair" veto: `data/cache/liked.json`
+(user data, never exported), one entry per pair with the step exactly as it played. A liked pair
+counts as PLAYED_GOOD evidence in the pair atlas and, when `replay` is true, the console performs
+the stored step as a forced plan whenever the pair comes up (`macro-mode.js:likedFor`); `replay`
+false keeps a record only. Each like is also a one-step `yours` macro `liked-<a>-<b>`. Seed:
+`app/music_brain/learning/liked_seed.json` (`python -m app.music_brain.learning.liked seed`).
+Code: `app/music_brain/learning/liked.py`, `/api/liked`.
+
 ### local wins
 When importing `knowledge/`, the local cache always wins: a local macro, atlas pair or studied
 set is never overwritten. `app/music_brain/matching/knowledge.py`.
@@ -359,7 +368,17 @@ MediaRecorder captures of a live console mix, uploaded with `POST /api/recording
 samples, recordings (`app/ui/server.py`), atlas, macros and studied sets (`app/ui/services/atlas_api.py`).
 All ids are content hashes.
 
-### replay
+### replay (a played set)
+A past session, or one transition of it, rebuilt from its logs as a macro with source
+`replay:<session>`: the recipe that ran, A's exit (`a_pos`), B's entry (the console's cue, exact),
+the tempo and merge plan of the stored macro step that drove it, and the in-transition moves with
+their logged params and time from the transition start. A vocal throw under an Echo Out keeps its
+stored echo (`fx-moves.js:storedThrow`, the live tail gate still applies); other moves with an
+on-demand entry point fire at their stored time (`history-view.js:replaySchedule`). What the log
+lacks is listed per step under `gaps`. Code: `app/music_brain/learning/replay.py`,
+`POST /api/replay`, CLI `python -m app.music_brain.learning.replay build <session> [--from N --to N]`.
+
+### replay (sim)
 Running the sim from a recorded fixture with zero network: `virtual_set --replay NAME`. Keyed by
 subject, not prompt text; a call with no recorded reply is a replay miss. See `app/sim/README.md`.
 
@@ -389,6 +408,13 @@ The learning pipeline behind [learn-set](#learn-mode--learn-set), plus the user-
 A compact copy of the atlas (the best partners per song and per move) for git.
 `app/music_brain/matching/knowledge.py:slim_atlas`.
 
+### time travel
+Jump to a moment of a past session (epoch, seconds into the set, or the step log's HH:MM:SS):
+each deck's song and song position then (interpolated between logged positions), and the replay
+from there. A transition in progress restarts from its own start, A loaded 8 s before the stored
+exit (`replay.py:PRE_ROLL_S`) so it plays whole. Console: HISTORY, TIME TRAVEL (refused while the
+autopilot plays). `replay.py:travel`, `POST /api/replay {session, at | step}`.
+
 ### stem intro
 Bringing B in stem by stem (for example synths first) instead of a full-track fade. A learned stem
 intro is a tonal blend, so it obeys the key gate. Refused when the stem has no energy in the window
@@ -406,6 +432,11 @@ converts an existing WAV cache in place (dry run by default; `--apply`, `--only 
 deleted. `--jobs` converts N folders at once in worker processes (default min(4, cpus / 2), capped
 at cpus - 1 and at `--max-mem-gb` / 1.6 GB per folder); Ctrl-C stops handing out folders and lets
 running ones finish, so every folder ends all-WAV or all-FLAC.
+
+### set history interface
+`app/music_brain/learning/history_api.py`: `sessions()`, `timeline(session)`, `state_at(session, t)`,
+`pair_plays(a, b)`. Reads `data/cache/sessions/<id>/` directly for now; the set-history DB
+(sqlite-store) implements the same four functions and replaces the module.
 
 ### step log
 Per-song log of each step the autopilot took (song, recipe, why), shown in the browser and saved

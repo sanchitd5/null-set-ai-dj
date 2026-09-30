@@ -980,6 +980,13 @@
         <label class="hud-label"><input type="checkbox" id="macro-lock-order" /> keep order</label>
         <button class="hw-btn" id="macro-picks" title="Order the ticked songs (and the playing one) for the best flow and save them as a macro">PLAN FROM PICKS</button></h3>
       <div class="compat-list" id="compat-list"></div>
+      <!-- HISTORY (history-view.js): past sessions, replay as played, time travel, liked transitions -->
+      <h3 class="hud-label" title="Past sessions (data/cache/sessions): replay a set or one transition exactly as it played, jump to a moment, or keep a transition as LIKED">HISTORY
+        <select id="hist-session" aria-label="Past sessions"><option value="">SESSIONS…</option></select>
+        <button class="hw-btn" id="hist-refresh" title="Re-read the session list">REFRESH</button>
+        <input type="text" id="hist-at" placeholder="HH:MM:SS or s" title="A moment of the picked session: the step log's clock (HH:MM:SS) or seconds into the set" autocomplete="off" />
+        <button class="hw-btn" id="hist-go" title="Load the song that played then at its position and replay the set from there">TIME TRAVEL</button></h3>
+      <ol class="macro-steps" id="hist-rows"></ol>
     </div>
   </details>
 
@@ -1120,6 +1127,7 @@
 <script src="/artist-spacing.js"></script>
 <script src="/autopilot.js"></script>
 <script src="/macro-mode.js"></script>
+<script src="/history-view.js"></script>
 <script src="/beat-grid-ai.js"></script>
 <script src="/vibe-ui.js"></script>
 <script src="/marquee.js"></script>

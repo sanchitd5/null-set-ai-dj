@@ -241,7 +241,20 @@
     const num = (v) => (Number.isFinite(v) ? v : null);
     return { source: o.source || "macro", macro: o.macro || null, n: o.n != null ? o.n : s.n != null ? s.n : null,
              a: o.a || s.a || null, b: o.b || s.b || null, a_name: s.a_name || o.a_name || null, b_name: s.b_name || o.b_name || null,
-             recipe: s.recipe, a_time: num(s.a_time), b_time: num(s.b_time), merge: s.merge || null };
+             recipe: s.recipe, a_time: num(s.a_time), b_time: num(s.b_time), merge: s.merge || null,
+             moves: Array.isArray(s.moves) && s.moves.length ? s.moves : null };
+  }
+  // LIKED (GET /api/liked): the owner's kept transition for A -> B as a macro step, or null. An
+  // entry with replay false is a record only: it never steers the autopilot.
+  function likedFor(liked, aId, bId) {
+    const e = (liked || []).find((x) => x && x.a === aId && x.b === bId);
+    if (!e || e.replay === false || !e.step || !e.step.recipe) return null;
+    return Object.assign({}, e.step, { a: aId, b: bId, n: null });
+  }
+  // A stored in-transition move of a step by name ("vocal_throw"), with its logged params, or null.
+  function storedMoveOf(step, move) {
+    const m = step && Array.isArray(step.moves) ? step.moves.find((x) => x && x.move === move) : null;
+    return m ? { move: m.move, params: m.params && typeof m.params === "object" ? m.params : null, dt: Number.isFinite(m.dt) ? m.dt : null } : null;
   }
   // The stored step for the pair A -> B in the known macros (studied macros first), or null:
   // a FOLLOW SET pick / studied combo performs the move the studied set made.
@@ -352,7 +365,7 @@
 
   const core = { MACRO_PREFERENCE, COMBO_MIN_WORKS, COMBO_LABEL, FOLLOW_WINDOW, artistOf, studiedLabel, followCandidates, macroOrder, comboCandidates, macroCandidate,
                  macroRows, macroListLabel, macroGroups,
-                 macroPrefer, streakAfter, streakLabel, applyPlan, fireAt, stepGate, editStep, setToMacro, runNowCheck, forcedOf, stepForPair, runNext, autoMixPick, upcomingIds,
+                 macroPrefer, streakAfter, streakLabel, applyPlan, fireAt, stepGate, editStep, setToMacro, runNowCheck, forcedOf, likedFor, storedMoveOf, stepForPair, runNext, autoMixPick, upcomingIds,
                  createRuntime: create };   // node checks drive the runtime over a fake Host
   if (typeof module !== "undefined" && module.exports) module.exports = core;
 
@@ -370,6 +383,7 @@
     const played = [];                   // transitions this set: [{a, b, a_name, b_name, recipe, a_time, b_time}]
     const stats = { macroSeen: 0, macroTaken: 0, comboTried: 0, comboPicked: 0, atlasPlan: 0, maxStreak: 0, followTried: 0 };
     let studiedSets = null;              // GET /api/studied/sets (FOLLOW SET), loaded once per refreshList
+    let liked = [];                      // GET /api/liked: the owner's kept transitions (performed as stored)
     async function followSets() {
       if (studiedSets) return studiedSets;
       try { studiedSets = (await getJSON("/api/studied/sets")).sets || []; } catch (e) { studiedSets = []; }
@@ -492,16 +506,18 @@
       const bId = cand && cand.track_id;
       const src = !cand ? null : cand._macro ? "macro" : cand._follow ? "follow set" : cand._combo && cand._combo.studied ? "studied combo" : null;
       const ps = src && src !== "macro" ? stepForPair(macros.concat(loaded ? [loaded] : []), aId, bId) : null;
-      const st = (cand && cand._macro && cand._macro.step) || (ps && ps.step);
+      // a LIKED pair is performed as stored (a macro step the user is playing still comes first)
+      const lk = !(cand && cand._macro) && bId ? likedFor(liked, aId, bId) : null;
+      const st = (cand && cand._macro && cand._macro.step) || lk || (ps && ps.step);
       const plan = st ? { recipe: st.recipe, a_time: st.a_time, b_time: st.b_time, merge: st.merge || null } : planFor(aId, bId);
       const r = applyPlan(match, plan);
-      if (src && plan && plan.recipe && r.cand) {
-        r.cand.forced = forcedOf(st || plan, { source: src, macro: (cand._macro && cand._macro.name) || (ps && ps.macro), n: st ? st.n : null,
+      if ((src || lk) && plan && plan.recipe && r.cand) {
+        r.cand.forced = forcedOf(st || plan, { source: lk ? "liked" : src, macro: (cand._macro && cand._macro.name) || (ps && ps.macro), n: st ? st.n : null,
           a: aId, b: bId, b_name: cand.name });
       }
       if (plan) {
         stats.atlasPlan++;
-        const line = `atlas: plan ${plan.recipe} exit ${Math.round(plan.a_time || 0)} s entry ${Math.round(plan.b_time || 0)} s${st ? ` (macro ${(cand._macro && cand._macro.name) || (ps && ps.macro)} step ${st.n})` : ""}${r.cand && r.cand.forced ? ", forced" : ""}`;
+        const line = `atlas: plan ${plan.recipe} exit ${Math.round(plan.a_time || 0)} s entry ${Math.round(plan.b_time || 0)} s${lk ? " (liked, as stored)" : st ? ` (macro ${(cand._macro && cand._macro.name) || (ps && ps.macro)} step ${st.n})` : ""}${r.cand && r.cand.forced ? ", forced" : ""}`;
         console.info(line);
         step("atlas", { decision: "plan", why: line });
       }
@@ -547,6 +563,7 @@
         if (sel) sel.innerHTML = `<option value="">MACROS…</option>` + macroGroups(list).map((g) => `<optgroup label="${esc(g.label)}">`
           + g.items.map((m) => `<option value="${esc(m.name)}" title="${esc(m.name)}">${esc(macroListLabel(m))}</option>`).join("")
           + `</optgroup>`).join("");
+        try { liked = (await getJSON("/api/liked")).liked || []; } catch (e) { liked = []; }
         macros = [];
         for (const m of macroOrder(list, 20)) { try { macros.push((await getJSON(`/api/macros/${encodeURIComponent(m.name)}`)).macro); } catch (e) { /* skip */ } }
       } catch (e) { say(`macros: ${e.message}`, false); }
@@ -770,11 +787,40 @@
     refreshList();
     renderMacro();
 
+    // The stored move of the step being performed for A -> B: the loaded macro's step (a replay /
+    // liked macro), else a liked pair. fx-moves.js reads it for the vocal throw's stored echo.
+    function storedMove(aId, bId, move) {
+      if (!aId || !bId) return null;
+      const s = loaded && (loaded.steps || []).find((x) => x.a === aId && x.b === bId);
+      return storedMoveOf(s, move) || storedMoveOf(likedFor(liked, aId, bId), move);
+    }
+    // The step whose stored moves replay during A -> B (history-view.js): a replay / liked macro's
+    // step, else a liked pair; null for any other transition (normal ones are never touched).
+    function storedStep(aId, bId) {
+      const own = loaded && /^(replay:|liked)/.test(String(loaded.source || "")) ? (loaded.steps || []).find((x) => x.a === aId && x.b === bId) : null;
+      return own || likedFor(liked, aId, bId);
+    }
+    // TIME TRAVEL / REPLAY (history-view.js): load the replay macro, put its first A on the active
+    // deck at the logged position, then PLAY MACRO (every step forced, every gate live).
+    // load: {track_id, name, pos}. Refused while a song plays: the jump would cut it.
+    async function startReplay(macro, load) {
+      const c = deckState();
+      if (c.playing && host.mod.autopilotState && host.mod.autopilotState.active) return say("REPLAY: stop the autopilot first (the jump would cut the playing song)", false);
+      if (!macro || !macro.steps || !macro.steps.length || !load || !load.track_id) return say("REPLAY: nothing to replay from there", false);
+      loaded = macro; cursor = 0; running = false;
+      try { await ensureLoaded(c.aDeck, load.track_id, load.name); } catch (e) { return say(`REPLAY: ${e.message}`, false); }
+      const d = (host.decks || {})[c.aDeck];
+      if (d && d.seek && Number.isFinite(load.pos)) d.seek(load.pos, { why: "time travel" });
+      host.log.step("macro", { phase: "user", decision: "REPLAY", why: `${macro.name} from ${load.name || load.track_id} at ${fmt(load.pos)}` });
+      renderMacro();
+      return playMacro();
+    }
     // PLAY MACRO: the next songs, for the autopilot's pre-render (their stems early)
     function upcoming() {
       return running && loaded ? upcomingIds(loaded, cursor, 2).map((id) => ({ track_id: id, bpm: null })) : [];
     }
     return { core, firstCandidates, defaultPlan, landed, partners, planFor, loadMacro, playStep, playMacro, autoMix, upcoming, saveSet, run, ACTIONS,
+             storedMove, storedStep, startReplay, refreshList, get liked() { return liked; },
              get running() { return running; },
              get stats() { return Object.assign({ streak: streak.n }, stats); }, get streak() { return streak; }, get loaded() { return loaded; } };
   }
