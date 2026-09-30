@@ -113,7 +113,7 @@ def test_seed_still_reads_the_old_single_gz(src, tmp_path):
     cache = _cache(tmp_path / "away", dict(NAMES))
     rep = kn.seed(cache, old)
     assert rep["pairs"] == 3 and set(pa.load(cache)["pairs"]) == set(slim["pairs"])
-    assert (pa.atlas_path(cache) / pa.META).is_file(), "seeded into the segmented local folder"
+    assert pa.load_meta(cache)["shards"] and not pa.atlas_path(cache).exists(), "seeded into the local DB"
 
 
 def test_export_has_no_private_strings(src):

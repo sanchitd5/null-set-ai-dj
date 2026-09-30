@@ -396,8 +396,9 @@ def _seed_atlas(cache: Path, src: Path, res: _Resolver, pa, lock) -> object:
         return "tracked atlas is stale (rules changed): rebuild and export"
     with lock(cache):
         path = pa.atlas_path(cache)
-        local = pa.load(cache)                     # migrates an old single pair_atlas.json first
-        if local is None and ((path / pa.META).exists() or pa._legacy(path).exists()):
+        local = pa.load(cache)                     # migrates an old folder / single pair_atlas.json first
+        if local is None and (pa._has_atlas(pa._db(path)) or (path / pa.META).exists()
+                              or pa._legacy(path).exists()):
             return "local atlas unreadable: left alone"
         if local is not None and local.get("rules") != ka["rules"]:
             return "local atlas has other rules: left alone"
@@ -415,7 +416,7 @@ def _seed_atlas(cache: Path, src: Path, res: _Resolver, pa, lock) -> object:
             added += 1
         if added:
             doc.setdefault("stats", {})["knowledge_pairs"] = added
-            pa.write_atlas(doc, path)              # only the shards the new pairs touch change
+            pa.write_atlas(doc, path)              # only the new pairs' rows are written
         return added
 
 
