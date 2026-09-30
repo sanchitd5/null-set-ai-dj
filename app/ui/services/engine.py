@@ -82,7 +82,7 @@ class Host:
         return download_service.download_to_dir(url, output_dir, progress=progress)
 
     def lrclib_search(self, artist, track):
-        from app.music_brain import lyrics
+        from app.music_brain.analysis import lyrics
 
         return lyrics._lrclib_search(artist, track)
 
@@ -151,12 +151,12 @@ class Host:
         return techniques.vocal_style(y, sr)
 
     def file_hash(self, path):
-        from app.music_brain import analyzer
+        from app.music_brain.analysis import analyzer
 
         return analyzer._file_hash_impl(path)
 
     def library_raws(self):
-        from app.music_brain import energy
+        from app.music_brain.analysis import energy
 
         return energy._library_raws_impl()
 

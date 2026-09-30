@@ -1,6 +1,6 @@
 import numpy as np
 
-from app.music_brain.tempo import _beat_regression_bpm, loop_tempo
+from app.music_brain.analysis.tempo import _beat_regression_bpm, loop_tempo
 
 SR = 22050
 

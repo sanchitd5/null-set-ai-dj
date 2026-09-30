@@ -138,7 +138,7 @@ def test_balance_without_a_voice_band_measurement_keeps_the_old_constants():
 
 
 def test_rap_moves_are_placed_on_each_raps_own_lines():
-    from app.music_brain import waveform_params as wp
+    from app.music_brain.analysis import waveform_params as wp
     import numpy as np
 
     def rap(gaps, seed=0):

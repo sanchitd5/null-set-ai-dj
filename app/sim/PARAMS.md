@@ -3,7 +3,7 @@
 Inventory of the hard-coded numbers that shape RIFF x RAP, the mashup layer, merge, bridge, LAYER and hook drops
 (line numbers at the commit that added this file). KB = a rule from `DJ/` or CLAUDE.md section 4, kept. GUESS = a
 stand-in for a property of the two tracks, to be measured. "Done" rows read the audio through
-`app/music_brain/waveform_params.py`, which measures each stem once (hash keyed, cached in
+`app/music_brain/analysis/waveform_params.py`, which measures each stem once (hash keyed, cached in
 `CACHE_DIR/wf_profile`, 0.5 s hops, one FFT per hop) and logs `derived_params` (measured or fallback) so the sim counts them.
 Every derived value has a clamp and falls back to the old constant only when the audio could not be read.
 

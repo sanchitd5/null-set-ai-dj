@@ -33,7 +33,7 @@ def _key_of(a: dict) -> str:
 
 def build_run(js: dict, world, meta: dict) -> dict:
     """js: the harness output; world: the sim world (its events, steps, pool entries)."""
-    from app.music_brain import energy as en
+    from app.music_brain.analysis import energy as en
     from app.music_brain import techniques as tq
     from app.music_brain.recipe_matcher import camelot_distance_score
 
@@ -231,7 +231,7 @@ def _merge_facts(lines: list, executed: Optional[str]) -> dict:
 
 def wf_summary(events: list) -> dict:
     """What the layered moves took from the waveform in this run: the server logs one `derived_params` event
-    per plan (app.music_brain.waveform_params.note). Counts parameters measured versus fallen back to the old
+    per plan (app.music_brain.analysis.waveform_params.note). Counts parameters measured versus fallen back to the old
     constant, and the vocal-gap fit of the riff's rap moves (share of the rap actually voiced under the bar the
     move picked, against the old fixed bar)."""
     ev = [e for e in events if e.get("kind") == "derived_params"]

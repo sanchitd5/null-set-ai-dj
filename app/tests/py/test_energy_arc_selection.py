@@ -1,6 +1,6 @@
 """Fixer D (batch 2): cumulative energy fall, the prompt's energy window, the real
 Fred again.. trace (session 2026-09-29_005748), and cross-session repeats."""
-from app.music_brain import energy
+from app.music_brain.analysis import energy
 from app.ui.services import autopilot_service as svc
 from app.ui.services.set_memory import MAX_SONGS, PROMPT_LIMIT, SetMemory
 

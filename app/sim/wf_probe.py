@@ -2,7 +2,7 @@
 
 The played set rarely reaches RIFF x RAP or an ok mashup plan (they are gated by key, tempo and a rap
 section), so the `derived_params` events alone are thin. This probe runs the same derivations
-(app.music_brain.waveform_params, keylock.measured_lines) over the synthetic stems of every track the
+(app.music_brain.analysis.waveform_params, keylock.measured_lines) over the synthetic stems of every track the
 run loaded, whether or not a move fired on it. The synthetic stems (synth.py) carry the real songs'
 per-second stem energy, so a rap's gaps and a stem's loudness are the real ones; their spectra are
 not (white noise plus a 60 Hz tone), so band and low-end numbers here only prove plumbing, not taste.
@@ -16,7 +16,7 @@ from __future__ import annotations
 from typing import Optional
 
 from app.music_brain import keylock
-from app.music_brain import waveform_params as wp
+from app.music_brain.analysis import waveform_params as wp
 
 
 def _mean(xs) -> Optional[float]:

@@ -295,7 +295,7 @@ def scan(cache: Path) -> Dict[str, Track]:
     lyr_dir = cache / "lyrics"
     if lyr_dir.is_dir():
         try:
-            from app.music_brain import lyrics as _lyrics
+            from app.music_brain.analysis import lyrics as _lyrics
             for t in tracks.values():
                 p = _lyrics._cache_path(t.name, lyr_dir)
                 if p.exists():

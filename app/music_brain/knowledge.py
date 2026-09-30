@@ -261,7 +261,7 @@ def export(cache_dir: Optional[Path] = None, out: Optional[Path] = None,
     files[NAMES] = dict(sorted(names.items()))
     # the model's genre / era labels per exported name (another machine's library fallback
     # needs them; see genre_labels.py). A tracked label survives when the local store lacks it.
-    from app.music_brain import genre_labels as gl
+    from app.music_brain.analysis import genre_labels as gl
     labels = dict(_read(out / LABELS, {}) or {})
     labels.update(gl.for_export(names, *gl.load(gl.path(cache))))
     labels = dict(sorted((t, v) for t, v in labels.items() if t in names))

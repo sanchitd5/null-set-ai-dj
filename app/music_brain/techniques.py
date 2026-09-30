@@ -320,7 +320,7 @@ def scene_store(store: Dict[str, dict], scene: Optional[str] = None) -> Dict[str
     clash never loosens the global rules. A store with no tagged set comes back as is.
     Each entry also gets scene_clash: the kept scene-tagged sightings on a key clash
     (key_score < LEARNED_MIN_KEY), and scene_sets: those sightings' set labels."""
-    from app.music_brain import scene_profile as sp
+    from app.music_brain.analysis import scene_profile as sp
     out = {}
     for kind, e in (store or {}).items():
         obs = e.get("observations") if isinstance(e, dict) else None
@@ -430,7 +430,7 @@ def learned_pick(ranked: List[dict], store: Optional[Dict[str, dict]] = None,
     Under "full": a tonal blend on a clash plays when the scene's own sets show it on
     clashing pairs often enough (learned_clash_ok), and a pair past the keylock cap
     (tempo_gap, octave-folded) gets the profile's fallback_recipe instead of the blend."""
-    from app.music_brain import scene_profile as sp
+    from app.music_brain.analysis import scene_profile as sp
     if store is None:
         from app.music_brain.set_learner import load_learned
         store = load_learned()

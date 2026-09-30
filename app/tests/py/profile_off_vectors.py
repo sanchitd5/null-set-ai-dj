@@ -32,7 +32,7 @@ SUGGEST_CASES = [
 
 
 def _track(camelot, bpm):
-    from app.music_brain.analyzer import KeyEstimate, StructureSection, TrackAnalysis
+    from app.music_brain.analysis.analyzer import KeyEstimate, StructureSection, TrackAnalysis
     return TrackAnalysis(
         path="fake.mp3", duration=240.0, bpm=bpm,
         phrase_boundaries_8bar=[0.0, 15.0, 30.0, 45.0, 200.0, 215.0],

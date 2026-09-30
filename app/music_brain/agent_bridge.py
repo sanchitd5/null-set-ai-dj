@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from app.music_brain.analyzer import analyze as _analyze
+from app.music_brain.analysis.analyzer import analyze as _analyze
 from app.music_brain.knowledge_parser import KnowledgeParser
 from app.music_brain.recipe_matcher import RecipeMatcher
 from app.music_brain.stem_service import separate as _separate
@@ -167,7 +167,8 @@ def hook_drops(path: str, title: str, top_n: int = 3, render: bool = False, ai: 
 
     import librosa
 
-    from app.music_brain import hook_drop as hd, lyrics as ly, set_ai
+    from app.music_brain.analysis import hook_drop as hd, lyrics as ly
+    from app.music_brain import set_ai
     from app.music_brain.config import ROOT_DIR
     from app.music_brain.set_learner import load_learned
     from app.music_brain.stem_service import separate as _sep
@@ -360,7 +361,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             print("\n".join(lp.summary(d) for d in docs) or "no set study recorded yet")
             return 0
         elif args.command == "lyrics":
-            from app.music_brain import lyrics as ly
+            from app.music_brain.analysis import lyrics as ly
 
             if args.none:
                 lines = ly.set_manual(args.title, None)

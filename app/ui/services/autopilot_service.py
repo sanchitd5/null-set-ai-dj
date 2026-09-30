@@ -613,11 +613,11 @@ def _key_clash_reason(current_key: str | None, expected_key) -> str | None:
 
 MAX_GENRE_HOP = 1  # 0 same subgenre, 1 neighbour; 2+ only on a deliberate move
 
-# Genre-family distance is shared with RecipeMatcher (app/music_brain/genre.py)
+# Genre-family distance is shared with RecipeMatcher (app/music_brain/analysis/genre.py)
 # so a manual /api/match call gets the same "no unrelated-genre jump" sense.
 # The model's own genre_hop is not trusted alone: it rated Afusic "Pal Pal"
 # (Urdu pop) -> Fred again.. "Delilah" (UK electronic) as a small hop.
-from app.music_brain.genre import GENRE_FAMILIES  # noqa: E402
+from app.music_brain.analysis.genre import GENRE_FAMILIES  # noqa: E402
 
 
 def _tempo_locks(target: float, bpm) -> bool | None:
@@ -652,11 +652,11 @@ def _parroted(data: dict, title: str) -> bool:
     return bool(sugg) and all(_bare_title(x["title"]) in ex for x in sugg)
 
 
-from app.music_brain.genre import genre_families as _genre_families  # noqa: E402
-from app.music_brain.genre import family_jump as _family_jump  # noqa: E402
-from app.music_brain.genre import MAX_ERA_GAP, era_gap  # noqa: E402
-from app.music_brain import scene_profile as _scene_profile  # noqa: E402
-from app.music_brain.genre import genre_scenes as _genre_scenes  # noqa: E402
+from app.music_brain.analysis.genre import genre_families as _genre_families  # noqa: E402
+from app.music_brain.analysis.genre import family_jump as _family_jump  # noqa: E402
+from app.music_brain.analysis.genre import MAX_ERA_GAP, era_gap  # noqa: E402
+from app.music_brain.analysis import scene_profile as _scene_profile  # noqa: E402
+from app.music_brain.analysis.genre import genre_scenes as _genre_scenes  # noqa: E402
 
 # Scene continuity (owner: Anyma "Atoma" went to "EVIL x YOU (bjork X Melanie
 # Martinez MashMIX)"). A mashup / bootleg / "A x B" title inside a coherent
@@ -1024,7 +1024,7 @@ def prompt_history(played: list | None, queued: list | None = None, skip: list |
 
 def energy_line(avg: float, measured: int | None, relaxed: bool = False,
                 window: tuple | None = None) -> str:
-    """The prompt's energy fact: the measured 1-10 level (app.music_brain.energy) with the
+    """The prompt's energy fact: the measured 1-10 level (app.music_brain.analysis.energy) with the
     range the next song must stay in, else the old per-song relative number."""
     if measured is None:
         return f"Avg Energy: {avg:.2f}/1.0 (relative to this song's own peak)"
@@ -1214,7 +1214,7 @@ def suggest_next_tracks(
     # the gate agree and a set that has slid down is asked to climb back.
     energy_window = None
     if measured_energy is not None:
-        from app.music_brain import energy as _en
+        from app.music_brain.analysis import energy as _en
         energy_window = _en.allowed_window(
             measured_energy, relaxed=relaxed, songs=len(history_display or history), recent=energy_history,
             reset=energy_reset, set_pos=set_position)

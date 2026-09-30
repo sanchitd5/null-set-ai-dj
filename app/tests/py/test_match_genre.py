@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from app.music_brain.genre import ERA_JUMP_PENALTY, GENRE_JUMP_PENALTY, era_score, vibe_score
+from app.music_brain.analysis.genre import ERA_JUMP_PENALTY, GENRE_JUMP_PENALTY, era_score, vibe_score
 from app.music_brain.knowledge_parser import KnowledgeParser
 from app.music_brain.recipe_matcher import RecipeMatcher
 from app.tests.py.test_recipe_matcher import _track

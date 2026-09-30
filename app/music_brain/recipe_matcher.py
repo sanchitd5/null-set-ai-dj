@@ -19,10 +19,10 @@ import re
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
-from app.music_brain.analyzer import TrackAnalysis
+from app.music_brain.analysis.analyzer import TrackAnalysis
 from app.music_brain.config import BARS_PER_PHRASE, BEATS_PER_BAR
-from app.music_brain.genre import vibe_score
-from app.music_brain import scene_profile as _scene_profile
+from app.music_brain.analysis.genre import vibe_score
+from app.music_brain.analysis import scene_profile as _scene_profile
 from app.music_brain.knowledge_parser import KnowledgeParser, TransitionRecipe
 
 _CAMELOT_RE = re.compile(r"^(\d{1,2})([AB])$", re.IGNORECASE)
@@ -609,7 +609,7 @@ if __name__ == "__main__":
     import json
     import sys
 
-    from app.music_brain.analyzer import analyze
+    from app.music_brain.analysis.analyzer import analyze
 
     if len(sys.argv) < 3:
         print("Usage: python -m music_brain.recipe_matcher <track_a> <track_b>")

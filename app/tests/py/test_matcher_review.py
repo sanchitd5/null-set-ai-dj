@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from app.music_brain.analyzer import KeyEstimate, StructureSection, TrackAnalysis
+from app.music_brain.analysis.analyzer import KeyEstimate, StructureSection, TrackAnalysis
 from app.music_brain.knowledge_parser import KnowledgeParser
 from app.music_brain.recipe_matcher import (
     OVERLAP_BARS,
@@ -73,7 +73,7 @@ def test_vocal_clash_halves_non_stems_recipes(matcher):
 
 def test_api_match_uses_cached_vocal_stem_without_separating(monkeypatch, tmp_path):
     from app.music_brain import stem_service
-    from app.music_brain import analyzer
+    from app.music_brain.analysis import analyzer
     from app.ui import server
 
     stem = tmp_path / "vocals.wav"

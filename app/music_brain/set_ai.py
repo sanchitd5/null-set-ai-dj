@@ -116,7 +116,7 @@ def emotional_lines(title: str, lines: Sequence[dict], chat: Optional[Chat] = No
     if not lines:
         return []
     uniq = list(dict.fromkeys(l["text"] for l in lines))[:120]
-    from app.music_brain.lyrics import sample_of
+    from app.music_brain.analysis.lyrics import sample_of
 
     smp = sample_of(title)
     src = f"Vocal sampled from: {smp['title']}" + (f" ({smp['note']})" if smp.get("note") else "") + "\n" if smp else ""

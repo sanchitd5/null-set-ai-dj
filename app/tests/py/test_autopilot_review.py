@@ -156,7 +156,7 @@ def test_tempo_target_replaces_tempo_window_without_occasion(monkeypatch):
 
 
 def _run_server_suggest(monkeypatch, **req):
-    from app.music_brain import vibe
+    from app.music_brain.analysis import vibe
     from app.ui import server
 
     captured = {}

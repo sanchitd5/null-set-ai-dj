@@ -139,7 +139,7 @@ def assemble_entry(h: str, name: str, analysis: dict, vibe: dict, energy: dict, 
     import librosa
 
     from app.music_brain import techniques as tq
-    from app.music_brain.analyzer import vocal_presence_map
+    from app.music_brain.analysis.analyzer import vocal_presence_map
 
     regions = vocal_regions
     if regions is None:

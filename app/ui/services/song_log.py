@@ -447,7 +447,7 @@ def _default_resolvers() -> None:
         return None
 
     def analysis(p: Path) -> dict:
-        from app.music_brain.analyzer import analyze
+        from app.music_brain.analysis.analyzer import analyze
         return analyze(p).to_dict()
 
     def stems(tid: str):

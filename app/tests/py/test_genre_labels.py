@@ -1,9 +1,9 @@
 """Genre / era labels persist across a server restart and travel in the knowledge export
-(app/music_brain/genre_labels.py). Session 2026-09-30_102327: labels lived in memory only,
+(app/music_brain/analysis/genre_labels.py). Session 2026-09-30_102327: labels lived in memory only,
 so after a restart the library fallback had no labelled Punjabi song."""
 import json
 
-from app.music_brain import genre_labels as gl
+from app.music_brain.analysis import genre_labels as gl
 from app.music_brain import knowledge as kn
 
 

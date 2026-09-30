@@ -5,7 +5,7 @@ import shutil
 import numpy as np
 import pytest
 
-from app.music_brain.analyzer import (
+from app.music_brain.analysis.analyzer import (
     KeyEstimate,
     StructureSection,
     analyze,

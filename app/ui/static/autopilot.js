@@ -2352,7 +2352,7 @@ function createAutopilotEngine({ host, ai }) {
       return false;
     }
 
-    // Measured energy gate (app/music_brain/energy.py, 1-10 vs the library): the next
+    // Measured energy gate (app/music_brain/analysis/energy.py, 1-10 vs the library): the next
     // song stays within 2 levels (1 relaxed), the set arc decides the direction.
     // The last-round fallback allows one more level so the set never stalls.
     const ev = candidate.vibe;

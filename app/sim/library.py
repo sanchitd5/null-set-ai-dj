@@ -100,7 +100,7 @@ class MainLibrary:
         Demucs stems with the real vocal_presence_map."""
         if not force and pool.has(t.hash):
             return pool.load(t.hash)
-        from app.music_brain import energy as en
+        from app.music_brain.analysis import energy as en
         from app.sim.pool import assemble_entry
 
         a = json.loads((self.cache / "analysis" / f"{t.hash}.v5.json").read_text(encoding="utf-8"))
@@ -119,7 +119,7 @@ class MainLibrary:
 
     def library_raws(self) -> list:
         """Every measured track's raw energy score, as energy.library_raws() reads it live."""
-        from app.music_brain import energy as en
+        from app.music_brain.analysis import energy as en
 
         out = []
         for p in sorted((self.cache / "analysis").glob("*.energy.json")):

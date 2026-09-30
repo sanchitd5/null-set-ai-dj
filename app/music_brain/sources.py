@@ -175,7 +175,7 @@ def captions(source_id: str) -> dict:
 
 def source_of(song: str) -> Optional[dict]:
     """The source recording linked to a song, {title, url, note, id}, or None."""
-    from app.music_brain.lyrics import _clean_title
+    from app.music_brain.analysis.lyrics import _clean_title
 
     key = _clean_title(song).lower()
     if not SOURCES_DIR.is_dir():

@@ -54,7 +54,7 @@ from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
-from app.music_brain import scene_profile as _scene_profile
+from app.music_brain.analysis import scene_profile as _scene_profile
 from app.music_brain.config import CACHE_DIR, ROOT_DIR
 
 SR = 11025
@@ -267,7 +267,7 @@ def find_or_fetch_song(title: str, download_dir: Path, library: Path = SONGS_DIR
                     return p
     # this set's own downloads are named by YouTube ("A_New_Error.mp3"): the title alone
     # identifies them there (they passed pick_result's artist check when fetched)
-    from app.music_brain.lyrics import split_title
+    from app.music_brain.analysis.lyrics import split_title
 
     tkey = _norm(re.sub(r"\(.*?\)|\[.*?\]", "", split_title(title)[1]))
     if download_dir.is_dir() and len(tkey) >= 4:
@@ -279,7 +279,7 @@ def find_or_fetch_song(title: str, download_dir: Path, library: Path = SONGS_DIR
     import yt_dlp
 
     from app.music_brain import yt_guard
-    from app.music_brain.lyrics import split_title
+    from app.music_brain.analysis.lyrics import split_title
 
     opts = _ydl(download_dir, "%(title)s.%(ext)s", max_s=MAX_SONG_S)
     artist, track = split_title(title)
@@ -417,7 +417,7 @@ class SongData:
     key: Optional[str]
     env: Dict[str, np.ndarray]     # stem -> onset envelope
     lyrics: List[dict] = field(default_factory=list)
-    vocal_db: Optional[np.ndarray] = None   # song's own vocal stem, dB per VDB_STEP_S (None: not checked)   # [{t, end, text}] aligned to this file (app.music_brain.lyrics)
+    vocal_db: Optional[np.ndarray] = None   # song's own vocal stem, dB per VDB_STEP_S (None: not checked)   # [{t, end, text}] aligned to this file (app.music_brain.analysis.lyrics)
 
 
 def _candidates(t: float, songs: List[SongData]) -> List[int]:
@@ -737,7 +737,7 @@ def vocal_recuts(vrows: List[dict], songs: List[SongData], set_id: str, win_s: f
                 resequenced = any(_vocal_jump(songs[tr], p, q, win_s) for p, q in zip(passage, passage[1:]))
                 detail = {"set_span": [passage[0]["set_t0"], passage[-1]["set_t1"] + win_s], "source_lines": lines}
                 if songs[tr].lyrics:                  # the new lyric the DJ built, in the song's own words
-                    from app.music_brain.lyrics import words_between
+                    from app.music_brain.analysis.lyrics import words_between
                     detail["words"] = [words_between(songs[tr].lyrics, a, b) for a, b in lines]
                 if repeats:
                     out.append(Observation("vocal_loop", set_id=set_id, at=passage[0]["set_t0"],
@@ -779,7 +779,7 @@ def vocal_chops(crows: List[dict], songs: List[SongData], set_id: str, hop_s: fl
                         if abs(b["src0"] - (a["src1"] + (b["t0"] - a["t1"]))) > JUMP_S
                         and not same_material(songs[tr], b["src0"], a["src1"] + (b["t0"] - a["t1"]), CWIN_S))
             if jumps >= CHOP_MIN_JUMPS:
-                from app.music_brain.lyrics import words_between
+                from app.music_brain.analysis.lyrics import words_between
                 lyr = songs[tr].lyrics
                 out.append(Observation("vocal_chop", set_id=set_id, at=burst[0]["t0"], track_a=songs[tr].title, detail={
                     "set_span": [burst[0]["t0"], burst[-1]["t1"] + CWIN_S], "jumps": jumps,
@@ -795,7 +795,7 @@ def acapella_drops(rows: List[dict], songs: List[SongData], set_id: str, hop_s: 
     back: the DJ making a drop out of a sung line. Records the words held.
     Rows are win_s windows starting at t: the beat is gone by the first silent
     window's start and back only after the last silent window's end."""
-    from app.music_brain.lyrics import is_hook, words_between
+    from app.music_brain.analysis.lyrics import is_hook, words_between
 
     grid: Dict[float, Dict[str, dict]] = {}
     for r in rows:
@@ -960,7 +960,7 @@ def lyric_query(title: str, path: Optional[str], heard_share: float) -> Optional
     """'Artist - Title' to look lyrics up by, or None. A bare title ("Delilah") matches
     any artist's song, so the artist must come from the tracklist, or from the download's
     file name once the file is proven to be what the set played."""
-    from app.music_brain.lyrics import is_manual, load_plain, split_title
+    from app.music_brain.analysis.lyrics import is_manual, load_plain, split_title
 
     if split_title(title)[0] or is_manual(title) or load_plain(title):
         return title
@@ -972,7 +972,7 @@ def lyric_query(title: str, path: Optional[str], heard_share: float) -> Optional
 
 def _attach_lyrics(songs: List[SongData], entries: List[TrackEntry], verdict: List[dict],
                    vocal_paths: Dict[str, str], log: Callable[[str], None]) -> None:
-    from app.music_brain import lyrics as ly
+    from app.music_brain.analysis import lyrics as ly
 
     cache: Dict[Tuple[str, str], List[dict]] = {}      # lines are aligned to one file's vocal
     for i, (s, e, v) in enumerate(zip(songs, entries, verdict)):
@@ -1317,7 +1317,7 @@ def _study_part(set_path: Path, set_id: str, all_entries: List[TrackEntry], part
     """Fetch, cut, separate, locate, detect and review one part (the whole set when unsplit).
     Returns plain JSON (the checkpoint): observations, timeline rows (song indices global),
     per-entry verdicts keyed by global index, the song paths, and the working files to clean."""
-    from app.music_brain.analyzer import analyze
+    from app.music_brain.analysis.analyzer import analyze
     from app.music_brain.stem_service import separate
 
     lo, hi = part["lo"], part["hi"]

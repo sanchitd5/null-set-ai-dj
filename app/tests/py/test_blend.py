@@ -2,7 +2,7 @@
 
 import pytest
 
-from app.music_brain.analyzer import StructureSection, TrackAnalysis
+from app.music_brain.analysis.analyzer import StructureSection, TrackAnalysis
 from app.music_brain.blend import plan_blend, tempo_lock
 
 

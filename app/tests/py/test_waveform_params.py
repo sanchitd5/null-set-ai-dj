@@ -3,7 +3,7 @@ import numpy as np
 import pytest
 import soundfile as sf
 
-from app.music_brain import waveform_params as wp
+from app.music_brain.analysis import waveform_params as wp
 
 SR = 11025
 

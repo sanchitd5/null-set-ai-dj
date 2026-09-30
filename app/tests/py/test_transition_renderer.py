@@ -12,7 +12,7 @@ import numpy as np
 import pytest
 import soundfile as sf
 
-from app.music_brain.analyzer import KeyEstimate, StructureSection, TrackAnalysis
+from app.music_brain.analysis.analyzer import KeyEstimate, StructureSection, TrackAnalysis
 from app.music_brain.config import ROOT_DIR
 from app.music_brain.knowledge_parser import KnowledgeParser
 from app.music_brain.recipe_matcher import RecipeMatcher, TransitionCandidate
@@ -124,7 +124,7 @@ def test_render_full_mix_produces_nonempty_output(tmp_path):
 def test_recipe_matcher_output_feeds_renderer_end_to_end(tmp_path):
     """A true end-to-end smoke test: analyze two real tracks, match recipes,
     render the top candidate's preview."""
-    from app.music_brain.analyzer import analyze
+    from app.music_brain.analysis.analyzer import analyze
 
     track_a = analyze(SAMPLE_A)
     track_b = analyze(SAMPLE_B)

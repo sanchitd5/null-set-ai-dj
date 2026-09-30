@@ -22,8 +22,8 @@ import math
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
-from app.music_brain import waveform_params as wp
-from app.music_brain.analyzer import TrackAnalysis, vocal_presence_map
+from app.music_brain.analysis import waveform_params as wp
+from app.music_brain.analysis.analyzer import TrackAnalysis, vocal_presence_map
 from app.music_brain.recipe_matcher import camelot_distance_score
 
 MASHUP_DEMUCS_MODEL = "htdemucs"  # single model: ~4x faster than htdemucs_ft

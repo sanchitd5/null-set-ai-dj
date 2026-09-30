@@ -26,7 +26,7 @@ import math
 import statistics
 from typing import List, Optional
 
-from app.music_brain.analyzer import TrackAnalysis
+from app.music_brain.analysis.analyzer import TrackAnalysis
 from app.music_brain.blend import (
     ENTRY_SEARCH_FRACTION,
     Regions,

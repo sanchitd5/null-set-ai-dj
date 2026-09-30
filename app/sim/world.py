@@ -595,8 +595,8 @@ class World:
         """live, a song the library does not have: the real YouTube download, then only what the console's graph
         needs (analysis, vibe, energy: librosa, seconds). No Demucs: the entry has no stem lanes (`stems` None), the
         console sees a track whose separation has not finished. The audio it is handed is synthesised from the entry."""
-        from app.music_brain import analyzer, energy as en, vibe
-        from app.music_brain.analyzer import _file_hash
+        from app.music_brain.analysis import analyzer, energy as en, vibe
+        from app.music_brain.analysis.analyzer import _file_hash
         from app.sim.pool import assemble_entry
         from app.sim.synth import synth_track
 

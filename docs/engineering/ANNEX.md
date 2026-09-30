@@ -189,12 +189,12 @@ Dance-floor energy on a 1 to 10 scale, measured from onset density, low-end shar
 tempo and brightness, then ranked against your own library. The next song may move at most
 `MAX_STEP` levels (`RELAXED_STEP` in a relaxed session) in the direction the set arc allows;
 the last-round `force` widens rises only, never falls. Python:
-`app/music_brain/energy.py:next_ok`; browser twin `app/ui/static/autopilot.js:energyStepOk`.
+`app/music_brain/analysis/energy.py:next_ok`; browser twin `app/ui/static/autopilot.js:energyStepOk`.
 Theory: [[Energy Management & Dynamics]].
 
 ### era gap
 Release-decade distance between two songs. A gap above `MAX_ERA_GAP` decades trims the score by
-`ERA_JUMP_PENALTY` rather than refusing. `app/music_brain/genre.py:era_gap`. Used by the matcher
+`ERA_JUMP_PENALTY` rather than refusing. `app/music_brain/analysis/genre.py:era_gap`. Used by the matcher
 and autopilot suggest.
 
 ### FOLLOW SET
@@ -206,7 +206,7 @@ step, studied combo, FOLLOW SET) gets no LLM re-pick but still runs the gates.
 ### genre_near / genre scenes
 Genre-family distance shared by the autopilot's suggestion filter and the matcher, so no
 unrelated-genre jump. Genre labels come from metadata or the model, never from audio.
-`app/music_brain/genre.py:genre_near`. A scene profile can override it (see
+`app/music_brain/analysis/genre.py:genre_near`. A scene profile can override it (see
 [scene profiles](#scene-profiles-punjabi)).
 
 ### key gate
@@ -307,7 +307,7 @@ key score). Stored per kind in `learned_techniques.json`; counted in `knowledge 
 ### octave fold
 Tempos are folded so half and double time count as a match: `app/ui/static/tempo-rule.js:lockRate`
 tries rates 1, 2 and 0.5 and takes the closest. Energy folds tempo into 80 to 150 BPM, so half-time
-DnB counts at its full feel (`app/music_brain/energy.py`).
+DnB counts at its full feel (`app/music_brain/analysis/energy.py`).
 
 ### pair atlas vs matcher
 The [atlas](#atlas-pair_atlas) is an offline table over the whole library, scored with the
@@ -351,7 +351,7 @@ A hash of the files whose rules the atlas applies (`app/music_brain/pair_atlas.p
 The autopilot's rules for a Punjabi / bhangra / desi set, with the console setting `PUNJABI`
 (sent as `punjabi_profile`) set to `off`, `auto` or `on`. `off` is today's behaviour byte for
 byte; `auto` applies the full profile when both songs are Punjabi and a handover-only level
-(Quick Cut fallback, no era gate) when one is. Code: `app/music_brain/scene_profile.py`, console
+(Quick Cut fallback, no era gate) when one is. Code: `app/music_brain/analysis/scene_profile.py`, console
 copy `app/ui/static/scene-profile.js`. Most values are marked GUESS in their source note. The task
 brief said this lives only on branch `punjabi-scene-profile`; in fact that branch is already
 merged into main (commit c28f1ee), so this entry describes main.
@@ -415,7 +415,7 @@ atlas scores them as the `supermove` move (`app/music_brain/pair_atlas.py:MOVE_A
 - Half and double time count as a match ([octave fold](#octave-fold)).
 - Bigger gaps go Echo Out or Stem Bridge. Theory: [[Beatmatching & Tempo]], [[Genre Bridge Playbook]].
 
-Whole-song BPM uses a section-consensus estimate (`app/music_brain/tempo.py:robust_tempo`).
+Whole-song BPM uses a section-consensus estimate (`app/music_brain/analysis/tempo.py:robust_tempo`).
 
 ### titles
 Human names for macros, shown in the MACRO dropdown, for example "Anyma @ Live from Atomium
@@ -437,7 +437,7 @@ under the riff"), or `--disable` to keep it out of ranking. Kept across re-learn
 ### vibe
 Measured "vibe" features the name cannot tell the LLM: loudness, brightness, percussive density,
 mean energy. `vibe_distance` turns the deltas into one number plus reasons, so the autopilot can
-reject a mood flip. `app/music_brain/vibe.py:vibe_distance`. The VIBE strip in the console
+reject a mood flip. `app/music_brain/analysis/vibe.py:vibe_distance`. The VIBE strip in the console
 (`app/ui/static/vibe-ui.js`) shows what the AI hears, plans and does, including the combo streak.
 
 ### virtual set sim
@@ -461,6 +461,6 @@ merge and combo fit for one pair. `app/music_brain/pair_atlas.py:works_score`.
 | Max tempo change per bar | 0.25% | `app/ui/static/tempo-rule.js:MAX_TEMPO_PCT_PER_BAR` |
 | Combo min works score | 65 | `app/ui/static/macro-mode.js:COMBO_MIN_WORKS` |
 | Macro step preference | 0.8 | `app/ui/static/macro-mode.js:MACRO_PREFERENCE` |
-| Max era gap (decades) | 1 | `app/music_brain/genre.py:MAX_ERA_GAP` |
+| Max era gap (decades) | 1 | `app/music_brain/analysis/genre.py:MAX_ERA_GAP` |
 | Phrase | 8 bars / 32 beats | [[Phrasing & Structure]] |
 | Sub-bass owner | below 120 Hz, one deck | [[EQ & Frequency Management]] |

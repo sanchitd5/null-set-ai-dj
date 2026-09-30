@@ -248,7 +248,8 @@ def test_lyrics_or_review_failing_late_keeps_the_study(tmp_path, monkeypatch):
     import shutil
     if not shutil.which("ffmpeg"):
         return
-    from app.music_brain import lyrics, set_ai
+    from app.music_brain.analysis import lyrics
+    from app.music_brain import set_ai
     _stub_study(tmp_path, monkeypatch)
     words = {"A - One": [{"t": 0.0, "end": 4.0, "text": "one"}]}
 
@@ -269,7 +270,8 @@ def _stub_study(tmp_path, monkeypatch) -> list:
     Returns the list of paths sent to (stub) Demucs."""
     import types
     import soundfile as sf
-    from app.music_brain import analyzer, lyrics, stem_service
+    from app.music_brain.analysis import analyzer, lyrics
+    from app.music_brain import stem_service
 
     a_st, _ = _song("A - One", 0.0, 1)
     b_st, _ = _song("B - Two", 36.0, 2)

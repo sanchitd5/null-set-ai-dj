@@ -22,7 +22,7 @@ from __future__ import annotations
 import math
 from typing import List, Optional, Tuple
 
-from app.music_brain.analyzer import TrackAnalysis
+from app.music_brain.analysis.analyzer import TrackAnalysis
 
 Regions = List[Tuple[float, float]]
 

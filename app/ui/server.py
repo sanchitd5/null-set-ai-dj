@@ -27,7 +27,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from app.music_brain.analyzer import analyze as analyze_track
+from app.music_brain.analysis.analyzer import analyze as analyze_track
 from app.music_brain.config import (
     CACHE_DIR,
     RECORDINGS_CACHE_DIR,
@@ -76,7 +76,7 @@ def _boot_llm() -> None:
 def _migrate_analyses() -> None:
     """Library analyses from before v5 get their tempo refined in the
     background, one song at a time; nothing is re-analysed from scratch."""
-    from app.music_brain.analyzer import queue_upgrade
+    from app.music_brain.analysis.analyzer import queue_upgrade
 
     queue_upgrade(sorted(_tracks.values()))
 
@@ -510,7 +510,7 @@ def _cached_vocal_regions(track_id: str) -> Optional[list]:
         if (model, two) == (MASHUP_DEMUCS_MODEL, "vocals"):
             return _vocal_regions_for(track_id)  # hits the same stem cache
         try:
-            from app.music_brain.analyzer import vocal_presence_map
+            from app.music_brain.analysis.analyzer import vocal_presence_map
 
             regions = [list(r) for r in vocal_presence_map(Path(stems["vocals"]))]
         except Exception as exc:
@@ -814,7 +814,7 @@ def _cached_energy_fit(path, bpm: float, cur: int) -> int:
     if not cur:
         return 0
     try:
-        from app.music_brain import energy as en
+        from app.music_brain.analysis import energy as en
 
         if not en._cache(Path(path)).exists():
             return 0
@@ -851,14 +851,14 @@ def get_library_lockable(bpm: float, key: str = "", exclude: str = "", limit: in
     102327 every candidate died on "energy drop 8 -> 5". Nothing is measured
     here; unmeasured songs rank in between."""
     from app.music_brain import techniques as tq
-    from app.music_brain.genre import MAX_ERA_GAP, era_gap, genre_near
+    from app.music_brain.analysis.genre import MAX_ERA_GAP, era_gap, genre_near
     from app.ui.services.download_service import _is_live, _is_mix
     from app.ui.services.track_identity import clean_identity
 
     skip = set(filter(None, exclude.split(",")))
     # Punjabi scene profile: one scene (punjabi / bhangra / desi, bollywood near) and
     # a wider era gate while it is active; "off" (the default) is today's filter.
-    from app.music_brain import scene_profile as _sp
+    from app.music_brain.analysis import scene_profile as _sp
     sp_active = _sp.selection_active(punjabi_profile, genre)
     genre = str(genre or "").strip()[:80]
     era = str(era or "").strip()[:40]
@@ -1040,7 +1040,8 @@ def _hook_drops(track_id: str, top_n: int = 3, ai_call: bool = False) -> list:
     cached vocal stem when there is one, the local model's emotional-line picks
     (ai_call=False: only already-cached picks, never waits on the model).
     [] on any miss; never separates."""
-    from app.music_brain import hook_drop, lyrics, set_ai
+    from app.music_brain.analysis import hook_drop, lyrics
+    from app.music_brain import set_ai
     from app.music_brain.set_learner import load_learned
 
     path = _track_path(track_id)
@@ -1075,7 +1076,7 @@ def _hook_drops(track_id: str, top_n: int = 3, ai_call: bool = False) -> list:
 @app.get("/api/tracks/{track_id}/hook-drops")
 def get_hook_drops(track_id: str, top_n: int = 3, ai: bool = True):
     """Where to go acapella on the track's emotional hook and bring the drop back in:
-    [{text, cut_at, drop_at, hold_s, score, ai, why[]}] best first (app.music_brain.hook_drop).
+    [{text, cut_at, drop_at, hold_s, score, ai, why[]}] best first (app.music_brain.analysis.hook_drop).
     ai=True asks the local model which lines carry the emotion (cached per song)."""
     drops = _hook_drops(track_id, max(1, min(top_n, 10)), ai_call=ai)
     _song_step("hook_drop_plan", track_id, decision=f"{len(drops)} hook drop(s)",
@@ -1138,7 +1139,7 @@ def _song_resolvers() -> None:
     from app.ui.services import song_log
 
     def energy(path: Path, bpm: float) -> dict:
-        from app.music_brain import energy as en
+        from app.music_brain.analysis import energy as en
         return en.level(path, bpm)
 
     def track_path(tid: str) -> Optional[Path]:
@@ -1377,7 +1378,7 @@ def get_learned_pick(a: str, b: str, keylock: bool = False, profile: str = ""):
     profile: the Punjabi scene profile level the console resolved for this pair
     ("full" | "handover"; anything else = none, today's pick). Under "full" the pick
     also reads the Punjabi-tagged sets (techniques.learned_pick)."""
-    from app.music_brain import scene_profile as sp
+    from app.music_brain.analysis import scene_profile as sp
     from app.music_brain import techniques as tq
 
     lvl = profile if profile in (sp.LEVEL_FULL, sp.LEVEL_HANDOVER) else None
@@ -1447,7 +1448,7 @@ def post_riff_plan(req: RiffRequest):
     from app.music_brain import keylock
     from app.music_brain import stem_service
     from app.music_brain import techniques as tq
-    from app.music_brain import waveform_params as wp
+    from app.music_brain.analysis import waveform_params as wp
 
     if not keylock.available():
         return {"ok": False, "reasons": ["Rubber Band not installed (brew install rubberband)"]}
@@ -1583,7 +1584,7 @@ def post_match(req: MatchRequest):
     track_a, track_b = tracks
     vibe_kw = _pair_vibe(req.track_a_id, req.track_b_id)
     # Punjabi scene profile level for this pair (scene_profile.level); "off" -> None
-    from app.music_brain import scene_profile as _sp
+    from app.music_brain.analysis import scene_profile as _sp
     profile = _sp.level(req.punjabi_profile, vibe_kw.get("genre_a"), vibe_kw.get("genre_b"))
     candidates = _matcher.match(
         track_a, track_b, top_n=req.top_n, no_cuts=req.no_cuts, profile=profile, **vibe_kw,
@@ -1592,17 +1593,17 @@ def post_match(req: MatchRequest):
     # Best-effort: a vibe failure must never break matching.
     vibe = None
     try:
-        from app.music_brain.vibe import analyze_vibe, vibe_distance
+        from app.music_brain.analysis.vibe import analyze_vibe, vibe_distance
         vibe = vibe_distance(
             analyze_vibe(_track_path(req.track_a_id)),
             analyze_vibe(_track_path(req.track_b_id)),
         )
     except Exception:
         vibe = None
-    # Measured energy 1-10 of both (app.music_brain.energy): the console refuses a
+    # Measured energy 1-10 of both (app.music_brain.analysis.energy): the console refuses a
     # next song more than 2 levels away (1 when relaxed).
     try:
-        from app.music_brain import energy as en
+        from app.music_brain.analysis import energy as en
 
         la = en.level(_track_path(req.track_a_id), track_a.bpm)
         lb = en.level(_track_path(req.track_b_id), track_b.bpm)
@@ -1647,7 +1648,7 @@ def _vocal_regions_for(track_id: str) -> Optional[list]:
     if track_id in _vocal_regions:
         return _vocal_regions[track_id]
     try:
-        from app.music_brain.analyzer import vocal_presence_map
+        from app.music_brain.analysis.analyzer import vocal_presence_map
 
         regions = [list(r) for r in vocal_presence_map(Path(_vocals_stem(track_id)))]
     except Exception as exc:
@@ -1980,7 +1981,7 @@ class AutopilotSuggestRequest(BaseModel):
     history: list[str] = []
     set_position: Optional[float] = None  # 0.0=start, 1.0=end; computed from history if omitted
     set_mode: str = "hybrid"  # long | quick | hybrid
-    # Punjabi scene profile (app/music_brain/scene_profile.py): off | on | auto.
+    # Punjabi scene profile (app/music_brain/analysis/scene_profile.py): off | on | auto.
     # Absent -> "off" so older clients get today's behaviour.
     punjabi_profile: str = "off"
     # Relaxed session (autopilot.js RELAXED_OCCASION): picks never lift the energy.
@@ -2091,7 +2092,7 @@ _suggested_genres: Dict[str, str] = {}
 # Normalised title -> release era the model gave it ("1990s"), same lifetime
 # as _suggested_genres: the library fallback holds the set's decade too.
 _suggested_eras: Dict[str, str] = {}
-# Both persist in CACHE_DIR/genre_labels.json (app.music_brain.genre_labels): lost on a
+# Both persist in CACHE_DIR/genre_labels.json (app.music_brain.analysis.genre_labels): lost on a
 # restart, the library fallback had no labelled Punjabi song (session 2026-09-30_102327).
 LABELS_PATH: Optional[Path] = None        # None: genre_labels.path(); tests point it at tmp_path
 _labels_dirty = False
@@ -2111,7 +2112,7 @@ def _save_labels() -> None:
     global _labels_dirty
     if not _labels_dirty:
         return
-    from app.music_brain import genre_labels as gl
+    from app.music_brain.analysis import genre_labels as gl
 
     if gl.save(_suggested_genres, _suggested_eras, LABELS_PATH):
         _labels_dirty = False
@@ -2120,7 +2121,7 @@ def _save_labels() -> None:
 def _load_labels() -> int:
     """Startup: the stored labels, then the knowledge export's for songs that have none
     (matched by name; no model call). Returns how many came from the export."""
-    from app.music_brain import genre_labels as gl
+    from app.music_brain.analysis import genre_labels as gl
     from app.music_brain import knowledge
 
     g, e = gl.load(LABELS_PATH)
@@ -2251,7 +2252,7 @@ def _autopilot_suggest_impl(req: AutopilotSuggestRequest):
     avg_energy = float(np.mean(curve)) if curve else 0.5
     measured_energy = None
     try:
-        from app.music_brain import energy as en
+        from app.music_brain.analysis import energy as en
 
         measured_energy = en.level(path, analysis.bpm)["level"]
     except Exception:
@@ -2301,7 +2302,7 @@ def _autopilot_suggest_impl(req: AutopilotSuggestRequest):
     # Absolute loudness (Avg Energy is peak-normalised per song). Best-effort.
     loudness_dbfs = None
     try:
-        from app.music_brain.vibe import analyze_vibe
+        from app.music_brain.analysis.vibe import analyze_vibe
 
         loudness_dbfs = analyze_vibe(path).loudness_dbfs
     except Exception as exc:

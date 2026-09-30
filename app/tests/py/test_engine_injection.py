@@ -87,7 +87,7 @@ def test_download_and_background_jobs_use_the_host_clock_ids_and_executor(tmp_pa
 
 
 def test_energy_and_hash_read_the_hosts_view_of_the_world(tmp_path):
-    from app.music_brain import analyzer, energy
+    from app.music_brain.analysis import analyzer, energy
 
     class H(FakeHost):
         def file_hash(self, path):

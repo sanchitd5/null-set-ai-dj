@@ -171,7 +171,7 @@ def test_sequel_is_not_the_song():
 
 
 def test_genre_near_scene_level():
-    from app.music_brain.genre import genre_near
+    from app.music_brain.analysis.genre import genre_near
     # user: Aqua "Barbie Girl" (eurodance) -> Bicep "Glue" (breakbeat/electronica)
     assert genre_near("eurodance", "breakbeat") is False
     assert genre_near("eurodance", "electronica") is False
@@ -184,7 +184,7 @@ def test_genre_near_scene_level():
 
 
 def test_era_parsing_and_gap():
-    from app.music_brain.genre import decade_of, era_gap
+    from app.music_brain.analysis.genre import decade_of, era_gap
     assert decade_of("1990s") == 1990 and decade_of("90s") == 1990 and decade_of("late 90's") == 1990
     assert decade_of("1997") == 1990 and decade_of("2010s") == 2010 and decade_of("00s") == 2000
     assert decade_of("") is None and decade_of("modern") is None

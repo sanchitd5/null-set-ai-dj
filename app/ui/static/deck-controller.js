@@ -271,7 +271,7 @@ class Deck {
           fetch(`/api/tracks/${trackId}/fame`).then((r) => (r.ok ? r.json() : null))
             .then((f) => { if (this.analysis === analysis) this.fame = f; }).catch(() => {});
           // where to go acapella on this song's emotional line and drop back in
-          // (app/music_brain/hook_drop.py; lyrics + the local model's picks, cached)
+          // (app/music_brain/analysis/hook_drop.py; lyrics + the local model's picks, cached)
           fetch(`/api/tracks/${trackId}/hook-drops?top_n=3`).then((r) => (r.ok ? r.json() : null))
             .then((h) => { if (this.analysis === analysis) this.hookDrops = (h && h.hook_drops) || []; }).catch(() => {});
         }

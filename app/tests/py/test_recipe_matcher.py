@@ -2,7 +2,7 @@
 
 import pytest
 
-from app.music_brain.analyzer import KeyEstimate, StructureSection, TrackAnalysis
+from app.music_brain.analysis.analyzer import KeyEstimate, StructureSection, TrackAnalysis
 from app.music_brain.knowledge_parser import KnowledgeParser
 from app.music_brain.recipe_matcher import (
     RecipeMatcher,

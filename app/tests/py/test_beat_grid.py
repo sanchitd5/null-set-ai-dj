@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from app.music_brain.analyzer import (
+from app.music_brain.analysis.analyzer import (
     ANALYSIS_VERSION,
     compute_downbeats,
     compute_phrase_boundaries,

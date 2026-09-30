@@ -4,7 +4,8 @@ import json
 import numpy as np
 import pytest
 
-from app.music_brain import hook_drop, lyrics, set_ai
+from app.music_brain.analysis import hook_drop, lyrics
+from app.music_brain import set_ai
 from app.music_brain import set_learner as sl
 from app.music_brain import techniques as tq
 

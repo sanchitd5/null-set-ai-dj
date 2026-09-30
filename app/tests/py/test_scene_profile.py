@@ -1,4 +1,4 @@
-"""Punjabi scene profile (app/music_brain/scene_profile.py): resolution, era gate, octave
+"""Punjabi scene profile (app/music_brain/analysis/scene_profile.py): resolution, era gate, octave
 fold, Quick Cut fallback, cut key scoring, JS parity, and off == before the profile."""
 import hashlib
 import json
@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from app.music_brain import genre
-from app.music_brain import scene_profile as sp
+from app.music_brain.analysis import genre
+from app.music_brain.analysis import scene_profile as sp
 from app.music_brain.knowledge_parser import KnowledgeParser
 from app.music_brain.recipe_matcher import BYPASS_KEY_SCORE, RecipeMatcher
 from app.tests.py import profile_off_vectors as vectors
@@ -117,7 +117,7 @@ def test_suggest_filter_under_profile():
 
 def test_library_lockable_under_profile(monkeypatch):
     import app.ui.server as srv
-    from app.music_brain.analyzer import KeyEstimate
+    from app.music_brain.analysis.analyzer import KeyEstimate
     tracks = {"t1": Path("/x/a - One.mp3"), "t2": Path("/x/b - Two.mp3")}
     monkeypatch.setattr(srv, "_tracks", tracks)
     monkeypatch.setattr(srv, "_track_names", {"t1": "A - One", "t2": "B - Two"})
@@ -137,8 +137,8 @@ def test_library_lockable_unlabelled_under_profile(monkeypatch):
     is kept, ranked after the labelled ones; off the profile it is still left out.
     A cached energy level within MAX_STEP of the playing song ranks first."""
     import app.ui.server as srv
-    from app.music_brain import energy as en
-    from app.music_brain.analyzer import KeyEstimate
+    from app.music_brain.analysis import energy as en
+    from app.music_brain.analysis.analyzer import KeyEstimate
     tracks = {"t1": Path("/x/a - One.mp3"), "t2": Path("/x/b - Two.mp3"), "t3": Path("/x/c - Three.mp3")}
     monkeypatch.setattr(srv, "_tracks", tracks)
     monkeypatch.setattr(srv, "_track_names", {"t1": "A - One", "t2": "B - Two", "t3": "C - Three"})

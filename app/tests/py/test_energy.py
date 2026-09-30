@@ -1,5 +1,5 @@
 """Measured energy 1-10 and the next-song energy step rule."""
-from app.music_brain import energy
+from app.music_brain.analysis import energy
 
 
 def test_raw_score_orders_ambient_house_peak():
