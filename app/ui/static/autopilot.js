@@ -555,6 +555,32 @@ var autopilotCore = (function () {
         || (rank[x.tier] - rank[y.tier]) || (y.works - x.works));
     return ((r && r.list) || []).concat(set);
   }
+  // The deadline's first fallback (owner 2026-09-30: "if macro is coming from studied set it should be
+  // allowed, specially if no other track is identified, the macro defined track should be the
+  // fallback"): the song a running / armed studied-set macro defines for the playing song
+  // (macroMode.deadlineStep), tried before the atlas and the library, measured gates waived
+  // (measuredWaiver: _macro run / byUser). ms: {name, step, run | byUser} | null.
+  // o: {currentId, played: ids, reason, tryCand(cand) -> Promise<bool>, log(kind, obj)}
+  // -> "macro" when booked, false when there is no step or it failed (the chain carries on)
+  async function macroFallback(ms, o) {
+    const s = ms && ms.step;
+    if (!s || !s.b) return false;
+    const label = `${ms.name || "macro"} step ${s.n != null ? s.n : "?"}: ${s.b_name || s.b}`;
+    const why = s.b === o.currentId ? "it is the playing song" : (o.played || []).includes(s.b) ? "already played this set" : null;
+    if (why) {
+      o.log("deadline_fallback", { track_id: s.b, phase: "selection", decision: "macro refused", why: `${label}: ${why} (${o.reason}), falling through` });
+      return false;
+    }
+    const cand = { track_id: s.b, name: s.b_name || s.b, keep: false, fromLibrary: true, _fallback: "macro",
+                   _macro: Object.assign({ name: ms.name, step: s }, ms.byUser ? { byUser: true } : { run: true }) };
+    if (await o.tryCand(cand)) {
+      o.log("deadline_fallback", { track_id: s.b, phase: "selection", decision: "macro", why: `${label} (${o.reason})` });
+      return "macro";
+    }
+    o.log("deadline_fallback", { track_id: s.b, phase: "selection", decision: "macro refused",
+      why: `${label}: ${cand._rejectWhy || "a gate refused it (see the lines above)"} (${o.reason}), falling through` });
+    return false;
+  }
   // ---- booking vet (server booking_vet.py) ----
   // A stored move replayed from memory (a macro step, a FOLLOW SET song, a studied combo) obeys the picks'
   // repeat / earlier-set / scene rules; a step the owner armed by hand is his call (only his veto
@@ -1127,7 +1153,7 @@ var autopilotCore = (function () {
   }
   const api = { prerenderTargets, readinessNeeds, aTempoAtEntry, deferBudgetS, deferDecision, orderByReadiness, DEFER_MAX_S, DEFER_MIN_LEAD_S, PREFER_READY_JUMP,
     emptyRetryMs, useLibraryFallback, searchPlan, DEADLINE_LEAD_S, preparedWait, PREPARED_LEAD_S, gateWhy, candSource, deckEvent,
-    sceneAnchorNext, sceneAnchorBad, sceneOrder, SCENE_ORDER, rankAtlasBackups, crossBackups, measuredWaiver, deadlineStuck, stuckBackups, STUCK_AFTER_HOLDS, backupStale, backupNeedsStems, rememberPairReject, pairRejected, awaitJob, keySafeRecipe, KEY_SAFE_MIN, energyStepOk, hybridWindowKey, highSpans, quantileLinear, median, exitPastHigh, learnedRecipe, vocalRecipe, stemBlendBars, stemBlendFader, phraseWaitS, introBars, FADER_PARK_BARS, homePlan, maskedGlideBars, maskedDropAt, HOME_DROP_PCT, LADDER_STEP_PCT,
+    sceneAnchorNext, sceneAnchorBad, sceneOrder, SCENE_ORDER, rankAtlasBackups, crossBackups, measuredWaiver, deadlineStuck, stuckBackups, STUCK_AFTER_HOLDS, macroFallback, backupStale, backupNeedsStems, rememberPairReject, pairRejected, awaitJob, keySafeRecipe, KEY_SAFE_MIN, energyStepOk, hybridWindowKey, highSpans, quantileLinear, median, exitPastHigh, learnedRecipe, vocalRecipe, stemBlendBars, stemBlendFader, phraseWaitS, introBars, FADER_PARK_BARS, homePlan, maskedGlideBars, maskedDropAt, HOME_DROP_PCT, LADDER_STEP_PCT,
     tempoLockableAt, recipeKind, decideRecipe, planSkipReason, WINDOWS, playWindowFor, exitBounds, exitPick, exitTiming, exitHighPush, audibleEnd, entryClamp, SILENT_FLOOR,
     breakdownSpans, exitOutOfBreakdown, exitBreakdownPush, energyAtTarget, FINISH_MAX_S, forcedExit, forcedRecipe, forcedLine, forcedBooking,
     storedMove, vetRefusal, vetStep, badPairOf, pairKey, mashupGate, mashupBars,
@@ -3427,7 +3453,8 @@ function createAutopilotEngine({ host, ai }) {
   }
   // Deadline fallback. First a candidate that is being PREPARED (loaded, backed off only because its
   // stems were not on yet) is waited for while it can still make A's latest exit line
-  // (autopilotCore.preparedWait): 191133 threw Hanumankind away for Four Tet. Then, in tier order, the
+  // (autopilotCore.preparedWait): 191133 threw Hanumankind away for Four Tet. Then the song a running /
+  // armed studied-set macro defines for the playing song (autopilotCore.macroFallback). Then, in tier order, the
   // atlas backup (studied combo / atlas combo / best partner, up to 4 tried, in the playing song's scene),
   // then a library song that tempo-locks in that scene. Only when none passes, the last resort outside
   // the scene (atlas cross-family partner, library song of another family / unknown genre), logged as
@@ -3438,6 +3465,13 @@ function createAutopilotEngine({ host, ai }) {
     if (held && reason === "deadline") {
       const r = await waitPrepared(currentId, held, gen, reason);
       if (r || !active || gen !== prepGen) return r;
+    }
+    // a running / armed studied-set macro's own next song first (autopilotCore.macroFallback)
+    const ms = host.mod.macroMode && host.mod.macroMode.deadlineStep ? host.mod.macroMode.deadlineStep(currentId) : null;
+    if (ms) {
+      const r = await autopilotCore.macroFallback(ms, { currentId, played: playedIds, reason,
+        tryCand: (c) => tryCandidate(currentId, c, gen), log: (k, o) => host.log.step(k, o) });
+      if (r || !active || gen !== prepGen) return r || null;
     }
     // the fallback's scene: the anchor while recovering, else the playing song's stored label (server),
     // else the prepared candidate's scene when the playing song has no label

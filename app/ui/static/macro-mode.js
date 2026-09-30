@@ -273,6 +273,18 @@
     for (let i = Math.max(0, cursor); i < steps.length; i++) if (steps[i].a === aId) return { i, step: steps[i] };
     return null;
   }
+  // The deadline's first fallback (autopilot.js macroFallback, owner 2026-09-30): the next song a
+  // STUDIED-SET macro defines for the playing song, when it runs (PLAY MACRO) or one of its steps was
+  // armed (PLAY STEP). No side effect: the cursor is not moved.
+  // o: {macro: the loaded one, running, cursor, aId, armed: {name, kind, step} last armed step | null}
+  // -> {name, step, run | byUser} | null
+  function deadlineStepOf(o) {
+    const a = o && o.armed;
+    if (a && a.kind === "studied" && a.step && a.step.a === o.aId) return { name: a.name, step: a.step, byUser: true };
+    if (!o || !o.running || !o.macro || macroKind(o.macro) !== "studied") return null;
+    const nx = runNext(o.macro, o.cursor, o.aId);
+    return nx ? { name: o.macro.name, step: nx.step, run: true } : null;
+  }
   // AUTO MIX with a macro selected (owner): the step whose A is the playing song (from the cursor,
   // then from the start). The playing song is never swapped out. -> {i, step} | {why} | null (no macro)
   function autoMixPick(macro, cursor, aId) {
@@ -366,7 +378,7 @@
 
   const core = { MACRO_PREFERENCE, COMBO_MIN_WORKS, COMBO_LABEL, FOLLOW_WINDOW, artistOf, studiedLabel, followCandidates, macroOrder, comboCandidates, macroCandidate,
                  macroRows, macroListLabel, macroGroups,
-                 macroPrefer, streakAfter, streakLabel, applyPlan, fireAt, stepGate, editStep, setToMacro, runNowCheck, forcedOf, likedFor, storedMoveOf, stepForPair, runNext, autoMixPick, upcomingIds,
+                 macroPrefer, streakAfter, streakLabel, applyPlan, fireAt, stepGate, editStep, setToMacro, runNowCheck, forcedOf, likedFor, storedMoveOf, stepForPair, runNext, deadlineStepOf, autoMixPick, upcomingIds,
                  createRuntime: create };   // node checks drive the runtime over a fake Host
   if (typeof module !== "undefined" && module.exports) module.exports = core;
 
@@ -381,6 +393,7 @@
     let streak = { n: 0, names: [] };
     let armed = null;                    // a step the user armed for the autopilot's next booking
     let running = false;                 // PLAY MACRO: the autopilot performs the loaded macro step after step
+    let lastArmed = null;                // the armed step once handed out: {name, kind, step} (deadlineStep)
     const played = [];                   // transitions this set: [{a, b, a_name, b_name, recipe, a_time, b_time}]
     const stats = { macroSeen: 0, macroTaken: 0, comboTried: 0, comboPicked: 0, atlasPlan: 0, maxStreak: 0, followTried: 0 };
     let studiedSets = null;              // GET /api/studied/sets (FOLLOW SET), loaded once per refreshList
@@ -433,6 +446,8 @@
       if (armed && armed.a === aId) {
         out.push(mk(armed.b, armed.b_name, { _macro: { name: loaded && loaded.name, step: armed, byUser: true } }));
         step("macro", { decision: `step ${armed.n} armed by user`, why: `${armed.recipe} into ${armed.b_name}` });
+        const own = loaded && (loaded.steps || []).some((s) => s.a === armed.a && s.b === armed.b);
+        lastArmed = { name: loaded && loaded.name, kind: own ? macroKind(loaded) : null, step: armed };
         armed = null;
         return out;
       }
@@ -820,7 +835,9 @@
     function upcoming() {
       return running && loaded ? upcomingIds(loaded, cursor, 2).map((id) => ({ track_id: id, bpm: null })) : [];
     }
-    return { core, firstCandidates, defaultPlan, landed, partners, planFor, loadMacro, playStep, playMacro, autoMix, upcoming, saveSet, run, ACTIONS,
+    // the deadline's first fallback for the playing song (autopilot.js deadlineFallback)
+    const deadlineStep = (aId) => deadlineStepOf({ macro: loaded, running, cursor, aId, armed: lastArmed });
+    return { core, firstCandidates, deadlineStep, defaultPlan, landed, partners, planFor, loadMacro, playStep, playMacro, autoMix, upcoming, saveSet, run, ACTIONS,
              storedMove, storedStep, startReplay, refreshList, get liked() { return liked; },
              get running() { return running; },
              get stats() { return Object.assign({ streak: streak.n }, stats); }, get streak() { return streak; }, get loaded() { return loaded; } };
