@@ -195,6 +195,13 @@ def test_grounding_is_compact_and_from_the_wiki():
     assert "Loops" in g and "Bass Swap" in g
 
 
+def test_loop_transition_step_one_caps_cycles():
+    # DJ/05 Loop Transition step 1 reaches the plan prompt with its 2-cycle cap intact
+    step1 = mp._recipe_lines("Loop Transition", 2)[0]
+    assert "2 cycles" in step1 and "indefinitely" not in step1
+    assert "2 cycles" in mp.grounding(["Loop Transition"])
+
+
 def test_loop_hold_rule_is_capped_not_open_ended():
     # DJ/04 Loops & Beat Jumps: a hold lasts at most one 8-bar phrase; short outro -> Echo Out / breakdown
     line = next(ln for ln in mp.move_rules().splitlines() if ln.startswith("- loop_extend"))
