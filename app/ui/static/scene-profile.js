@@ -20,6 +20,8 @@
     cuts_skip_key_bypass: true,      // note s7: cuts skip the key gate (GUESS)
     bpm_octave_fold: true,           // note s7: 176 == 88 (GUESS)
     repeat_anthems_after_min: 45,    // note s7 (GUESS); not wired
+    learned_clash_min_obs: 3,        // full level: a learned tonal blend on a key clash needs 3 clashing sightings in Punjabi sets (GUESS)
+    learned_tempo_cap: 0.08,         // ... and a learned move never past the keylock cap (tempo-rule.js KEYLOCK_RANGE_PCT)
   });
   const FULL = "full", HANDOVER = "handover";
 
@@ -56,6 +58,16 @@
     if (!(a > 0) || !(b > 0)) return b;
     return [1, 2, 0.5].map((m) => b * m).reduce((best, x) => (Math.abs(a / x - 1) < Math.abs(a / best - 1) ? x : best));
   }
+  // Learned moves (scene_profile.py learned_scene / learned_clash_ok / learned_tempo_ok).
+  // Only the full level reads the Punjabi-tagged sets' sightings.
+  const learnedScene = (lvl) => (lvl === FULL ? PUNJABI_PROFILE.name : null);
+  // a tonal learned blend on a key clash: full level and enough clashing sightings in the scene's sets
+  const learnedClashOk = (lvl, clashObs) => lvl === FULL && Math.trunc(Number(clashObs) || 0) >= PUNJABI_PROFILE.learned_clash_min_obs;
+  // full level: a learned move plays only inside the keylock cap (octave-folded gap), else the fallback
+  function learnedTempoOk(lvl, foldedGap) {
+    if (lvl !== FULL || foldedGap == null) return true;
+    return Number(foldedGap) <= PUNJABI_PROFILE.learned_tempo_cap + 1e-9;
+  }
   // status text: the mode, and when auto is active which level fired
   function statusLabel(mode, lvl) {
     const m = normalizeMode(mode);
@@ -65,7 +77,7 @@
   }
 
   const core = { MODES, DEFAULT_MODE, PUNJABI_PROFILE, FULL, HANDOVER, normalizeMode, isPunjabi, isNeighbour, level,
-    fallbackRecipe, playWindow, foldBpm, statusLabel };
+    fallbackRecipe, playWindow, foldBpm, statusLabel, learnedScene, learnedClashOk, learnedTempoOk };
   if (typeof module !== "undefined" && module.exports) module.exports = core;
   if (root.Engine) root.Engine.mount("sceneProfile", () => core);
 })(typeof window !== "undefined" ? window : globalThis);
