@@ -72,12 +72,12 @@ MOVE_HELP = {
 }
 
 # -- DJ wiki grounding (./DJ/, extracted once and cached) ---------------------
-GROUNDING_MAX_CHARS = 1550
+GROUNDING_MAX_CHARS = 1595  # +45 for the loop_extend hold cap line (DJ/04 Loops & Beat Jumps)
 RECIPE_STEP_CHARS = 75
 
 # (move, note stem, heading fragment, line keyword or None, max chars)
 _MOVE_SOURCES = (
-    ("loop_extend", "Loops & Beat Jumps", "Extending the", "Solution", 105),
+    ("loop_extend", "Loops & Beat Jumps", "Extending the", "Solution", 150),
     ("stutter", "Loops & Beat Jumps", "Pre-Drop Tension", None, 130),
     ("beat_jump", "Loops & Beat Jumps", "Why Every Pro DJ", "Bypassing", 110),
     ("loops", "Loops & Beat Jumps", "Loop Length vs", "power-of-two", 90),

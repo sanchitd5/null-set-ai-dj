@@ -172,10 +172,16 @@ var autopilotCore = (function () {
   }
   // The stored recipe through the live gates. o: {want, beat (tempo-locked), stemsBoth,
   // keyScore, mashupFits, mergeOk, mergeGate, vocalRule} -> {recipe, refused: null | "gate: why"}
+  // The fallback for a move refused for a reason that is NOT the key or the tempo (stems
+  // missing, a merge / mashup gate, a vocal rule): the key-and-tempo-safe blend, a Bass
+  // Swap; Echo Out only on a Camelot clash below KEY_SAFE_MIN (CLAUDE.md s4). The caller
+  // has already checked the tempo lock. keyScore null (unknown key): the blend.
+  function safeBlend(keyScore) {
+    return keySafeRecipe("Bass Swap", keyScore);
+  }
   function forcedRecipe(o) {
     const want = String(o.want || "");
-    const keyOk = o.keyScore == null || o.keyScore >= KEY_SAFE_MIN;
-    const fb = o.beat && keyOk ? "Bass Swap" : "Echo Out";             // never a cut
+    const fb = o.beat ? safeBlend(o.keyScore) : "Echo Out";             // never a cut
     const no = (gate, recipe = fb) => ({ recipe, refused: gate });
     if (!want || /^(hard )?cut$/i.test(want)) return no("cut: never a hard cut");
     if (/merge|mashup|stem|riff/i.test(want) && !o.stemsBoth) return no("stems: stems missing on a deck");
@@ -511,7 +517,11 @@ var autopilotCore = (function () {
     } else if (!["echo", "filter"].includes(recipeKind(recipe))) {
       // No stems and no tempo lock: beats cannot be layered, so don't hard-swap.
       // Echo the outgoing song away while the new one enters on its phrase ([[Echo Out]]).
-      recipe = "Echo Out";
+      // Tempos lock but no blend plan (stems missing on a deck, no clean vocal window):
+      // that refusal is not a key or tempo reason, so the key-and-tempo-safe blend plays,
+      // a short Bass Swap; Echo Out only when the keys clash (CLAUDE.md s4).
+      recipe = lockS.beat ? safeBlend(o.keyScore) : "Echo Out";
+      if (recipe !== "Echo Out") vocalShort = true;
     }
     // Clashing keys never get a tonal blend: Echo Out (CLAUDE.md s4). The matcher
     // ranked key-safe recipes for these pairs; the rewrites above turned them into

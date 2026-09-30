@@ -26,7 +26,11 @@ function refDecide(o) {
     if (vr) { vocalRule = true; recipe = vr.recipe; vocalShort = vr.short; vocalCut = vr.why; }
   } else if (oneSong) recipe = "Long Blend";
   else if (stemsBoth) recipe = "Stem Bridge";
-  else if (!["echo", "filter"].includes(core.recipeKind(recipe))) recipe = "Echo Out";
+  else if (!["echo", "filter"].includes(core.recipeKind(recipe))) {
+    // kb-fixes-approved item 6: tempos lock but no blend plan -> the key-safe short Bass Swap
+    recipe = lockS.beat ? core.keySafeRecipe("Bass Swap", o.keyScore) : "Echo Out";
+    if (recipe !== "Echo Out") vocalShort = true;
+  }
   if (!layer) {
     const safe = core.keySafeRecipe(recipe, o.keyScore);
     if (safe !== recipe) { recipe = safe; blend = null; vocalShort = false; }
@@ -83,9 +87,25 @@ for (let i = 0; i < 4000; i++) {
 // no stems, tempo gap: Echo Out
 assert.strictEqual(core.decideRecipe({ recipe: "Blend", blend: null, layer: false, aStems: false, bStems: false,
   aEff: 174, bBpm: 125, keyScore: 1 }, tempoRule).recipe, "Echo Out");
-// a cut never plays: without stems a locked pair falls to Echo Out, never a Hard Cut
-assert.strictEqual(core.decideRecipe({ recipe: "Hard Cut", blend: null, layer: false, aStems: false, bStems: false,
-  aEff: 124, bBpm: 125, keyScore: 1 }, tempoRule).recipe, "Echo Out");
+// a cut never plays: without stems or a blend plan a locked pair falls to the key-safe short
+// Bass Swap (not a key or tempo reason, so not an Echo Out), never a Hard Cut
+{
+  const d = core.decideRecipe({ recipe: "Hard Cut", blend: null, layer: false, aStems: false, bStems: false,
+    aEff: 124, bBpm: 125, keyScore: 1 }, tempoRule);
+  assert.strictEqual(d.recipe, "Bass Swap"); assert.strictEqual(d.vocalShort, true); assert.strictEqual(d.keyRewrite, null);
+  // stems missing on one deck, unknown key: still the blend
+  assert.strictEqual(core.decideRecipe({ recipe: "Backspin (Spinback)", blend: null, layer: false, aStems: true, bStems: false,
+    aEff: 128, bBpm: 128, keyScore: null }, tempoRule).recipe, "Bass Swap");
+  // the same locked pair on clashing keys keeps the Echo Out (CLAUDE.md s4), no key rewrite logged
+  for (const keyScore of [0, 0.3]) {
+    const c = core.decideRecipe({ recipe: "Hard Cut", blend: null, layer: false, aStems: false, bStems: false,
+      aEff: 124, bBpm: 125, keyScore }, tempoRule);
+    assert.strictEqual(c.recipe, "Echo Out"); assert.strictEqual(c.keyRewrite, null); assert.strictEqual(c.vocalShort, false);
+  }
+  // a matcher / model Echo Out is never rewritten, whatever the keys
+  assert.strictEqual(core.decideRecipe({ recipe: "Echo Out", blend: null, layer: false, aStems: false, bStems: false,
+    aEff: 128, bBpm: 128, keyScore: 1 }, tempoRule).recipe, "Echo Out");
+}
 // camelotScore is the same table the console uses for keyScore
 assert.strictEqual(djCore.camelotScore("6A", "1A"), 0);
 

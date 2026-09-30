@@ -35,6 +35,18 @@ def test_selection_brief_grounded_and_capped():
     assert "[[" not in b and "**" not in b  # wiki markup stripped
 
 
+@pytest.mark.parametrize("genre", ["drum and bass", "dubstep", "future bass", "trap", "hip-hop",
+                                   "melodic", "edm", "house", "pop"])
+def test_playbook_out_opens_same_scene_and_never_ramps(genre):
+    # DJ/09 OUT sections: the same-scene move reaches the brief first; big gaps go
+    # breakdown first, Echo Out second, never a tempo ramp past CLAUDE.md 4.4's 6 %
+    import re
+    from app.music_brain.matching import dj_knowledge as dk
+    assert "Out of: - First: another " in selection_brief(genre)
+    out = dk._section(dk._note(playbook_for(genre)), "Transition OUT")
+    assert not re.search(r"\bramp(ing)? (the |tempo |from )|accelerate tempo|slow the tempo", out, re.I)
+
+
 def test_credited_artists():
     from app.ui.services.track_identity import credited_artists
     assert credited_artists("LATIN MAFIA, Fred again.. - Te Estoy Correteando") == ["LATIN MAFIA", "Fred again.."]
