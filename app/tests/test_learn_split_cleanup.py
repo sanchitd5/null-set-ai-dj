@@ -220,6 +220,16 @@ def test_cleanup_registers_before_it_deletes(tmp_path):
     assert out["freed_bytes"] > 0
 
 
+def test_cleanup_deletes_flac_clips_and_their_stems(tmp_path):
+    t = _tidy(tmp_path)
+    clip = _file(t.clips_dir / "0.00-80.00.flac", b"clip")
+    stem_dir = t.stems_dir / "abc_htdemucs"
+    _file(stem_dir / "vocals.flac", b"v")
+    t.sweep({}, clip_files=[clip], stem_dirs=[str(stem_dir)])
+    assert not Path(clip).exists() and not stem_dir.exists()
+    assert t.result()["deleted"]["clips"] == 1 and t.result()["deleted"]["clip_stems"] == 1
+
+
 def test_recording_deleted_only_after_every_id_is_cut(tmp_path, monkeypatch):
     t = _tidy(tmp_path)
     rec = Path(_file(t.sets_dir / "S1.mp3", b"the set"))
