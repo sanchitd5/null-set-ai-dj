@@ -83,10 +83,37 @@ assert.strictEqual(am.planChantGate(Object.assign(chantBase(), { onDemand: true,
 p = am.planChantGate(Object.assign(chantBase(), { pos: 61 }));
 assert.ok(p.ok && p.window_beats === 4, JSON.stringify(p));
 
+// ---- dhol_drop
+const dholBase = () => ({ pos: 50, exitT: 64, bEntry: 20, aBpm: BPM, aRate: 1, bBpm: BPM, bPlaying: false, bDrumEnv: env(0.1),
+  aDrumRms: 0.1, recipe: "Quick Cut", style: "standard", sinceLast: 5, inTransition: false, mashupActive: false, relaxed: false, onDemand: false });
+p = am.planDholDrop(dholBase());
+assert.ok(p.ok, JSON.stringify(p));
+assert.strictEqual(p.window_beats, 8, "2-bar bed when there is room");
+assert.ok(Math.abs(p.start - 60) < 1e-9 && p.release === 64, "ends on the cut");
+assert.ok(Math.abs(p.piece.b_from - 16) < 1e-9, "B's drums from the 2 bars before its entry");
+assert.ok(p.hp_hz >= 120 && p.gain > 0 && p.gain <= 0.7);
+const refuseD = (patch, gate) => { const r = am.planDholDrop(Object.assign(dholBase(), patch)); assert.strictEqual(r.ok, false); assert.strictEqual(r.gate, gate, JSON.stringify(r)); };
+refuseD({ inTransition: true }, "transition");
+refuseD({ mashupActive: true }, "vocal_layer");
+refuseD({ relaxed: true }, "relaxed");
+refuseD({ recipe: "Long Blend" }, "recipe");        // only ahead of a cut
+refuseD({ sinceLast: 1 }, "spacing");               // at most every other cut
+refuseD({ exitT: null }, "no_plan");
+refuseD({ bPlaying: true }, "b_rolling");
+refuseD({ bBpm: 110 }, "tempo");                    // 9 % > the 8 % keylock cap
+refuseD({ bDrumEnv: null }, "no_stems");
+refuseD({ bDrumEnv: env(0.001) }, "no_drums");
+refuseD({ bEntry: 1 }, "no_room");
+refuseD({ pos: 63.8 }, "late");
+assert.ok(am.planDholDrop(Object.assign(dholBase(), { recipe: "Long Blend", style: "instant" })).ok, "an instant swap is a cut");
+assert.ok(am.planDholDrop(Object.assign(dholBase(), { recipe: "Long Blend", onDemand: true })).ok, "on demand skips the recipe gate");
+p = am.planDholDrop(Object.assign(dholBase(), { pos: 59.8 }));
+assert.ok(p.ok && p.window_beats === 4, "1-bar fallback");
+
 // ---- wiring: every new move has a button (ACTION_IDS) and a toggle in index.html
 const html = fs.readFileSync(path.join(STATIC, "index.html"), "utf8");
 const src = fs.readFileSync(path.join(STATIC, "artist-moves.js"), "utf8");
-for (const [btn, kind] of [["artist-pad", "pad_lead"], ["artist-chant", "chant_gate"]]) {
+for (const [btn, kind] of [["artist-pad", "pad_lead"], ["artist-chant", "chant_gate"], ["artist-dhol", "dhol_drop"]]) {
   assert.ok(html.includes(`data-ai-action="${btn}"`), btn);
   assert.ok(html.includes(`id="ap-artist-${kind}"`), kind);
   assert.ok(new RegExp(`"${btn}": "${kind}"`).test(src), `ACTION_IDS ${btn}`);
@@ -205,5 +232,22 @@ const o = (pos, over = {}) => Object.assign({ pos, bar: 2, entryT: 0, lineT: 64,
   H.host.mod.djMind.fireAt = () => null;
   const r = api.runNow("chant_gate");
   assert.ok(r.ok, r.why);
+}
+{
+  // dhol drop-in runtime: one layered piece of B's drums, and the cue tease / roll stand down on that entry
+  const a = fakeDeck("a"), b = fakeDeck("b", { playing: false });
+  const H = fakeHost({ a, b });
+  const api = mount(H);
+  const oc = (pos) => o(pos, { lineT: 999, exitT: 64, bEntry: 20, recipe: "Quick Cut" });
+  api.tick(a, oc(50));                                 // 7 bars out: the tease waits for the drop-in
+  assert.strictEqual(H.events.filter((e) => e.detail && e.detail.move === "cue_tease").length, 0);
+  api.tick(a, oc(58.5));
+  const dh = H.events.filter((e) => e.type === "ai-activity" && e.detail.move === "dhol_drop");
+  assert.strictEqual(dh.length, 1, JSON.stringify(H.steps));
+  api.tick(a, oc(60)); api.tick(a, oc(62));
+  assert.strictEqual(H.events.filter((e) => e.detail && (e.detail.move === "cue_tease" || e.detail.move === "roll")).length, 0, "no stacking on the cut");
+  // a blend entry: the drop-in refuses by recipe, the tease is free again
+  api.tick(a, o(105, { lineT: 999, exitT: 110, bEntry: 20, recipe: "Long Blend" }));
+  assert.ok(H.steps.some((s) => s.o.decision === "dhol_drop" && /^recipe/.test(s.o.why)));
 }
 console.log("artist_moves_more_check ok");

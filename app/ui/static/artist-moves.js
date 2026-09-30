@@ -24,16 +24,21 @@
 //                learned vocal_loop "chant" sightings): A's own vocal stem gated on straight 16ths
 //                over the last 1 or 2 bars of a build, opened fully again on the phrase line.
 //                One per song, costs one "vocal" unit of the S21 FX budget.
+//   dhol_drop    desi drum-bed drop-in (research/notes/punjabi-original-sets.md: "a drums-only bed
+//                is how DJs and dholis hand over", SOURCED vendor pages; Quick Cut on the hook /
+//                dhol entry is the scene's dominant move, GUESS from set lengths): B's drum stem
+//                from the 1 or 2 bars before its entry point layered under A's last bars,
+//                high-passed at 150 Hz, then the cut lands on the downbeat and B's drums run on.
 (function (root) {
   "use strict";
 
   const lm = root.learnedMovesCore || (typeof require === "function" ? require("./learned-moves.js") : null);
   const { envelope, snapBeat, median } = lm;
 
-  const KINDS = ["slip_loop", "cue_tease", "roll", "perc_bridge", "pad_lead", "chant_gate"];
-  const SPEC = { slip_loop: "S13", cue_tease: "S14", roll: "S12", perc_bridge: "S11", pad_lead: "Lane8", chant_gate: "S20" };
+  const KINDS = ["slip_loop", "cue_tease", "roll", "perc_bridge", "pad_lead", "chant_gate", "dhol_drop"];
+  const SPEC = { slip_loop: "S13", cue_tease: "S14", roll: "S12", perc_bridge: "S11", pad_lead: "Lane8", chant_gate: "S20", dhol_drop: "Desi" };
   const LABEL = { slip_loop: "SLIP LOOP", cue_tease: "CUE TEASE", roll: "ROLL", perc_bridge: "PERC BRIDGE",
-    pad_lead: "PAD LEAD", chant_gate: "CHANT GATE" };
+    pad_lead: "PAD LEAD", chant_gate: "CHANT GATE", dhol_drop: "DHOL DROP-IN" };
   const MIN_LEAD_S = 0.6;             // a move is booked at least this far ahead (learned-moves.js)
   const SLIP_WINDOW_BEATS = [16, 8];  // window before the line; the loop is its first half (4 or 8 beats)
   const SLIP_CAP_BEATS = 16;          // hard cap on the slip window (KB 16-beat hold)
@@ -62,6 +67,11 @@
   const CHANT_MIN_VOCAL = 0.5;        // A must sing at least half the window (else nothing to gate)
   const CHANT_STEP_BEATS = 0.25;      // straight 16ths
   const CHANT_FLOOR = 0.1;            // closed gate level, about -20 dB (UNVERIFIED by ear)
+  const DHOL_BARS = [2, 1];           // drum bed before the cut
+  const DHOL_EVERY = 2;               // autopilot: at most one drop-in every 2 cut transitions
+  const DHOL_REL = 0.5;               // B's drums about 6 dB under A's (UNVERIFIED by ear)
+  const DHOL_GAIN_FALLBACK = 0.3;
+  const CUT_RECIPES = /\bcut\b/i;    // Quick Cut, Hard Cut, the profile cut
 
   const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
   const no = (gate, reason) => ({ ok: false, gate, reason });
@@ -294,14 +304,53 @@
     return last;
   }
 
+  // ---- desi dhol drop-in ------------------------------------------------------------------------
+  // c: {pos, exitT, aBpm, aRate, bBpm, bEntry, bPlaying, bDrumEnv ({t0, hop, v} of B's drums before its
+  //     entry), aDrumRms, recipe, style, sinceLast, inTransition, mashupActive, relaxed, onDemand}
+  function planDholDrop(c) {
+    if (c.inTransition) return no("transition", "the transition is running");
+    if (c.mashupActive) return no("vocal_layer", "a vocal layer is running");
+    if (!c.onDemand) {
+      if (c.relaxed) return no("relaxed", "relaxed session: no artist moves");
+      if (!(CUT_RECIPES.test(String(c.recipe || "")) || c.style === "instant")) return no("recipe", `${c.recipe || "no recipe"} is not a cut: B already enters over bars`);
+      if (c.sinceLast != null && c.sinceLast < DHOL_EVERY) return no("spacing", `last drop-in ${c.sinceLast} cut(s) ago (< ${DHOL_EVERY})`);
+    }
+    if (!fin(c.exitT) || !fin(c.bEntry)) return no("no_plan", "no planned entry for B");
+    if (c.bPlaying) return no("b_rolling", "B already plays: its entry point moves");
+    const fallbacks = [];
+    const aBpm = c.aBpm > 0 ? c.aBpm : (fallbacks.push("aBpm=128"), 128);
+    const bBpm = c.bBpm > 0 ? c.bBpm : (fallbacks.push("bBpm=128"), 128);
+    const aRate = c.aRate > 0 ? c.aRate : 1, v = aBpm * aRate / bBpm;
+    if (Math.abs(v - 1) * 100 > TEMPO_CAP_PCT) return no("tempo", `B's drums need a ${((v - 1) * 100).toFixed(1)}% stretch (cap ${TEMPO_CAP_PCT}%)`);
+    const env = c.bDrumEnv;
+    if (!env || !Array.isArray(env.v) || env.v.length < 2) return no("no_stems", "B's drum stem is not loaded");
+    const beatS = 60 / aBpm, bBeatS = 60 / bBpm;
+    let last = no("late", "less than a bar left before the cut");
+    for (const W of DHOL_BARS) {
+      const start = c.exitT - W * 4 * beatS, from = c.bEntry - W * 4 * bBeatS;
+      if (from < 0) { last = no("no_room", `B's entry point leaves no ${W} bar${W > 1 ? "s" : ""} before it`); continue; }
+      if (start < c.pos + MIN_LEAD_S * aRate) { last = no("late", `no ${W} bar window left before the cut`); continue; }
+      const bMean = envMean(env, from, c.bEntry);
+      if (!(bMean >= MIN_RMS)) { last = no("no_drums", `B's drums are silent in the ${W} bar${W > 1 ? "s" : ""} before its entry`); continue; }
+      let gain;
+      if (c.aDrumRms > 0) gain = clamp(DHOL_REL * c.aDrumRms / bMean, 0.1, 0.7);
+      else { gain = DHOL_GAIN_FALLBACK; fallbacks.push(`gain=${DHOL_GAIN_FALLBACK}`); }
+      return { ok: true, kind: "dhol_drop", start, release: c.exitT, window_beats: W * 4, cap_beats: 8,
+        piece: { a_t: start, b_from: from, b_beats: W * 4 }, b_rate: v, gain, hp_hz: HP_HZ, fallbacks,
+        why: `B's drums in under A's last ${W} bar${W > 1 ? "s" : ""}, then the cut on the downbeat (desi drop-in)` };
+    }
+    return last;
+  }
+
   const PLANNERS = { slip_loop: planSlipLoop, cue_tease: planCueTease, roll: planRoll, perc_bridge: planPercBridge,
-    pad_lead: planPadLead, chant_gate: planChantGate };
+    pad_lead: planPadLead, chant_gate: planChantGate, dhol_drop: planDholDrop };
 
   const core = { KINDS, SPEC, LABEL, MIN_LEAD_S, SLIP_WINDOW_BEATS, SLIP_CAP_BEATS, SLIP_PER_SONG, SLIP_GAP_BARS,
     TEASE_BARS, TEASE_MAX_STABS, TEMPO_CAP_PCT, HP_HZ, ROLL_WET, PLANNERS,
     PAD_BARS, PAD_KEY_MIN, PAD_EVERY, PAD_RECIPES, CHANT_BARS, CHANT_PER_SONG, CHANT_MIN_VOCAL, CHANT_STEP_BEATS, CHANT_FLOOR,
+    DHOL_BARS, DHOL_EVERY, CUT_RECIPES,
     vocalShare, meanEnergy, nearestBeat, shadowAt, envMean, planSlipLoop, planCueTease, planRoll, planPercBridge,
-    planPadLead, planChantGate };
+    planPadLead, planChantGate, planDholDrop };
   root.artistMovesCore = core;
   if (typeof module !== "undefined" && module.exports) module.exports = core;
 
@@ -397,6 +446,15 @@
     }
     // S20 chant gate: A's live vocal stem gain chopped on straight 16ths (open, floor, open, ...),
     // fully open again on the phrase line. Same stem-mode entry / exit as learned-moves.js runSwap.
+    // dhol drop-in: B's drum stem layered into deck A (high-passed) up to the cut
+    function runDhol(d, b, p, o) {
+      const st = b.stems, k = st.ratio || 1, lag = st.lag || 0, bBeatS = 60 / (b.bpm || 128), pc = p.piece;
+      const res = book(d, st.drums, [{ a_t: pc.a_t, from: (pc.b_from + lag) * k, dur: pc.b_beats * bBeatS * k }], p.b_rate * k, p.gain, o);
+      if (!res) return null;
+      say(d, "dhol_drop", p.why, { t0: audioAt(d, o, pc.a_t), t1: res.until, beats: p.window_beats, cap_beats: p.cap_beats, hp_hz: p.hp_hz,
+        params: { window_beats: p.window_beats, gain: +p.gain.toFixed(3), b_rate: +p.b_rate.toFixed(4) }, fallbacks: p.fallbacks });
+      return { busyS: 0, why: p.why };
+    }
     function runChant(d, p, o) {
       const at = audioAt(d, o, p.start), until = audioAt(d, o, p.release), lead = at - audioCtx.currentTime;
       if (lead < 0.35 || !(until > at)) return null;
@@ -434,7 +492,7 @@
     // per-song state on the deck (a new song = a new analysis object = fresh counters)
     const songOf = (d) => (d._artist && d._artist.ana === d.analysis ? d._artist
       : (d._artist = { ana: d.analysis, slips: 0, lastSlipBar: null, teaseFor: null, rollFor: null, slipLine: null, bridged: false,
-          padFor: null, chants: 0, chantLine: null, slipBooked: null }));
+          padFor: null, chants: 0, chantLine: null, slipBooked: null, dholFor: null }));
     function attempt(kind, d, o) {
       const a = d.analysis || {}, b = host.decks && host.decks[other(d.id)], r = songOf(d);
       const base = { pos: o.pos, inTransition: !!o.inTransition, mashupActive: !!o.mashupActive, relaxed: relaxed(), onDemand: !!o.onDemand };
@@ -475,6 +533,14 @@
           bOtherEnv: b && from != null ? stemEnv(b, "other", Math.max(0, from), o.bEntry, bBeatS / 4) : null,
           aOtherRms: aEnv && aEnv.v.length ? median(aEnv.v) : null }));
         if (p.ok) { logPlan(kind, p); res = runPad(d, b, p, o); if (res) padLast = padEntries; }
+      } else if (kind === "dhol_drop") {
+        const bBeatS = 60 / ((b && b.bpm) || 128);
+        const aEnv = fin(o.exitT) ? stemEnv(d, "drums", o.exitT - o.bar, o.exitT, o.bar / 4) : null;
+        p = planDholDrop(Object.assign(base, { exitT: o.exitT, aBpm: d.bpm, aRate: rateOf(d), bBpm: b && b.bpm, bEntry: o.bEntry,
+          bPlaying: !!(b && b.playing), recipe: o.recipe, style: o.style, sinceLast: cutEntries - dholLast,
+          bDrumEnv: b && fin(o.bEntry) ? stemEnv(b, "drums", Math.max(0, o.bEntry - 8 * bBeatS), o.bEntry, bBeatS / 4) : null,
+          aDrumRms: aEnv && aEnv.v.length ? median(aEnv.v) : null }));
+        if (p.ok) { logPlan(kind, p); res = runDhol(d, b, p, o); if (res) dholLast = cutEntries; }
       } else if (kind === "chant_gate") {
         const len = PHRASE_S(o);
         p = planChantGate(Object.assign(base, { lineT: o.lineT, bpm: d.bpm, rate: rateOf(d), beats: a.beat_times,
@@ -495,6 +561,7 @@
       return { plan: p, res, r };
     }
     const PHRASE_S = (o) => 8 * o.bar;
+    let cutEntries = 0, dholLast = -1e9;             // cut entries seen / the one the last drop-in played on
     let padEntries = 0, padLast = -1e9;              // planned entries seen / the one the last pad lead played on
 
     // Called by dj-mind on its ticks between phrase lines (never during a transition / hold / layer).
@@ -514,9 +581,20 @@
         const x = attempt("pad_lead", d, o);
         if (!x.plan.ok) refuse(d, "pad_lead", o.exitT.toFixed(1), x.plan);
       }
+      // desi drop-in: planned once per cut entry, 3 bars ahead (the 2-bar bed next). It owns B's drums on this
+      // entry, so the cue tease (B's drum stabs) and the roll (a second FX on the transition, S21) stand down.
+      if (on("dhol_drop") && o.exitT != null && r.dholFor !== o.exitT && o.exitT > o.pos && (o.exitT - o.pos) / o.bar <= 3) {
+        r.dholFor = o.exitT;
+        if (CUT_RECIPES.test(String(o.recipe || "")) || o.style === "instant") cutEntries++;
+        const x = attempt("dhol_drop", d, o);
+        if (!x.plan.ok) refuse(d, "dhol_drop", o.exitT.toFixed(1), x.plan);
+        else { r.teaseFor = o.exitT; r.rollFor = o.exitT; }
+      }
       // S14 / S12: A's last bars before B's planned entry
       if (o.exitT != null && o.exitT > o.pos && (o.exitT - o.pos) / o.bar <= TEASE_BARS) {
-        if (on("cue_tease") && r.teaseFor !== o.exitT) {
+        // on a cut the drop-in decides first (3 bars out); the tease waits for it
+        const dholPending = on("dhol_drop") && r.dholFor !== o.exitT && (CUT_RECIPES.test(String(o.recipe || "")) || o.style === "instant");
+        if (on("cue_tease") && r.teaseFor !== o.exitT && !dholPending) {
           r.teaseFor = o.exitT;                     // one plan per entry
           const x = attempt("cue_tease", d, o);
           if (!x.plan.ok) refuse(d, "cue_tease", o.exitT.toFixed(1), x.plan);
@@ -569,7 +647,7 @@
       const mind = host.mod.djMind;
       const bar = 240 / (d.bpm || 128), pos = d._currentPosition(), a = d.analysis || {};
       const lines = a.phrase_boundaries_8bar || [];
-      const leadBars = { slip_loop: 4, pad_lead: 4, chant_gate: 2 }[kind] || 1;
+      const leadBars = { slip_loop: 4, pad_lead: 4, chant_gate: 2, dhol_drop: 2 }[kind] || 1;
       const lead = leadBars * bar + MIN_LEAD_S * rateOf(d);
       let lineT = lines.find((t) => t - pos >= lead);
       if (lineT == null) { lineT = pos; while (lineT - pos < lead) lineT += 8 * bar; }
@@ -599,7 +677,8 @@
 
     // on-demand wiring: the AI ACTIONS register API when present, and `ai-action` events on djEvents
     const ACTION_IDS = { "artist-slip": "slip_loop", "artist-tease": "cue_tease", "artist-roll": "roll", "artist-perc": "perc_bridge",
-      "artist-pad": "pad_lead", "artist-chant": "chant_gate" };
+      "artist-pad": "pad_lead", "artist-chant": "chant_gate",
+      "artist-dhol": "dhol_drop" };
     let registered = false;
     const register = () => {
       const reg = host.mod.aiActions;
