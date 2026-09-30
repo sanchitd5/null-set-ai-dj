@@ -32,7 +32,7 @@ app/                 The main player: music_brain/ engine, ui/ (FastAPI + consol
                       tests/, and legacy_pipeline/ (the older end-to-end batch scripts below)
 downloader/           YouTube -> MP3 downloader (downloader.py)
 DJ/                   Obsidian knowledge base (unchanged, see Section 3)
-research/             Experimental / superseded code: older_way/, research_stuff/, notes/
+research/             Experimental code: research_stuff/, notes/
 data/                 Runtime artifacts, not source: songs/, output/, cache/ (all gitignored)
 assets/               Reference screenshots
 ```
