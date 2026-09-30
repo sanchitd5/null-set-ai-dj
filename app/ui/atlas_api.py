@@ -96,6 +96,38 @@ def atlas_partners(a: str, move: Optional[str] = None, n: int = 10, combo: bool 
     return {"a": a, "name": idx.names.get(a), "move": move, "partners": rows, "built": True}
 
 
+def _earlier_set_keys(set_id: str) -> set:
+    """Title keys of songs heard in earlier sets (set_memory.json), the list the suggest
+    prompt avoids. Empty when there is no memory yet."""
+    from app.ui import set_memory as sm
+
+    try:
+        from app.ui import server
+        mem = server._set_memory or sm.SetMemory(ATLAS_CACHE_DIR / "set_memory.json")
+    except Exception:  # noqa: BLE001 -- no server registry (tests)
+        mem = sm.SetMemory(ATLAS_CACHE_DIR / "set_memory.json")
+    return {sm._key(n) for n in mem.earlier_sets([], limit=sm.MAX_SONGS, set_id=set_id)}
+
+
+@router.get("/api/atlas/backup")
+def atlas_backup(a: str, n: int = 40, set_id: str = ""):
+    """A's atlas partners for the console's preplanned backup B (autopilot.js rankAtlasBackups):
+    the served rows (one shard read) with b_level (energy 1-10), a_level, and earlier_set
+    (the song was heard in an earlier set: tried after the fresh ones, like the suggest
+    prompt's "prefer fresh"). The live gates still decide at booking time."""
+    from app.ui import set_memory as sm
+
+    idx = _index()
+    if idx is None:
+        return {"a": a, "partners": [], "built": False}
+    rows = [dict(r) for r in idx.partners(a, None, max(1, min(100, n)))]
+    earlier = _earlier_set_keys(str(set_id or "")[:64])
+    for r in rows:
+        r["earlier_set"] = sm._key(r.get("b_name") or "") in earlier
+    a_level = ((idx._light.get("tracks") or {}).get(a) or {}).get("level")
+    return {"a": a, "a_level": a_level, "partners": rows, "built": True}
+
+
 _SETS_MEMO: dict = {}
 
 

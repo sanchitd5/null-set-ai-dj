@@ -401,6 +401,46 @@ var autopilotCore = (function () {
       retryMs: emptyRetryMs(Math.max(emptyStreak, failedSearches)),
     };
   }
+  // Atlas backup B (preplanned as soon as A plays; GET /api/atlas/backup rows). The atlas's partners
+  // are library songs with a scored pair: they cannot be invented the way the model's picks were.
+  // Tier order: studied combo, atlas combo, then the best partner; songs heard in an earlier set after
+  // the fresh ones; inside a tier a partner whose atlas energy level passes energyStepOk before an
+  // unmeasured one, then by works. A partner that fails a cheap live gate (played, bad played evidence,
+  // artist spacing, a remembered pair reject, the energy step) is skipped WITH its reason: 102327 died
+  // on "energy drop 8 -> 2..5" and said nothing. Booking still runs every live gate (tryCandidate).
+  // o: {aId, played: ids, recent: names, energyA, songs, relaxed, recentLevels, spacing(name), rejected(bId)}
+  function rankAtlasBackups(rows, o = {}) {
+    const played = new Set(o.played || []), recent = new Set(o.recent || []);
+    const list = [], skipped = [];
+    for (const r of rows || []) {
+      if (!r || !r.b || r.b === o.aId) continue;
+      const name = r.b_name || r.b;
+      let why = played.has(r.b) || recent.has(name) ? "already played this set"
+        : (r.played_bad || 0) > (r.played_good || 0) ? `bad played evidence (-${r.played_bad})` : null;
+      if (!why && o.spacing) why = o.spacing(name) || null;
+      if (!why && o.rejected) { const k = o.rejected(r.b); if (k) why = k.why || String(k); }
+      let fit = 0;
+      if (!why && Number.isFinite(o.energyA) && Number.isFinite(r.b_level)) {
+        const v = energyStepOk(o.energyA, r.b_level, { songs: o.songs, relaxed: o.relaxed, recent: o.recentLevels });
+        if (v.ok) fit = 1; else why = v.why;
+      }
+      if (why) { skipped.push({ b: r.b, name, why }); continue; }
+      list.push({ track_id: r.b, name, bpm: r.b_bpm, duration: r.b_duration, works: r.works || 0, plan: r.plan || null,
+                  level: Number.isFinite(r.b_level) ? r.b_level : null, fit, earlier: !!r.earlier_set,
+                  tier: r.studied ? "studied combo" : r.combo ? "atlas combo" : "atlas partner" });
+    }
+    const rank = { "studied combo": 0, "atlas combo": 1, "atlas partner": 2 };
+    list.sort((x, y) => (x.earlier - y.earlier) || (rank[x.tier] - rank[y.tier]) || (y.fit - x.fit)
+      || (y.works - x.works) || (x.track_id < y.track_id ? -1 : x.track_id > y.track_id ? 1 : 0));
+    return { list, skipped };
+  }
+  // The backup is re-ranked when A changed, a song was played since, or A's energy became known / changed.
+  function backupStale(b, ctx) {
+    return !b || b.for !== ctx.aId || b.played !== (ctx.played || []).length || b.energyA !== ctx.energyA;
+  }
+  // Stems are warmed early only for a plan whose recipe plays stems.
+  const STEM_RECIPE = /stem|merge|acapella|mashup/i;
+  const backupNeedsStems = (plan) => !!(plan && plan.recipe && STEM_RECIPE.test(plan.recipe));
 
   // (A, B) pairs that already failed a pairwise gate (vibe / energy / plan-fit) are not matched again
   // while A still plays. A reject made under the relaxed last-round limits holds in every round; one
@@ -682,7 +722,7 @@ var autopilotCore = (function () {
     return out;
   }
   const api = { prerenderTargets, readinessNeeds, aTempoAtEntry, deferBudgetS, deferDecision, orderByReadiness, DEFER_MAX_S, DEFER_MIN_LEAD_S, PREFER_READY_JUMP,
-    emptyRetryMs, useLibraryFallback, searchPlan, DEADLINE_LEAD_S, rememberPairReject, pairRejected, awaitJob, keySafeRecipe, KEY_SAFE_MIN, energyStepOk, hybridWindowKey, highSpans, quantileLinear, median, exitPastHigh, learnedRecipe, vocalRecipe, stemBlendBars, stemBlendFader, phraseWaitS, introBars, FADER_PARK_BARS, homePlan, maskedGlideBars, maskedDropAt, HOME_DROP_PCT, LADDER_STEP_PCT,
+    emptyRetryMs, useLibraryFallback, searchPlan, DEADLINE_LEAD_S, rankAtlasBackups, backupStale, backupNeedsStems, rememberPairReject, pairRejected, awaitJob, keySafeRecipe, KEY_SAFE_MIN, energyStepOk, hybridWindowKey, highSpans, quantileLinear, median, exitPastHigh, learnedRecipe, vocalRecipe, stemBlendBars, stemBlendFader, phraseWaitS, introBars, FADER_PARK_BARS, homePlan, maskedGlideBars, maskedDropAt, HOME_DROP_PCT, LADDER_STEP_PCT,
     tempoLockableAt, recipeKind, decideRecipe, planSkipReason, WINDOWS, playWindowFor, exitBounds, exitPick, exitTiming, exitHighPush, audibleEnd, entryClamp, SILENT_FLOOR,
     breakdownSpans, exitOutOfBreakdown, exitBreakdownPush, energyAtTarget, FINISH_MAX_S, forcedExit, forcedRecipe, forcedLine, forcedBooking };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
@@ -1847,7 +1887,8 @@ function createAutopilotEngine({ host, ai }) {
   const aTempoOf = (d) => autopilotCore.aTempoAtEntry({ bpm: d.bpm, rate: d._playbackRate(), pitchPct: d._pitchPercent });
   function poolRanked() {
     const seen = new Set(), out = [];
-    for (const c of [focusCand, scheduledNext, ...ready, ...heldPool]) {
+    const bk = atlasBackup && atlasBackup.cand && autopilotCore.backupNeedsStems(atlasBackup.cand.plan) ? [atlasBackup.cand] : [];
+    for (const c of [focusCand, scheduledNext, ...ready, ...heldPool, ...bk]) {
       if (c && c.track_id && !c._dead && !history.includes(c.name) && !seen.has(c.track_id)) { seen.add(c.track_id); out.push(c); }
     }
     return out;
@@ -2718,6 +2759,71 @@ function createAutopilotEngine({ host, ai }) {
     }));
   }
 
+  // ── preplanned backup B (atlas partners) ─────────────────────────────────
+  // Fetched as soon as A plays (prepareTransition start), re-ranked when stale (backupStale),
+  // its analysis warmed and, when its plan plays stems, its stems prerendered (poolRanked).
+  let atlasBackup = null;     // {for, played, energyA, list, skipped, cand}
+  let backupPromise = null;
+  function preplanBackup(currentId) {
+    const ctx = { aId: currentId, played: playedIds, energyA: measuredById[currentId] };
+    if (!autopilotCore.backupStale(atlasBackup, ctx)) return Promise.resolve(atlasBackup);
+    if (backupPromise && backupPromise.for === currentId) return backupPromise;
+    const p = (async () => { try {
+      let data = {};
+      try { data = await (await fetch(`/api/atlas/backup?a=${encodeURIComponent(currentId)}&n=40&set_id=${encodeURIComponent(setId || "")}`)).json(); }
+      catch (e) { data = {}; }
+      const energyA = Number.isFinite(measuredById[currentId]) ? measuredById[currentId] : data.a_level;
+      const r = autopilotCore.rankAtlasBackups(data.partners || [], {
+        aId: currentId, played: playedIds, recent: history, energyA, songs: history.length,
+        relaxed: !!(host.session && host.session.relaxed), recentLevels: playedEnergies(),
+        spacing: (n) => (host.mod.artistSpacing ? host.mod.artistSpacing.spacingBlock(n, history, false) : null),
+        rejected: (b) => autopilotCore.pairRejected(pairRejects, currentId, b, false) });
+      atlasBackup = { for: currentId, played: playedIds.length, energyA: measuredById[currentId], list: r.list, skipped: r.skipped, cand: r.list[0] || null };
+      const c = atlasBackup.cand;
+      if (c) {
+        host.log.step("atlas_backup", { track_id: c.track_id, phase: "planning", decision: `backup ${c.name}`,
+          why: `${c.tier}, works ${c.works}${c.level != null ? `, energy ${energyA} -> ${c.level}` : ""}${c.earlier ? ", heard in an earlier set" : ""}` });
+        fetch(`/api/tracks/${encodeURIComponent(c.track_id)}/analysis`).catch(() => {});   // warm B's analysis
+        if (autopilotCore.backupNeedsStems(c.plan)) syncPrerender();                        // B's stems via the prerender path
+      } else if (data.built !== false) {
+        const why = r.skipped.slice(0, 3).map((s) => `${s.name}: ${s.why}`).join("; ") || "no atlas partners for this song";
+        host.log.step("atlas_backup", { phase: "planning", decision: "no backup", why });
+        for (const s of r.skipped.slice(0, 5)) host.log.step("suggest_reject", { track_id: s.b, phase: "selection", decision: `atlas: ${s.name}`, why: s.why });
+      }
+      return atlasBackup;
+    } catch (e) { console.warn("atlas backup:", e.message); return atlasBackup; } })();
+    p.for = currentId;
+    backupPromise = p;
+    p.finally(() => { if (backupPromise === p) backupPromise = null; });
+    return p;
+  }
+  // Deadline fallback, in tier order: the atlas backup (studied combo / atlas combo / best partner,
+  // up to 4 tried), then a library song that tempo-locks. Null = nothing booked: HOLD LOOP stays.
+  async function deadlineFallback(currentId, gen, reason) {
+    const b = await preplanBackup(currentId);
+    if (!active || gen !== prepGen) return null;
+    for (const c of (b && b.list || []).slice(0, 4)) {
+      if (!active || gen !== prepGen) return null;
+      if (c.track_id === currentId || playedIds.includes(c.track_id)) continue;
+      apStatus(`Backup (${c.tier}): trying ${c.name}`);
+      const cand = { track_id: c.track_id, name: c.name, bpm: c.bpm, duration: c.duration, keep: false, fromLibrary: true };
+      if (await tryCandidate(currentId, cand, gen)) {
+        host.log.step("atlas_fallback", { track_id: c.track_id, phase: "selection", decision: `${currentId}>${c.track_id}`,
+          why: `${c.tier}, works ${c.works}${c.level != null ? `, energy level ${c.level}` : ""} (${reason})` });
+        host.log.step("deadline_fallback", { phase: "selection", decision: "atlas", why: reason });
+        return "atlas";
+      }
+    }
+    if (!active || gen !== prepGen) return null;
+    if (await tryLibraryLockable(currentId, gen)) {
+      host.log.step("deadline_fallback", { phase: "selection", decision: "library", why: reason });
+      return "library";
+    }
+    host.log.step("deadline_fallback", { phase: "selection", decision: "hold",
+      why: `${reason}: no atlas partner or library song passed the gates${b && b.skipped && b.skipped.length ? ` (${b.skipped.slice(0, 2).map((s) => `${s.name}: ${s.why}`).join("; ")})` : ""}` });
+    return null;
+  }
+
   async function tryLibraryLockable(currentId, gen) {
     const d = host.decks && host.decks[activeDeck];
     if (!d || !d.bpm) return false;
@@ -2766,6 +2872,7 @@ function createAutopilotEngine({ host, ai }) {
     const gen = ++prepGen;
     prepStartedAt = host.clock.now();
     showQueue();
+    preplanBackup(currentId);    // backup B from the atlas as soon as A plays (no model round trip)
 
     // 0) LEAD TO destination is due: book it (beat-matched when the tempo
     // locks; otherwise the tempo-jump fallback, it's where the user asked to go).
@@ -2857,13 +2964,18 @@ function createAutopilotEngine({ host, ai }) {
       pos: deckPosition(activeDeck), exitLo: exitWindow(50).lo,
       failedSearches: failedFor === currentId ? failedSearches : 0, emptyStreak });
     if (plan.fallbackFirst) {
-      host.log.step("deadline_fallback", { phase: "selection", decision: plan.deadline ? "deadline" : "search failed before",
-        why: `library / ready pool before asking the model again (${autopilotCore.DEADLINE_LEAD_S} s lead)` });
-      if (await tryLibraryLockable(currentId, gen)) return;
+      if (await deadlineFallback(currentId, gen, plan.deadline ? "deadline" : "search failed before")) return;
       if (!active || gen !== prepGen) return;
     }
     const rejected = [];
+    let deadlineTried = plan.fallbackFirst;
     for (let round = 1; round <= MAX_ROUNDS; round++) {
+      // the exit came close while the model was still answering: the backup, not another round
+      if (!deadlineTried && autopilotCore.searchPlan({ pos: deckPosition(activeDeck), exitLo: exitWindow(50).lo }).deadline) {
+        deadlineTried = true;
+        if (await deadlineFallback(currentId, gen, "deadline")) return;
+        if (!active || gen !== prepGen) return;
+      }
       // A running BRIDGE PATH holds the budget back; the last round always may jump.
       forceJump = round === MAX_ROUNDS;
       allowTempoJump = forceJump || (!bridge && tempoJumpBudget());
@@ -2899,6 +3011,7 @@ function createAutopilotEngine({ host, ai }) {
       try {
         suggestions = await getSuggestions(currentId, rejected);
         aiPicking = false;
+        preplanBackup(currentId);   // the model's pick landed: re-rank the backup if its context moved
       } catch (e) {
         aiPicking = false;
         console.warn("Autopilot suggest failed:", e.message);

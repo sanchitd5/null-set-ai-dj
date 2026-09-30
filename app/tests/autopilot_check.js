@@ -175,6 +175,45 @@ console.log("autopilot core ok");
   console.log("no hard cuts ok");
 }
 
+{ // atlas backup B: tier order, energy-ranked, skipped with reasons, re-ranked when stale
+  const { rankAtlasBackups, backupStale, backupNeedsStems } = require("../ui/static/autopilot.js");
+  const row = (b, o = {}) => Object.assign({ b, b_name: `Artist ${b} - Song ${b}`, b_bpm: 95, b_duration: 200, works: 50 }, o);
+  const rows = [
+    row("p1", { works: 90 }),                                // plain partner, unmeasured
+    row("p2", { works: 60, b_level: 7 }),                    // plain partner, energy fits 8 -> 7
+    row("c1", { works: 40, combo: "merge" }),                // atlas combo
+    row("s1", { works: 20, studied: { count: 2 } }),         // studied combo
+    row("low", { works: 99, b_level: 3 }),                   // 102327: energy drop 8 -> 3
+    row("old", { works: 95, earlier_set: true }),            // heard in an earlier set
+    row("done", { works: 99 }),                              // played this set
+    row("bad", { works: 99, played_bad: 2, played_good: 0 }),
+    row("sp", { works: 99 }),                                // artist spacing
+    row("A"),                                                // A itself
+  ];
+  const r = rankAtlasBackups(rows, { aId: "A", played: ["done"], recent: [], energyA: 8, songs: 8,
+    spacing: (n) => (n.startsWith("Artist sp") ? "artist played 2 songs ago" : null) });
+  assert.deepStrictEqual(r.list.map((c) => c.track_id), ["s1", "c1", "p2", "p1", "old"]);
+  assert.deepStrictEqual(r.list.map((c) => c.tier).slice(0, 3), ["studied combo", "atlas combo", "atlas partner"]);
+  const why = Object.fromEntries(r.skipped.map((s) => [s.b, s.why]));
+  assert.ok(/drop 8 -> 3/.test(why.low), why.low);
+  assert.strictEqual(why.done, "already played this set");
+  assert.ok(/bad played/.test(why.bad) && /spacing|artist/.test(why.sp));
+  // a pair rejected earlier for this A is skipped with that reason
+  const r2 = rankAtlasBackups([row("p1")], { aId: "A", rejected: (b) => (b === "p1" ? { why: "vibe: genre jump" } : null) });
+  assert.deepStrictEqual([r2.list.length, r2.skipped[0].why], [0, "vibe: genre jump"]);
+  // no atlas: nothing, no throw
+  assert.deepStrictEqual(rankAtlasBackups(undefined, {}), { list: [], skipped: [] });
+  // stale: new A, a song played since, A's energy measured
+  const b = { for: "A", played: 3, energyA: 8 };
+  assert.ok(!backupStale(b, { aId: "A", played: [1, 2, 3], energyA: 8 }));
+  assert.ok(backupStale(b, { aId: "B", played: [1, 2, 3], energyA: 8 }));
+  assert.ok(backupStale(b, { aId: "A", played: [1, 2, 3, 4], energyA: 8 }));
+  assert.ok(backupStale(b, { aId: "A", played: [1, 2, 3], energyA: 6 }));
+  assert.ok(backupStale(null, { aId: "A" }));
+  assert.ok(backupNeedsStems({ recipe: "Stem Merge" }) && !backupNeedsStems({ recipe: "Bass Swap" }) && !backupNeedsStems(null));
+  console.log("atlas backup ok");
+}
+
 { // deadline rule: near the exit, or after a failed search, the library / ready pool goes before the model
   const { searchPlan, DEADLINE_LEAD_S } = require("../ui/static/autopilot.js");
   assert.strictEqual(DEADLINE_LEAD_S, 45);
