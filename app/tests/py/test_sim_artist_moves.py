@@ -22,7 +22,7 @@ def test_artist_report_counts_runs_checks_and_release():
     }
     F = _F()
     rep = features.artist_moves_report(js, F)
-    assert rep["fired"] == {"slip_loop": 1, "cue_tease": 1, "roll": 0, "perc_bridge": 0, "pad_lead": 0}
+    assert rep["fired"] == {"slip_loop": 1, "cue_tease": 1, "roll": 0, "perc_bridge": 0, "pad_lead": 0, "chant_gate": 0}
     s, t = F["artist_slip_loop"], F["artist_cue_tease"]
     assert s.checks["release_on_shadow"] == {"pass": 1, "fail": 1}
     assert s.checks["within_cap"] == {"pass": 1, "fail": 0}

@@ -20,16 +20,20 @@
 //                N_GfH09iP9c): B's own pads ("other" stem) from the 4 or 8 bars before its entry
 //                point rise in under A's last bars, high-passed at 150 Hz, so B's pads arrive first,
 //                its drums / bass land with the transition. Key >= 0.8 (two melodies overlap, G2).
+//   chant_gate   S20 (Argy / Anyma melodic techno gated vocal, SECONDARY + GUESS artist link; the
+//                learned vocal_loop "chant" sightings): A's own vocal stem gated on straight 16ths
+//                over the last 1 or 2 bars of a build, opened fully again on the phrase line.
+//                One per song, costs one "vocal" unit of the S21 FX budget.
 (function (root) {
   "use strict";
 
   const lm = root.learnedMovesCore || (typeof require === "function" ? require("./learned-moves.js") : null);
   const { envelope, snapBeat, median } = lm;
 
-  const KINDS = ["slip_loop", "cue_tease", "roll", "perc_bridge", "pad_lead"];
-  const SPEC = { slip_loop: "S13", cue_tease: "S14", roll: "S12", perc_bridge: "S11", pad_lead: "Lane8" };
+  const KINDS = ["slip_loop", "cue_tease", "roll", "perc_bridge", "pad_lead", "chant_gate"];
+  const SPEC = { slip_loop: "S13", cue_tease: "S14", roll: "S12", perc_bridge: "S11", pad_lead: "Lane8", chant_gate: "S20" };
   const LABEL = { slip_loop: "SLIP LOOP", cue_tease: "CUE TEASE", roll: "ROLL", perc_bridge: "PERC BRIDGE",
-    pad_lead: "PAD LEAD" };
+    pad_lead: "PAD LEAD", chant_gate: "CHANT GATE" };
   const MIN_LEAD_S = 0.6;             // a move is booked at least this far ahead (learned-moves.js)
   const SLIP_WINDOW_BEATS = [16, 8];  // window before the line; the loop is its first half (4 or 8 beats)
   const SLIP_CAP_BEATS = 16;          // hard cap on the slip window (KB 16-beat hold)
@@ -53,7 +57,11 @@
   const PAD_EVERY = 3;                // autopilot: at most one pad lead every 3 transitions (conservative rate)
   // the blends B's pads can lead into: B's full song enters over bars (never a cut, echo out or peak swap)
   const PAD_RECIPES = /^(long blend|bass swap|drop swap|blend|stem bridge|learned:stem_intro)$/i;
-
+  const CHANT_BARS = [2, 1];          // gated window before the line
+  const CHANT_PER_SONG = 1;
+  const CHANT_MIN_VOCAL = 0.5;        // A must sing at least half the window (else nothing to gate)
+  const CHANT_STEP_BEATS = 0.25;      // straight 16ths
+  const CHANT_FLOOR = 0.1;            // closed gate level, about -20 dB (UNVERIFIED by ear)
 
   const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
   const no = (gate, reason) => ({ ok: false, gate, reason });
@@ -250,14 +258,50 @@
     return last;
   }
 
+  // ---- S20 chant gate --------------------------------------------------------------------------
+  // c: {pos, lineT, bpm, rate, beats, vocals (regions), energyNow, energyNext, count, quiet,
+  //     vocalLive (A's vocal stem sounds), vocalBusy (sliced / held / swapped), inTransition,
+  //     holdActive, mashupActive, relaxed, onDemand}
+  function planChantGate(c) {
+    if (c.inTransition || c.holdActive) return no("transition", "a transition or merge hold owns the deck");
+    if (c.mashupActive) return no("vocal_layer", "a vocal layer is running");
+    if (!c.vocalLive) return no("no_stems", "A's vocal stem is not live");
+    if (c.vocalBusy) return no("busy", "A's vocal stem is already sliced / held / swapped");
+    if (!c.onDemand) {
+      if (c.relaxed) return no("relaxed", "relaxed session: no artist moves");
+      if (c.quiet === false) return no("phrase_busy", "the mind booked another move on this phrase");
+      if ((c.count || 0) >= CHANT_PER_SONG) return no("cap", `${CHANT_PER_SONG} chant gate this song`);
+      if (!(fin(c.energyNow) && fin(c.energyNext))) return no("unmeasured", "no energy curve: cannot tell a build from a fade");
+      if (!(c.energyNext > c.energyNow)) return no("no_build", "the next phrase does not lift: a gate is a build move");
+    }
+    if (!Array.isArray(c.vocals)) return no("unmeasured", "no vocal regions: cannot tell if A sings");
+    const fallbacks = [];
+    const bpm = c.bpm > 0 ? c.bpm : (fallbacks.push("bpm=128"), 128);
+    const beatS = 60 / bpm, rate = c.rate > 0 ? c.rate : 1;
+    let last = no("late", "less than a bar left before the line");
+    for (const W of CHANT_BARS) {
+      const nb = nearestBeat(c.beats, c.lineT - W * 4 * beatS, c.lineT, beatS);
+      if (nb.t < c.pos + MIN_LEAD_S * rate) { last = no("late", `no ${W} bar window left before the line`); continue; }
+      const share = vocalShare(c.vocals, nb.t, c.lineT);
+      if (share < CHANT_MIN_VOCAL) { last = no("no_vocal", `A sings ${Math.round(share * 100)}% of the ${W} bars: nothing to gate`); continue; }
+      if (nb.grid && !fallbacks.includes("beat grid from bpm")) fallbacks.push("beat grid from bpm");
+      const n = Math.round(W * 4 / CHANT_STEP_BEATS), stepS = (c.lineT - nb.t) / n, steps = [];
+      for (let i = 0; i < n; i += 2) steps.push({ t0: nb.t + i * stepS, t1: nb.t + (i + 1) * stepS });
+      return { ok: true, kind: "chant_gate", start: nb.t, release: c.lineT, window_beats: W * 4, cap_beats: 8,
+        step_beats: CHANT_STEP_BEATS, steps, floor: CHANT_FLOOR, grid_err_s: nb.err, fallbacks,
+        why: `A's vocal gated on 16ths over the last ${W} bar${W > 1 ? "s" : ""} of the build, open on the line` };
+    }
+    return last;
+  }
+
   const PLANNERS = { slip_loop: planSlipLoop, cue_tease: planCueTease, roll: planRoll, perc_bridge: planPercBridge,
-    pad_lead: planPadLead };
+    pad_lead: planPadLead, chant_gate: planChantGate };
 
   const core = { KINDS, SPEC, LABEL, MIN_LEAD_S, SLIP_WINDOW_BEATS, SLIP_CAP_BEATS, SLIP_PER_SONG, SLIP_GAP_BARS,
     TEASE_BARS, TEASE_MAX_STABS, TEMPO_CAP_PCT, HP_HZ, ROLL_WET, PLANNERS,
-    PAD_BARS, PAD_KEY_MIN, PAD_EVERY, PAD_RECIPES,
+    PAD_BARS, PAD_KEY_MIN, PAD_EVERY, PAD_RECIPES, CHANT_BARS, CHANT_PER_SONG, CHANT_MIN_VOCAL, CHANT_STEP_BEATS, CHANT_FLOOR,
     vocalShare, meanEnergy, nearestBeat, shadowAt, envMean, planSlipLoop, planCueTease, planRoll, planPercBridge,
-    planPadLead };
+    planPadLead, planChantGate };
   root.artistMovesCore = core;
   if (typeof module !== "undefined" && module.exports) module.exports = core;
 
@@ -351,13 +395,46 @@
         params: { window_beats: p.window_beats, gain: +p.gain.toFixed(3), b_rate: +p.b_rate.toFixed(4), rise_share: p.rise_share }, fallbacks: p.fallbacks });
       return { busyS: 0, why: p.why };
     }
+    // S20 chant gate: A's live vocal stem gain chopped on straight 16ths (open, floor, open, ...),
+    // fully open again on the phrase line. Same stem-mode entry / exit as learned-moves.js runSwap.
+    function runChant(d, p, o) {
+      const at = audioAt(d, o, p.start), until = audioAt(d, o, p.release), lead = at - audioCtx.currentTime;
+      if (lead < 0.35 || !(until > at)) return null;
+      if (!d.stemsLiveAt || !d.stemsLiveAt(at)) return null;
+      const live = d.stemLive && d.stemLive.vocals;
+      if (!live || !live.gain) return null;
+      const e = 0.006, rec = d._artistChant = { until };
+      // audio times now: audioAt reads the clock, so it must not run inside the timer
+      const steps = p.steps.map((s) => [audioAt(d, o, s.t0), audioAt(d, o, s.t1)]);
+      later(d.id, lead * 1000 - 250, () => {
+        if (!d.playing || d._artistChant !== rec) return;
+        if (!d.stemMix({}, at - 0.01, 0.01)) return void console.info("artist move chant_gate skipped: stem mode refused");
+        const lg = live.gain;
+        lg.cancelScheduledValues(at); lg.setValueAtTime(1, at);
+        for (const [a0, a1] of steps) {
+          const reopen = Math.min(until, a1 + (a1 - a0));
+          if (a1 - e <= a0 || reopen - e <= a1) continue;
+          lg.setValueAtTime(1, a1 - e); lg.linearRampToValueAtTime(p.floor, a1);
+          lg.setValueAtTime(p.floor, reopen - e); lg.linearRampToValueAtTime(1, reopen);
+        }
+        lg.setValueAtTime(1, until);
+        later(d.id, (until - audioCtx.currentTime) * 1000 - 200, () => {
+          if (d._artistChant === rec) d._artistChant = null;
+          if (d.playing) d.stemMix(null, until + 0.03, 0.02);
+        });
+      });
+      say(d, "chant_gate", p.why, { t0: at, t1: until, beats: p.window_beats, cap_beats: p.cap_beats,
+        grid_err_s: +p.grid_err_s.toFixed(4), params: { window_beats: p.window_beats, step_beats: p.step_beats, floor: p.floor, steps: p.steps.length },
+        fallbacks: p.fallbacks });
+      return { busyS: 0, why: p.why };
+    }
 
     // ---- one attempt of one kind on deck d. o: {pos, bar, entryT, lineT, exitT, bEntry, quiet, holdActive,
     //      mashupActive, fxOk, inTransition, onDemand} -> {plan, res} (res null when refused or not armed)
     // per-song state on the deck (a new song = a new analysis object = fresh counters)
     const songOf = (d) => (d._artist && d._artist.ana === d.analysis ? d._artist
       : (d._artist = { ana: d.analysis, slips: 0, lastSlipBar: null, teaseFor: null, rollFor: null, slipLine: null, bridged: false,
-          padFor: null, slipBooked: null }));
+          padFor: null, chants: 0, chantLine: null, slipBooked: null }));
     function attempt(kind, d, o) {
       const a = d.analysis || {}, b = host.decks && host.decks[other(d.id)], r = songOf(d);
       const base = { pos: o.pos, inTransition: !!o.inTransition, mashupActive: !!o.mashupActive, relaxed: relaxed(), onDemand: !!o.onDemand };
@@ -398,6 +475,21 @@
           bOtherEnv: b && from != null ? stemEnv(b, "other", Math.max(0, from), o.bEntry, bBeatS / 4) : null,
           aOtherRms: aEnv && aEnv.v.length ? median(aEnv.v) : null }));
         if (p.ok) { logPlan(kind, p); res = runPad(d, b, p, o); if (res) padLast = padEntries; }
+      } else if (kind === "chant_gate") {
+        const len = PHRASE_S(o);
+        p = planChantGate(Object.assign(base, { lineT: o.lineT, bpm: d.bpm, rate: rateOf(d), beats: a.beat_times,
+          vocals: a.vocal_active_regions, holdActive: !!o.holdActive, quiet: o.quiet, count: r.chants,
+          energyNow: meanEnergy(a.energy_curve, a.energy_times, o.lineT - len, o.lineT),
+          energyNext: meanEnergy(a.energy_curve, a.energy_times, o.lineT, o.lineT + len),
+          vocalLive: !!(d.stems && d.stems.vocals && d.stemGain && d.stemGain.vocals),
+          vocalBusy: !!((d._slices && d._slices.vocals) || (d._holds && d._holds.vocals) || d._artistSwap || d._artistChant) }));
+        // S21: one "vocal" unit of the FX budget (a choice gate, so AI ACTIONS skip it)
+        const fb = host.mod.fxBudget;
+        if (p.ok && !o.onDemand && fb && typeof fb.spend === "function") {
+          const s = fb.spend("vocal", 1, { phraseS: len, song: d.trackId || d.id });
+          if (s && !s.ok) p = no("fx_budget", `FX budget: ${s.why}`);
+        }
+        if (p.ok) { r.chants++; logPlan(kind, p); res = runChant(d, p, o); }
       }
       if (p && p.ok && !res) p = no("deck", "the deck refused the booking (nothing armed)");
       return { plan: p, res, r };
@@ -443,6 +535,12 @@
         if (!x.plan.ok) refuse(d, "slip_loop", o.lineT.toFixed(1), x.plan);
         else { r.slipBooked = o.lineT; return x.res; }
       }
+      // S20: planned once per phrase, 3 bars ahead (the 2-bar window next), never on a line a slip loop already owns
+      if (on("chant_gate") && r.chantLine !== o.lineT && r.slipBooked !== o.lineT && o.lineT > o.pos && o.lineT - o.pos <= 3 * o.bar) {
+        r.chantLine = o.lineT;
+        const x = attempt("chant_gate", d, o);
+        if (!x.plan.ok) refuse(d, "chant_gate", o.lineT.toFixed(1), x.plan);
+      }
       return null;
     }
 
@@ -471,7 +569,7 @@
       const mind = host.mod.djMind;
       const bar = 240 / (d.bpm || 128), pos = d._currentPosition(), a = d.analysis || {};
       const lines = a.phrase_boundaries_8bar || [];
-      const leadBars = { slip_loop: 4, pad_lead: 4 }[kind] || 1;
+      const leadBars = { slip_loop: 4, pad_lead: 4, chant_gate: 2 }[kind] || 1;
       const lead = leadBars * bar + MIN_LEAD_S * rateOf(d);
       let lineT = lines.find((t) => t - pos >= lead);
       if (lineT == null) { lineT = pos; while (lineT - pos < lead) lineT += 8 * bar; }
@@ -492,11 +590,16 @@
       (timers[d.id] || []).forEach(clearTimeout);
       timers[d.id] = [];
       if (d._slip && d.slipRelease) d.slipRelease();
+      if (d._artistChant) {                           // an armed / running chant gate opens again now
+        d._artistChant = null;
+        const lg = d.stemLive && d.stemLive.vocals && d.stemLive.vocals.gain;
+        if (lg) { const t = audioCtx.currentTime; lg.cancelScheduledValues(t); lg.setValueAtTime(1, t); if (d.playing && d.stemMix) d.stemMix(null, t + 0.03, 0.02); }
+      }
     }
 
     // on-demand wiring: the AI ACTIONS register API when present, and `ai-action` events on djEvents
     const ACTION_IDS = { "artist-slip": "slip_loop", "artist-tease": "cue_tease", "artist-roll": "roll", "artist-perc": "perc_bridge",
-      "artist-pad": "pad_lead" };
+      "artist-pad": "pad_lead", "artist-chant": "chant_gate" };
     let registered = false;
     const register = () => {
       const reg = host.mod.aiActions;

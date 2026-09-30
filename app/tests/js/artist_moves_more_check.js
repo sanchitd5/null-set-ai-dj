@@ -1,5 +1,5 @@
 // Node check for the two artist moves added on artist-moves-more (app/ui/static/artist-moves.js):
-// pad_lead (Lane 8 "pads first", learned stem_intro order).
+// pad_lead (Lane 8 "pads first", learned stem_intro order) and chant_gate (S20 gated vocal).
 // Pure planners on synthetic data, then the index.html wiring (button + toggle per move).
 const assert = require("assert");
 const fs = require("fs");
@@ -49,11 +49,44 @@ assert.ok(p.ok && p.window_beats === 16, JSON.stringify(p));
 p = am.planPadLead(Object.assign(padBase(), { aOtherRms: null }));
 assert.ok(p.ok && p.fallbacks.some((f) => /^gain=/.test(f)));
 
+// ---- chant_gate
 const beats = Array.from({ length: 400 }, (_, i) => i * beatS);
+const chantBase = () => ({ pos: 50, lineT: 64, bpm: BPM, rate: 1, beats, vocals: [[55, 70]], energyNow: 0.3, energyNext: 0.6,
+  count: 0, quiet: true, vocalLive: true, vocalBusy: false, inTransition: false, holdActive: false, mashupActive: false, relaxed: false, onDemand: false });
+p = am.planChantGate(chantBase());
+assert.ok(p.ok, JSON.stringify(p));
+assert.strictEqual(p.kind, "chant_gate");
+assert.strictEqual(p.release, 64, "opens again exactly on the phrase line");
+assert.strictEqual(p.window_beats, 8);
+assert.ok(Math.abs(p.start - 60) < 1e-9);
+assert.strictEqual(p.steps.length, 16, "straight 16ths: 32 slots, every other one open");
+for (const s of p.steps) assert.ok(Math.abs(s.t1 - s.t0 - 0.125) < 1e-9 && s.t0 >= p.start && s.t1 <= p.release);
+assert.ok(p.floor > 0 && p.floor < 0.5);
+const refuseC = (patch, gate) => { const r = am.planChantGate(Object.assign(chantBase(), patch)); assert.strictEqual(r.ok, false); assert.strictEqual(r.gate, gate, JSON.stringify(r)); };
+refuseC({ inTransition: true }, "transition");
+refuseC({ holdActive: true }, "transition");
+refuseC({ mashupActive: true }, "vocal_layer");
+refuseC({ vocalLive: false }, "no_stems");
+refuseC({ vocalBusy: true }, "busy");
+refuseC({ relaxed: true }, "relaxed");
+refuseC({ quiet: false }, "phrase_busy");
+refuseC({ count: 1 }, "cap");                        // once per song
+refuseC({ energyNow: null }, "unmeasured");
+refuseC({ energyNext: 0.2 }, "no_build");            // a gate is a build move
+refuseC({ vocals: null }, "unmeasured");
+refuseC({ vocals: [[10, 20]] }, "no_vocal");         // nothing sung, nothing to gate
+refuseC({ pos: 63.5 }, "late");
+// on demand skips the choice gates (cap, build, quiet) but keeps safety ones
+assert.ok(am.planChantGate(Object.assign(chantBase(), { onDemand: true, count: 5, quiet: false, energyNext: 0.1 })).ok);
+assert.strictEqual(am.planChantGate(Object.assign(chantBase(), { onDemand: true, vocalBusy: true })).gate, "busy");
+// 1-bar fallback when 2 bars are no longer ahead
+p = am.planChantGate(Object.assign(chantBase(), { pos: 61 }));
+assert.ok(p.ok && p.window_beats === 4, JSON.stringify(p));
+
 // ---- wiring: every new move has a button (ACTION_IDS) and a toggle in index.html
 const html = fs.readFileSync(path.join(STATIC, "index.html"), "utf8");
 const src = fs.readFileSync(path.join(STATIC, "artist-moves.js"), "utf8");
-for (const [btn, kind] of [["artist-pad", "pad_lead"]]) {
+for (const [btn, kind] of [["artist-pad", "pad_lead"], ["artist-chant", "chant_gate"]]) {
   assert.ok(html.includes(`data-ai-action="${btn}"`), btn);
   assert.ok(html.includes(`id="ap-artist-${kind}"`), kind);
   assert.ok(new RegExp(`"${btn}": "${kind}"`).test(src), `ACTION_IDS ${btn}`);
@@ -130,5 +163,47 @@ const o = (pos, over = {}) => Object.assign({ pos, bar: 2, entryT: 0, lineT: 64,
   const H3 = fakeHost({ a: a3, b: b3 }, { mod: { djMind: { core: { camelotScore: () => 0.6 } } } });
   mount(H3).tick(a3, o(47, { lineT: 999 }));
   assert.ok(a3.layers.length === 0 && H3.steps.some((s) => s.o.decision === "pad_lead" && /^key/.test(s.o.why)));
+}
+{
+  // chant gate: stem mode at the window, 16 gate steps on A's live vocal gain, full mix back after the line
+  const a = fakeDeck("a"), b = fakeDeck("b", { playing: false });
+  const H = fakeHost({ a, b });
+  const api = mount(H);
+  a.pos = 58.5;
+  assert.strictEqual(api.tick(a, o(58.5, { exitT: 200 })), null);
+  assert.deepStrictEqual(H.spent, ["vocal"], "one vocal unit of the FX budget");
+  H.advance(10);
+  const lg = a.stemLive.vocals.gain.calls;
+  assert.ok(lg.filter((c) => c[0] === "ramp" && c[1] === am.CHANT_FLOOR).length === 16, "16 closed steps");
+  assert.ok(a.mixCalls.some((m) => m[0] && Object.keys(m[0]).length === 0), "stem mode entered");
+  assert.ok(a.mixCalls.some((m) => m[0] === null), "full mix restored after the line");
+  const last = lg[lg.length - 1];
+  assert.ok(last[0] === "set" && last[1] === 1, "open on the line");
+  // once per song
+  api.tick(a, o(75.5, { lineT: 80, exitT: 200 }));
+  assert.ok(H.steps.some((s) => s.o.decision === "chant_gate" && /^cap/.test(s.o.why)));
+  // stop() opens an armed gate at once
+  const a4 = fakeDeck("a"), b4 = fakeDeck("b", { playing: false });
+  const H4 = fakeHost({ a: a4, b: b4 });
+  const api4 = mount(H4);
+  api4.tick(a4, o(59.5, { exitT: 200 }));
+  api4.stop(a4);
+  const c4 = a4.stemLive.vocals.gain.calls;
+  assert.ok(c4.length >= 2 && c4[c4.length - 1][0] === "set" && c4[c4.length - 1][1] === 1);
+}
+{
+  // FX budget refusal: nothing armed, the refusal names the gate
+  const a = fakeDeck("a"), b = fakeDeck("b", { playing: false });
+  const H = fakeHost({ a, b }, { mod: { fxBudget: { spend: () => ({ ok: false, why: "2 vocal moves this song" }) } } });
+  const api = mount(H);
+  api.tick(a, o(59.5, { exitT: 200 }));
+  H.advance(10);
+  assert.strictEqual(a.stemLive.vocals.gain.calls.length, 0);
+  assert.ok(H.steps.some((s) => s.o.decision === "chant_gate" && /^fx_budget/.test(s.o.why)));
+  // on demand (AI ACTIONS button) skips the budget, as the other artist buttons skip choice gates
+  a.pos = 58.5;
+  H.host.mod.djMind.fireAt = () => null;
+  const r = api.runNow("chant_gate");
+  assert.ok(r.ok, r.why);
 }
 console.log("artist_moves_more_check ok");
