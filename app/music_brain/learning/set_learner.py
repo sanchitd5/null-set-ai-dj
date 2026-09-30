@@ -879,6 +879,69 @@ def _merge_locked(observations: List[Observation], path: Path, set_ids: Sequence
     return store
 
 
+REVIEW_SIDECAR_DIR = CACHE_DIR / "learned_review"
+_OBS_FIELDS = tuple(Observation.__dataclass_fields__)
+
+
+def _stored_by_set(store: Dict[str, dict]) -> Dict[str, List[dict]]:
+    out: Dict[str, List[dict]] = {}
+    for e in store.values():
+        for o in e.get("observations", []):
+            if isinstance(o, dict) and o.get("set_id"):
+                out.setdefault(str(o["set_id"]), []).append(o)
+    return out
+
+
+def review_learned(set_id: Optional[str] = None, backend: Optional[str] = None, dry_run: bool = False,
+                   path: Path = LEARNED_PATH, sidecar_dir: Optional[Path] = None,
+                   log: Callable[[str], None] = lambda m: None) -> dict:
+    """Re-review stored observations, one set at a time (set_id=None: every set).
+    Load -> review (no lock: calls are slow) -> under the store lock, if the set is
+    unchanged, merge(kept, set_ids=(sid,)). Rejected ones go to a sidecar
+    <sidecar_dir>/<sid>.json with the model's reason, never silently lost.
+    dry_run: counts and the calls it would make, no model call."""
+    from app.music_brain.learning import set_ai
+    from app.music_brain.llm import claudecode as cc
+
+    b = cc.backend(backend)
+    sidecar_dir = Path(sidecar_dir or REVIEW_SIDECAR_DIR)
+    by_set = _stored_by_set(load_learned(path))
+    if set_id is not None:
+        if set_id not in by_set:
+            raise ValueError(f"no stored observations for set {set_id!r}")
+        by_set = {set_id: by_set[set_id]}
+    batch = set_ai.CLAUDECODE_REVIEW_BATCH if b == "claudecode" else set_ai.REVIEW_BATCH
+    out = {"backend": b, "model": cc.model() if b == "claudecode" else "local",
+           "dry_run": dry_run, "sets": []}
+    for sid, rows in sorted(by_set.items()):
+        # a copy: review() writes ai_rule into detail, rows must stay as stored for the check below
+        obs = [Observation(**{k: v for k, v in json.loads(json.dumps(o)).items() if k in _OBS_FIELDS}) for o in rows]
+        if dry_run:
+            reqs = set_ai.review_requests(obs, batch)
+            out["sets"].append({"set_id": sid, "observations": len(obs), "calls": len(reqs),
+                                "prompt_chars": sum(len(set_ai.REVIEW_SYSTEM) + len(r) for r in reqs)})
+            continue
+        res = set_ai.review(obs, log=log, backend=b)
+        row = {"set_id": sid, "observations": len(obs), "kept": len(res["kept"]),
+               "rejected": len(res["rejected"]), "ai": res["ai"]}
+        if res["ai"] != "reviewed":            # nothing answered: the store stays as it is
+            out["sets"].append(row | {"merged": False})
+            continue
+        with _store_lock(path):
+            if _stored_by_set(load_learned(path)).get(sid) != rows:
+                out["sets"].append(row | {"merged": False, "note": "set changed while reviewing; run again"})
+                continue
+            if res["rejected"]:
+                sidecar_dir.mkdir(parents=True, exist_ok=True)
+                side = sidecar_dir / f"{re.sub(r'[^A-Za-z0-9_.-]', '_', sid)[:80]}.json"
+                side.write_text(json.dumps({"set_id": sid, "backend": b, "rejected": [asdict(o) for o in res["rejected"]]},
+                                           ensure_ascii=False, indent=1), encoding="utf-8")
+                row["sidecar"] = str(side)
+            _merge_locked(res["kept"], path, (sid,))
+        out["sets"].append(row | {"merged": True})
+    return out
+
+
 class _store_lock:
     """Exclusive flock on <store>.lock beside the learned store, held across load -> save.
     No-op where fcntl is missing (Windows), same as set_import's atlas lock."""

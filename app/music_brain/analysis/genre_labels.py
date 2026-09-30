@@ -115,3 +115,137 @@ def for_export(names: Dict[str, str], genres: Dict[str, str], eras: Dict[str, st
         if e:
             out[tid] = e
     return dict(sorted(out.items()))
+
+
+# ------------------------------------------------------------------ offline labelling
+# python -m app.music_brain.analysis.genre_labels label [--missing-only|--all]
+#     [--backend local|claudecode] [--overwrite] [--dry-run]
+# Labels library songs by name only (nothing else leaves the machine). The backend is
+# AI_REVIEW_BACKEND (default local); claudecode is the owner's own `claude` CLI login,
+# see app/music_brain/llm/claudecode.py.
+
+LABEL_BATCH = 5                # local model, same as the server's suggest calls
+CLAUDECODE_LABEL_BATCH = 40
+LABEL_SCHEMA = {"type": "object", "required": ["labels"], "properties": {
+    "labels": {"type": "array", "items": {"type": "object", "required": ["title_key", "genre", "era"],
+               "properties": {"title_key": {"type": "string"}, "genre": {"type": "string"},
+                              "era": {"type": "string"}}}}}}
+
+
+def _label_system() -> str:
+    from app.music_brain.analysis.genre import GENRE_FAMILIES, SCENES
+    vocab = sorted({w for words in GENRE_FAMILIES.values() for w in words} | set(SCENES))
+    return ("You label songs for a DJ's library by name only. For each song give its genre and "
+            "its era. Genre: prefer one of these words, or a short phrase built from them: "
+            + ", ".join(vocab) + ". Use another short genre name only when none fits. Era: the "
+            "decade the recording came out, written like \"1990s\" or \"2020s\"; \"\" when unsure. "
+            "Copy each title_key exactly. Answer JSON: {\"labels\": [{\"title_key\": \"<as given>\", "
+            "\"genre\": \"<genre>\", \"era\": \"<decade>\"}]}")
+
+
+def library_titles(cache_dir: Optional[Path] = None) -> Dict[str, str]:
+    """{title key: display name} for every library song: uploads/_names.json, a duplicate
+    id resolved to its canonical id (track_aliases.json) so a song counts once."""
+    from app.music_brain.config import CACHE_DIR
+    from app.ui.services.dedup_songs import load_aliases, resolve_alias
+    cache = Path(cache_dir or CACHE_DIR)
+    try:
+        names = json.loads((cache / "uploads" / "_names.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(names, dict):
+        return {}
+    aliases = load_aliases(cache)
+    out: Dict[str, str] = {}
+    for tid in names:
+        n = names.get(resolve_alias(tid, cache, aliases)) or names[tid]
+        if isinstance(n, str) and (k := name_key(n)):
+            out.setdefault(k, n)
+    return out
+
+
+def _era(label) -> str:
+    from app.music_brain.analysis.genre import decade_of
+    d = decade_of(label)
+    return f"{d}s" if d is not None else ""
+
+
+def label_library(missing_only: bool = True, overwrite: bool = False, backend: Optional[str] = None,
+                  dry_run: bool = False, cache_dir: Optional[Path] = None, chat=None,
+                  log=lambda m: None) -> dict:
+    """Ask the model for {genre, era} of library songs; local labels win unless overwrite.
+    dry_run: counts and calls only, no model call. `chat` is for tests (skips the backend)."""
+    from app.music_brain.learning import set_ai
+    p = path(cache_dir)
+    genres, eras = load(p)
+    titles = library_titles(cache_dir)
+    todo = [(k, n) for k, n in sorted(titles.items())
+            if not missing_only or not (genres.get(k) and eras.get(k))]
+    from app.music_brain.llm import claudecode as cc
+    b = cc.backend(backend)
+    batch = CLAUDECODE_LABEL_BATCH if b == "claudecode" else LABEL_BATCH
+    system = _label_system()
+    users = [json.dumps({"songs": [{"title_key": k, "name": n} for k, n in todo[s:s + batch]]},
+                        ensure_ascii=False) for s in range(0, len(todo), batch)]
+    out = {"backend": b, "songs": len(titles), "to_label": len(todo), "calls": len(users)}
+    if dry_run:   # no model call, no CLI needed
+        return out | {"dry_run": True, "prompt_chars": sum(len(system) + len(u) for u in users)}
+    tag = ""
+    if chat is None:
+        chat, tag, _ = set_ai.backend_chat(LABEL_SCHEMA, b)
+    added = changed = answered = 0
+    for i, user in enumerate(users):
+        data = set_ai._ask(system, user, chat, "labels", tag=tag)
+        if data is None:
+            out["ai"] = "skipped (no model answering)"
+            break
+        asked = {s["title_key"] for s in json.loads(user)["songs"]}
+        for x in data.get("labels") if isinstance(data.get("labels"), list) else []:
+            if not isinstance(x, dict) or x.get("title_key") not in asked:
+                continue           # a key the model made up or changed
+            answered += 1
+            k = x["title_key"]
+            for store, v in ((genres, _clean(str(x.get("genre") or "")).lower()), (eras, _era(x.get("era")))):
+                if not v or store.get(k) == v:
+                    continue
+                if not store.get(k):
+                    added += 1
+                elif overwrite:
+                    changed += 1
+                else:
+                    continue       # the local label wins
+                store[k] = v
+        log(f"labels: {min((i + 1) * batch, len(todo))}/{len(todo)}")
+    if added or changed:
+        out["saved"] = save(genres, eras, p)
+    return out | {"answered": answered, "added": added, "overwritten": changed}
+
+
+def main(argv=None) -> int:
+    import argparse
+    import sys
+    parser = argparse.ArgumentParser(prog="python -m app.music_brain.analysis.genre_labels")
+    sub = parser.add_subparsers(dest="command", required=True)
+    p = sub.add_parser("label", help="Label library songs with genre / era (names only are sent).")
+    g = p.add_mutually_exclusive_group()
+    g.add_argument("--missing-only", action="store_true", help="songs without a genre or era (default)")
+    g.add_argument("--all", action="store_true", help="every library song")
+    p.add_argument("--backend", choices=("local", "claudecode"), default=None,
+                   help="default: AI_REVIEW_BACKEND, else local")
+    p.add_argument("--overwrite", action="store_true", help="the model's answer replaces a local label")
+    p.add_argument("--dry-run", action="store_true", help="counts and calls only, no model call")
+    args = parser.parse_args(argv)
+    try:
+        from dotenv import load_dotenv
+        load_dotenv()
+        res = label_library(missing_only=not args.all, overwrite=args.overwrite, backend=args.backend,
+                            dry_run=args.dry_run, log=lambda m: print(m, file=sys.stderr, flush=True))
+    except Exception as exc:  # one JSON error line, never a traceback on stdout
+        print(json.dumps({"error": f"{type(exc).__name__}: {str(exc)[:400]}"}, indent=2))
+        return 1
+    print(json.dumps(res, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -176,6 +176,31 @@ Logs: `/tmp/ai-dj-server.log` (app), `/tmp/ai-dj-omni-server.log` (model).
 | `SUGGEST_BUDGET_S` / `SUGGEST_VERIFY` | `15` / `1` | suggestion time budget / check picks against YouTube |
 | `DJ_LIBRARY_DIRS` | none | semicolon-separated local music folders |
 | `LOG_LEVEL` / `CONSOLE_LEVEL` | `info` / `warn` | app log and `start.sh` console verbosity |
+| `AI_REVIEW_BACKEND` | `local` | `claudecode` sends two offline jobs (AI review of learned moves, genre / era labels) to your own `claude` CLI login |
+| `CLAUDECODE_MODEL` / `CLAUDECODE_CONCURRENCY` | `sonnet` / `1` | model for `claude --model`; parallel `claude` calls (max 2) |
+
+Everything runs 100% on your machine by default. The Claude Code backend is optional and off
+unless `AI_REVIEW_BACKEND=claudecode`; song picks and the live ear always stay on the local
+model. When it is on, the review sends observation facts (move kind, set times, stem levels,
+tempo gap, key score) with song names and short lyric lines, and labelling sends song names
+only. It uses the `claude` binary you installed and logged in to with your own Claude
+subscription (`ANTHROPIC_API_KEY` is removed from the child process). Anthropic's terms say
+subscription (OAuth) login "is intended exclusively for purchasers of Claude Free, Pro, Max,
+Team, and Enterprise subscription plans and is designed to support ordinary use of Claude Code
+and other native Anthropic applications" ([legal and compliance](https://code.claude.com/docs/en/legal-and-compliance)).
+So this is for personal use through your own install: if you share the app, each person must
+use their own `claude` login or leave the backend off; never bundle, share or proxy credentials.
+
+```bash
+python3 -m app.music_brain.agent_bridge learned-review --all --backend claudecode --dry-run   # counts and calls, no model
+python3 -m app.music_brain.agent_bridge learned-review --set SET_ID --backend claudecode
+python3 -m app.music_brain.analysis.genre_labels label --missing-only --backend claudecode --dry-run
+python3 -m app.music_brain.analysis.genre_labels label --missing-only --backend claudecode
+```
+
+`learned-review` merges the kept moves back per set under the store lock and saves rejected ones,
+with the model's reason, to `data/cache/learned_review/<set id>.json`. Labels never replace a
+label you already have unless you pass `--overwrite`.
 
 Disk use: stems (`data/cache/stems/`) are 16-bit FLAC and key-locked renders (`data/cache/keylock/`) are 24-bit FLAC, both lossless. An older WAV cache keeps working; convert it in place with `python3 -m app.music_brain.audio_convert` (dry run, prints the projected saving) and then `--apply` while the app is idle. Add `--jobs N` to convert N folders in parallel (default min(4, cpus / 2); `--max-mem-gb` lowers N to fit memory).
 
