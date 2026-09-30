@@ -250,9 +250,12 @@ def qc(out: np.ndarray, sr: int, layers, norm: float, slots) -> dict:
 
 
 def select_chain(cache_dir: str, n: int = 12, lanes: Optional[Dict[str, int]] = None,
-                 bpm_lo: float = 124.5, bpm_hi: float = 129.5, key_min: float = KEY_SAFE_MIN) -> List[dict]:
+                 bpm_lo: float = 124.5, bpm_hi: float = 129.5, key_min: float = KEY_SAFE_MIN,
+                 keep=None, final_bonus=None) -> List[dict]:
     """Best-`works` path of n songs through the pair atlas that passes the live gates (Bass / Drop Swap only).
-    key_min: KEY_SAFE_MIN for handovers, mashup.MIN_KEY_SCORE when the pair's melodic stems are layered."""
+    key_min: KEY_SAFE_MIN for handovers, mashup.MIN_KEY_SCORE when the pair's melodic stems are layered.
+    keep(song) -> bool: extra per-song filter (song dict has id, name, bpm, cam, genre, level, analysis, ...).
+    final_bonus(song) -> float: added to a path's score for the song it ends on (e.g. the climax last)."""
     import sqlite3
     from app.music_brain.analysis.genre import family_jump
     from app.music_brain.analysis.genre_labels import name_key, title_key
@@ -262,18 +265,23 @@ def select_chain(cache_dir: str, n: int = 12, lanes: Optional[Dict[str, int]] = 
     db = sqlite3.connect(f"file:{cache_dir}/app.db?mode=ro", uri=True)
     labels = dict(db.execute("select key, genre from labels where genre is not null"))
     cand = {}
-    for tid, name, bpm, cam, feat in db.execute("select id, name, bpm, camelot, features from atlas_tracks"):
+    for tid, name, bpm, cam, feat, lvl in db.execute(
+            "select id, name, bpm, camelot, features, level from atlas_tracks"):
         g = labels.get(name_key(name)) or labels.get(title_key(name))
         if g not in lanes or not bpm or not bpm_lo <= bpm <= bpm_hi or not cam:
             continue
         if any(w in name.lower() for w in ("unreleased", "set cut")):
             continue
         st = [s for s in glob.glob(f"{cache_dir}/stems/{tid}*_htdemucs_ft") if os.path.exists(s + "/bass.flac")]
-        an = glob.glob(f"{cache_dir}/analysis/{tid}*.v5.json")
+        an = glob.glob(f"{cache_dir}/analysis/{tid}*.v6.json") or glob.glob(f"{cache_dir}/analysis/{tid}*.v5.json")
         if st and an:
             f = json.loads(feat or "{}")
-            cand[tid] = dict(id=tid, name=name, bpm=bpm, cam=cam, genre=g, stems=st[0], analysis=an[0],
-                             stem_bars={k: f.get(k) for k in ("anchor", "bar", "bars")} if f.get("bars") else None)
+            c = dict(id=tid, name=name, bpm=bpm, cam=cam, genre=g, level=lvl, stems=st[0], analysis=an[0],
+                     stem_bars={k: f.get(k) for k in ("anchor", "bar", "bars")} if f.get("bars") else None)
+            if keep is None or keep(c):
+                cand[tid] = c
+    if not cand:
+        return []
     vet = V.load(cache_dir=Path(cache_dir))
     ids = list(cand)
     marks = ",".join("?" * len(ids))
@@ -302,6 +310,8 @@ def select_chain(cache_dir: str, n: int = 12, lanes: Optional[Dict[str, int]] = 
         if budget[0] > 2_000_000:
             return
         if len(path) == n:
+            if final_bonus:
+                score += final_bonus(cand[path[-1]])
             if score > best[0]:
                 best[0], best[1] = score, (list(path), list(steps))
             return
