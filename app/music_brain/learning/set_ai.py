@@ -163,6 +163,12 @@ song positions (seconds) the set played, in set order.
 Reject only when the evidence itself looks wrong: no words where words are
 claimed, a jump between two copies of the same chorus, stem levels that
 contradict the move, a duplicate of another item.
+Never reject a move for its key score or tempo gap: a real DJ may blend clashing
+keys or big tempo gaps on purpose, and the player applies its own key and tempo
+limits when it plays. A large tempo gap is a reason to reject only when the
+levels or sources also show the detection is wrong. A bass swap (the bass owner
+flipping from one record to the other while the drums keep running) is a core
+move: keep it whenever the bass levels support it.
 For kept items write the rule a DJ could reuse, ONE concrete sentence built
 from this item's evidence: name the stems and their order, the bars or seconds,
 which vocal line (by its position, e.g. "the second hook line"; never quote the
