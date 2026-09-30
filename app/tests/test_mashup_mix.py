@@ -58,6 +58,61 @@ def _chain(n=8, stems_dir=None):
     return out
 
 
+def test_label_cluster_is_one_cluster_only():
+    assert mm.label_cluster("melodic techno") == "melodic"
+    assert mm.label_cluster("progressive house") == "melodic"
+    assert mm.label_cluster("bass house") is None          # bridge label: house AND bass
+    for g in (None, "", "electronic", "pop", "indie electronic"):
+        assert mm.label_cluster(g) is None
+
+
+def test_build_plan_gate_zero_genre_shift():
+    ch = _chain()
+    assert mm.build_plan(ch, 120.5)["genre"] == {"cluster": "melodic", "label": "melodic house"}
+    ch = _chain()
+    ch[3]["genre"] = "melodic techno"                        # same cluster, two sub-labels: allowed
+    assert mm.build_plan(ch, 120.5)["genre"] == {"cluster": "melodic", "label": None}
+    for g in ("techno", "bass house", "electronic", None):   # neighbour cluster, bridge, vague, unknown
+        ch = _chain()
+        ch[5]["genre"] = g
+        with pytest.raises(ValueError, match="genre gate"):
+            mm.build_plan(ch, 120.5)
+
+
+def test_peak_core_only_on_a_drop():
+    an, st = _song(full=(32, 64))
+    an["drops"] = [{"start": 32 * BAR, "energy": 1.0}, {"start": 48 * BAR, "energy": 1.0}]
+    an["main_drop"] = {"start": 48 * BAR}
+    c = mm.pick_peak_core(an, st)
+    assert c["how"] == "main drop" and c["start"] == pytest.approx(48 * BAR)
+    an["main_drop"] = None
+    assert mm.pick_peak_core(an, st)["how"] == "drop line"
+    an["drops"] = [{"start": 80 * BAR, "energy": 1.0}]             # the only drop line sits in a weak stretch
+    assert mm.pick_peak_core(an, st) is None                       # left out, never a groove-only window
+    an.pop("drops")
+    assert mm.pick_peak_core(an, st) is None                       # flat energy curve: no drop line at all
+
+
+def test_peak_gate_and_climax():
+    ch = _chain()
+    for i, s in enumerate(ch):
+        s["core"]["how"], s["level"] = "drop line", 5 + (i == 6)
+    p = mm.build_plan(ch, 120.5, peak=True)
+    assert p["shape"] == {"peak": True, "climax_index": 6, "rise_db": mm.CLIMAX_RISE_DB}
+    ch[2]["core"]["how"] = "full-groove phrase"
+    with pytest.raises(ValueError, match="peak gate"):
+        mm.build_plan(ch, 120.5, peak=True)
+
+
+def test_percentile_and_rising_leveller():
+    assert mm.percentile([3, 5, 7, 9], 7) == 75.0 and mm.percentile([], 7) is None
+    sr, blk = 1000, 8 * BAR
+    x = np.full((int(6 * blk * sr), 1), 0.1, np.float32)
+    g = mm.level(x, sr, blk, rise_db=1.5)
+    assert g[0] == pytest.approx(-0.75) and g[-1] == pytest.approx(0.75)
+    assert all(b > a for a, b in zip(g, g[1:]))
+
+
 def test_plan_is_json_and_layers_by_stem():
     p = mm.build_plan(_chain(), 120.5)
     json.dumps(p)

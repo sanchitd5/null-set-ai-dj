@@ -28,7 +28,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Sequence
 
 import numpy as np
 import soundfile as sf
@@ -109,6 +109,66 @@ def pick_core(analysis, stem_bars: Optional[dict] = None, long: bool = False, en
         return None
     m = min(mean(w["start"] + j * BLOCK_BARS * bar, BLOCK_BARS) for j in range(2))
     return dict(w, bars=16, share=round(m / top, 2), how=w["how"] + " (below band)")
+
+
+PEAK_HOW = ("main drop", "drop line")
+PEAK_MIN_PCT = 50.0       # a peak song's energy level sits in the top half of its genre in the library
+CLIMAX_RISE_DB = 1.5      # the planned gentle rise, first core to last (the leveller's target ramp)
+
+
+def pick_peak_core(analysis, stem_bars: Optional[dict] = None, long: bool = False, enter_bars: int = ENTER_BARS,
+                   exit_bars: int = EXIT_BARS) -> Optional[dict]:
+    """Peak-move core (owner: "high energy peak set movements"): a window that STARTS on a drop line
+    (v6 drops via blend.track_drop_lines, the v6 main drop first) and holds full level (every 8-bar block
+    >= BAND of the song's strongest block). 32 bars when `long` and one fits, else 16. None when the song has
+    no drop that qualifies: then the song is left out, never given a groove-only window."""
+    from app.music_brain.render.blend import main_drop_time, track_drop_lines
+    bpm = float(sm._g(analysis, "bpm") or 0)
+    dur = float(sm._g(analysis, "duration") or 0)
+    if bpm <= 0 or dur <= 0:
+        return None
+    bar = 240.0 / bpm
+    phrases = list(sm._g(analysis, "phrase_boundaries_8bar") or [])
+    mean = _level_fn(analysis, stem_bars)
+    top = max([mean(t, BLOCK_BARS) for t in phrases] or [-1.0])
+    if top <= 0:
+        return None
+    main = main_drop_time(analysis)
+    drops = sorted({float(t) for t, _, _ in track_drop_lines(analysis, bar)})
+    for k in ((32, 16) if long else (16,)):
+        cand = []
+        for t in drops:
+            if t - enter_bars * bar < 0 or t + (k + exit_bars) * bar > dur:
+                continue
+            m = min(mean(t + j * BLOCK_BARS * bar, BLOCK_BARS) for j in range(k // BLOCK_BARS))
+            if m >= BAND * top:
+                is_main = main is not None and abs(t - main) < 1e-3
+                cand.append((is_main, m, t))
+        if cand:
+            is_main, m, t = max(cand)
+            return {"start": t, "end": t + k * bar, "bars": k, "share": round(m / top, 2),
+                    "how": "main drop" if is_main else "drop line"}
+    return None
+
+
+def genre_levels(cache_dir: str) -> dict:
+    """{genre label: sorted atlas energy levels (1-10) of every library song with that label}."""
+    from app.music_brain.analysis.genre_labels import name_key, title_key
+    db = sqlite3.connect(f"file:{cache_dir}/app.db?mode=ro", uri=True)
+    labels = dict(db.execute("select key, genre from labels where genre is not null"))
+    out: dict = {}
+    for name, lvl in db.execute("select name, level from atlas_tracks where level is not null"):
+        g = labels.get(name_key(name)) or labels.get(title_key(name))
+        if g:
+            out.setdefault(g, []).append(int(lvl))
+    return {g: sorted(v) for g, v in out.items()}
+
+
+def percentile(levels: Sequence[int], level) -> Optional[float]:
+    """Share (0-100) of `levels` at or under `level`; None when unknown."""
+    if level is None or not levels:
+        return None
+    return round(100.0 * sum(x <= level for x in levels) / len(levels), 1)
 
 
 def enter_ok(analysis, stem_bars: Optional[dict], core_start: float, enter_bars: int) -> bool:
@@ -206,9 +266,117 @@ def sections(chain: List[dict], sl: List[dict], bar: float, total: float) -> Lis
     return out
 
 
-def build_plan(chain: List[dict], target: float) -> dict:
+def label_cluster(label) -> Optional[str]:
+    """The ONE electronic cluster (genre.ELECTRONIC_CLUSTERS) a label sits in, else None: no label, a
+    non-electronic family, bare / unknown "electronic", or a bridge label in two clusters (bass house =
+    house AND bass) all return None."""
+    from app.music_brain.analysis.genre import ELECTRONIC_CLUSTERS, genre_families
+    fams = genre_families(label) if label else set()
+    return next(iter(fams)) if len(fams) == 1 and fams <= set(ELECTRONIC_CLUSTERS) else None
+
+
+def single_genre(chain: List[dict]) -> dict:
+    """Owner rule (mashup = "should sound as a single song"): zero genre shift. Every song sits in the
+    same single cluster, neighbours NOT allowed. Returns {cluster, label}; label is the shared sub-label
+    when all songs carry the same one, else None. Raises ValueError when the chain breaks the rule."""
+    clusters = [label_cluster(s.get("genre")) for s in chain]
+    bad = [f"{s['name']} ({s.get('genre')})" for s, c in zip(chain, clusters) if c is None]
+    if bad:
+        raise ValueError(f"genre gate: not in exactly one electronic cluster: {', '.join(bad)}")
+    if len(set(clusters)) != 1:
+        raise ValueError(f"genre gate: more than one cluster in the mashup: {sorted(set(clusters))}")
+    labels = {str(s["genre"]).strip().lower() for s in chain}
+    return {"cluster": clusters[0], "label": labels.pop() if len(labels) == 1 else None}
+
+
+BPM_SPAN = 0.035          # a genre's peak chain keeps to +-3.5 % around its qualifying songs' median tempo
+CLIMAX_BONUS = 20.0       # chain score per energy level of the song the chain ends on (the climax last)
+
+
+def peak_candidates(cache_dir: str, genres: Sequence[str], liked: set, levels: dict) -> List[dict]:
+    """Library songs with one of `genres`, stems + analysis, a qualifying drop core (pick_peak_core) and an
+    energy level in the top half of their genre (PEAK_MIN_PCT). Each carries `an`, `core`, `pct`."""
+    out = []
+
+    def keep(c):
+        pct = percentile(levels.get(c["genre"], []), c.get("level"))
+        if pct is None or pct < PEAK_MIN_PCT:
+            return False
+        an = json.loads(Path(c["analysis"]).read_text())
+        core = pick_peak_core(an, c.get("stem_bars"), long=c["name"] in liked)
+        if not core:
+            return False
+        c.update(an=an, core=core, pct=pct)
+        out.append(c)
+        return False           # counting pass only: no chain search
+    sm.select_chain(cache_dir, 2, lanes={g: 0 for g in genres}, bpm_lo=60, bpm_hi=200, keep=keep)
+    return out
+
+
+def pick_peak_chain(cache_dir: str, n: int, min_songs: int = 8, liked: Optional[set] = None) -> tuple:
+    """(chain, ranking) for the peak single-genre mashup. Every one-cluster sub-label is scored by its peak
+    candidates in its densest tempo band; a label with >= min_songs of them is chained (n songs, then fewer
+    down to min_songs) with the highest-energy song favoured last (the climax). Winner: the chained label
+    with the highest mean energy percentile. Whole-cluster fallback only when no sub-label chains."""
+    liked = liked or set()
+    levels = genre_levels(cache_dir)
+    labels = [g for g in levels if label_cluster(g)]
+    rank = []
+
+    def run(genres, name):
+        cands = peak_candidates(cache_dir, genres, liked, levels)
+        if len(cands) < min_songs:
+            return {"genre": name, "qualifying": len(cands), "chained": 0}
+        bpm = float(np.median([c["bpm"] for c in cands]))
+        ids = {c["id"]: c for c in cands if abs(c["bpm"] / bpm - 1) <= BPM_SPAN}
+        r = {"genre": name, "qualifying": len(cands), "in_band": len(ids), "bpm_band": round(bpm, 1), "chained": 0}
+        if len(ids) < min_songs:
+            return r
+        for k in range(n, min_songs - 1, -1):
+            ch = sm.select_chain(cache_dir, k, lanes={g: 0 for g in genres}, bpm_lo=bpm * (1 - BPM_SPAN),
+                                 bpm_hi=bpm * (1 + BPM_SPAN), key_min=MIN_KEY_SCORE,
+                                 keep=lambda c: c["id"] in ids,
+                                 final_bonus=lambda c: CLIMAX_BONUS * (c.get("level") or 0))
+            if len(ch) >= k:
+                for c in ch:
+                    c.update({x: ids[c["id"]][x] for x in ("an", "core", "pct")})
+                r.update(chained=len(ch), mean_pct=round(float(np.mean([c["pct"] for c in ch])), 1),
+                         mean_level=round(float(np.mean([c["level"] for c in ch])), 2), chain=ch)
+                break
+        return r
+
+    for g in labels:
+        rank.append(run([g], g))
+    ok = [r for r in rank if r["chained"]]
+    if not ok:
+        for cl in dict.fromkeys(label_cluster(g) for g in labels):
+            r = run([g for g in labels if label_cluster(g) == cl], f"cluster {cl}")
+            rank.append(r)
+            if r["chained"]:
+                ok = [r]
+                break
+    rank.sort(key=lambda r: (r["chained"] > 0, r.get("mean_pct", 0), r["qualifying"]), reverse=True)
+    best = next((r for r in rank if r["chained"]), None)
+    return (best["chain"] if best else []), [{k: v for k, v in r.items() if k != "chain"} for r in rank]
+
+
+def peak_shape(chain: List[dict]) -> dict:
+    """Peak gate: every core starts on a drop (PEAK_HOW), else ValueError. Returns the shape: the climax
+    (highest energy level, then strongest core) and the planned gentle rise to it."""
+    bad = [s["name"] for s in chain if s["core"].get("how") not in PEAK_HOW]
+    if bad:
+        raise ValueError(f"peak gate: core is not a drop window: {', '.join(bad)}")
+    score = [((s.get("level") or 0), s["core"].get("share", 0)) for s in chain]
+    return {"peak": True, "climax_index": int(max(range(len(chain)), key=lambda i: score[i])),
+            "rise_db": CLIMAX_RISE_DB}
+
+
+def build_plan(chain: List[dict], target: float, peak: bool = False) -> dict:
     """Pure plan (JSON-safe, no audio) for a chain from swap_mix.select_chain with `an` (analysis), `core`
-    (pick_core) and optional `stem_bars` per song."""
+    (pick_core / pick_peak_core) and optional `stem_bars` per song. Hard gates: one genre (single_genre);
+    with `peak`, every core a drop window (peak_shape). Either raises ValueError."""
+    genre = single_genre(chain)
+    shape = peak_shape(chain) if peak else {"peak": False, "rise_db": 0.0}
     bar = 240.0 / target
     for i, s in enumerate(chain):
         if i and not enter_ok(s.get("an"), s.get("stem_bars"), s["core"]["start"], ENTER_BARS):
@@ -222,7 +390,7 @@ def build_plan(chain: List[dict], target: float) -> dict:
             "i": c["i"], "id": s.get("id"), "name": s["name"], "genre": s.get("genre"), "key": s.get("cam"),
             "bpm": s["bpm"], "ratio": c["ratio"], "stretch_pct": c["stretch_pct"], "stems_dir": s.get("stems"),
             "core": s["core"], "enter_bars": c["enter_bars"], "exit_bars": c["exit_bars"],
-            "enter_refused": s.get("enter_refused"),
+            "enter_refused": s.get("enter_refused"), "level": s.get("level"), "energy_pct": s.get("pct"),
             "src": [s["core"]["start"] - c["enter_bars"] * bar_n, s["core"]["end"] + c["exit_bars"] * bar_n],
             "out": [c["pre"], c["post"]], "core_out": [c["lead"], c["lead_end"]],
             "gain": {"rms_match_dbfs": sm.TARGET_RMS_DBFS, "over": "core"},
@@ -231,7 +399,7 @@ def build_plan(chain: List[dict], target: float) -> dict:
             "parts": _parts(c, c["i"] == 0, c["i"] == len(sl) - 1, bar),
         })
     total = sl[-1]["post"]
-    return {"kind": "stem_mashup", "bpm": target, "bar_s": bar, "duration": total, "songs": songs,
+    return {"kind": "stem_mashup", "genre": genre, "shape": shape, "bpm": target, "bar_s": bar, "duration": total, "songs": songs,
             "sections": sections(chain, sl, bar, total),
             "rules": {"key_min": MIN_KEY_SCORE, "sub_hz": sm.SUB_HZ, "max_stretch": sm.MAX_STRETCH, "band": BAND,
                       "enter_bars": ENTER_BARS, "exit_bars": EXIT_BARS, "enter_gain": ENTER_GAIN}}
@@ -260,14 +428,16 @@ def energy_steps(x: np.ndarray, sr: int, bpm: float, drop_last: bool = True, low
     return {"blocks_db": b, "max_step_db": round(max(steps or [0.0]), 2), "range_db": round(max(b) - min(b), 2)}
 
 
-def level(out: np.ndarray, sr: int, block_s: float) -> List[float]:
+def level(out: np.ndarray, sr: int, block_s: float, rise_db: float = 0.0) -> List[float]:
     """Slow bus leveller: each block moves toward the median block level (capped at LEVEL_MAX_DB), gains
-    interpolated between block centres so nothing steps. Returns the block gains (dB)."""
+    interpolated between block centres so nothing steps. rise_db: the target is a straight ramp of that many
+    dB, first block to last (the planned build to the climax). Returns the block gains (dB)."""
     k = int(round(block_s * sr))
     b = np.asarray(block_db(out, sr, block_s))
     if len(b) < 2:
         return []
-    g = np.clip(float(np.median(b)) - b, -LEVEL_MAX_DB, LEVEL_MAX_DB)
+    ramp = np.linspace(-rise_db / 2, rise_db / 2, len(b))
+    g = np.clip(float(np.median(b)) + ramp - b, -LEVEL_MAX_DB, LEVEL_MAX_DB)
     gain = 10 ** (np.interp(np.arange(len(out)), (np.arange(len(b)) + 0.5) * k, g) / 20)
     out *= gain.astype(np.float32)[:, None]
     return [round(float(v), 2) for v in g]
@@ -329,7 +499,7 @@ def render_plan(plan: dict, out_wav: Path, tmp: Path) -> dict:
     for off, audio, *_ in layers:
         o = int(round(off * sr))
         out[o:o + len(audio)] += audio
-    lev = level(out, sr, BLOCK_BARS * plan["bar_s"])
+    lev = level(out, sr, BLOCK_BARS * plan["bar_s"], (plan.get("shape") or {}).get("rise_db", 0.0))
     norm = 10 ** (sm.PEAK_DBFS / 20) / float(np.max(np.abs(out)))
     out *= norm
     sf.write(str(out_wav), out, sr, subtype="PCM_24")
@@ -383,20 +553,19 @@ def main(argv=None) -> int:
     try:
         if args.songs < 8:
             raise ValueError("a mashup needs at least 8 songs")
-        chain = sm.select_chain(args.cache, args.songs, key_min=MIN_KEY_SCORE)
-        if len(chain) < args.songs:
-            raise ValueError(f"only {len(chain)} songs chain through the gates")
-        liked = liked_names(args.cache)
-        for s in chain:
-            s["an"] = json.loads(Path(s["analysis"]).read_text())
-            s["core"] = pick_core(s["an"], s.get("stem_bars"), long=s["name"] in liked)
-            if not s["core"]:
-                raise ValueError(f"{s['name']}: no core window with room for the enter / exit layers")
-        plan = build_plan(chain, sm.target_bpm([s["bpm"] for s in chain]))
-        out = Path(args.out)
+        chain, ranking = pick_peak_chain(args.cache, args.songs, liked=liked_names(args.cache))
+        if len(chain) < 8:
+            raise ValueError(f"no single genre chains 8 peak drop songs: {ranking[:3]}")
+        top2 = [r for r in ranking if r["qualifying"]][:2]
+        why = "; ".join(f"{r['genre']}: {r['qualifying']} peak drop songs, {r.get('in_band', 0)} in its tempo band, "
+                        f"chained {r['chained']}" + (f", mean energy pct {r['mean_pct']}" if r.get("mean_pct") else "")
+                        for r in top2)
+        plan = build_plan(chain, sm.target_bpm([s["bpm"] for s in chain]), peak=True)
+        plan["genre"]["ranking"] = top2
         if args.plan_only:
             print(json.dumps(plan))
             return 0
+        out = Path(args.out)
         out.with_suffix(".plan.json").write_text(json.dumps(plan, indent=1))
         rep = render_plan(plan, out.with_suffix(".wav"), Path(args.tmp or tempfile.mkdtemp()))
         subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(out.with_suffix(".wav")),
@@ -406,15 +575,19 @@ def main(argv=None) -> int:
             x, bsr = sf.read(args.before, dtype="float32", always_2d=True)
             before = {"rms": energy_steps(x, bsr, plan["bpm"]),
                       "low": energy_steps(x, bsr, plan["bpm"], lowpass_hz=LOW_HZ)}
-        lines = [f"Stem mashup mix: {len(chain)} songs, {plan['bpm']} BPM (median, key-locked), cores of 16 bars "
+        lines = [f"Genre (zero shift): cluster {plan['genre']['cluster']}, sub-label {plan['genre']['label']} ({why})",
+                 f"Stem mashup mix: {len(chain)} songs, {plan['bpm']} BPM (median, key-locked), cores of 16 bars "
                  f"(32 for liked songs); each song enters by its other stem ({ENTER_BARS} bars) and leaves by its "
                  f"drums ({EXIT_BARS} bars); {sm._mmss(rep['duration'])} total",
-                 "core start | song | genre | key | BPM | stretch % | core in source (s) | key score into next"]
+                 f"PEAK shape: every core starts on a drop; climax = song {plan['shape']['climax_index'] + 1}; "
+                 f"planned rise {plan['shape']['rise_db']} dB first to last",
+                 "core start | song | genre | key | BPM | stretch % | core in source (s) | energy | key score into next"]
         for s in plan["songs"]:
             c = s["core"]
             lines.append(f"{sm._mmss(s['core_out'][0])} | {s['name']} | {s['genre']} | {s['key']} | {s['bpm']} | "
                          f"{s['stretch_pct']:+.2f} | {c['start']:.1f}-{c['end']:.1f} ({c['bars']} bars, {c['how']}, "
-                         f"weakest block {c['share']:.0%} of top) | "
+                         f"weakest block {c['share']:.0%} of top) | energy level {s['level']}, "
+                         f"{s['energy_pct']} pct of genre | "
                          + (str(s["next"]["key_score"]) if s["next"] else "end")
                          + (f" | {s['enter_refused']}" if s["enter_refused"] else ""))
         e, lo = rep["energy"], rep["energy_low"]
