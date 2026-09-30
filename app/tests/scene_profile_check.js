@@ -71,6 +71,39 @@ assert.strictEqual(td.isOn("ap-punjabi-profile", "off"), false);
 assert.strictEqual(td.isOn("ap-punjabi-profile", "auto"), true);
 assert.deepStrictEqual(td.restorePlan({ "ap-punjabi-profile": "off" }, { "ap-punjabi-profile": "auto" }), [["ap-punjabi-profile", "off"]]);
 
+// learned moves under the profile (autopilot learnedRecipe + scene-profile learned*; techniques.py learned_pick)
+{
+  const lr = ap.learnedRecipe;
+  const base = { oneSong: true, recipe: "Echo Out", keyScore: 0, blend: null, vocalRule: false };
+  const full = { ...base, profile: { level: "full" } }, hand = { ...base, profile: { level: "handover" } };
+  const pick = (o) => ({ kind: "stem_intro", recipe: "Long Blend", seen: 32, source: "aLWCv6MGyho 15:32", scene_clash: 9,
+    tempo_gap: 0.0196, clash: "learned from DJ Timeless NYC Live Sessions 1: 9 key-clash stem intros", ...o });
+  const ok = lr(pick(), full, SP);
+  assert.strictEqual(ok.recipe, "Long Blend", "full + 9 clashing Punjabi sightings: the clash blend plays");
+  assert.match(ok.why, /learned from DJ Timeless NYC Live Sessions 1: 9 key-clash stem intros/);
+  assert.strictEqual(lr(pick(), base, SP), null, "no profile: key gate as before");
+  assert.strictEqual(lr(pick(), hand, SP), null, "handover: no clash exemption");
+  assert.strictEqual(lr(pick(), full), null, "no scene-profile module: key gate as before");
+  assert.strictEqual(lr(pick({ scene_clash: 2 }), full, SP), null, "too little evidence");
+  assert.strictEqual(lr(pick({ kind: "bass_swap", recipe: "Bass Swap" }), full, SP).recipe, "Bass Swap");
+  // tempo: past the 8 % cap the learned move is the profile's Quick Cut, never a stretch
+  const cut = lr(pick({ tempo_gap: 0.3245 }), full, SP);
+  assert.strictEqual(cut.recipe, "Quick Cut");
+  assert.match(cut.why, /keylock cap/);
+  const served = lr(pick({ tempo_gap: 0.3245, recipe: "Quick Cut", planned: "Long Blend", degraded: "tempo gap 32.5% past the 8% keylock cap" }), full, SP);
+  assert.strictEqual(served.recipe, "Quick Cut");
+  assert.strictEqual(lr(pick({ tempo_gap: 0.3245, scene_clash: 0 }), full, SP), null, "a clash blend without evidence does not become a cut");
+  assert.strictEqual(lr(pick({ tempo_gap: 0.08 }), full, SP).recipe, "Long Blend", "8 % exactly: inside the cap");
+  assert.strictEqual(lr(pick({ recipe: "Quick Cut", planned: "Long Blend" }), { ...base, keyScore: 0.9 }, SP), null, "no Quick Cut without the full level");
+  assert.strictEqual(lr(pick({ tempo_gap: 0.3245 }), { ...full, recipe: "Quick Cut" }, SP), null, "already the cut: no switch");
+  for (const g of [0, 0.05, 0.079, 0.081, 0.1, 0.178, 0.33]) {
+    const r = lr(pick({ tempo_gap: g }), full, SP);
+    if (g > 0.08) assert.strictEqual(r.recipe, "Quick Cut", `gap ${g}`);
+  }
+  assert.strictEqual(SP.learnedTempoOk("handover", 0.3), true);
+  assert.strictEqual(SP.learnedClashOk("handover", 99), false);
+}
+
 // off == before the profile: the same vectors hash to what main produced before this change
 const canon = (v) => JSON.stringify(v, (k, x) => (x && typeof x === "object" && !Array.isArray(x)
   ? Object.fromEntries(Object.keys(x).sort().map((q) => [q, x[q]])) : x));
