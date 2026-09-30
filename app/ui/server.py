@@ -2726,6 +2726,9 @@ app.include_router(_atlas_router)
 from app.ui.services.replay_api import router as _replay_router  # noqa: E402 -- set history, replay, time travel, liked
 
 app.include_router(_replay_router)
+from app.ui.services.supermove_api import router as _supermove_router  # noqa: E402 -- $Up3R-M@SS!V3-M0v3 variants
+
+app.include_router(_supermove_router)
 
 class _RevalidatingStatic(StaticFiles):
     """The console's own JS/CSS/HTML: always revalidated (ETag -> cheap 304), never taken from the

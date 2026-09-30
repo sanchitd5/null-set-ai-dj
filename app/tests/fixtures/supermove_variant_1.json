@@ -1,0 +1,1713 @@
+{
+ "kind": "stem_mashup",
+ "genre": {
+  "cluster": "melodic",
+  "label": null,
+  "ranking": [
+   {
+    "genre": "cluster melodic",
+    "qualifying": 11,
+    "in_band": 11,
+    "bpm_band": 124.0,
+    "chained": 8,
+    "mean_pct": 77.1,
+    "mean_level": 8.62
+   },
+   {
+    "genre": "house",
+    "qualifying": 6,
+    "chained": 0
+   }
+  ]
+ },
+ "shape": {
+  "peak": true,
+  "climax_index": 6,
+  "rise_db": 1.5
+ },
+ "bpm": 124.0,
+ "bar_s": 1.935483870967742,
+ "duration": 232.25806451612905,
+ "rules": {
+  "key_min": 0.8,
+  "sub_hz": 120.0,
+  "max_stretch": 0.08,
+  "band": 0.85,
+  "enter_bars": 16,
+  "exit_bars": 8,
+  "enter_gain": 0.7
+ },
+ "songs": [
+  {
+   "i": 0,
+   "id": "f7533130d3a1fbd8",
+   "name": "Anyma & Chris Avantgarde - Eternity",
+   "genre": "melodic techno",
+   "key": "8B",
+   "bpm": 125.0,
+   "ratio": 1.0080645161290323,
+   "stretch_pct": -0.8,
+   "stems_dir": "/Users/sanchitdang/dev/AI-DJ-Mixing-System/data/cache/stems/f7533130d3a1fbd8c661cfb279dd1893307afafbf2afe7290f1f5ca5f93ce1f2_htdemucs_ft",
+   "core": {
+    "start": 59.606,
+    "end": 90.326,
+    "bars": 16,
+    "share": 0.88,
+    "how": "main drop"
+   },
+   "enter_bars": 0,
+   "exit_bars": 8,
+   "enter_refused": null,
+   "level": 7,
+   "energy_pct": 50.0,
+   "src": [
+    59.606,
+    105.68599999999999
+   ],
+   "out": [
+    0.0,
+    46.45161290322581
+   ],
+   "core_out": [
+    0.0,
+    30.967741935483872
+   ],
+   "gain": {
+    "rms_match_dbfs": -14.0,
+    "over": "core"
+   },
+   "next": {
+    "key_score": 0.9,
+    "works": 97.0,
+    "atlas_move": "Bass Swap"
+   },
+   "parts": [
+    {
+     "stem": "drums",
+     "role": "core",
+     "env": [
+      [
+       0.0,
+       1
+      ],
+      [
+       30.967741935483872,
+       1
+      ],
+      [
+       30.98774193548387,
+       0
+      ]
+     ],
+     "hp_hz": null,
+     "mute": []
+    },
+    {
+     "stem": "bass",
+     "role": "core",
+     "env": [
+      [
+       0.0,
+       1
+      ],
+      [
+       30.967741935483872,
+       1
+      ],
+      [
+       30.98774193548387,
+       0
+      ]
+     ],
+     "hp_hz": null,
+     "mute": []
+    },
+    {
+     "stem": "other",
+     "role": "core",
+     "env": [
+      [
+       0.0,
+       1
+      ],
+      [
+       30.967741935483872,
+       1
+      ],
+      [
+       30.98774193548387,
+       0
+      ]
+     ],
+     "hp_hz": null,
+     "mute": []
+    },
+    {
+     "stem": "vocals",
+     "role": "core",
+     "env": [
+      [
+       0.0,
+       1
+      ],
+      [
+       30.967741935483872,
+       1
+      ],
+      [
+       30.98774193548387,
+       0
+      ]
+     ],
+     "hp_hz": null,
+     "mute": []
+    },
+    {
+     "stem": "drums",
+     "role": "exit",
+     "hp_hz": 120.0,
+     "mute": [],
+     "env": [
+      [
+       30.947741935483872,
+       0
+      ],
+      [
+       30.967741935483872,
+       1
+      ],
+      [
+       38.70967741935484,
+       1
+      ],
+      [
+       46.45161290322581,
+       0
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "i": 1,
+   "id": "932af8d76ab4e19b",
+   "name": "Anyma & Rebūke - Syren (Adam Sellouk Remix)",
+   "genre": "melodic techno",
+   "key": "9B",
+   "bpm": 125.0,
+   "ratio": 1.0080645161290323,
+   "stretch_pct": -0.8,
+   "stems_dir": "/Users/sanchitdang/dev/AI-DJ-Mixing-System/data/cache/stems/932af8d76ab4e19b7571a4412cf460013eba39edc5e066251432e156895ffff6_htdemucs_ft",
+   "core": {
+    "start": 189.196,
+    "end": 219.916,
+    "bars": 16,
+    "share": 0.94,
+    "how": "main drop"
+   },
+   "enter_bars": 16,
+   "exit_bars": 8,
+   "enter_refused": null,
+   "level": 9,
+   "energy_pct": 85.7,
+   "src": [
+    158.476,
+    235.276
+   ],
+   "out": [
+    0.0,
+    77.41935483870968
+   ],
+   "core_out": [
+    30.967741935483872,
+    61.935483870967744
+   ],
+   "gain": {
+    "rms_match_dbfs": -14.0,
+    "over": "core"
+   },
+   "next": {
+    "key_score": 0.85,
+    "works": 85.0,
+    "atlas_move": "Bass Swap"
+   },
+   "parts": [
+    {
+     "stem": "drums",
+     "role": "core",
+     "env": [
+      [
+       30.947741935483872,
+       0
+      ],
+      [
+       30.967741935483872,
+       1
+      ],
+      [
+       61.935483870967744,
+       1
+      ],
+      [
+       61.95548387096775,
+       0
+      ]
+     ],
+     "hp_hz": null,
+     "mute": []
+    },
+    {
+     "stem": "bass",
+     "role": "core",
+     "env": [
+      [
+       30.947741935483872,
+       0
+      ],
+      [
+       30.967741935483872,
+       1
+      ],
+      [
+       61.935483870967744,
+       1
+      ],
+      [
+       61.95548387096775,
+       0
+      ]
+     ],
+     "hp_hz": null,
+     "mute": []
+    },
+    {
+     "stem": "other",
+     "role": "core",
+     "env": [
+      [
+       30.947741935483872,
+       0
+      ],
+      [
+       30.967741935483872,
+       1
+      ],
+      [
+       61.935483870967744,
+       1
+      ],
+      [
+       61.95548387096775,
+       0
+      ]
+     ],
+     "hp_hz": null,
+     "mute": []
+    },
+    {
+     "stem": "vocals",
+     "role": "core",
+     "env": [
+      [
+       30.947741935483872,
+       0
+      ],
+      [
+       30.967741935483872,
+       1
+      ],
+      [
+       61.935483870967744,
+       1
+      ],
+      [
+       61.95548387096775,
+       0
+      ]
+     ],
+     "hp_hz": null,
+     "mute": []
+    },
+    {
+     "stem": "other",
+     "role": "enter",
+     "hp_hz": 120.0,
+     "mute": [],
+     "env": [
+      [
+       0.0,
+       0
+      ],
+      [
+       15.483870967741936,
+       0.7
+      ],
+      [
+       30.947741935483872,
+       0.7
+      ],
+      [
+       30.967741935483872,
+       0
+      ]
+     ]
+    },
+    {
+     "stem": "drums",
+     "role": "exit",
+     "hp_hz": 120.0,
+     "mute": [],
+     "env": [
+      [
+       61.91548387096774,
+       0
+      ],
+      [
+       61.935483870967744,
+       1
+      ],
+      [
+       69.67741935483872,
+       1
+      ],
+      [
+       77.41935483870968,
+       0
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "i": 2,
+   "id": "a955f9369451bfdc",
+   "name": "ARTBAT - Horizon (Official Audio Video)",
+   "genre": "melodic techno",
+   "key": "9A",
+   "bpm": 124.0,
+   "ratio": 1.0,
+   "stretch_pct": 0.0,
+   "stems_dir": "/Users/sanchitdang/dev/AI-DJ-Mixing-System/data/cache/stems/a955f9369451bfdc28b11b06b44dd383765823b6c3a651e0a3371d12dc47055a_htdemucs_ft",
+   "core": {
+    "start": 334.901,
+    "end": 365.86874193548385,
+    "bars": 16,
+    "share": 0.97,
+    "how": "drop line"
+   },
+   "enter_bars": 16,
+   "exit_bars": 8,
+   "enter_refused": null,
+   "level": 10,
+   "energy_pct": 100.0,
+   "src": [
+    303.93325806451617,
+    381.3526129032258
+   ],
+   "out": [
+    30.967741935483872,
+    108.38709677419357
+   ],
+   "core_out": [
+    61.935483870967744,
+    92.90322580645162
+   ],
+   "gain": {
+    "rms_match_dbfs": -14.0,
+    "over": "core"
+   },
+   "next": {
+    "key_score": 0.8,
+    "works": 84.0,
+    "atlas_move": "Bass Swap"
+   },
+   "parts": [
+    {
+     "stem": "drums",
+     "role": "core",
+     "env": [
+      [
+       61.91548387096774,
+       0
+      ],
+      [
+       61.935483870967744,
+       1
+      ],
+      [
+       92.90322580645162,
+       1
+      ],
+      [
+       92.92322580645161,
+       0
+      ]
+     ],
+     "hp_hz": null,
+     "mute": []
+    },
+    {
+     "stem": "bass",
+     "role": "core",
+     "env": [
+      [
+       61.91548387096774,
+       0
+      ],
+      [
+       61.935483870967744,
+       1
+      ],
+      [
+       92.90322580645162,
+       1
+      ],
+      [
+       92.92322580645161,
+       0
+      ]
+     ],
+     "hp_hz": null,
+     "mute": []
+    },
+    {
+     "stem": "other",
+     "role": "core",
+     "env": [
+      [
+       61.91548387096774,
+       0
+      ],
+      [
+       61.935483870967744,
+       1
+      ],
+      [
+       92.90322580645162,
+       1
+      ],
+      [
+       92.92322580645161,
+       0
+      ]
+     ],
+     "hp_hz": null,
+     "mute": []
+    },
+    {
+     "stem": "vocals",
+     "role": "core",
+     "env": [
+      [
+       61.91548387096774,
+       0
+      ],
+      [
+       61.935483870967744,
+       1
+      ],
+      [
+       92.90322580645162,
+       1
+      ],
+      [
+       92.92322580645161,
+       0
+      ]
+     ],
+     "hp_hz": null,
+     "mute": []
+    },
+    {
+     "stem": "other",
+     "role": "enter",
+     "hp_hz": 120.0,
+     "mute": [],
+     "env": [
+      [
+       30.967741935483872,
+       0
+      ],
+      [
+       46.45161290322581,
+       0.7
+      ],
+      [
+       61.91548387096774,
+       0.7
+      ],
+      [
+       61.935483870967744,
+       0
+      ]
+     ]
+    },
+    {
+     "stem": "drums",
+     "role": "exit",
+     "hp_hz": 120.0,
+     "mute": [],
+     "env": [
+      [
+       92.88322580645162,
+       0
+      ],
+      [
+       92.90322580645162,
+       1
+      ],
+      [
+       100.64516129032259,
+       1
+      ],
+      [
+       108.38709677419357,
+       0
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "i": 3,
+   "id": "7922a419da56967b",
+   "name": "Fred again.. & Swedish House Mafia ft Future - Turn On The Lights Again.. (Anyma Remix)",
+   "genre": "melodic techno",
+   "key": "11A",
+   "bpm": 125.99,
+   "ratio": 1.0160483870967743,
+   "stretch_pct": -1.58,
+   "stems_dir": "/Users/sanchitdang/dev/AI-DJ-Mixing-System/data/cache/stems/7922a419da56967bd9d0fef5e39583577802d3fb3736581a3617279e654a417a_htdemucs_ft",
+   "core": {
+    "start": 45.627,
+    "end": 76.1056094134455,
+    "bars": 16,
+    "share": 0.93,
+    "how": "drop line"
+   },
+   "enter_bars": 16,
+   "exit_bars": 8,
+   "enter_refused": null,
+   "level": 7,
+   "energy_pct": 50.0,
+   "src": [
+    15.148390586554491,
+    91.34491412016826
+   ],
+   "out": [
+    61.935483870967744,
+    139.3548387096774
+   ],
+   "core_out": [
+    92.90322580645162,
+    123.87096774193549
+   ],
+   "gain": {
+    "rms_match_dbfs": -14.0,
+    "over": "core"
+   },
+   "next": {
+    "key_score": 1.0,
+    "works": 94.0,
+    "atlas_move": "Bass Swap"
+   },
+   "parts": [
+    {
+     "stem": "drums",
+     "role": "core",
+     "env": [
+      [
+       92.88322580645162,
+       0
+      ],
+      [
+       92.90322580645162,
+       1
+      ],
+      [
+       123.87096774193549,
+       1
+      ],
+      [
+       123.89096774193548,
+       0
+      ]
+     ],
+     "hp_hz": null,
+     "mute": []
+    },
+    {
+     "stem": "bass",
+     "role": "core",
+     "env": [
+      [
+       92.88322580645162,
+       0
+      ],
+      [
+       92.90322580645162,
+       1
+      ],
+      [
+       123.87096774193549,
+       1
+      ],
+      [
+       123.89096774193548,
+       0
+      ]
+     ],
+     "hp_hz": null,
+     "mute": []
+    },
+    {
+     "stem": "other",
+     "role": "core",
+     "env": [
+      [
+       92.88322580645162,
+       0
+      ],
+      [
+       92.90322580645162,
+       1
+      ],
+      [
+       123.87096774193549,
+       1
+      ],
+      [
+       123.89096774193548,
+       0
+      ]
+     ],
+     "hp_hz": null,
+     "mute": []
+    },
+    {
+     "stem": "vocals",
+     "role": "core",
+     "env": [
+      [
+       92.88322580645162,
+       0
+      ],
+      [
+       92.90322580645162,
+       1
+      ],
+      [
+       123.87096774193549,
+       1
+      ],
+      [
+       123.89096774193548,
+       0
+      ]
+     ],
+     "hp_hz": null,
+     "mute": []
+    },
+    {
+     "stem": "other",
+     "role": "enter",
+     "hp_hz": 120.0,
+     "mute": [],
+     "env": [
+      [
+       61.935483870967744,
+       0
+      ],
+      [
+       77.41935483870968,
+       0.7
+      ],
+      [
+       92.88322580645162,
+       0.7
+      ],
+      [
+       92.90322580645162,
+       0
+      ]
+     ]
+    },
+    {
+     "stem": "drums",
+     "role": "exit",
+     "hp_hz": 120.0,
+     "mute": [],
+     "env": [
+      [
+       123.85096774193549,
+       0
+      ],
+      [
+       123.87096774193549,
+       1
+      ],
+      [
+       131.61290322580646,
+       1
+      ],
+      [
+       139.3548387096774,
+       0
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "i": 4,
+   "id": "c856810defd7dc3b",
+   "name": "Argy, Son of Son - Faust",
+   "genre": "melodic techno",
+   "key": "11A",
+   "bpm": 124.0,
+   "ratio": 1.0,
+   "stretch_pct": 0.0,
+   "stems_dir": "/Users/sanchitdang/dev/AI-DJ-Mixing-System/data/cache/stems/c856810defd7dc3b968c14dd4ae78bcc04a37285552911cba83418152b9ee93e_htdemucs_ft",
+   "core": {
+    "start": 38.986,
+    "end": 69.95374193548386,
+    "bars": 16,
+    "share": 0.88,
+    "how": "drop line"
+   },
+   "enter_bars": 16,
+   "exit_bars": 8,
+   "enter_refused": null,
+   "level": 7,
+   "energy_pct": 50.0,
+   "src": [
+    8.018258064516125,
+    85.4376129032258
+   ],
+   "out": [
+    92.90322580645162,
+    170.3225806451613
+   ],
+   "core_out": [
+    123.87096774193549,
+    154.83870967741936
+   ],
+   "gain": {
+    "rms_match_dbfs": -14.0,
+    "over": "core"
+   },
+   "next": {
+    "key_score": 1.0,
+    "works": 80.0,
+    "atlas_move": "Bass Swap"
+   },
+   "parts": [
+    {
+     "stem": "drums",
+     "role": "core",
+     "env": [
+      [
+       123.85096774193549,
+       0
+      ],
+      [
+       123.87096774193549,
+       1
+      ],
+      [
+       154.83870967741936,
+       1
+      ],
+      [
+       154.85870967741937,
+       0
+      ]
+     ],
+     "hp_hz": null,
+     "mute": []
+    },
+    {
+     "stem": "bass",
+     "role": "core",
+     "env": [
+      [
+       123.85096774193549,
+       0
+      ],
+      [
+       123.87096774193549,
+       1
+      ],
+      [
+       154.83870967741936,
+       1
+      ],
+      [
+       154.85870967741937,
+       0
+      ]
+     ],
+     "hp_hz": null,
+     "mute": []
+    },
+    {
+     "stem": "other",
+     "role": "core",
+     "env": [
+      [
+       123.85096774193549,
+       0
+      ],
+      [
+       123.87096774193549,
+       1
+      ],
+      [
+       154.83870967741936,
+       1
+      ],
+      [
+       154.85870967741937,
+       0
+      ]
+     ],
+     "hp_hz": null,
+     "mute": []
+    },
+    {
+     "stem": "vocals",
+     "role": "core",
+     "env": [
+      [
+       123.85096774193549,
+       0
+      ],
+      [
+       123.87096774193549,
+       1
+      ],
+      [
+       154.83870967741936,
+       1
+      ],
+      [
+       154.85870967741937,
+       0
+      ]
+     ],
+     "hp_hz": null,
+     "mute": []
+    },
+    {
+     "stem": "other",
+     "role": "enter",
+     "hp_hz": 120.0,
+     "mute": [],
+     "env": [
+      [
+       92.90322580645162,
+       0
+      ],
+      [
+       108.38709677419355,
+       0.7
+      ],
+      [
+       123.85096774193549,
+       0.7
+      ],
+      [
+       123.87096774193549,
+       0
+      ]
+     ]
+    },
+    {
+     "stem": "drums",
+     "role": "exit",
+     "hp_hz": 120.0,
+     "mute": [],
+     "env": [
+      [
+       154.81870967741935,
+       0
+      ],
+      [
+       154.83870967741936,
+       1
+      ],
+      [
+       162.58064516129033,
+       1
+      ],
+      [
+       170.3225806451613,
+       0
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "i": 5,
+   "id": "50a2fe4b550f1651",
+   "name": "Martim Rola & David Mackay - Sunday Sunrise [ANJUNADEEP]",
+   "genre": "melodic house",
+   "key": "11A",
+   "bpm": 124.0,
+   "ratio": 1.0,
+   "stretch_pct": 0.0,
+   "stems_dir": "/Users/sanchitdang/dev/AI-DJ-Mixing-System/data/cache/stems/50a2fe4b550f165136c8885876425a9bfb5ce52dc7d3bc15638fa2bfaed2aa7c_htdemucs_ft",
+   "core": {
+    "start": 233.105,
+    "end": 264.07274193548386,
+    "bars": 16,
+    "share": 0.93,
+    "how": "main drop"
+   },
+   "enter_bars": 16,
+   "exit_bars": 8,
+   "enter_refused": null,
+   "level": 10,
+   "energy_pct": 100.0,
+   "src": [
+    202.13725806451612,
+    279.5566129032258
+   ],
+   "out": [
+    123.87096774193549,
+    201.29032258064515
+   ],
+   "core_out": [
+    154.83870967741936,
+    185.80645161290323
+   ],
+   "gain": {
+    "rms_match_dbfs": -14.0,
+    "over": "core"
+   },
+   "next": {
+    "key_score": 0.8,
+    "works": 91.0,
+    "atlas_move": "Bass Swap"
+   },
+   "parts": [
+    {
+     "stem": "drums",
+     "role": "core",
+     "env": [
+      [
+       154.81870967741935,
+       0
+      ],
+      [
+       154.83870967741936,
+       1
+      ],
+      [
+       185.80645161290323,
+       1
+      ],
+      [
+       185.82645161290324,
+       0
+      ]
+     ],
+     "hp_hz": null,
+     "mute": []
+    },
+    {
+     "stem": "bass",
+     "role": "core",
+     "env": [
+      [
+       154.81870967741935,
+       0
+      ],
+      [
+       154.83870967741936,
+       1
+      ],
+      [
+       185.80645161290323,
+       1
+      ],
+      [
+       185.82645161290324,
+       0
+      ]
+     ],
+     "hp_hz": null,
+     "mute": []
+    },
+    {
+     "stem": "other",
+     "role": "core",
+     "env": [
+      [
+       154.81870967741935,
+       0
+      ],
+      [
+       154.83870967741936,
+       1
+      ],
+      [
+       185.80645161290323,
+       1
+      ],
+      [
+       185.82645161290324,
+       0
+      ]
+     ],
+     "hp_hz": null,
+     "mute": []
+    },
+    {
+     "stem": "vocals",
+     "role": "core",
+     "env": [
+      [
+       154.81870967741935,
+       0
+      ],
+      [
+       154.83870967741936,
+       1
+      ],
+      [
+       185.80645161290323,
+       1
+      ],
+      [
+       185.82645161290324,
+       0
+      ]
+     ],
+     "hp_hz": null,
+     "mute": []
+    },
+    {
+     "stem": "other",
+     "role": "enter",
+     "hp_hz": 120.0,
+     "mute": [],
+     "env": [
+      [
+       123.87096774193549,
+       0
+      ],
+      [
+       139.35483870967744,
+       0.7
+      ],
+      [
+       154.81870967741935,
+       0.7
+      ],
+      [
+       154.83870967741936,
+       0
+      ]
+     ]
+    },
+    {
+     "stem": "drums",
+     "role": "exit",
+     "hp_hz": 120.0,
+     "mute": [],
+     "env": [
+      [
+       185.78645161290322,
+       0
+      ],
+      [
+       185.80645161290323,
+       1
+      ],
+      [
+       193.5483870967742,
+       1
+      ],
+      [
+       201.29032258064515,
+       0
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "i": 6,
+   "id": "c0309e3905fec60b",
+   "name": "Lane 8 - Little By Little",
+   "genre": "melodic house",
+   "key": "1A",
+   "bpm": 121.0,
+   "ratio": 0.9758064516129032,
+   "stretch_pct": 2.48,
+   "stems_dir": "/Users/sanchitdang/dev/AI-DJ-Mixing-System/data/cache/stems/c0309e3905fec60beab4b8935b1c5f0086bf1d51ac6fb6b2f61fd62383d6a487_htdemucs_ft",
+   "core": {
+    "start": 126.897,
+    "end": 158.63253719008264,
+    "bars": 16,
+    "share": 0.98,
+    "how": "main drop"
+   },
+   "enter_bars": 16,
+   "exit_bars": 8,
+   "enter_refused": null,
+   "level": 10,
+   "energy_pct": 100.0,
+   "src": [
+    95.16146280991737,
+    174.50030578512397
+   ],
+   "out": [
+    154.83870967741936,
+    232.25806451612905
+   ],
+   "core_out": [
+    185.80645161290323,
+    216.7741935483871
+   ],
+   "gain": {
+    "rms_match_dbfs": -14.0,
+    "over": "core"
+   },
+   "next": null,
+   "parts": [
+    {
+     "stem": "drums",
+     "role": "core",
+     "env": [
+      [
+       185.78645161290322,
+       0
+      ],
+      [
+       185.80645161290323,
+       1
+      ],
+      [
+       216.7741935483871,
+       1
+      ],
+      [
+       232.23806451612904,
+       0.12
+      ],
+      [
+       232.25806451612905,
+       0
+      ]
+     ],
+     "hp_hz": null,
+     "mute": []
+    },
+    {
+     "stem": "bass",
+     "role": "core",
+     "env": [
+      [
+       185.78645161290322,
+       0
+      ],
+      [
+       185.80645161290323,
+       1
+      ],
+      [
+       216.7741935483871,
+       1
+      ],
+      [
+       232.23806451612904,
+       0.12
+      ],
+      [
+       232.25806451612905,
+       0
+      ]
+     ],
+     "hp_hz": null,
+     "mute": []
+    },
+    {
+     "stem": "other",
+     "role": "core",
+     "env": [
+      [
+       185.78645161290322,
+       0
+      ],
+      [
+       185.80645161290323,
+       1
+      ],
+      [
+       216.7741935483871,
+       1
+      ],
+      [
+       232.23806451612904,
+       0.12
+      ],
+      [
+       232.25806451612905,
+       0
+      ]
+     ],
+     "hp_hz": null,
+     "mute": []
+    },
+    {
+     "stem": "vocals",
+     "role": "core",
+     "env": [
+      [
+       185.78645161290322,
+       0
+      ],
+      [
+       185.80645161290323,
+       1
+      ],
+      [
+       216.7741935483871,
+       1
+      ],
+      [
+       232.23806451612904,
+       0.12
+      ],
+      [
+       232.25806451612905,
+       0
+      ]
+     ],
+     "hp_hz": null,
+     "mute": []
+    },
+    {
+     "stem": "other",
+     "role": "enter",
+     "hp_hz": 120.0,
+     "mute": [],
+     "env": [
+      [
+       154.83870967741936,
+       0
+      ],
+      [
+       170.32258064516128,
+       0.7
+      ],
+      [
+       185.78645161290322,
+       0.7
+      ],
+      [
+       185.80645161290323,
+       0
+      ]
+     ]
+    }
+   ]
+  }
+ ],
+ "sections": [
+  {
+   "start": 0.0,
+   "songs": [
+    {
+     "i": 0,
+     "name": "Anyma & Chris Avantgarde - Eternity",
+     "role": "core",
+     "stems": [
+      "drums",
+      "bass",
+      "other",
+      "vocals"
+     ]
+    },
+    {
+     "i": 1,
+     "name": "Anyma & Rebūke - Syren (Adam Sellouk Remix)",
+     "stems": [
+      "other"
+     ],
+     "role": "enter"
+    }
+   ]
+  },
+  {
+   "start": 15.484,
+   "songs": [
+    {
+     "i": 0,
+     "name": "Anyma & Chris Avantgarde - Eternity",
+     "role": "core",
+     "stems": [
+      "drums",
+      "bass",
+      "other",
+      "vocals"
+     ]
+    },
+    {
+     "i": 1,
+     "name": "Anyma & Rebūke - Syren (Adam Sellouk Remix)",
+     "stems": [
+      "other"
+     ],
+     "role": "enter"
+    }
+   ]
+  },
+  {
+   "start": 30.968,
+   "songs": [
+    {
+     "i": 0,
+     "name": "Anyma & Chris Avantgarde - Eternity",
+     "role": "exit",
+     "stems": [
+      "drums"
+     ]
+    },
+    {
+     "i": 1,
+     "name": "Anyma & Rebūke - Syren (Adam Sellouk Remix)",
+     "role": "core",
+     "stems": [
+      "drums",
+      "bass",
+      "other",
+      "vocals"
+     ]
+    },
+    {
+     "i": 2,
+     "name": "ARTBAT - Horizon (Official Audio Video)",
+     "stems": [
+      "other"
+     ],
+     "role": "enter"
+    }
+   ]
+  },
+  {
+   "start": 46.452,
+   "songs": [
+    {
+     "i": 1,
+     "name": "Anyma & Rebūke - Syren (Adam Sellouk Remix)",
+     "role": "core",
+     "stems": [
+      "drums",
+      "bass",
+      "other",
+      "vocals"
+     ]
+    },
+    {
+     "i": 2,
+     "name": "ARTBAT - Horizon (Official Audio Video)",
+     "stems": [
+      "other"
+     ],
+     "role": "enter"
+    }
+   ]
+  },
+  {
+   "start": 61.935,
+   "songs": [
+    {
+     "i": 1,
+     "name": "Anyma & Rebūke - Syren (Adam Sellouk Remix)",
+     "role": "exit",
+     "stems": [
+      "drums"
+     ]
+    },
+    {
+     "i": 2,
+     "name": "ARTBAT - Horizon (Official Audio Video)",
+     "role": "core",
+     "stems": [
+      "drums",
+      "bass",
+      "other",
+      "vocals"
+     ]
+    },
+    {
+     "i": 3,
+     "name": "Fred again.. & Swedish House Mafia ft Future - Turn On The Lights Again.. (Anyma Remix)",
+     "stems": [
+      "other"
+     ],
+     "role": "enter"
+    }
+   ]
+  },
+  {
+   "start": 77.419,
+   "songs": [
+    {
+     "i": 2,
+     "name": "ARTBAT - Horizon (Official Audio Video)",
+     "role": "core",
+     "stems": [
+      "drums",
+      "bass",
+      "other",
+      "vocals"
+     ]
+    },
+    {
+     "i": 3,
+     "name": "Fred again.. & Swedish House Mafia ft Future - Turn On The Lights Again.. (Anyma Remix)",
+     "stems": [
+      "other"
+     ],
+     "role": "enter"
+    }
+   ]
+  },
+  {
+   "start": 92.903,
+   "songs": [
+    {
+     "i": 2,
+     "name": "ARTBAT - Horizon (Official Audio Video)",
+     "role": "exit",
+     "stems": [
+      "drums"
+     ]
+    },
+    {
+     "i": 3,
+     "name": "Fred again.. & Swedish House Mafia ft Future - Turn On The Lights Again.. (Anyma Remix)",
+     "role": "core",
+     "stems": [
+      "drums",
+      "bass",
+      "other",
+      "vocals"
+     ]
+    },
+    {
+     "i": 4,
+     "name": "Argy, Son of Son - Faust",
+     "stems": [
+      "other"
+     ],
+     "role": "enter"
+    }
+   ]
+  },
+  {
+   "start": 108.387,
+   "songs": [
+    {
+     "i": 3,
+     "name": "Fred again.. & Swedish House Mafia ft Future - Turn On The Lights Again.. (Anyma Remix)",
+     "role": "core",
+     "stems": [
+      "drums",
+      "bass",
+      "other",
+      "vocals"
+     ]
+    },
+    {
+     "i": 4,
+     "name": "Argy, Son of Son - Faust",
+     "stems": [
+      "other"
+     ],
+     "role": "enter"
+    }
+   ]
+  },
+  {
+   "start": 123.871,
+   "songs": [
+    {
+     "i": 3,
+     "name": "Fred again.. & Swedish House Mafia ft Future - Turn On The Lights Again.. (Anyma Remix)",
+     "role": "exit",
+     "stems": [
+      "drums"
+     ]
+    },
+    {
+     "i": 4,
+     "name": "Argy, Son of Son - Faust",
+     "role": "core",
+     "stems": [
+      "drums",
+      "bass",
+      "other",
+      "vocals"
+     ]
+    },
+    {
+     "i": 5,
+     "name": "Martim Rola & David Mackay - Sunday Sunrise [ANJUNADEEP]",
+     "stems": [
+      "other"
+     ],
+     "role": "enter"
+    }
+   ]
+  },
+  {
+   "start": 139.355,
+   "songs": [
+    {
+     "i": 4,
+     "name": "Argy, Son of Son - Faust",
+     "role": "core",
+     "stems": [
+      "drums",
+      "bass",
+      "other",
+      "vocals"
+     ]
+    },
+    {
+     "i": 5,
+     "name": "Martim Rola & David Mackay - Sunday Sunrise [ANJUNADEEP]",
+     "stems": [
+      "other"
+     ],
+     "role": "enter"
+    }
+   ]
+  },
+  {
+   "start": 154.839,
+   "songs": [
+    {
+     "i": 4,
+     "name": "Argy, Son of Son - Faust",
+     "role": "exit",
+     "stems": [
+      "drums"
+     ]
+    },
+    {
+     "i": 5,
+     "name": "Martim Rola & David Mackay - Sunday Sunrise [ANJUNADEEP]",
+     "role": "core",
+     "stems": [
+      "drums",
+      "bass",
+      "other",
+      "vocals"
+     ]
+    },
+    {
+     "i": 6,
+     "name": "Lane 8 - Little By Little",
+     "stems": [
+      "other"
+     ],
+     "role": "enter"
+    }
+   ]
+  },
+  {
+   "start": 170.323,
+   "songs": [
+    {
+     "i": 5,
+     "name": "Martim Rola & David Mackay - Sunday Sunrise [ANJUNADEEP]",
+     "role": "core",
+     "stems": [
+      "drums",
+      "bass",
+      "other",
+      "vocals"
+     ]
+    },
+    {
+     "i": 6,
+     "name": "Lane 8 - Little By Little",
+     "stems": [
+      "other"
+     ],
+     "role": "enter"
+    }
+   ]
+  },
+  {
+   "start": 185.806,
+   "songs": [
+    {
+     "i": 5,
+     "name": "Martim Rola & David Mackay - Sunday Sunrise [ANJUNADEEP]",
+     "role": "exit",
+     "stems": [
+      "drums"
+     ]
+    },
+    {
+     "i": 6,
+     "name": "Lane 8 - Little By Little",
+     "role": "core",
+     "stems": [
+      "drums",
+      "bass",
+      "other",
+      "vocals"
+     ]
+    }
+   ]
+  },
+  {
+   "start": 201.29,
+   "songs": [
+    {
+     "i": 6,
+     "name": "Lane 8 - Little By Little",
+     "role": "core",
+     "stems": [
+      "drums",
+      "bass",
+      "other",
+      "vocals"
+     ]
+    }
+   ]
+  },
+  {
+   "start": 216.774,
+   "songs": [
+    {
+     "i": 6,
+     "name": "Lane 8 - Little By Little",
+     "role": "fade",
+     "stems": [
+      "drums",
+      "bass",
+      "other",
+      "vocals"
+     ]
+    }
+   ]
+  }
+ ],
+ "variant": {
+  "move": "$Up3R-M@SS!V3-M0v3",
+  "from": 1,
+  "dropped": [
+   "Ben Böhmer - After Earth"
+  ]
+ }
+}
