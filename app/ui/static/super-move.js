@@ -197,12 +197,16 @@
       try { variants = ((await getJSON("/api/supermoves")).variants || []).filter((v) => v.songs && v.songs.length >= 2); }
       catch (e) { variants = []; }
       render();
+    }
+    // Analyses a booking point needs (the song after the playing one in each variant holding it), fetched only when a
+    // variant song plays: a set with no variant song never asks for anything. -> the ids still missing
+    function missingFor(curId) {
+      const ids = [];
       for (const v of variants) {
-        for (const s of v.songs.slice(0, firstHalf(v.songs.length) + 1)) {
-          if (analyses[s.id]) continue;
-          try { analyses[s.id] = await getJSON(`/api/tracks/${encodeURIComponent(s.id)}/analysis`); } catch (e) { /* decide treats it as unknown */ }
-        }
+        const k = v.songs.findIndex((s) => s.id === curId);
+        if (k >= 0 && k < v.songs.length - 1 && !(v.songs[k + 1].id in analyses)) ids.push(v.songs[k + 1].id);
       }
+      return [...new Set(ids)];
     }
     function render() {
       const sel = ui.el("smv-variant");
@@ -219,6 +223,20 @@
       if (released.has(o.currentId)) return false;
       const d = host.decks && host.decks[o.deck];
       if (!d || !d.playing) return false;
+      if (!(o.currentId in analyses) && d.analysis && variants.some((v) => v.songs.some((s) => s.id === o.currentId))) analyses[o.currentId] = d.analysis;
+      const need = missingFor(o.currentId);
+      if (need.length) {      // a variant song plays: hold this booking while its next song's analysis loads, then ask again
+        const gen = {};
+        run = { state: "checking", gen, timers: [], sources: [], currentId: o.currentId };
+        Promise.all(need.map((id) => getJSON(`/api/tracks/${encodeURIComponent(id)}/analysis`).then((a) => { analyses[id] = a; }, () => { analyses[id] = null; })))
+          .then(() => {
+            if (!run || run.gen !== gen) return;
+            run = null;
+            if (!apActive()) return;
+            if (!takeOver(o)) { const a = ap(); if (a) a.resume(); }
+          });
+        return true;
+      }
       const manual = pendingManual && variants.find((v) => v.name === pendingManual.variant && v.songs.some((s) => s.id === o.currentId)) ? pendingManual.variant : null;
       const r = decide({ variants, curId: o.currentId, pos: d._currentPosition(), rate: d._playbackRate(), setLevel: o.setLevel,
         setId: o.setId, fired, analyses, manual });
@@ -447,7 +465,7 @@
     }
     function abort(why) {
       if (!run) return;
-      if (run.state === "waiting" || run.state === "loading" && !run.sch) {
+      if (run.state === "waiting" || run.state === "checking" || run.state === "loading" && !run.sch) {
         const cur = run.currentId;
         cleanup(true);
         run = null;
@@ -465,6 +483,7 @@
       const st = host.mod.autopilotState;
       if (!st || !st.active) return say(`${NAME}: start the autopilot first (the move hands the set back to it)`);
       const deck = st.activeDeck, d = host.decks[deck], tid = deck === "a" ? host.state.trackA : host.state.trackB;
+      if (d && d.analysis && !(tid in analyses)) analyses[tid] = d.analysis;
       const r = decide({ variants: [v], curId: tid, pos: d ? d._currentPosition() : 0, rate: d ? d._playbackRate() : 1, fired, analyses, manual: v.name });
       if (r.fire || r.wait) {
         pendingManual = null;

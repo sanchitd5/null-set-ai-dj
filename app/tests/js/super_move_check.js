@@ -247,10 +247,18 @@ function world(o = {}) {
     const w2 = world();
     await w2.until(0.1);
     const before = JSON.stringify(w2.calls);
-    assert.strictEqual(w2.rt.takeOver({ currentId: ID[0], deck: "a", setLevel: 3, setId: seedFor(true) }), false, "low energy: no");
-    assert.strictEqual(w2.rt.takeOver({ currentId: ID[5], deck: "a", setLevel: 9, setId: seedFor(true) }), false, "second half: no");
+    // a song in no variant (every song of a normal set): no fetch, no hold, nothing changes
+    assert.strictEqual(w2.rt.takeOver({ currentId: "0123456789abcdef", deck: "a", setLevel: 9, setId: seedFor(true) }), false, "not a variant song: no");
     assert.strictEqual(JSON.stringify(w2.calls), before, "a no changes nothing (no fetch, no hold, no log side effect on the set)");
     assert.strictEqual(w2.rt.state, "idle");
+    // a variant song at low energy: holds only while its next song's analysis loads, then gives the booking back once
+    assert.strictEqual(w2.rt.takeOver({ currentId: ID[0], deck: "a", setLevel: 3, setId: seedFor(true) }), true, "checking");
+    await w2.until(0.5);
+    assert.strictEqual(w2.rt.state, "idle");
+    assert.strictEqual(w2.calls.resume, 1, "low energy: handed straight back");
+    assert.strictEqual(w2.calls.hold, 0, "never held the decks");
+    assert.strictEqual(w2.rt.takeOver({ currentId: ID[0], deck: "a", setLevel: 3, setId: seedFor(true) }), false, "low energy: no (analysis cached)");
+    assert.strictEqual(w2.rt.takeOver({ currentId: ID[5], deck: "a", setLevel: 9, setId: seedFor(true) }) && (await w2.until(1), w2.rt.state), "idle", "second half: no");
     const src = fs.readFileSync(path.join(__dirname, "..", "..", "ui", "static", "autopilot.js"), "utf8");
     assert.ok(/if \(smv && smv\.armed\) \{/.test(src), "the autopilot hook is gated on armed");
   }
