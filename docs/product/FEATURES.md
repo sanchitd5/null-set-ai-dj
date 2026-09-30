@@ -4,7 +4,7 @@ What is actually implemented in `app/ui` (the console), `app/music_brain` (the A
 `app/sim` (the virtual set sim) today, versus what is partial, stubbed or deliberately absent.
 Written so you can tell "real" from "placeholder" at a glance.
 
-Last verified 2026-09-30 against main `10bb79e`. Code is cited by module and symbol, not by line.
+Last verified 2026-10-01 against main `21ee185` (release 1.1). Code is cited by module and symbol, not by line.
 Names used here (atlas, macro, merge-hold, live ear, ...) are defined in
 [ANNEX.md](../engineering/ANNEX.md); future plans live in [IDEAS.md](IDEAS.md); release history
 lives in `CHANGELOG.md`.
@@ -48,14 +48,18 @@ Status legend:
 | Feature | Status | Where | Notes |
 |---|---|---|---|
 | Track analysis (BPM, beatgrid, Camelot, phrases, sections, vocals) | Working | `analyzer.py`, `GET /api/tracks/{id}/analysis` | |
+| Analysis v6: phrase-grid sections, drops, main drop | Working | `analysis/structure.py` `refine`, `analysis/reanalyse.py` | One section label per 8-bar phrase; drops from the drums + bass stems (mix energy without stems); main drop by the deepest, longest dip within 20% of the loudest. v5 records still read. Upgrade with `python3 -m app.music_brain.analysis.reanalyse --all` (app stopped, resumable) |
 | Transition matching over the 28-recipe cookbook | Working | `recipe_matcher.py`, `POST /api/match` | Manual points go through `RecipeMatcher.resolve_candidate()` |
 | Preview and full offline render | Working | `transition_renderer.py` `render_preview` / `render_full_mix` | Dedicated DSP for Bass Swap, Echo Out, cuts, Filter Transition; the rest use `_generic_eq_blend` (see gaps) |
 | Stem separation (Demucs, 4/2 stem) | Working | `stem_service.py`, `stem_worker.py`, `POST /api/tracks/{id}/separate` | Stems stored as FLAC, WAV fallback |
 | Live autopilot (pick next, book, play) | Working | `autopilot.js` `decideRecipe` / `keySafeRecipe` / `energyStepOk`, `autopilot_service.py` | Replaces the old "no live automation" gap. Drives the real console controls |
 | Live Transition Maker | Working | `automation.js` | Phrase-timed runs scheduled on the AudioContext clock |
+| $Up3R-M@SS!V3-M0v3 (live multi-song stem mashup) | Working (unverified by ear) | `super-move.js` `takeOver` / `press`, `supermove/` (`variants/v1.json`), `render/mashup_mix.py` `build_plan` | Cores key-locked to one tempo on the real decks, Bass Swap handovers, one sub owner. Fires by itself at a seeded high-energy booking point in the first half of a variant (never inside a build), or by the MACROS button / `Shift+S`. NULL-BOT in front for the whole move. Variants are shipped JSON files; nothing runs without one |
 | Merge, then hold, then transition | Working | `ai-actions.js` / `autopilot.js` `mergeNow`, `dj-mind.js` `pickHoldLoop` | Preferred plan when its gates pass; gate reasons and phase steps logged |
 | Hold-loop preplan | Working | `preplan.py` `preplan`, `POST /api/transition/preplan` | |
-| Atlas backup and deadline fallback | Working | `autopilot.js` `preplanBackup` / `deadlineFallback` | Tiers: atlas, then library, then hold |
+| Atlas backup and deadline fallback | Working | `autopilot.js` `preplanBackup` / `deadlineFallback` / `macroFallback`, `macro-mode.js` `deadlineStepOf` | Tiers: a running or armed studied-set macro's next song (measured gates waived), then atlas, then library, then hold. The deadline waits for a prepared song; fallbacks hold the scene. A held loop fits the track (capped at one 8-bar phrase, 2 cycles) |
+| Late entry on a strong downbeat | Working | `autopilot.js`, `render/entry_lines.py`, `pair_atlas.py` | B may enter on any strong downbeat (drum stem, or mix low band without stems), seeded pick among the energy-fit lines |
+| Hand-started moves on the line | Working | `autopilot.js` `fireOnLine` | PLAY STEP and MERGE -> HOLD fire on the next phrase line, not at the press (no echo on A before the transition) |
 | Suggest-reject log | Working | `autopilot_service.py` `note_rejects` | Every dropped pick logged with its reason as a session event |
 | Stem moves (stem intro, voice strip, synth hold) | Working | `stem-moves.js` `pickIntro`, `engine.js` stem slices | Silent-stem moves refused, they fall back |
 | Artist and FX moves (S1 to S22 family) | Working | `artist-moves.js`, `fx-moves.js`, `fx-rack.js`, `fx-budget.js` `canSpend` | Budget per transition and per song |
@@ -88,6 +92,8 @@ Status legend:
 | Macros, macro mode, PLAY MACRO, FOLLOW SET | Working | `macros.py`, `set_import.py`, `macro-mode.js` `playMacro`, `/api/macros` | |
 | Knowledge export and seed | Working | `knowledge.py` `export` / `seed` / `auto_seed` | Slim atlas, privacy check before export |
 | Persisted genre labels | Working | `genre_labels.py` | Stored in `CACHE_DIR/app.db`, travel in the export |
+| Genre families and electronic sub-families | Working | `analysis/genre.py` `family_jump` / `scene_relation`, `ELECTRONIC_CLUSTERS` / `ELECTRONIC_NEIGHBOURS` | Electronic split into house, melodic, trance, techno, bass, dnb, chill, edm, breaks with an owner neighbour table; hip-hop and R&B are neighbours |
+| Offline stem-preview, swap mix, mashup mix | Working (unverified by ear) | `agent_bridge stem-preview`, `render/swap_mix.py`, `render/mashup_mix.py` | stem-preview renders a transition as the console plays it (`--full`, `--set-energy`); swap mix hands the lead every 16 bars; mashup mix layers songs by stem (`--plan-only` prints the plan) |
 | Local stores in SQLite | Working | `db.py`, `history.py`, `user_marks.py` | `app.db` (atlas, macros, learned, labels; exported as JSON) and `user.db` (set history, set memory, marks; private); old JSON migrates once, kept as `.migrated` |
 | Set history | Working (API only) | `history.py` `sessions` / `timeline` / `state_at` / `pair_plays` | Every set in `user.db`, indexed from the session logs as they are written; for replay / time travel |
 | Punjabi scene profile | Working | `scene_profile.py`, `scene-profile.js` | auto/on/off setting; scene-tagged learned moves |

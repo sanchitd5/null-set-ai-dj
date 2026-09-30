@@ -13,7 +13,7 @@
 
 **stems · phrase-locked transitions · merge → hold → drop · a local LLM that picks the next song**
 
-![version](https://img.shields.io/badge/version-v1.0.1-00ff66?style=for-the-badge&labelColor=0a0f0d)
+![version](https://img.shields.io/badge/version-v1.1.0-00ff66?style=for-the-badge&labelColor=0a0f0d)
 ![AI DJ](https://img.shields.io/badge/AI%20DJ-NULL%3A%3ASET-00e5ff?style=for-the-badge&labelColor=0a0f0d)
 ![local](https://img.shields.io/badge/runs-100%25%20local-ff2bd6?style=for-the-badge&labelColor=0a0f0d)
 ![license](https://img.shields.io/badge/license-MIT-8a8f8c?style=for-the-badge&labelColor=0a0f0d)
@@ -50,6 +50,19 @@ Everything runs on your own machine:
 
 ---
 
+## 🆕 New in 1.1
+
+- **$Up3R-M@SS!V3-M0v3**: a live multi-song stem mashup on the real decks, fired by the autopilot at a peak or by hand (`Shift+S`)
+- **Analysis v6**: sections on the 8-bar phrase grid, stem-aware drops and a main drop
+- **Electronic sub-families** with a neighbour table, so a set stays in its scene
+- **Studied sets play as studied**, even when a deadline hits
+- **SQLite** `app.db` / `user.db`, knowledge sync, replay, time travel and liked transitions
+- **FLAC** stems and renders
+
+Full notes: [docs/release-notes/1.1.md](docs/release-notes/1.1.md). Upgrading from 1.0.1 needs one re-analysis, see [CHANGELOG.md](CHANGELOG.md).
+
+---
+
 ## 🎚️ What it plays
 
 ### The transition it loves: merge → hold → transition
@@ -68,7 +81,18 @@ When the gates say no, it falls back to the move that fits the pair:
 
 > 🚫 **No hard cuts.** The autopilot never plays a Hard Cut or Quick Cut, and the only rewind in the whole codebase is the **REWIND REPLAY** of a supermove.
 
+### The peak move: $Up3R-M@SS!V3-M0v3
+
+A whole chain of songs layered by stem on the two real decks: each song enters by one stem and leaves by another, the cores are key-locked to one tempo, the handovers are Bass Swaps on the phrase line, and only one song ever owns the sub-bass or sings. Variants ship with the app as files in `app/music_brain/supermove/variants/` (`v1` is included).
+
+- **Automatic**: when the set energy is high and the playing song is in the first half of a variant, the autopilot may fire it at a booking point (seeded, at most once per variant per set). It never starts inside a build; it waits for the build to end.
+- **By hand**: pick **$Up3R-M@SS!V3-M0v3 v1** at the top of the MACRO list and press PLAY MACRO (or `Shift+S`); the status line counts down to the first layer; press again to stop it.
+- **NULL-BOT** dances in the centre of the screen with the move's name for the whole move (clicks pass through to the decks), then the normal set takes over.
+
 ### Inside a song
+
+- **Sections and drops** (analysis v6): one section label per 8-bar phrase, drops found where the drums and bass come back to full groove, and one **main drop** per song
+- **Late entry**: B can come in on any strong downbeat, not only its first bar
 
 - **Stem remix**: hold-on loops, acapella breaks, drum breaks, bass out, synth holds
 - **Learned moves** from studied DJ sets: vocal loops, vocal re-cuts, chops on the 1/8 grid, loop extends
@@ -82,6 +106,9 @@ When the gates say no, it falls back to the move that fits the pair:
 - **FOLLOW SET**: play a song by an artist from a studied set and the autopilot follows that set's music, nearest by tempo, key and energy
 - A **pair atlas** scores every pair in your library by the console's own rules, with per-move compatibility (merge-hold, riff, mashup, supermove)
 - Scene continuity, artist spacing on every path, energy-arc rules, Camelot key gates, set memory across sessions
+- **Genre neighbours**: electronic music is split into sub-families (house, melodic, trance, techno, bass, drum and bass, chill, festival EDM, breaks) with a neighbour table; hip-hop and R&B are neighbours. A fallback keeps the scene too
+- **Set energy picks the recipe**: Mashup, then Bass Swap, then Long Blend, and B's entry point to match. A liked pair keeps its stored recipe
+- **BAD PAIR**: veto a pair for good from the console
 - **Punjabi scene profile** (`PUNJABI` in the toggle drawer: auto, on, off). When both songs are Punjabi it treats punjabi, bhangra and desi as one scene, allows a 4-decade era gap, plays 45 to 90 s snippets, folds 88 and 176 BPM as the same feel and falls back to a Quick Cut on the downbeat. Learned moves from studied Punjabi sets may blend on a key clash. Off is byte-identical to the default
 
 ---
@@ -96,6 +123,7 @@ A **macro** is a stored set: songs, recipes, exit and entry points, hold bars. T
 | **PLAY STEP** / `Shift+M` | performs exactly the next stored move |
 | **AUTO MIX** | with a macro selected, loads the step's song and performs its move |
 | **SKIP / REPEAT / EDIT / SAVE** | step through, tweak a move, save your own |
+| **$Up3R-M@SS!V3-M0v3** / `Shift+S` | plays a saved supermove variant from the playing song; press again to stop |
 
 The autopilot prefers a known macro step 80 % of the time (`MACRO_PREFERENCE`), so a set sounds curated without becoming a replay.
 
@@ -178,6 +206,10 @@ Logs: `/tmp/ai-dj-server.log` (app), `/tmp/ai-dj-omni-server.log` (model).
 stems, converts leftover WAVs to FLAC, labels unlabelled songs, AI-reviews never-reviewed sets,
 updates the atlas and re-exports `knowledge/`, then prints before / after counts. Details and a
 launchd schedule: [ANNEX, maintain.sh](docs/engineering/ANNEX.md#maintainsh).
+
+**Re-analysis.** When a release bumps the analysis version (1.1 moves to v6), stop the app and run
+`python3 -m app.music_brain.analysis.reanalyse --all` once (resumable, `--dry-run` to preview), then
+`python3 -m app.music_brain.maintain --steps atlas`. Songs not yet re-analysed keep working on the old rule.
 
 ### Requirements
 
@@ -309,7 +341,7 @@ The decision engine talks to the world only through an injected **Host port** (`
 
 <div align="center">
 
-**v1.0.1** · see [CHANGELOG.md](CHANGELOG.md) · built with a lot of late nights, two decks and an AI that will not stop mixing
+**v1.1.0** · see [CHANGELOG.md](CHANGELOG.md) · built with a lot of late nights, two decks and an AI that will not stop mixing
 
 <sub>MIT. See <a href="LICENSE">LICENSE</a>. Use only music you are legally allowed to use.</sub>
 

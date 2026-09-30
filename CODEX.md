@@ -106,7 +106,7 @@ python3 -m app.sim.virtual_set --replay NAME --out DIR
 python3 -m app.sim.compare A/report.json B/report.json
 ```
 
-Live-console rules the sim enforces (details in `CLAUDE.md` section 4 and `app/sim/LEARNINGS.md`): tonal blends need Camelot >= 0.8 else Echo Out; key-locked stretch capped at 8%; the energy last-round `force` widens rises only; a stem intro or strip on a silent stem is refused.
+Live-console rules the sim enforces (details in `CLAUDE.md` section 4 and `app/sim/LEARNINGS.md`): tonal blends need Camelot >= 0.6 (`KEY_SAFE_MIN`) else Echo Out, stem merge / handoff / peak keep a 0.8 floor; key-locked stretch capped at 8%; the energy last-round `force` widens rises only; a stem intro or strip on a silent stem is refused; electronic sub-families follow the neighbour table in `analysis/genre.py`; a studied-set macro's next song is the first deadline fallback (gates waived); hand-started moves fire on the phrase line; $Up3R-M@SS!V3-M0v3 runs only when a variant (`app/music_brain/supermove/variants/`) is loaded or pressed; analysis v6 sections / drops need `python3 -m app.music_brain.analysis.reanalyse --all` after a version bump.
 
 ---
 
