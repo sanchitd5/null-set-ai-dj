@@ -963,16 +963,13 @@
   <details class="macro-panel" id="macro-panel">
     <summary class="hud-label" title="Saved macros (data/cache/macros): pick one, then PLAY STEP (Shift+M) performs its next move (stored recipe, exit, entry, hold) with the autopilot's gates, or PLAY MACRO runs them all">MACROS <span id="macro-status"></span></summary>
     <div class="macro-body">
-      <select id="macro-select" aria-label="Macros"><option value="">MACROS…</option></select>
+      <select id="macro-select" aria-label="Macros" title="Macros; the $Up3R-M@SS!V3-M0v3 entries on top start the move with PLAY STEP / PLAY MACRO (Shift+S)"><option value="">MACROS…</option></select>
       <input type="text" id="macro-name" placeholder="title for SAVE MACRO" title="The dropdown shows this title; the file name (slug) is derived from it" autocomplete="off" />
       <button class="hw-btn" id="macro-save" title="Save the transitions played this set as a macro">SAVE MACRO</button>
       <button class="hw-btn" id="macro-next" title="Play the highlighted step (Shift+M)">PLAY STEP</button>
       <button class="hw-btn" id="macro-play" title="The autopilot performs the whole macro, step after step (click again to stop)">PLAY MACRO</button>
       <button class="hw-btn" id="macro-skip" title="Skip the highlighted step">SKIP</button>
       <button class="hw-btn" id="macro-repeat" title="Back one step (repeat it)">REPEAT</button>
-      <select id="smv-variant" aria-label="$Up3R-M@SS!V3-M0v3 variants" title="Saved $Up3R-M@SS!V3-M0v3 variants (the first is the default)"></select>
-      <button class="hw-btn" id="smv-go" title="$Up3R-M@SS!V3-M0v3: play the variant from the playing song (Shift+S); again: stop it">$Up3R-M@SS!V3-M0v3</button>
-      <span class="hud-label" id="smv-status"></span>
       <ol class="macro-steps" id="macro-steps"></ol>
       <div class="macro-edit">
         <input type="text" id="macro-edit-recipe" placeholder="recipe" />
