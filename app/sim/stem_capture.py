@@ -82,6 +82,24 @@ def seed_cache(dst: Path, src_cache: Path, songs: list[Path]) -> dict:
         (to / "manifest.json").write_text(json.dumps(
             {"version": 2, "format": "flac" if to.joinpath("drums.flac").exists() else "wav", "stems": stems}))
         out[sid] = {"name": song.stem, "stem_dir": str(sd), "path": str(song)}
+    # what the console's other reads need, as the live server has it (read here, copied there):
+    # liked transitions (stored moves), macros, learned moves, aliases; fame only where cached
+    for f in ("liked.json", "learned_techniques.json", "track_aliases.json"):
+        if (src_cache / f).is_file():
+            shutil.copy2(src_cache / f, dst / f)
+    if (src_cache / "macros").is_dir():
+        shutil.copytree(src_cache / "macros", dst / "macros", dirs_exist_ok=True)
+    fame_ids = []
+    if (src_cache / "fame.json").is_file():
+        try:
+            fame = json.loads((src_cache / "fame.json").read_text(encoding="utf-8"))
+            kept = {k: v for k, v in fame.items() if k in out}
+            (dst / "fame.json").write_text(json.dumps(kept))
+            fame_ids = sorted(kept)
+        except (ValueError, AttributeError):
+            pass
+    for v in out.values():
+        v["fame_ids"] = fame_ids
     names = src_cache / "uploads" / "_names.json"
     if names.is_file():
         try:
@@ -134,7 +152,7 @@ def _worker(cfg_path: Path) -> int:
 
 def capture(a_path, b_path, recipe: str, a_time: float, b_time: float, pre: float = 30.0,
             post: float = 30.0, src_cache: Optional[Path] = None, timeout_s: float = 900.0,
-            allow_stem_path: bool = False, xf: Optional[float] = None) -> dict:
+            allow_stem_path: bool = False, xf: Optional[float] = None, full: bool = False) -> dict:
     """Capture the console playing A -> B with `recipe` forced at A's exit `a_time` and B's
     entry `b_time` (the macro PLAY STEP path: autopilot performNow + forcedBooking gates).
 
@@ -142,7 +160,10 @@ def capture(a_path, b_path, recipe: str, a_time: float, b_time: float, pre: floa
     loads (never app/ui/static, never the live console), listed in the result's `sim_overrides`:
     allow_stem_path lifts the stem blend's loudness floor; xf sets PLAY STEP's crossfade budget
     (default 16 = the booking as it is; below 16 every bar count is halved, like a running set's
-    quick / vocal-short window)."""
+    quick / vocal-short window).
+
+    full: the window is A from its 0:00 (A plays from the start) to B's own end; pre / post
+    are ignored."""
     if not recipe:
         raise ValueError("recipe is required")
     if xf is not None and not (float(xf) > 0):
@@ -165,7 +186,8 @@ def capture(a_path, b_path, recipe: str, a_time: float, b_time: float, pre: floa
         cfg = {"a": {"id": ida, "name": songs[ida]["name"]}, "b": {"id": idb, "name": songs[idb]["name"]},
                "recipe": recipe, "aTime": float(a_time), "bTime": float(b_time), "pre": float(pre),
                "post": float(post), "out": str(out), "timeout_s": timeout_s,
-               "allowStemPath": bool(allow_stem_path), "xf": None if xf is None else float(xf)}
+               "allowStemPath": bool(allow_stem_path), "xf": None if xf is None else float(xf), "full": bool(full),
+               "fameIds": songs[ida].get("fame_ids", [])}
         cfg_path = d / "cfg.json"
         cfg_path.write_text(json.dumps(cfg))
         env = dict(os.environ, AIDJ_CACHE_DIR=str(cache), PYTHONPATH=str(REPO_ROOT))

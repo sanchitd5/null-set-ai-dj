@@ -54,10 +54,20 @@ const PAINT = ["stem-wave.js", "visuals.js", "anyma-show.js", "anyma-ui.js", "ma
 const POS_HZ = 1000;                     // song position samples per second of each buffer source
 const GEN_MAX_S = 10;                    // generated buffers up to this long are written out sample by sample
 const GEN = {};                          // buffer id -> {sr, channels}
+const STEPS = [];                        // the console's POST /api/session/steps|event bodies
 
 // GET paths a capture may send to the API -> {id, key}; key names the decoded file (id:stem / id:mix)
-function allowed(p, ids) {
+// The console-wide reads the live server answers from its cache alone (copied into the capture's
+// throwaway cache by stem_capture.py): liked transitions (a stored vocal throw), macros, learned
+// moves, the recipe list. Fame only for songs with a cached answer (a miss would ask YouTube).
+// Still not served: hook-drops (a miss asks LRCLIB / the local model), POST /api/match (the
+// suggestion panel's matcher, never read by a booked move), status polls and set history.
+const SHARED = [/^\/api\/liked$/, /^\/api\/macros$/, /^\/api\/macros\/[^/]+$/, /^\/api\/learned\/moves$/, /^\/api\/recipes$/];
+function allowed(p, ids, fameIds) {
   const bare = p.split("?")[0];
+  if (SHARED.some((r) => r.test(bare))) return { key: null };
+  const fm = bare.match(/^\/api\/tracks\/([^/]+)\/fame$/);
+  if (fm) return fameIds.has(fm[1]) ? { key: null } : null;
   let m = bare.match(/^\/api\/tracks\/([^/]+)\/(analysis|vocals|vocal_entry|stems)$/);
   if (m && ids.has(m[1])) return { key: null };
   m = bare.match(/^\/api\/tracks\/([^/]+)\/stems\/([a-z]+)$/);
@@ -145,6 +155,7 @@ let ENV = null;
 async function main() {
   const cfg = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
   const ids = new Set([cfg.a.id, cfg.b.id]);
+  const fameIds = new Set(cfg.fameIds || []);
   const st = staticWith(cfg);
   if (st.dir !== STATIC) process.on("exit", () => { try { fs.rmSync(st.dir, { recursive: true, force: true }); } catch (e) { /* tmp */ } });
   const env = await createEnv({ staticDir: st.dir, port: cfg.port, seed: cfg.seed || 1, skip: PAINT });
@@ -155,7 +166,12 @@ async function main() {
   const unserved = new Set(), bodyKey = new Map();
   const real = env.net._request.bind(env.net);
   env.net._request = (method, p, headers, body) => {
-    const ok = method === "GET" ? allowed(p, ids) : null;
+    const ok = method === "GET" ? allowed(p, ids, fameIds) : null;
+    if (method === "POST" && /^\/api\/session\/(steps|event)/.test(p)) {
+      // the console's own step / event log: kept in the capture (merge_gate, macro, ...), not persisted
+      try { const b = JSON.parse(String(body)); for (const s of [].concat(b.steps || b)) STEPS.push({ t: +ENV.clock.now.toFixed(3), ...s }); } catch (e) { /* not JSON */ }
+      return Promise.resolve({ status: 200, statusText: "OK", headers: { "content-type": "application/json" }, body: Buffer.from("{}"), real: 0 });
+    }
     if (!ok) {
       unserved.add(`${method} ${p.split("?")[0]}`);
       return Promise.resolve({ status: 404, statusText: "Not Found", headers: { "content-type": "application/json" },
@@ -201,9 +217,14 @@ async function main() {
   await waitFor(() => decks.a.buffer && decks.b.buffer && decks.a.analysis && decks.b.analysis, 60, "analysis");
   // stemsReady means "stems sounding now" (deck-controller.js), so a stopped deck only holds decoded .stems
   await waitFor(() => decks.a.stems && decks.b.stems, 120, "stems (A and B need cached 4-stem sets)");
+  // what the running set's staging does once B's stems are on (autopilot.js, "where its vocal
+  // phrase starts (for a mashup transition)"): PLAY STEP alone never asks, so a mashup would
+  // always read "does not fit". Same request, same field.
+  const ve = await settle(g.fetch(`/api/tracks/${cfg.b.id}/vocal_entry`).then((r) => (r.ok ? r.json() : null)).catch(() => null), 60);
+  if (ve) decks.b._vocalEntry = ve;
 
   // A plays from `lead` s before the window, the move is booked like PLAY STEP pressed then
-  const lead = cfg.lead != null ? cfg.lead : 8;
+  const lead = cfg.full ? 0 : cfg.lead != null ? cfg.lead : 8;
   decks.a.play(Math.max(0, cfg.aTime - cfg.pre - lead));
   await env.clock.run(env.clock.now + 2);
   if (!decks.a.stemsReady) throw new Error("deck A plays but its stems are not live");
@@ -221,7 +242,15 @@ async function main() {
   await env.clock.run(t0 + 180, () => ctx.currentTime > t0 && !decks.a.playing);
   const end = !decks.a.playing;
   const tEnd = end ? Math.max(t0, ctx.currentTime - 0.3) : null;
-  const w0 = t0 - cfg.pre, w1 = (tEnd || t0 + 60) + cfg.post;
+  // full: A from its 0:00 (A has played since then), B to its own end
+  let pre = cfg.pre, post = cfg.post;
+  if (cfg.full) {
+    pre = cfg.aTime / rate;
+    const bRate = decks.b._playbackRate ? decks.b._playbackRate() : 1;
+    const bLeft = decks.b.playing && decks.b.buffer ? (decks.b.buffer.duration - decks.b._currentPosition()) / bRate : 0;
+    post = Math.max(0, ctx.currentTime + bLeft - (tEnd || t0 + 60));
+  }
+  const w0 = t0 - pre, w1 = (tEnd || t0 + 60) + post;
   await env.clock.run(w1 + 0.5);
 
   const out = {
@@ -229,6 +258,8 @@ async function main() {
     t_end: tEnd === null ? null : +tEnd.toFixed(6), end_marked: end, pos_hz: POS_HZ,
     a: Object.assign({}, cfg.a, { a_time: cfg.aTime }), b: Object.assign({}, cfg.b, { b_time: cfg.bTime }),
     sim_overrides: st.applied,
+    vocal_entry_b: ve || null,
+    steps: STEPS.slice(-400),
     recipe_asked: cfg.recipe, ran: r.ran, refused: r.refused || null, line: r.line || null,
     destination: ctx.destination._id,
     nodes: ctx._nodes.map((n) => serNode(n, w0, w1)),
@@ -236,7 +267,7 @@ async function main() {
     buffers: GEN,
     labels: labels(g),
     unserved: [...unserved].sort(),
-    console: env.logs.console.filter((c) => c.level === "warn" || c.level === "error" || /transition|stem|merge|macro/i.test(c.text)).slice(-200),
+    console: env.logs.console.filter((c) => c.level === "warn" || c.level === "error" || /transition|stem|merge|macro|mashup|variant|gate|refused|echo|throw/i.test(c.text)).slice(-200),
     errors: env.logs.errors.slice(0, 50),
     audio_errors: ctx._errors.slice(0, 20),
   };
