@@ -1524,7 +1524,8 @@ def get_riff_stem(key: str, name: str):
     p = _host().keylock_stem_path(key, name)
     if not p:
         raise HTTPException(status_code=404, detail="key-locked stem not rendered")
-    return FileResponse(p, media_type="audio/wav")
+    from app.music_brain.audio_io import media_type
+    return FileResponse(p, media_type=media_type(p))
 
 
 @app.get("/api/tracks/{track_id}/stems/{name}")
@@ -1534,7 +1535,8 @@ def get_track_stem_audio(track_id: str, name: str):
     stems = _cached_stems4(track_id)
     if not stems:
         raise HTTPException(status_code=404, detail="stems not separated yet")
-    return FileResponse(stems[name], media_type="audio/wav")
+    from app.music_brain.audio_io import media_type
+    return FileResponse(stems[name], media_type=media_type(stems[name]))
 
 
 _fame: Dict[str, dict] = {}
