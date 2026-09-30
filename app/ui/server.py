@@ -2648,6 +2648,12 @@ def save_set_log(payload: dict):
     json_path.write_bytes(raw)
     markdown_path.write_text(export_set_log_markdown(validated), encoding="utf-8")
     _set_logs[log_id] = json_path
+    try:
+        from app.music_brain import history
+
+        history.add_set_log(json_path, SET_LOGS_CACHE_DIR.parent)     # the set-history index (user DB)
+    except Exception:  # noqa: BLE001 -- the file is saved; the index catches up on rebuild()
+        pass
     return {
         "set_log_id": log_id,
         "json_url": f"/api/set-logs/{log_id}",

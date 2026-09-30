@@ -73,6 +73,9 @@ def _write(kind: str, **fields) -> None:
             p.parent.mkdir(parents=True, exist_ok=True)
             with open(p, "a", encoding="utf-8") as f:
                 f.write(line + "\n")
+        from app.music_brain import history
+
+        history.on_event(SESSION_ID, p)           # the set-history index (user DB); never raises
     except Exception:
         pass
 

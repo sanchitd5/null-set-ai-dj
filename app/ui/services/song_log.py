@@ -133,8 +133,12 @@ def _meta_of(s: dict) -> dict:
 def _write_meta(s: dict) -> None:
     p = s["dir"] / "meta.json"
     tmp = p.with_suffix(".tmp")
-    tmp.write_text(json.dumps(_meta_of(s), indent=1, default=str), encoding="utf-8")
+    meta = _meta_of(s)
+    tmp.write_text(json.dumps(meta, indent=1, default=str), encoding="utf-8")
     tmp.replace(p)
+    from app.music_brain import history
+
+    history.on_play(session_log.SESSION_ID, meta, s["dir"])     # the set-history index; never raises
 
 
 def _name(track_id: str, given: Optional[str]) -> str:

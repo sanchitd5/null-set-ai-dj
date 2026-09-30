@@ -18,9 +18,10 @@ def _no_song_lookup(monkeypatch, tmp_path_factory):
 
 @pytest.fixture(autouse=True)
 def _private_session_log(tmp_path_factory, monkeypatch):
-    """Tests never write into the real per-session event log (data/cache/sessions)."""
+    """Tests never write into the real per-session event log (data/cache/sessions) nor the real
+    set history (data/cache/user.db): a private cache's sessions/ (history keeps its DB beside)."""
     import app.ui.services.session_log as sl
-    monkeypatch.setattr(sl, "SESSIONS_DIR", tmp_path_factory.mktemp("sessions"))
+    monkeypatch.setattr(sl, "SESSIONS_DIR", tmp_path_factory.mktemp("cache") / "sessions")
 
 
 @pytest.fixture(autouse=True)
