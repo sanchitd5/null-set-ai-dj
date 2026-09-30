@@ -382,7 +382,10 @@ separated twice. `app/music_brain/stem_service.py`; CLI `agent_bridge separate`;
 WAV size) with a v2 `manifest.json` (`version`, `format`, `stems`). Readers try `.flac` first and
 fall back to `.wav`, so old WAV entries still load. `python3 -m app.music_brain.audio_convert`
 converts an existing WAV cache in place (dry run by default; `--apply`, `--only stems|keylock`,
-`--limit N`); every file is decoded and compared before its WAV is deleted.
+`--limit N`, `--jobs N`, `--max-mem-gb G`); every file is decoded and compared before its WAV is
+deleted. `--jobs` converts N folders at once in worker processes (default min(4, cpus / 2), capped
+at cpus - 1 and at `--max-mem-gb` / 1.6 GB per folder); Ctrl-C stops handing out folders and lets
+running ones finish, so every folder ends all-WAV or all-FLAC.
 
 ### step log
 Per-song log of each step the autopilot took (song, recipe, why), shown in the browser and saved

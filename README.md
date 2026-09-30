@@ -177,7 +177,7 @@ Logs: `/tmp/ai-dj-server.log` (app), `/tmp/ai-dj-omni-server.log` (model).
 | `DJ_LIBRARY_DIRS` | none | semicolon-separated local music folders |
 | `LOG_LEVEL` / `CONSOLE_LEVEL` | `info` / `warn` | app log and `start.sh` console verbosity |
 
-Disk use: stems (`data/cache/stems/`) are 16-bit FLAC and key-locked renders (`data/cache/keylock/`) are 24-bit FLAC, both lossless. An older WAV cache keeps working; convert it in place with `python3 -m app.music_brain.audio_convert` (dry run, prints the projected saving) and then `--apply` while the app is idle.
+Disk use: stems (`data/cache/stems/`) are 16-bit FLAC and key-locked renders (`data/cache/keylock/`) are 24-bit FLAC, both lossless. An older WAV cache keeps working; convert it in place with `python3 -m app.music_brain.audio_convert` (dry run, prints the projected saving) and then `--apply` while the app is idle. Add `--jobs N` to convert N folders in parallel (default min(4, cpus / 2); `--max-mem-gb` lowers N to fit memory).
 
 ---
 
