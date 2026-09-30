@@ -13,7 +13,7 @@
 
 **stems · phrase-locked transitions · merge → hold → drop · a local LLM that picks the next song**
 
-![version](https://img.shields.io/badge/version-v1-00ff66?style=for-the-badge&labelColor=0a0f0d)
+![version](https://img.shields.io/badge/version-v1.0.1-00ff66?style=for-the-badge&labelColor=0a0f0d)
 ![AI DJ](https://img.shields.io/badge/AI%20DJ-NULL%3A%3ASET-00e5ff?style=for-the-badge&labelColor=0a0f0d)
 ![local](https://img.shields.io/badge/runs-100%25%20local-ff2bd6?style=for-the-badge&labelColor=0a0f0d)
 ![license](https://img.shields.io/badge/license-MIT-8a8f8c?style=for-the-badge&labelColor=0a0f0d)
@@ -82,6 +82,7 @@ When the gates say no, it falls back to the move that fits the pair:
 - **FOLLOW SET**: play a song by an artist from a studied set and the autopilot follows that set's music, nearest by tempo, key and energy
 - A **pair atlas** scores every pair in your library by the console's own rules, with per-move compatibility (merge-hold, riff, mashup, supermove)
 - Scene continuity, artist spacing on every path, energy-arc rules, Camelot key gates, set memory across sessions
+- **Punjabi scene profile** (`PUNJABI` in the toggle drawer: auto, on, off). When both songs are Punjabi it treats punjabi, bhangra and desi as one scene, allows a 4-decade era gap, plays 45 to 90 s snippets, folds 88 and 176 BPM as the same feel and falls back to a Quick Cut on the downbeat. Learned moves from studied Punjabi sets may blend on a key clash. Off is byte-identical to the default
 
 ---
 
@@ -119,6 +120,10 @@ python -m app.music_brain.agent_bridge learn-status
 ```
 
 It clips every tracklist boundary, separates stems, matches each song, detects the techniques (bass swaps, stem intros, acapella overs, vocal loops and re-cuts, loop extends), has the local model review them, and merges them into `data/cache/learned_techniques.json`. Then it imports the set's songs into your library and rebuilds the pair atlas incrementally, which writes the set's macros (`studied-<set_id>-<n>` per transition, `studied-set-<set_id>` for the whole set). The JSON result reports that step under `macros`. To redo it by hand: `python -m app.music_brain.pair_atlas import-set <set_id>` then `python -m app.music_brain.pair_atlas build`.
+
+Only want the set as a playable macro? `learn-set <url> --tracklist tracklist.txt --macros-only` skips the set download and stem separation: it fetches the songs, imports them, updates the atlas and writes `set-<set_id>` in tracklist order.
+
+What the player knows travels with the repo: `app/music_brain/knowledge/` holds every macro, the learned observations and a slim, segmented pair atlas. Every learn-set run exports there (`python -m app.music_brain.knowledge export`), and a fresh checkout seeds its own cache from it on start, matching songs by name. Your local cache always wins.
 
 Glossary of every named concept (atlas, macros, gates, recipes, sim): [ANNEX.md](ANNEX.md).
 
@@ -198,11 +203,14 @@ app/
                   live ear, prerender, downloads, dedup
   ui/static/      the console: autopilot, dj-mind, stem / fx / artist / learned moves,
                   macro mode, NULL-BOT, visuals, ANYMA look (vanilla JS, no build step)
+  music_brain/knowledge/  tracked macros, learned observations, slim pair atlas
+  legacy_pipeline/        the older end-to-end batch mixer (data/songs -> data/output/mix.mp3)
   sim/            the virtual set: fake decks, record / replay, scorer, suite
   tests/          pytest + node checks
 DJ/               the Obsidian DJ knowledge base
 research/notes/   studies: hidden DJ practices, artist signatures, stack evaluation
 data/             songs and caches (gitignored)
+.github/workflows CI: console JS checks and pytest on every push and PR
 ```
 
 The decision engine talks to the world only through an injected **Host port** (`engine.js`, `app/ui/engine.py`), so the same engine runs in the browser and in the sim.
@@ -221,7 +229,7 @@ The decision engine talks to the world only through an injected **Host port** (`
 
 <div align="center">
 
-**v1 · launch version** · built with a lot of late nights, two decks and an AI that will not stop mixing
+**v1.0.1** · see [CHANGELOG.md](CHANGELOG.md) · built with a lot of late nights, two decks and an AI that will not stop mixing
 
 <sub>MIT. See <a href="LICENSE">LICENSE</a>. Use only music you are legally allowed to use.</sub>
 
