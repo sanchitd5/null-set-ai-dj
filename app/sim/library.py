@@ -19,6 +19,12 @@ _SPLIT = re.compile(r"\s+[-–—]\s+")
 MIN_DURATION_S, MAX_DURATION_S = 120.0, 540.0
 
 
+def analysis_file(adir: Path, h: str) -> Path:
+    """<h>.v6.json when the song was re-analysed, else its v5 record."""
+    v6 = adir / f"{h}.v6.json"
+    return v6 if v6.exists() else adir / f"{h}.v5.json"
+
+
 @dataclass(frozen=True)
 class LibTrack:
     tid: str            # sha256[:16], the console's track id
@@ -40,8 +46,9 @@ class MainLibrary:
     # -- discovery ------------------------------------------------------------------
     def _analysis_hashes(self) -> dict:
         out = {}
-        for p in (self.cache / "analysis").glob("*.v5.json"):
-            out[p.name.split(".")[0][:16]] = p.name.split(".")[0]
+        for v in ("v5", "v6"):                  # v6 wins when both exist
+            for p in (self.cache / "analysis").glob(f"*.{v}.json"):
+                out[p.name.split(".")[0][:16]] = p.name.split(".")[0]
         return out
 
     def _stems_for(self, h: str) -> Optional[dict]:
@@ -76,7 +83,7 @@ class MainLibrary:
             if audio is None or stems is None or not (self.cache / "analysis" / f"{h}.vibe.json").exists():
                 continue
             try:
-                a = json.loads((self.cache / "analysis" / f"{h}.v5.json").read_text(encoding="utf-8"))
+                a = json.loads(analysis_file(self.cache / "analysis", h).read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 continue
             if not (MIN_DURATION_S <= float(a.get("duration") or 0) <= MAX_DURATION_S):
@@ -103,7 +110,7 @@ class MainLibrary:
         from app.music_brain.analysis import energy as en
         from app.sim.pool import assemble_entry
 
-        a = json.loads((self.cache / "analysis" / f"{t.hash}.v5.json").read_text(encoding="utf-8"))
+        a = json.loads(analysis_file(self.cache / "analysis", t.hash).read_text(encoding="utf-8"))
         v = json.loads((self.cache / "analysis" / f"{t.hash}.vibe.json").read_text(encoding="utf-8"))
         ep = self.cache / "analysis" / f"{t.hash}.energy.json"
         if ep.exists():

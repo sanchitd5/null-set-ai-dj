@@ -144,7 +144,8 @@
     if (!d || !d.analysis || !core2 || !core2.dropLines) return;
     const bar = 240 / (d.bpm || 128), rate = (d._playbackRate && d._playbackRate()) || 1;
     const a = d.analysis;
-    if (!a._samplerDrops) a._samplerDrops = core2.dropLines(a.phrase_boundaries_8bar, a.energy_times, a.energy_curve, bar);
+    if (!a._samplerDrops) a._samplerDrops = core2.trackDropLines
+      ? core2.trackDropLines(a, bar) : core2.dropLines(a.phrase_boundaries_8bar, a.energy_times, a.energy_curve, bar);
     const pos = d._currentPosition();
     for (const dl of a._samplerDrops) {
       const ahead = (dl.t - pos) / rate;

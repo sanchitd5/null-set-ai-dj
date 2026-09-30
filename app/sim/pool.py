@@ -37,7 +37,7 @@ def find_data_dir() -> Path:
         return Path(env).expanduser().resolve()
     for p in [REPO_ROOT, *REPO_ROOT.parents]:
         d = p / "data" / "cache" / "analysis"
-        if d.is_dir() and next(d.glob("*.v5.json"), None) is not None:     # config.py creates empty cache dirs
+        if d.is_dir() and (next(d.glob("*.v5.json"), None) or next(d.glob("*.v6.json"), None)) is not None:     # config.py creates empty cache dirs
             return p / "data"
     return REPO_ROOT / "data"
 

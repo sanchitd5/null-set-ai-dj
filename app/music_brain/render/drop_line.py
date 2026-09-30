@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from typing import Any, Callable, List, Optional, Sequence, Tuple
 
-from app.music_brain.render.blend import drop_lines
+from app.music_brain.render.blend import drop_lines, track_drop_lines  # noqa: F401 -- drop_lines re-exported
 
 MIN_SECTION_DROP_BARS = 2.0
 DROP_WINDOW_BARS = 2.0        # the drop window after a drop line (= drop-line.js DROP_WINDOW_BARS)
@@ -100,8 +100,7 @@ def drop_spans(analysis: Any, bpm: Optional[float] = None) -> List[Span]:
         label, st, en = _get(s, "label"), _get(s, "start"), _get(s, "end")
         if "drop" in str(label or "").lower() and _fin(st) and _fin(en) and en - st >= MIN_SECTION_DROP_BARS * bar - EPS:
             out.append((float(st), float(min(en, st + w))))
-    for t, _, _ in drop_lines(_get(analysis, "phrase_boundaries_8bar"), _get(analysis, "energy_times"),
-                              _get(analysis, "energy_curve"), bar):
+    for t, _, _ in track_drop_lines(analysis, bar):  # v6 drops, else the v5 energy rule
         out.append((float(t), float(t) + w))
     return out
 

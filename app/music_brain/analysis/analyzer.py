@@ -24,6 +24,8 @@ from app.music_brain.config import (
     ANALYSIS_CACHE_DIR,
     BEATS_PER_BAR,
     BEATS_PER_PHRASE,
+    DEMUCS_MODEL,
+    STEMS_CACHE_DIR,
     VOCAL_PRESENCE_THRESHOLD_DBFS,
 )
 
@@ -81,6 +83,11 @@ class TrackAnalysis:
     energy_times: List[float] = field(default_factory=list)
     sections: List[StructureSection] = field(default_factory=list)
     vocal_active_regions: List[Tuple[float, float]] = field(default_factory=list)
+    # v6 (analysis/structure.py): phrase-grid drops, the main one, and how they were found.
+    # Empty / None on a v5 record: readers fall back to blend.drop_lines on the energy curve.
+    drops: List[dict] = field(default_factory=list)
+    main_drop: Optional[dict] = None
+    structure: Optional[dict] = None
 
     def to_dict(self) -> dict:
         d = asdict(self)
@@ -400,7 +407,34 @@ def vocal_presence_map(
 # v4: key chroma tuning-corrected, first/last 8% trimmed.
 # v5: bpm = tempo at which an 8-bar loop repeats (tempo.loop_tempo), not the
 #     tempogram bin (loops and blends drifted ~150 ms per 8 bars).
-ANALYSIS_VERSION = 5
+# v6: sections on the 8-bar phrase grid, a `drops` list and `main_drop`
+#     (analysis/structure.py, drums+bass stems when cached). Derived from the v5
+#     record alone, so v5 -> v6 needs no audio decode of the mix.
+ANALYSIS_VERSION = 6
+
+
+def _stems_for(digest: str) -> Optional[dict]:
+    """{name: path} of the cached Demucs stems for a content hash, or None."""
+    from app.music_brain.audio.audio_io import read_manifest
+
+    try:
+        return read_manifest(STEMS_CACHE_DIR / f"{digest}_{DEMUCS_MODEL}")
+    except Exception:  # noqa: BLE001 -- a broken stem cache falls back to the mix rule
+        return None
+
+
+def _refine(data: dict, digest: str) -> dict:
+    """v5-shaped record -> v6 record (structure.refine), in place."""
+    from app.music_brain.analysis import structure
+
+    return structure.refine(data, _stems_for(digest))
+
+
+def _write_json(path: Path, data: dict) -> None:
+    tmp = path.with_suffix(".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+    tmp.replace(path)
 
 
 def _cache_path_for(audio_path: Path, version: int = ANALYSIS_VERSION, digest: Optional[str] = None) -> Path:
@@ -425,24 +459,27 @@ _upgrade_started = False
 
 
 def upgrade_to_current(audio_path: Path) -> bool:
-    """v4 record -> v5 record (tempo only). True when a v5 record now exists."""
+    """Older record -> current one. v5 -> v6 is structure only (no mix decode);
+    v4 also refines the tempo (~1 s). True when a current record now exists."""
     audio_path = Path(audio_path)
     digest = _file_hash(audio_path)
-    new, old = _cache_path_for(audio_path, digest=digest), _cache_path_for(audio_path, 4, digest)
+    new = _cache_path_for(audio_path, digest=digest)
     if new.exists():
         return True
-    if not old.exists():
-        return False
-    from app.music_brain.analysis.tempo import loop_tempo
+    v5, v4 = _cache_path_for(audio_path, 5, digest), _cache_path_for(audio_path, 4, digest)
+    if v5.exists():
+        with open(v5, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    elif v4.exists():
+        from app.music_brain.analysis.tempo import loop_tempo
 
-    with open(old, "r", encoding="utf-8") as f:
-        data = json.load(f)
-    y, sr = librosa.load(str(audio_path), sr=SAMPLE_RATE, mono=True)
-    data["bpm"] = float(loop_tempo(y, sr, float(data["bpm"]), data.get("beat_times") or []))
-    tmp = new.with_suffix(".tmp")
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
-    tmp.replace(new)
+        with open(v4, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        y, sr = librosa.load(str(audio_path), sr=SAMPLE_RATE, mono=True)
+        data["bpm"] = float(loop_tempo(y, sr, float(data["bpm"]), data.get("beat_times") or []))
+    else:
+        return False
+    _write_json(new, _refine(data, digest))
     return True
 
 
@@ -501,11 +538,22 @@ def analyze(
             if mem_key:
                 _mem_index[mem_key] = res
             return res
+        if _cache_path_for(audio_path, 5, digest).exists():
+            # v5 -> v6 is structure only (phrase grid + stems, no mix decode): do it now.
+            try:
+                if upgrade_to_current(audio_path):
+                    with open(cache_path, "r", encoding="utf-8") as f:
+                        res = _from_dict(json.load(f))
+                    if mem_key:
+                        _mem_index[mem_key] = res
+                    return res
+            except (OSError, ValueError) as exc:
+                print(f"[analysis] v6 upgrade failed for {audio_path.name}: {exc}", flush=True)
         old = _cache_path_for(audio_path, 4, digest)
         if old.exists():                        # analysed before: answer now, refine tempo later
             queue_upgrade([audio_path])
             with open(old, "r", encoding="utf-8") as f:
-                return _from_dict(json.load(f))
+                return _from_dict(_refine(json.load(f), digest))
 
     y, sr = librosa.load(str(audio_path), sr=SAMPLE_RATE, mono=True)
     duration = float(librosa.get_duration(y=y, sr=sr))
@@ -546,10 +594,11 @@ def analyze(
         sections=sections,
         vocal_active_regions=vocal_regions,
     )
+    record = _refine(result.to_dict(), digest)   # v6: phrase-grid sections + drops
+    result = _from_dict(record)
 
     if use_cache and vocals_stem_path is None:
-        with open(cache_path, "w", encoding="utf-8") as f:
-            json.dump(result.to_dict(), f, indent=2)
+        _write_json(cache_path, record)
         if mem_key:
             _mem_index[mem_key] = result
 

@@ -111,6 +111,30 @@ def drop_lines(phrases, times, curve, bar: float) -> List[Tuple[float, float, fl
     return out
 
 
+def _get(a, k: str, default=None):
+    if a is None:
+        return default
+    return a.get(k, default) if isinstance(a, dict) else getattr(a, k, default)
+
+
+def track_drop_lines(a, bar: float) -> List[Tuple[float, float, float]]:
+    """drop_lines of one analysed song (TrackAnalysis or dict). A v6 record
+    carries its phrase-grid drops (analysis/structure.py, drums+bass stems when
+    cached): those win. A v5 record falls back to drop_lines on the energy curve."""
+    drops = _get(a, "drops")
+    if drops:
+        return [(float(d["start"]), float(d.get("line_energy", d.get("energy", 0.0))),
+                 float(d.get("prev_energy") or 0.0)) for d in drops]
+    return drop_lines(_get(a, "phrase_boundaries_8bar"), _get(a, "energy_times"),
+                      _get(a, "energy_curve"), bar)
+
+
+def main_drop_time(a) -> Optional[float]:
+    """Start of the v6 main drop, or None (v5 record / no drop)."""
+    m = _get(a, "main_drop")
+    return float(m["start"]) if isinstance(m, dict) and "start" in m else None
+
+
 def _vocal_in_bars(regions: Optional[Regions], entry: float, bar: float) -> Optional[float]:
     """Bars from `entry` until the first vocal region (0 if one is sounding at entry);
     None when vocals are unknown or there is none after the entry."""
@@ -163,16 +187,22 @@ def min_exit_floor(a: TrackAnalysis, a_entry: Optional[float], window_lo: float,
     drop after `a_entry` has played DROP_HOLD_BARS; the window stretches to
     allow it when `bars` more of A still fit. min_exit None = no floor."""
     a_own_bar = 240.0 / a.bpm if a.bpm > 0 else 2.0
-    lines = [(t, e) for t, e, _ in drop_lines(a.phrase_boundaries_8bar, a.energy_times, a.energy_curve, a_own_bar)]
-    lines += _breakdown_drops(a, a_own_bar, {t for t, _ in lines})
+    lines = [(t, e) for t, e, _ in track_drop_lines(a, a_own_bar)]
+    if not _get(a, "drops"):        # v5: the curve rule misses drops out of a breakdown
+        lines += _breakdown_drops(a, a_own_bar, {t for t, _ in lines})
     after = sorted((t, e) for t, e in lines if t >= (a_entry or 0.0) - 0.01)
     if not after:
         return None, window_lo, window_hi
     # The first drop, and also the song's BIGGEST drop when it comes later (a short track
     # whose one real drop sits near the end, e.g. Anyma - Atoma 1:40-2:25 of 2:30): leaving
-    # before it plays skips the moment the song is built for.
+    # before it plays skips the moment the song is built for. v6 names its main drop.
     first = after[0][0]
     main_t, main_e = max(after, key=lambda x: (x[1], x[0]))
+    mt = main_drop_time(a)
+    if mt is not None:
+        hit = [x for x in after if abs(x[0] - mt) < 0.01]
+        if hit:
+            main_t, main_e = hit[0]
     min_exit = max(first, main_t) + DROP_HOLD_BARS * a_own_bar
     # A FINALE drop (its high-energy run lasts to within FINALE_S of the end) plays out whole:
     # crossfading inside it cuts the song's climax. A drop in the middle of a long song keeps
@@ -268,9 +298,13 @@ def plan_blend(
     drop_span = None
     if entry_mode == "drop":
         b_bar_own = 240.0 / b.bpm
-        drops = [(t, t + 8 * b_bar_own, e) for t, e, _ in
-                 drop_lines(b.phrase_boundaries_8bar, b.energy_times, b.energy_curve, b_bar_own)]
-        drops = sorted(drops + long_drops(b, b_bar_own))
+        if _get(b, "drops"):        # v6: phrase-grid drops with their real span
+            drops = sorted((float(d["start"]), float(d["end"]), float(d.get("line_energy", d["energy"])))
+                           for d in b.drops)
+        else:
+            drops = [(t, t + 8 * b_bar_own, e) for t, e, _ in
+                     drop_lines(b.phrase_boundaries_8bar, b.energy_times, b.energy_curve, b_bar_own)]
+            drops = sorted(drops + long_drops(b, b_bar_own))
         if not drops:
             return {"ok": False, "reasons": ["incoming song has no drop"]}
         drop_span = drops[0]
@@ -280,8 +314,8 @@ def plan_blend(
     # Only B's own phrase grid: its first boundary is its first detected
     # downbeat (5.9 s into Lane 8 "Little By Little"), not 0:00. Entering at
     # 0:00 put B's downbeats off A's phrase line by whatever the intro pad is.
-    b_first_drop = next(iter(t for t, _, _ in drop_lines(
-        b.phrase_boundaries_8bar, b.energy_times, b.energy_curve, 240.0 / b.bpm if b.bpm > 0 else 2.0)), None)
+    b_first_drop = next(iter(t for t, _, _ in track_drop_lines(
+        b, 240.0 / b.bpm if b.bpm > 0 else 2.0)), None)
     for e in b.phrase_boundaries_8bar:
         if e > limit or e + b_len > b.duration:
             continue

@@ -32,9 +32,9 @@ from app.music_brain.render.blend import (
     Regions,
     _coverage,
     _label_at,
-    drop_lines,
     min_exit_floor,
     tempo_lock,
+    track_drop_lines,
 )
 from app.music_brain.matching.recipe_matcher import camelot_distance_score
 
@@ -132,8 +132,7 @@ def plan_layer(
     b_bar = 240.0 / (b.bpm * mult)
     a_per_b = a_bar / b_bar
     min_exit, lo, hi = min_exit_floor(a, a_entry, window_lo, window_hi, 16)
-    b_drops = [t for t, _, _ in drop_lines(b.phrase_boundaries_8bar, b.energy_times, b.energy_curve,
-                                           240.0 / b.bpm)]
+    b_drops = [t for t, _, _ in track_drop_lines(b, 240.0 / b.bpm)]
     b_limit = b.duration * ENTRY_SEARCH_FRACTION
     groove_fail = None
     clash_best = None

@@ -42,6 +42,7 @@ MIX_SPAN = 0.85          # the drop runs on while phrases keep this share of the
 DIP_PHRASES = 4          # how far back the dip before a drop is looked for
 MAIN_TIE = 0.05          # drops this close (share of the loudest phrase) count as equally loud
 LOW_SHARE = 0.5          # breakdown: below this share of the loudest phrase
+BUILD_RISE = 0.02      # a build phrase is louder than the one before it by this share of the loudest phrase
 EDGE_LOW = 0.6           # intro / outro: the leading / trailing phrases below this share
 
 
@@ -199,9 +200,10 @@ def segment(edges, energy: List[Optional[float]], drops: List[dict], duration: f
     for i in range(n):
         if lab[i] != "drop" and rel[i] < LOW_SHARE:
             lab[i] = "breakdown"
-    # build: the last phrase of a dip that rises into a drop
+    # build: the last phrase of a dip that rises into a drop (a flat breakdown stays a breakdown)
     for i in range(1, n):
-        if lab[i] == "drop" and lab[i - 1] != "drop" and i >= 2 and (e[i - 1] >= e[i - 2] or rel[i - 1] >= LOW_SHARE):
+        if lab[i] == "drop" and lab[i - 1] != "drop" and i >= 2 and (
+                e[i - 1] > e[i - 2] + BUILD_RISE * top or rel[i - 1] >= LOW_SHARE):
             lab[i - 1] = "build"
     first_drop = next((i for i in range(n) if lab[i] == "drop"), n)
     for i in range(n):

@@ -280,6 +280,16 @@
     }
     return out;
   }
+  // Drop lines of one analysis (twin of blend.py track_drop_lines): a v6 record's phrase-grid `drops` win,
+  // a v5 record falls back to dropLines on the energy curve.
+  function trackDropLines(a, bar) {
+    const x = a || {};
+    if (Array.isArray(x.drops) && x.drops.length) {
+      return x.drops.filter((d) => d && Number.isFinite(d.start)).map((d) => ({
+        t: d.start, energy: Number.isFinite(d.line_energy) ? d.line_energy : (d.energy || 0), prevEnergy: d.prev_energy || 0 }));
+    }
+    return dropLines(x.phrase_boundaries_8bar, x.energy_times, x.energy_curve, bar);
+  }
   // The playing song is at peak: LLM energy >= 8, or quick mode in a top-
   // quartile section, or a drop now / on the next phrase line.
   function isPeak(s) {
@@ -708,7 +718,7 @@
                  hookKey, motifHook, MOTIF_MAX_PLAYS, MOTIF_GAP_SONGS,
                  phraseBounds, phraseLabel, isPreDrop, remixBlock, aiVeto, needsHoldLoop, holdLoopAnchor, holdLoopSpan, holdLoopCandidates, pickHoldLoop,
                  PRECLEAR_DB, LOW_KILL, REMIX_MOVES,
-                 camelotScore, energyQ3, isPeak, dropLines, DROP_JUMP, bigMomentBlock, peakBlock, peakTransition,
+                 camelotScore, energyQ3, isPeak, dropLines, trackDropLines, DROP_JUMP, bigMomentBlock, peakBlock, peakTransition,
                  PEAK_MOVES, BIG_MOMENTS, BIG_COOLDOWN_S, BEAT_BOOST_BARS, BEAT_BOOST_COOLDOWN_S, BACKSPIN_MAX,
                  layerBars, layerVeto, layerDecision, LAYER_EVERY };
   root.djMindCore = core;
@@ -859,7 +869,7 @@
   function aDropLines(d, bar) {
     const a = d.analysis || {};
     if (a._mindDrops && a._mindDropsBar === bar) return a._mindDrops;
-    a._mindDrops = dropLines(a.phrase_boundaries_8bar, a.energy_times, a.energy_curve, bar);
+    a._mindDrops = trackDropLines(a, bar);
     a._mindDropsBar = bar;
     return a._mindDrops;
   }
