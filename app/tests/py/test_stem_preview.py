@@ -92,6 +92,57 @@ def test_param_curve_matches_the_sims_recording_api():
     assert np.allclose(got, want, atol=1e-9), np.c_[times, got, want][np.abs(got - want) > 1e-9][:5]
 
 
+def _impulse_cap(d_s: float, g: float, w: float = 1.2):
+    """impulse -> dest, and impulse -> delay(d) -> dest with delay -> gain(g) -> delay (an echo)."""
+    sr = gr.SR
+    imp = [0.0] * sr
+    imp[0] = 1.0
+    src = _src_node(2, None, 0.0, w, 0.0)
+    src["buf"] = 99
+    return {"window": [0.0, w], "t0": 0.0, "t_end": w, "pos_hz": 1000, "destination": 1, "labels": {},
+            "buffers": {"99": {"sr": sr, "channels": [imp, imp]}},
+            "nodes": [{"id": 1, "kind": "destination", "params": {}}, src,
+                      {"id": 3, "kind": "delay", "params": {"delayTime": {"base": d_s, "ev": []}}},
+                      _gain(4, g, [])],
+            "edges": [{"from": 2, "to": 1, "on": 0, "off": None}, {"from": 2, "to": 3, "on": 0, "off": None},
+                      {"from": 3, "to": 4, "on": 0, "off": None}, {"from": 4, "to": 3, "on": 0, "off": None},
+                      {"from": 3, "to": 1, "on": 0, "off": None}]}
+
+
+def test_feedback_delay_gives_the_geometric_echo_tail():
+    """An impulse through a delay d with feedback g: repeats at k*d with amplitude g^(k-1),
+    rendered through chunk boundaries (a small chunk forces many)."""
+    d, g = 0.1, 0.6
+    res = gr.render(_impulse_cap(d, g), {}, chunk=128 * 100)
+    y = res["audio"][0]
+    assert res["not_rendered"] == []
+    D = int(round(d * gr.SR))
+    want = np.zeros_like(y)
+    want[0] = 1.0
+    for k in range(1, len(y) // D + 1):
+        if k * D < len(y):
+            want[k * D] = g ** (k - 1)
+    assert np.max(np.abs(y - want)) < 1e-4, np.flatnonzero(np.abs(y - want) > 1e-4)[:5]
+
+
+def test_delay_in_a_cycle_is_at_least_one_render_quantum():
+    res = gr.render(_impulse_cap(0.0005, 0.5, w=0.05), {})         # 22 samples asked, 128 in a cycle
+    y = res["audio"][0]
+    nz = np.flatnonzero(np.abs(y) > 1e-6)
+    assert list(nz[:3]) == [0, 128, 256] and np.isclose(y[256], 0.5, atol=1e-4)
+
+
+def test_param_eval_in_blocks_equals_one_pass():
+    ev = [{"type": "set", "time": 0.0, "value": 1.0}, {"type": "lin", "time": 1.0, "value": 0.2},
+          {"type": "exp", "time": 2.0, "value": 0.8}, {"type": "target", "time": 2.5, "value": 0.0, "tc": 0.3},
+          {"type": "curve", "time": 4.0, "dur": 1.0, "curve": [0.5, 1.0, 0.0]}, {"type": "lin", "time": 6.0, "value": 1.0}]
+    t = np.linspace(-0.5, 7.0, 7501)
+    whole = gr.param_curve({"base": 1.0, "ev": ev}, t)
+    pe = gr.ParamEval({"base": 1.0, "ev": ev})
+    parts = np.concatenate([pe(t[i:i + 333]) for i in range(0, len(t), 333)])
+    assert np.allclose(whole, parts, atol=1e-12)
+
+
 def test_normalise_gives_both_files_the_same_peak():
     a = np.random.RandomState(0).standard_normal((2, 1000)) * 0.1
     b = a * 7.0
@@ -160,6 +211,9 @@ def _fixture_cache(root: Path) -> tuple:
         (cache / "analysis").mkdir(parents=True, exist_ok=True)
         (cache / "analysis" / f"{s['digest']}.v5.json").write_text(json.dumps(an))
         out.append(s["path"])
+    ida = hashlib.sha256(out[0].read_bytes()).hexdigest()[:16]
+    (cache / "fame.json").write_text(json.dumps({ida: {"views": 5, "famous": False, "name": "a"}, "ffff": {"views": 1}}))
+    (cache / "liked.json").write_text(json.dumps({"schema": 1, "liked": {}}))
     return cache, out[0], out[1]
 
 
@@ -278,6 +332,35 @@ def test_preview_overrides_touch_only_the_captures_copy(tmp_path):
     assert abs(L1 - L0 / 2) < 0.1, (L0, L1)
     with pytest.raises(ValueError):
         capture(a, b, "Bass Swap", a_time=75.0, b_time=0.0, src_cache=cache, xf=0)
+
+
+@needs_tools
+def test_capture_serves_what_the_live_server_reads_from_its_cache(captures):
+    """B's vocal entry is asked like the running set's staging does (a mashup reads it), and the
+    console-wide cache reads (liked, macros, learned moves, recipes, cached fame) are answered."""
+    cap = captures["Bass Swap"]
+    assert cap["vocal_entry_b"] is not None and "entry" in cap["vocal_entry_b"]
+    served_never = {"GET /api/liked", "GET /api/macros", "GET /api/learned/moves", "GET /api/recipes"}
+    assert not served_never & set(cap["unserved"]), cap["unserved"]
+    ida, idb = cap["songs"]["a"]["id"], cap["songs"]["b"]["id"]
+    assert f"GET /api/tracks/{ida}/fame" not in cap["unserved"]          # cached: answered
+    assert f"GET /api/tracks/{idb}/fame" in cap["unserved"]              # not cached: a miss would ask YouTube
+
+
+@needs_tools
+def test_full_capture_spans_a_from_zero_to_bs_end(tmp_path):
+    from app.sim.stem_capture import capture
+    cache, a, b = _fixture_cache(tmp_path)
+    a_time = 32 * BEAT * 2                                              # 30 s
+    cap = capture(a, b, "Bass Swap", a_time=a_time, b_time=0.0, src_cache=cache, full=True)
+    w0, w1 = cap["window"]
+    assert abs((cap["t0"] - w0) - a_time) < 0.01                        # A from its 0:00
+    b_at_end = cap["t_end"] - cap["t0"]                                 # B entered at 0, rate 1
+    assert abs((w1 - cap["t_end"]) - (DUR - b_at_end)) < 0.1            # B to its own end
+    nd = {n["id"]: n for n in cap["nodes"]}
+    a_src = [n for n in nd.values() if n["kind"] == "source" and (n.get("file") or "").endswith(":mix")
+             and n.get("positions") and n["positions"]["pos"] and n["positions"]["pos"][0] is not None]
+    assert min(n["positions"]["pos"][0] for n in a_src) < 0.05          # A's mix read from ~0 s
 
 
 def test_bridge_parser_has_stem_preview():
