@@ -1,7 +1,7 @@
 // AI Music Brain - side drawers for the autopilot row (user: "checkbox row is overflowing, create it a side
 // menu / filter menu") and the AI ACTIONS bar ("MORE ACTIONS").
 //
-// core  pure and node-testable (app/tests/toggle_drawer_check.js): which group a toggle / action belongs to,
+// core  pure and node-testable (app/tests/js/toggle_drawer_check.js): which group a toggle / action belongs to,
 //       filtering, per-group counts, nested LEARNED greying, the saved-state round trip.
 // glue  UI only (skipped by the sim, like host-browser.js): MOVES the existing <label><input> elements (ids and
 //       listeners stay, nothing is re-created) into the drawer, and picks up ones added later (MutationObserver).

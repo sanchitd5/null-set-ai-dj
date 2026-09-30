@@ -17,7 +17,7 @@
 //   ctx    {now: s on the audio clock (the runtime fills it), phraseS: s per 8-bar phrase from the beat grid,
 //           song: id of the song the move plays on, transition: id of the transition it rides on (null in-song)}
 //
-// Rules (all in `core`, pure, node-tested in app/tests/fx_budget_check.js):
+// Rules (all in `core`, pure, node-tested in app/tests/js/fx_budget_check.js):
 //   1. one FX per transition: a second move on the same transition id is refused (S21 "forbid stacking")
 //   2. per song: at most MAX_PER_SONG units on one song
 //   3. per K phrases, decaying: spent units decay with a half-life of HALF_LIFE_PHRASES phrases of the playing

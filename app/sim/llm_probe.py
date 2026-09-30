@@ -60,7 +60,7 @@ def _pick(models: list, want: Optional[str]) -> Optional[str]:
 def ear_up(opener=None) -> bool:
     """Is the live ear's audio model (OMNI_BASE_URL, default the local Omni server) answering? Optional: without
     it the hold loop uses the watchdog rules, in the live app and in the sim."""
-    from app.ui import live_ear
+    from app.ui.services import live_ear
 
     opener = opener or urllib.request.build_opener(urllib.request.ProxyHandler({}))
     try:
@@ -76,7 +76,7 @@ def resolve(opener=None, env=None, publish: bool = True) -> Endpoint:
     omni = f"http://127.0.0.1:{env.get('OMNI_PORT', '8901')}/v1"
     ollama = f"{env.get('OLLAMA_URL', 'http://localhost:11434').rstrip('/')}/v1"
     want = env.get("AUTOPILOT_MODEL") or None
-    from app.ui import live_ear
+    from app.ui.services import live_ear
 
     # the Omni server also lists the text model (unloaded): ask for the Omni model by name, never "the first"
     omni_model = env.get("OMNI_MODEL") or live_ear.LOCAL_MODEL

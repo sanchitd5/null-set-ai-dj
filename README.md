@@ -219,7 +219,7 @@ data/             songs and caches (gitignored)
 .github/workflows CI: console JS checks and pytest on every push and PR
 ```
 
-The decision engine talks to the world only through an injected **Host port** (`engine.js`, `app/ui/engine.py`), so the same engine runs in the browser and in the sim.
+The decision engine talks to the world only through an injected **Host port** (`engine.js`, `app/ui/services/engine.py`), so the same engine runs in the browser and in the sim.
 
 ---
 
@@ -229,7 +229,7 @@ The decision engine talks to the world only through an injected **Host port** (`
 
 ## 🔌 Agent bridge and REST
 
-`app/music_brain/agent_bridge.py` is a Python API and a CLI that prints JSON (`analyze`, `separate`, `match`, `preview`, `list-recipes`, `learn-set`, `learned`, `learn-status`). The REST surface lives in `app/ui/server.py` and `app/ui/atlas_api.py`: tracks, stems, match and plans, autopilot suggest and plan, live ear, pair atlas partners, macros, studied sets, learn progress, session logs.
+`app/music_brain/agent_bridge.py` is a Python API and a CLI that prints JSON (`analyze`, `separate`, `match`, `preview`, `list-recipes`, `learn-set`, `learned`, `learn-status`). The REST surface lives in `app/ui/server.py` and `app/ui/services/atlas_api.py`: tracks, stems, match and plans, autopilot suggest and plan, live ear, pair atlas partners, macros, studied sets, learn progress, session logs.
 
 ---
 

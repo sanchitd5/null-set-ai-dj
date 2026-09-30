@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from app.music_brain.audio_io import stem_file
+from app.music_brain.audio.audio_io import stem_file
 from app.sim.pool import Pool, find_data_dir
 
 _SPLIT = re.compile(r"\s+[-–—]\s+")
@@ -57,7 +57,7 @@ class MainLibrary:
         name then id: the order never depends on directory listing order."""
         if self._tracks is not None:
             return self._tracks
-        from app.ui.download_service import _is_live, _is_mix, _is_non_music
+        from app.ui.services.download_service import _is_live, _is_mix, _is_non_music
 
         try:
             names = json.loads((self.cache / "uploads" / "_names.json").read_text(encoding="utf-8"))
@@ -100,7 +100,7 @@ class MainLibrary:
         Demucs stems with the real vocal_presence_map."""
         if not force and pool.has(t.hash):
             return pool.load(t.hash)
-        from app.music_brain import energy as en
+        from app.music_brain.analysis import energy as en
         from app.sim.pool import assemble_entry
 
         a = json.loads((self.cache / "analysis" / f"{t.hash}.v5.json").read_text(encoding="utf-8"))
@@ -119,7 +119,7 @@ class MainLibrary:
 
     def library_raws(self) -> list:
         """Every measured track's raw energy score, as energy.library_raws() reads it live."""
-        from app.music_brain import energy as en
+        from app.music_brain.analysis import energy as en
 
         out = []
         for p in sorted((self.cache / "analysis").glob("*.energy.json")):

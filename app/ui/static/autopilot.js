@@ -6,7 +6,7 @@
 //
 // Requires: window.decks, window.loadIntoDeck, setStatus (app.js + deck-controller.js).
 
-// Pure transition maths, no DOM / audio (node-checked: app/tests/autopilot_check.js).
+// Pure transition maths, no DOM / audio (node-checked: app/tests/js/autopilot_check.js).
 var autopilotCore = (function () {
   const MASHUP_KINDS = new Set(["blend", "filter", "loop"]);
   // Stem blend length in real bars. barS = seconds per bar at A's live tempo,
@@ -359,7 +359,7 @@ var autopilotCore = (function () {
     return energy <= 5 ? "long" : "medium";
   }
 
-  // A background job's final answer (app/ui/bg_jobs.py: the silent ear's preplan /
+  // A background job's final answer (app/ui/services/bg_jobs.py: the silent ear's preplan /
   // merge audition). `first` is the POST's body; while it reads {status: "pending",
   // job}, poll(job) is asked every `everyMs` until the result lands. Past `budgetMs`,
   // when alive() turns false, or on a failed poll: null, and the caller carries on
@@ -747,7 +747,7 @@ function createAutopilotEngine({ host, ai }) {
     if (u.includes("/api/blend/plan") || u.includes("/api/mashup/plan")) return 180000;
     if (u.includes("/api/layer/plan")) return 60000;   // vocal maps already cached by the blend plan
     if (u.includes("/api/bridge/plan")) return 10000;
-    // background jobs (app/ui/bg_jobs.py): the POST starts one, the GET polls it; both answer at once
+    // background jobs (app/ui/services/bg_jobs.py): the POST starts one, the GET polls it; both answer at once
     if (u.includes("/api/transition/preplan") || u.includes("/api/merge/audition")) return 20000;
     if (u.includes("/api/autopilot/suggest")) return 240000; // ~50 s per call, may queue behind a plan
     if (u.includes("/api/audio/")) return 120000;
@@ -1873,7 +1873,7 @@ function createAutopilotEngine({ host, ai }) {
   // ── pre-render: the next songs' stems + key-locked tempo stems are made AHEAD of the booking ──
   // The ranked candidates (the one being tried, the booked one, the pool) go to the server, which makes
   // their stems and the tempo sets they may need (A's tempo now and A's native tempo) one heavy job at
-  // a time, and cancels the queued work of a song that left the list (app/ui/prerender.py). The answer
+  // a time, and cancels the queued work of a song that left the list (app/ui/services/prerender.py). The answer
   // says what is ready; the pool order prefers ready songs (bounded) and the booking waits for B's stems
   // instead of refusing a merge for a state that is minutes from being fine (awaitBReady).
   const PRERENDER_POLL_MS = 8000;
@@ -2352,7 +2352,7 @@ function createAutopilotEngine({ host, ai }) {
       return false;
     }
 
-    // Measured energy gate (app/music_brain/energy.py, 1-10 vs the library): the next
+    // Measured energy gate (app/music_brain/analysis/energy.py, 1-10 vs the library): the next
     // song stays within 2 levels (1 relaxed), the set arc decides the direction.
     // The last-round fallback allows one more level so the set never stalls.
     const ev = candidate.vibe;
@@ -3278,7 +3278,7 @@ function createAutopilotEngine({ host, ai }) {
       });
     }
 
-    // Learned from studied sets (app/music_brain/set_learner.py): the move that DJ
+    // Learned from studied sets (app/music_brain/learning/set_learner.py): the move that DJ
     // made most on pairs like this one, when the console already allows it here.
     let learned = null;
     if (!forced && !layer && !peakT && learnedOn()) {
@@ -3536,7 +3536,7 @@ function createAutopilotEngine({ host, ai }) {
   // 8/16-bar phrase of the current track (the Fred again.. "x" move: tease the
   // next record's voice over this beat, then bring the record itself in).
   // Restraint: at most one layer per track; skipped unless key and tempo fit.
-  // One line in this session's event log (app/ui/session_log.py). Fire and forget.
+  // One line in this session's event log (app/ui/services/session_log.py). Fire and forget.
   function sessionEvent(kind, data) {
     try {
       fetch("/api/session/event", { method: "POST", headers: { "Content-Type": "application/json" }, keepalive: true,
@@ -3552,7 +3552,7 @@ function createAutopilotEngine({ host, ai }) {
       song: history[history.length - 1] || null, pos: dk && dk._currentPosition ? Math.round(dk._currentPosition() * 10) / 10 : null });
   });
 
-  // POST /api/transition/preplan (app/music_brain/preplan.py) for the booked pair:
+  // POST /api/transition/preplan (app/music_brain/render/preplan.py) for the booked pair:
   // the exit window of this song, now, and A's live tempo. null when stems are
   // missing, B can't sit on A's tempo, the toggle is off, or nothing fits.
   async function requestPreplan(currentId, nextId, candidate) {

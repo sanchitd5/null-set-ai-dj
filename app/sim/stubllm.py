@@ -71,7 +71,7 @@ class StubLLM:
         return random.Random(f"{self.seed}:{kind}:{ctx.get('current', '')}:{ctx.get('n_call', 0)}")
 
     def _suggest(self, kind: str, user: str, ctx: dict) -> dict:
-        from app.music_brain.recipe_matcher import camelot_distance_score   # lazy: config must see AIDJ_CACHE_DIR first
+        from app.music_brain.matching.recipe_matcher import camelot_distance_score   # lazy: config must see AIDJ_CACHE_DIR first
 
         rng = self._rng(kind, ctx)
         now = _NOW.search(user)

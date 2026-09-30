@@ -92,13 +92,13 @@ SET_LEVEL_KEYS = ("recipe_variety", "distinct_recipes", "max_recipe_repeat_run",
 
 
 def _real_artists_of(name: str) -> set:
-    from app.ui.autopilot_service import _artists_of
+    from app.ui.services.autopilot_service import _artists_of
 
     return _artists_of(name)
 
 
 def _identity(name: str) -> str:
-    from app.ui.autopilot_service import _bare_title
+    from app.ui.services.autopilot_service import _bare_title
 
     return _bare_title(name.split(" - ", 1)[-1])
 

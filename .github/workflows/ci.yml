@@ -39,10 +39,10 @@ jobs:
       - name: Console JS checks
         run: |
           fail=0
-          for f in app/tests/*_check.js; do
+          for f in app/tests/js/*_check.js; do
             node "$f" > /dev/null || { echo "FAIL $f"; fail=1; }
           done
           exit $fail
 
       - name: pytest (not slow)
-        run: python -m pytest app/tests/ -q -m "not slow" --ignore=app/tests/test_ui_server.py
+        run: python -m pytest app/tests/ -q -m "not slow" --ignore=app/tests/py/test_ui_server.py

@@ -1,8 +1,8 @@
-// Punjabi scene profile, console half. The values are owned by app/music_brain/scene_profile.py
+// Punjabi scene profile, console half. The values are owned by app/music_brain/analysis/scene_profile.py
 // (evidence and GUESS marks there: research/notes/punjabi-original-sets.md section 7);
-// this is a parity-tested copy (app/tests/test_scene_profile.py runs it in node).
+// this is a parity-tested copy (app/tests/py/test_scene_profile.py runs it in node).
 //
-// core  pure and node-testable (app/tests/scene_profile_check.js)
+// core  pure and node-testable (app/tests/js/scene_profile_check.js)
 // mode  the PUNJABI setting: "off" = today's behaviour, "on" = every transition,
 //       "auto" = the songs decide (both Punjabi -> "full", exactly one side -> "handover")
 (function (root) {

@@ -3,8 +3,8 @@
 // Owner: "it's going back to playing Fred again". The server's suggest filter
 // (autopilot_service.py:artist_spacing) was the only check; the ready pool, combos,
 // macros, the atlas and the library fallback reached evaluateCandidate without it.
-// This file mirrors the Python rule exactly (parity: app/tests/artist_spacing_cases.json,
-// checked by app/tests/artist_spacing_check.js and app/tests/test_artist_spacing_parity.py):
+// This file mirrors the Python rule exactly (parity: app/tests/js/artist_spacing_cases.json,
+// checked by app/tests/js/artist_spacing_check.js and app/tests/py/test_artist_spacing_parity.py):
 //   * no artist from the last GAP songs (played + queued)
 //   * no artist already MAX_IN_WINDOW times in the last WINDOW songs (favourites included)
 // Credits hidden in a title ("Atlantic Records - CA7RIEL, Fred again..–Sexy Magic") count:

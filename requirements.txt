@@ -22,9 +22,9 @@ openai>=1.0.0                              # OpenAI API (v1.0+ for chat completi
 python-dotenv==1.1.1                       # Environment variable management (.env file)
 
 # === Music Brain Package (music_brain/) ===
-pyyaml>=6.0                                # Frontmatter parsing in music_brain/knowledge_parser.py
+pyyaml>=6.0                                # Frontmatter parsing in music_brain/matching/knowledge_parser.py
 pytest>=8.0                                # Test suite for music_brain/
-demucs                                     # Phase 2: stem separation (music_brain/stem_service.py)
+demucs                                     # Phase 2: stem separation (music_brain/audio/stem_service.py)
 torch                                      # Phase 2: Demucs backend. Install a CUDA build from
                                             #   https://download.pytorch.org/whl/ for GPU acceleration,
                                             #   or the default PyPI wheel for CPU-only.

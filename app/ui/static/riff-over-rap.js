@@ -1,6 +1,6 @@
 // AI Music Brain - "riff over rap", live (USB002 1:06:00, Aerodynamic x Victory Lap Five).
 //
-// The server (app/music_brain/keylock.py) renders A's last groove + breakdown
+// The server (app/music_brain/audio/keylock.py) renders A's last groove + breakdown
 // KEY-LOCKED at B's tempo. At the moment A reaches that groove on its own
 // deck, A's normal playback stops and these stems take over, sample-locked,
 // through A's channel strip (A's EQ and fader still apply):

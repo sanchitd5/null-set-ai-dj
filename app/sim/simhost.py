@@ -1,4 +1,4 @@
-"""The sim's Host and AIBackend: the ports of `app.ui.engine`, filled by a `World` (world.py).
+"""The sim's Host and AIBackend: the ports of `app.ui.services.engine`, filled by a `World` (world.py).
 
 The brain (server, autopilot_service, download jobs, live ear ...) finds its edges through the
 installed `Engine`, so the sim needs no monkeypatching: `World.engine()` builds
@@ -17,7 +17,7 @@ import itertools
 from pathlib import Path
 
 from app.sim.synth import read_tag
-from app.ui.engine import AIBackend, Host
+from app.ui.services.engine import AIBackend, Host
 
 _STEMS = ("drums", "bass", "vocals", "other")
 
@@ -83,7 +83,7 @@ class SimHost(Host):
     def separate(self, audio_path, two_stems=None, model=None, **kw):
         if not self.synthetic:
             return super().separate(audio_path, two_stems=two_stems, model=model, **kw)
-        from app.music_brain import stem_service
+        from app.music_brain.audio import stem_service
 
         files = self.w.synth_for_path(audio_path)
         if not files or not files["stems"]:

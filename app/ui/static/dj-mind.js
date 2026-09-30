@@ -67,7 +67,7 @@
   const MOTIF_MIN_PLAYS = 2;           // a title heard twice is the set's hook, not a one-off
   const MOTIF_MAX_PLAYS = 3;           // "Quiereme x3": the most any hook returned in that set
   // "Quiereme x2" (20:50) -> "x3" (59:03): 7 songs between. Same number as
-  // REMIX_REPLAY_GAP in app/ui/autopilot_service.py, so the picker's repeat
+  // REMIX_REPLAY_GAP in app/ui/services/autopilot_service.py, so the picker's repeat
   // filter lets the reprise through instead of dropping it.
   const MOTIF_GAP_SONGS = 8;
   // Remix moves (the song is re-edited live, not played as is). Restraint
@@ -116,7 +116,7 @@
                       stutter: ["STUTTER", "accent"], filter_build: ["FILTER BUILD", "accent"], echo_freeze: ["ECHO FREEZE", "accent"] };
   // Drop line: labels flicker (1-3 s slivers), so a drop is found by energy:
   // the phrase is in the song's top quartile and jumps >= DROP_JUMP over the
-  // phrase before. Same rule as drop_lines() in app/music_brain/blend.py.
+  // phrase before. Same rule as drop_lines() in app/music_brain/render/blend.py.
   const DROP_JUMP = 0.2;
 
   // ---------------------------------------------------------------- pure core
@@ -202,7 +202,7 @@
   }
 
   // Why a remix move may NOT run now (null = allowed). Same caps as
-  // app/ui/mind_plan.py validate_plan; the AI plan and the rules both pass here.
+  // app/ui/services/mind_plan.py validate_plan; the AI plan and the rules both pass here.
   function remixBlock(kind, s, bars) {
     const used = s.remixUsed || [];
     const sect = s.phraseSection != null ? s.phraseSection : s.section;
@@ -636,7 +636,7 @@
   // definition in research/notes/set-study-mDtud5fLgFQ.md section 5 is "the
   // same title again" ("Quiereme", "Quiereme x2", "Quiereme x3"), so a remix
   // or edit of a played song is the same hook. Mirrors _bare_title() in
-  // app/ui/autopilot_service.py, plus the "xN" pass counter. Unicode letters
+  // app/ui/services/autopilot_service.py, plus the "xN" pass counter. Unicode letters
   // are kept so non-Latin titles still get an identity.
   function hookKey(name) {
     let t = String(name || "").toLowerCase();

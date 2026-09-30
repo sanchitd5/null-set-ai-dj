@@ -27,7 +27,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from app.music_brain.analyzer import analyze as analyze_track
+from app.music_brain.analysis.analyzer import analyze as analyze_track
 from app.music_brain.config import (
     CACHE_DIR,
     RECORDINGS_CACHE_DIR,
@@ -35,13 +35,13 @@ from app.music_brain.config import (
     SAMPLES_CACHE_DIR,
     SET_LOGS_CACHE_DIR,
 )
-from app.music_brain.knowledge_parser import KnowledgeParser
-from app.music_brain.recipe_matcher import RecipeMatcher
-from app.music_brain.transition_renderer import render_full_mix, render_preview
-from app.music_brain.set_log import export_set_log_markdown, validate_set_log
-from app.ui import engine as _engine
-from app.ui.bg_jobs import DONE as _JOB_DONE, ERROR as _JOB_ERROR, EXPIRED as _JOB_EXPIRED, JobRunner
-from app.ui.library_service import scan_library
+from app.music_brain.matching.knowledge_parser import KnowledgeParser
+from app.music_brain.matching.recipe_matcher import RecipeMatcher
+from app.music_brain.render.transition_renderer import render_full_mix, render_preview
+from app.music_brain.learning.set_log import export_set_log_markdown, validate_set_log
+from app.ui.services import engine as _engine
+from app.ui.services.bg_jobs import DONE as _JOB_DONE, ERROR as _JOB_ERROR, EXPIRED as _JOB_EXPIRED, JobRunner
+from app.ui.services.library_service import scan_library
 
 
 def _host():
@@ -67,7 +67,7 @@ app = FastAPI(title="AI Music Brain", version="0.1.0")
 def _boot_llm() -> None:
     """Load the DJ's LLM (MLX on Apple Silicon, Ollama fallback) in the
     background at startup, so the first suggestion does not pay model load."""
-    from app.ui import model_runtime
+    from app.ui.services import model_runtime
 
     model_runtime.start_background()
 
@@ -76,22 +76,22 @@ def _boot_llm() -> None:
 def _migrate_analyses() -> None:
     """Library analyses from before v5 get their tempo refined in the
     background, one song at a time; nothing is re-analysed from scratch."""
-    from app.music_brain.analyzer import queue_upgrade
+    from app.music_brain.analysis.analyzer import queue_upgrade
 
     queue_upgrade(sorted(_tracks.values()))
 
 
 @app.on_event("startup")
 def _cap_keylock_cache() -> None:
-    from app.music_brain import keylock_cache
+    from app.music_brain.audio import keylock_cache
 
     keylock_cache.run_async("startup")
 
 
 @app.get("/api/llm/status")
 def get_llm_status():
-    from app.ui import model_runtime
-    from app.ui.llm_gate import gate
+    from app.ui.services import model_runtime
+    from app.ui.services.llm_gate import gate
 
     return {**model_runtime.status(), "gate": gate.snapshot()}
 
@@ -143,7 +143,7 @@ _load_registry_from_disk()
 def _track_path(track_id: str) -> Path:
     path = _tracks.get(track_id)
     if path is None or not path.exists():
-        from app.ui import dedup_songs
+        from app.ui.services import dedup_songs
 
         canonical = dedup_songs.resolve_alias(track_id, CACHE_DIR)   # a quarantined duplicate resolves to its kept copy
         path = _tracks.get(canonical) if canonical != track_id else None
@@ -252,7 +252,7 @@ class DownloadRequest(BaseModel):
 @app.post("/api/download")
 async def download_from_url(req: DownloadRequest):
     """Download a YouTube or YouTube Music URL and register as a track."""
-    from app.ui.download_service import detect_source
+    from app.ui.services.download_service import detect_source
 
     download_to_dir = _host().download_to_dir
     source = detect_source(req.url)
@@ -293,7 +293,7 @@ async def download_from_url(req: DownloadRequest):
 def _reuse_existing(url: str) -> Optional[List[dict]]:
     """A search URL for "Artist - Title" that the library already holds (same recording, remix markers
     included, aliases resolved): the existing track, so no second upload of it is downloaded."""
-    from app.ui import dedup_songs
+    from app.ui.services import dedup_songs
 
     wanted = dedup_songs.wanted_from_url(url)
     if not wanted:
@@ -362,8 +362,8 @@ def get_youtube_status():
 @app.post("/api/download/jobs")
 def post_download_job(req: DownloadJobRequest):
     """Start a background download (pre-download / prefetch); poll for progress."""
-    from app.ui import download_jobs
-    from app.ui.download_service import detect_source
+    from app.ui.services import download_jobs
+    from app.ui.services.download_service import detect_source
 
     if detect_source(req.url) == "unknown":
         raise HTTPException(status_code=400, detail="Unsupported URL.")
@@ -379,14 +379,14 @@ def post_download_job(req: DownloadJobRequest):
 
 @app.get("/api/download/jobs")
 def get_download_jobs():
-    from app.ui import download_jobs
+    from app.ui.services import download_jobs
 
     return {"jobs": download_jobs.list_jobs()[:20]}
 
 
 @app.get("/api/download/jobs/{job_id}")
 def get_download_job(job_id: str):
-    from app.ui import download_jobs
+    from app.ui.services import download_jobs
 
     job = download_jobs.get_job(job_id)
     if job is None:
@@ -431,7 +431,7 @@ def _name_from_tags(track_id: str, path: Path) -> Optional[str]:
 
 @app.get("/api/tracks")
 def list_tracks():
-    from app.ui.download_service import _is_live, _is_mix
+    from app.ui.services.download_service import _is_live, _is_mix
 
     def _entry(tid, p):
         name = _track_names.get(tid) or _name_from_tags(tid, p) or p.stem
@@ -496,9 +496,9 @@ def get_recipes():
 def _cached_vocal_regions(track_id: str) -> Optional[list]:
     """Vocal regions only when a Demucs vocal stem is already cached:
     matching must never start a separation."""
-    from app.music_brain import stem_service
+    from app.music_brain.audio import stem_service
     from app.music_brain.config import DEMUCS_MODEL
-    from app.music_brain.mashup import MASHUP_DEMUCS_MODEL
+    from app.music_brain.render.mashup import MASHUP_DEMUCS_MODEL
 
     if track_id in _vocal_regions:
         return _vocal_regions[track_id]
@@ -510,7 +510,7 @@ def _cached_vocal_regions(track_id: str) -> Optional[list]:
         if (model, two) == (MASHUP_DEMUCS_MODEL, "vocals"):
             return _vocal_regions_for(track_id)  # hits the same stem cache
         try:
-            from app.music_brain.analyzer import vocal_presence_map
+            from app.music_brain.analysis.analyzer import vocal_presence_map
 
             regions = [list(r) for r in vocal_presence_map(Path(stems["vocals"]))]
         except Exception as exc:
@@ -536,7 +536,7 @@ _stem_cache: Dict[str, Dict[str, str]] = {}
 
 
 def _cached_stems4(track_id: str) -> Optional[Dict[str, str]]:
-    from app.music_brain import stem_service
+    from app.music_brain.audio import stem_service
 
     if track_id in _stem_cache:
         return _stem_cache[track_id]
@@ -547,7 +547,7 @@ def _cached_stems4(track_id: str) -> Optional[Dict[str, str]]:
 
 
 def _llm_busy() -> bool:
-    from app.ui.llm_gate import gate
+    from app.ui.services.llm_gate import gate
 
     snap = gate.snapshot()
     return bool(snap["in_flight"] or snap["queued"] or snap.get("live"))
@@ -556,7 +556,7 @@ def _llm_busy() -> bool:
 def _stem_wait_note() -> str:
     """Why the background stem backfill is waiting, in the owner's words: the STEMS wait
     for the AI, the AI is not paused ("llm shows llm paused" was read the other way round)."""
-    from app.ui.llm_gate import gate
+    from app.ui.services.llm_gate import gate
 
     snap = gate.snapshot()
     doing = "live ear" if snap.get("live") else snap["in_flight"] or (snap["queued"][0] if snap["queued"] else "")
@@ -577,13 +577,13 @@ def _next_stem_job() -> Optional[str]:
 
 
 def _stem_worker() -> None:
-    """Feeds the persistent separation process (app/music_brain/stem_worker.py):
+    """Feeds the persistent separation process (app/music_brain/audio/stem_worker.py):
     up to STEM_IN_FLIGHT songs at once so the next one decodes while the current
     one runs on the GPU. Falls back to one-shot Demucs if the process won't start."""
     import queue as _q
 
     global _stem_busy
-    from app.music_brain import stem_service
+    from app.music_brain.audio import stem_service
 
     proc, in_flight = None, {}
     while True:
@@ -696,7 +696,7 @@ class PrerenderRequest(BaseModel):
 
 
 def _prerender_loop() -> None:
-    from app.ui import prerender
+    from app.ui.services import prerender
 
     while True:
         try:
@@ -717,7 +717,7 @@ def post_prerender(req: PrerenderRequest):
     """The ranked next-song candidates (best first) and the tempi they may have to play at. The server
     makes their stems and key-locked tempo sets ahead of the booking, one heavy job at a time, and
     drops the queued work of any candidate that is no longer listed. Answers each one's readiness."""
-    from app.ui import prerender
+    from app.ui.services import prerender
 
     items = [{"track_id": i.track_id, "bpms": i.bpms} for i in req.items if i.track_id in _tracks]
     sched = prerender.current()
@@ -729,7 +729,7 @@ def post_prerender(req: PrerenderRequest):
 
 @app.get("/api/prerender")
 def get_prerender():
-    from app.ui import prerender
+    from app.ui.services import prerender
 
     sched = prerender.current()
     sched.step()
@@ -743,7 +743,7 @@ def _backfill_stems() -> None:
     def scan():
         import soundfile as _sf
 
-        from app.ui.download_service import _is_live, _is_mix
+        from app.ui.services.download_service import _is_live, _is_mix
 
         missing = []
         for tid in list(_tracks):
@@ -776,7 +776,7 @@ def get_vocal_entry(track_id: str):
     opening hook), whether it's rap, and how long it keeps going (bars)."""
     import librosa
 
-    from app.music_brain import techniques as tq
+    from app.music_brain.matching import techniques as tq
 
     _track_path(track_id)
     if track_id in _vocal_entry_cache:
@@ -814,7 +814,7 @@ def _cached_energy_fit(path, bpm: float, cur: int) -> int:
     if not cur:
         return 0
     try:
-        from app.music_brain import energy as en
+        from app.music_brain.analysis import energy as en
 
         if not en._cache(Path(path)).exists():
             return 0
@@ -850,15 +850,15 @@ def get_library_lockable(bpm: float, key: str = "", exclude: str = "", limit: in
     whose already-measured level sits within energy.MAX_STEP go first: in
     102327 every candidate died on "energy drop 8 -> 5". Nothing is measured
     here; unmeasured songs rank in between."""
-    from app.music_brain import techniques as tq
-    from app.music_brain.genre import MAX_ERA_GAP, era_gap, genre_near
-    from app.ui.download_service import _is_live, _is_mix
-    from app.ui.track_identity import clean_identity
+    from app.music_brain.matching import techniques as tq
+    from app.music_brain.analysis.genre import MAX_ERA_GAP, era_gap, genre_near
+    from app.ui.services.download_service import _is_live, _is_mix
+    from app.ui.services.track_identity import clean_identity
 
     skip = set(filter(None, exclude.split(",")))
     # Punjabi scene profile: one scene (punjabi / bhangra / desi, bollywood near) and
     # a wider era gate while it is active; "off" (the default) is today's filter.
-    from app.music_brain import scene_profile as _sp
+    from app.music_brain.analysis import scene_profile as _sp
     sp_active = _sp.selection_active(punjabi_profile, genre)
     genre = str(genre or "").strip()[:80]
     era = str(era or "").strip()[:40]
@@ -930,7 +930,7 @@ def get_track_stems(track_id: str, separate: bool = False, bpm: Optional[float] 
     _track_path(track_id)
     stems = _cached_stems4(track_id)
     if stems and bpm:
-        from app.music_brain import keylock, stem_service
+        from app.music_brain.audio import keylock, stem_service
 
         native = analyze_track(_track_path(track_id)).bpm
         if abs(bpm / native - 1) > 0.005:
@@ -978,7 +978,7 @@ def _pair_features(a_id: str, b_id: str, keylock: bool = False):
     import librosa
     import numpy as np
 
-    from app.music_brain import techniques as tq
+    from app.music_brain.matching import techniques as tq
 
     ta, tb = analyze_track(_track_path(a_id)), analyze_track(_track_path(b_id))
     sa, sb = _cached_stems4(a_id), _cached_stems4(b_id)
@@ -1040,8 +1040,9 @@ def _hook_drops(track_id: str, top_n: int = 3, ai_call: bool = False) -> list:
     cached vocal stem when there is one, the local model's emotional-line picks
     (ai_call=False: only already-cached picks, never waits on the model).
     [] on any miss; never separates."""
-    from app.music_brain import hook_drop, lyrics, set_ai
-    from app.music_brain.set_learner import load_learned
+    from app.music_brain.analysis import hook_drop, lyrics
+    from app.music_brain.learning import set_ai
+    from app.music_brain.learning.set_learner import load_learned
 
     path = _track_path(track_id)
     name = _track_names.get(track_id) or _name_from_tags(track_id, path) or path.stem
@@ -1075,7 +1076,7 @@ def _hook_drops(track_id: str, top_n: int = 3, ai_call: bool = False) -> list:
 @app.get("/api/tracks/{track_id}/hook-drops")
 def get_hook_drops(track_id: str, top_n: int = 3, ai: bool = True):
     """Where to go acapella on the track's emotional hook and bring the drop back in:
-    [{text, cut_at, drop_at, hold_s, score, ai, why[]}] best first (app.music_brain.hook_drop).
+    [{text, cut_at, drop_at, hold_s, score, ai, why[]}] best first (app.music_brain.analysis.hook_drop).
     ai=True asks the local model which lines carry the emotion (cached per song)."""
     drops = _hook_drops(track_id, max(1, min(top_n, 10)), ai_call=ai)
     _song_step("hook_drop_plan", track_id, decision=f"{len(drops)} hook drop(s)",
@@ -1086,9 +1087,9 @@ def get_hook_drops(track_id: str, top_n: int = 3, ai: bool = True):
 
 
 def _song_step(kind: str, track_id: Optional[str], **fields) -> None:
-    """One AI step into the per-song log (app/ui/song_log.py). Never raises."""
+    """One AI step into the per-song log (app/ui/services/song_log.py). Never raises."""
     try:
-        from app.ui import song_log
+        from app.ui.services import song_log
         _host().song_step(kind, track_id, **fields)
     except Exception:
         pass
@@ -1102,7 +1103,7 @@ class SessionEvent(BaseModel):
 @app.post("/api/session/event")
 def post_session_event(ev: SessionEvent):
     """The console's side of this session's log (track changes, ear flushes)."""
-    from app.ui import session_log
+    from app.ui.services import session_log
 
     if ev.kind not in ("track", "ear_flush", "note", "glitch", "move"):
         raise HTTPException(status_code=400, detail="kind must be track, ear_flush, glitch, move or note")
@@ -1110,7 +1111,7 @@ def post_session_event(ev: SessionEvent):
     # those are kept as "<name>_" instead of clashing
     fields = {(f"{k}_" if k in ("kind", "t", "at") else k): v for k, v in list(ev.data.items())[:20] if isinstance(k, str)}
     session_log.log(ev.kind, **fields)
-    from app.ui import song_log
+    from app.ui.services import song_log
     _host().session_event(ev.kind, fields)   # transitions / glitches also land on the song
     return {"ok": True, "session": session_log.SESSION_ID}
 
@@ -1119,7 +1120,7 @@ def post_session_event(ev: SessionEvent):
 def get_session_log(session: Optional[str] = None, limit: int = 500):
     """This session's events (track changes, every LLM / ear call with its timing),
     a summary, and the list of past sessions. ?session=<id> for an earlier one."""
-    from app.ui import session_log
+    from app.ui.services import session_log
 
     try:
         events = session_log.read(session, max(1, min(limit, 5000)))
@@ -1135,10 +1136,10 @@ class StepBatch(BaseModel):
 
 def _song_resolvers() -> None:
     """How song_log finds a track's file, analysis, stems, name and energy (for waveforms)."""
-    from app.ui import song_log
+    from app.ui.services import song_log
 
     def energy(path: Path, bpm: float) -> dict:
-        from app.music_brain import energy as en
+        from app.music_brain.analysis import energy as en
         return en.level(path, bpm)
 
     def track_path(tid: str) -> Optional[Path]:
@@ -1157,7 +1158,7 @@ _song_resolvers()
 @app.post("/api/session/steps")
 def post_session_steps(batch: StepBatch):
     """A batch of AI steps from the console (app/ui/static/step-log.js), filed per song."""
-    from app.ui import song_log
+    from app.ui.services import song_log
 
     if len(batch.steps) > song_log.MAX_BATCH:
         raise HTTPException(status_code=413, detail=f"at most {song_log.MAX_BATCH} steps per batch")
@@ -1167,7 +1168,7 @@ def post_session_steps(batch: StepBatch):
 @app.get("/api/session/songs")
 def get_session_songs(session: Optional[str] = None):
     """Songs of a session (this run unless ?session=) with step counts per phase / kind."""
-    from app.ui import session_log, song_log
+    from app.ui.services import session_log, song_log
 
     try:
         return {"session": session or session_log.SESSION_ID, "songs": song_log.songs(session)}
@@ -1178,7 +1179,7 @@ def get_session_songs(session: Optional[str] = None):
 @app.get("/api/session/songs/{session}/{nn}")
 def get_session_song(session: str, nn: int, limit: int = 2000):
     """One song's meta + every AI step, in time order."""
-    from app.ui import song_log
+    from app.ui.services import song_log
 
     try:
         s = song_log.song(session, nn, limit)
@@ -1193,7 +1194,7 @@ def get_session_song(session: str, nn: int, limit: int = 2000):
 def get_session_song_png(session: str, nn: int, refresh: bool = False):
     """The song's rendered waveform with AI steps; rendered in the background on first ask (202)."""
     from fastapi.responses import JSONResponse
-    from app.ui import song_log
+    from app.ui.services import song_log
 
     try:
         d = song_log.song_dir(session, nn)
@@ -1244,7 +1245,7 @@ def _job_answer(job, kind: str, fresh=None):
 
 def _preplan_fresh(now: Optional[float]):
     """A finished plan whose B start is already too close to A's playhead is no plan."""
-    from app.music_brain.preplan import MIN_LEAD_S
+    from app.music_brain.render.preplan import MIN_LEAD_S
 
     def check(res: dict) -> dict:
         p = res.get("plan") if isinstance(res, dict) else None
@@ -1256,9 +1257,9 @@ def _preplan_fresh(now: Optional[float]):
 
 
 def _run_preplan(req: PreplanRequest, sa: dict, sb: dict) -> dict:
-    from app.music_brain import preplan
-    from app.music_brain import techniques as tq
-    from app.ui import session_log
+    from app.music_brain.render import preplan
+    from app.music_brain.matching import techniques as tq
+    from app.ui.services import session_log
 
     ta, tb = analyze_track(_track_path(req.a_id)), analyze_track(_track_path(req.b_id))
     ka, kb = ta.key.camelot if ta.key else None, tb.key.camelot if tb.key else None
@@ -1282,7 +1283,7 @@ def _run_preplan(req: PreplanRequest, sa: dict, sb: dict) -> dict:
 
 @app.post("/api/transition/preplan")
 def post_transition_preplan(req: PreplanRequest):
-    """The silent ear pre-plans the whole transition (app.music_brain.preplan):
+    """The silent ear pre-plans the whole transition (app.music_brain.render.preplan):
     when B starts inside A, from which of B's lines, for how long both play and
     which deck owns each stem; rendered offline and heard before the master plays it.
     Starts or joins a background job: {"status": "pending", "job": id} until
@@ -1324,12 +1325,12 @@ class MergeAuditionRequest(BaseModel):
 
 @app.post("/api/merge/audition")
 def post_merge_audition(req: MergeAuditionRequest):
-    """The silent ear on candidate song merges (app.music_brain.merge): each combo is
+    """The silent ear on candidate song merges (app.music_brain.render.merge): each combo is
     rendered offline from the cached stems (B key-locked to A's tempo) and the local
     omni model rates it. Advisory and cached; {"results": [...], "ear": bool}.
     Starts or joins a background job: {"status": "pending", "job": id} until
     GET /api/merge/audition/{job} returns that result."""
-    from app.music_brain import merge
+    from app.music_brain.render import merge
 
     sa, sb = _cached_stems4(req.a_id), _cached_stems4(req.b_id)
     if not sa or not sb:
@@ -1340,7 +1341,7 @@ def post_merge_audition(req: MergeAuditionRequest):
     a_time, b_time = max(0.0, req.a_time), max(0.0, req.b_time)
 
     def run() -> dict:
-        from app.ui import session_log
+        from app.ui.services import session_log
 
         ta, tb = analyze_track(_track_path(req.a_id)), analyze_track(_track_path(req.b_id))
         t0 = time.time()
@@ -1377,8 +1378,8 @@ def get_learned_pick(a: str, b: str, keylock: bool = False, profile: str = ""):
     profile: the Punjabi scene profile level the console resolved for this pair
     ("full" | "handover"; anything else = none, today's pick). Under "full" the pick
     also reads the Punjabi-tagged sets (techniques.learned_pick)."""
-    from app.music_brain import scene_profile as sp
-    from app.music_brain import techniques as tq
+    from app.music_brain.analysis import scene_profile as sp
+    from app.music_brain.matching import techniques as tq
 
     lvl = profile if profile in (sp.LEVEL_FULL, sp.LEVEL_HANDOVER) else None
     f = _pair_features_cached(a, b, keylock)
@@ -1395,7 +1396,7 @@ def get_learned_pick(a: str, b: str, keylock: bool = False, profile: str = ""):
 def get_learned_moves():
     """The in-song learned moves (vocal loop / re-cut / chops, loop extend): per kind whether the
     console may play it (sighted, not disabled), the user's rules and the sightings' parameters."""
-    from app.music_brain import techniques as tq
+    from app.music_brain.matching import techniques as tq
 
     return {"moves": tq.learned_moves()}
 
@@ -1404,14 +1405,14 @@ def get_learned_moves():
 def get_learn_progress():
     """Set studies (agent_bridge learn-set), newest first: each with state running|done|error|stale,
     elapsed_s and, while running, a rough eta_s. Read-only; nothing here starts a study."""
-    from app.music_brain import learn_progress as lp
+    from app.music_brain.learning import learn_progress as lp
 
     return {"studies": lp.read_all()}
 
 
 @app.get("/api/learn/progress/{set_id}")
 def get_learn_progress_one(set_id: str):
-    from app.music_brain import learn_progress as lp
+    from app.music_brain.learning import learn_progress as lp
 
     d = lp.read_one(set_id)
     if d is None:
@@ -1421,8 +1422,8 @@ def get_learn_progress_one(set_id: str):
 
 @app.get("/api/techniques")
 def get_techniques(a: str, b: str, keylock: bool = False):
-    """Which learned techniques fit A -> B, each with its reasons (app.music_brain.techniques)."""
-    from app.music_brain import techniques as tq
+    """Which learned techniques fit A -> B, each with its reasons (app.music_brain.matching.techniques)."""
+    from app.music_brain.matching import techniques as tq
 
     f = _pair_features(a, b, keylock)
     return {"features": {"tempo_gap": round(f.tempo_gap, 4), "key_score": f.key, "b_style": _voiced_cache.get((b, "style")), "b_rap_at": f.b_rap_at,
@@ -1444,10 +1445,10 @@ def post_riff_plan(req: RiffRequest):
     import librosa
     import numpy as np
 
-    from app.music_brain import keylock
-    from app.music_brain import stem_service
-    from app.music_brain import techniques as tq
-    from app.music_brain import waveform_params as wp
+    from app.music_brain.audio import keylock
+    from app.music_brain.audio import stem_service
+    from app.music_brain.matching import techniques as tq
+    from app.music_brain.analysis import waveform_params as wp
 
     if not keylock.available():
         return {"ok": False, "reasons": ["Rubber Band not installed (brew install rubberband)"]}
@@ -1498,7 +1499,7 @@ def post_riff_plan(req: RiffRequest):
 
 @app.get("/api/riff/{key}")
 def get_riff_state(key: str):
-    from app.music_brain import keylock
+    from app.music_brain.audio import keylock
 
     return {"state": keylock.state(key), "meta": keylock.meta(key)}
 
@@ -1506,7 +1507,7 @@ def get_riff_state(key: str):
 @app.post("/api/riff/{key}/balance")
 def post_riff_balance(key: str, b_levels: dict):
     """Gains for a rendered riff (A level-matched, B's rap and bass under the riff)."""
-    from app.music_brain import keylock
+    from app.music_brain.audio import keylock
 
     m = keylock.backfill_voice_band(key)
     if not m or "a_mix_db" not in m:
@@ -1519,12 +1520,12 @@ def post_riff_balance(key: str, b_levels: dict):
 
 @app.get("/api/riff/{key}/{name}")
 def get_riff_stem(key: str, name: str):
-    from app.music_brain import keylock
+    from app.music_brain.audio import keylock
 
     p = _host().keylock_stem_path(key, name)
     if not p:
         raise HTTPException(status_code=404, detail="key-locked stem not rendered")
-    from app.music_brain.audio_io import media_type
+    from app.music_brain.audio.audio_io import media_type
     return FileResponse(p, media_type=media_type(p))
 
 
@@ -1535,7 +1536,7 @@ def get_track_stem_audio(track_id: str, name: str):
     stems = _cached_stems4(track_id)
     if not stems:
         raise HTTPException(status_code=404, detail="stems not separated yet")
-    from app.music_brain.audio_io import media_type
+    from app.music_brain.audio.audio_io import media_type
     return FileResponse(stems[name], media_type=media_type(stems[name]))
 
 
@@ -1583,7 +1584,7 @@ def post_match(req: MatchRequest):
     track_a, track_b = tracks
     vibe_kw = _pair_vibe(req.track_a_id, req.track_b_id)
     # Punjabi scene profile level for this pair (scene_profile.level); "off" -> None
-    from app.music_brain import scene_profile as _sp
+    from app.music_brain.analysis import scene_profile as _sp
     profile = _sp.level(req.punjabi_profile, vibe_kw.get("genre_a"), vibe_kw.get("genre_b"))
     candidates = _matcher.match(
         track_a, track_b, top_n=req.top_n, no_cuts=req.no_cuts, profile=profile, **vibe_kw,
@@ -1592,17 +1593,17 @@ def post_match(req: MatchRequest):
     # Best-effort: a vibe failure must never break matching.
     vibe = None
     try:
-        from app.music_brain.vibe import analyze_vibe, vibe_distance
+        from app.music_brain.analysis.vibe import analyze_vibe, vibe_distance
         vibe = vibe_distance(
             analyze_vibe(_track_path(req.track_a_id)),
             analyze_vibe(_track_path(req.track_b_id)),
         )
     except Exception:
         vibe = None
-    # Measured energy 1-10 of both (app.music_brain.energy): the console refuses a
+    # Measured energy 1-10 of both (app.music_brain.analysis.energy): the console refuses a
     # next song more than 2 levels away (1 when relaxed).
     try:
-        from app.music_brain import energy as en
+        from app.music_brain.analysis import energy as en
 
         la = en.level(_track_path(req.track_a_id), track_a.bpm)
         lb = en.level(_track_path(req.track_b_id), track_b.bpm)
@@ -1630,7 +1631,7 @@ def _vocals_stem(track_id: str) -> str:
 
 
 def _vocals_stem_impl(track_id: str) -> str:
-    from app.music_brain.mashup import MASHUP_DEMUCS_MODEL
+    from app.music_brain.render.mashup import MASHUP_DEMUCS_MODEL
 
     result = separate_stems(_track_path(track_id), two_stems="vocals", model=MASHUP_DEMUCS_MODEL)
     path = result.stems.get("vocals")
@@ -1647,7 +1648,7 @@ def _vocal_regions_for(track_id: str) -> Optional[list]:
     if track_id in _vocal_regions:
         return _vocal_regions[track_id]
     try:
-        from app.music_brain.analyzer import vocal_presence_map
+        from app.music_brain.analysis.analyzer import vocal_presence_map
 
         regions = [list(r) for r in vocal_presence_map(Path(_vocals_stem(track_id)))]
     except Exception as exc:
@@ -1672,7 +1673,7 @@ class BlendRequest(BaseModel):
 def post_blend_plan(req: BlendRequest):
     """Beat-to-beat blend: vocal-free exit phrase in A, vocal-free entry phrase
     in B, and the playback rate that locks B's tempo to A's."""
-    from app.music_brain.blend import ALLOWED_BARS, ENTRY_MODES, plan_blend
+    from app.music_brain.render.blend import ALLOWED_BARS, ENTRY_MODES, plan_blend
 
     if req.bars not in ALLOWED_BARS:
         raise HTTPException(status_code=400, detail=f"bars must be one of {list(ALLOWED_BARS)}")
@@ -1697,7 +1698,7 @@ def post_blend_plan(req: BlendRequest):
 def post_mashup_plan(req: MashupRequest):
     """Plan guest-vocal-over-host-beat ("A x B"). Separates vocals (cached) only
     after the key/tempo checks pass, so incompatible pairs return quickly."""
-    from app.music_brain.mashup import ALLOWED_BARS, plan_mashup
+    from app.music_brain.render.mashup import ALLOWED_BARS, plan_mashup
 
     if req.bars not in ALLOWED_BARS:
         raise HTTPException(status_code=400, detail=f"bars must be one of {list(ALLOWED_BARS)}")
@@ -1739,8 +1740,8 @@ def _vocals_cached(track_id: str) -> bool:
     """True when the track's vocal stem is already separated (never runs Demucs)."""
     if track_id in _vocal_regions:
         return True
-    from app.music_brain.mashup import MASHUP_DEMUCS_MODEL
-    from app.music_brain.stem_service import _cache_dir_for, _load_from_cache, file_hash
+    from app.music_brain.render.mashup import MASHUP_DEMUCS_MODEL
+    from app.music_brain.audio.stem_service import _cache_dir_for, _load_from_cache, file_hash
 
     try:
         path = _track_path(track_id)
@@ -1752,9 +1753,9 @@ def _vocals_cached(track_id: str) -> bool:
 def _layer_third(req: LayerRequest, a, b, layer: dict) -> Optional[dict]:
     """Vocal stem of a third song over the layer: cached stems only, key and
     tempo fit BOTH playing songs, on a B phrase with no vocal from A or B."""
-    from app.music_brain.blend import tempo_lock
-    from app.music_brain.layer import key_fits, pitch_fits, vocal_clash
-    from app.music_brain.mashup import MAX_RATE_DEVIATION, plan_mashup
+    from app.music_brain.render.blend import tempo_lock
+    from app.music_brain.render.layer import key_fits, pitch_fits, vocal_clash
+    from app.music_brain.render.mashup import MAX_RATE_DEVIATION, plan_mashup
 
     a_eff = req.a_bpm_effective or a.bpm
     a_key = a.key.camelot if a.key else ""
@@ -1807,7 +1808,7 @@ def _layer_third(req: LayerRequest, a, b, layer: dict) -> Optional[dict]:
 def post_layer_plan(req: LayerRequest):
     """LAYER transition: B under A as a texture for 16-64 bars, bass to B on a
     phrase line, A unwound over 8-16 bars; optional third vocal-stem layer."""
-    from app.music_brain.layer import LAYER_HOLD_BARS, LAYER_UNWIND_BARS, plan_layer
+    from app.music_brain.render.layer import LAYER_HOLD_BARS, LAYER_UNWIND_BARS, plan_layer
 
     if req.max_hold_bars not in LAYER_HOLD_BARS:
         raise HTTPException(status_code=400, detail=f"max_hold_bars must be one of {list(LAYER_HOLD_BARS)}")
@@ -1848,7 +1849,7 @@ class BridgeRequest(BaseModel):
 @app.post("/api/bridge/plan")
 def post_bridge_plan(req: BridgeRequest):
     """BRIDGE PATH: BPM ladder (<= max_step_pct per song, half/double links)."""
-    from app.music_brain.bridge import bridge_ladder
+    from app.music_brain.render.bridge import bridge_ladder
 
     try:
         return bridge_ladder(req.from_bpm, req.to_bpm, req.max_step_pct, req.max_steps)
@@ -1980,7 +1981,7 @@ class AutopilotSuggestRequest(BaseModel):
     history: list[str] = []
     set_position: Optional[float] = None  # 0.0=start, 1.0=end; computed from history if omitted
     set_mode: str = "hybrid"  # long | quick | hybrid
-    # Punjabi scene profile (app/music_brain/scene_profile.py): off | on | auto.
+    # Punjabi scene profile (app/music_brain/analysis/scene_profile.py): off | on | auto.
     # Absent -> "off" so older clients get today's behaviour.
     punjabi_profile: str = "off"
     # Relaxed session (autopilot.js RELAXED_OCCASION): picks never lift the energy.
@@ -1995,7 +1996,7 @@ class AutopilotSuggestRequest(BaseModel):
     # the cumulative-fall rule (energy.next_ok) needs the set's recent peak.
     energy_history: list[float] = []
     # Look-ahead (songs for AFTER the booked next one): lowest LLM priority,
-    # waits behind any transition plan (app/ui/llm_gate.py).
+    # waits behind any transition plan (app/ui/services/llm_gate.py).
     lookahead: bool = False
     # Variety: how many songs in a row were the same subgenre, and which one.
     variety_run: int = 0
@@ -2091,7 +2092,7 @@ _suggested_genres: Dict[str, str] = {}
 # Normalised title -> release era the model gave it ("1990s"), same lifetime
 # as _suggested_genres: the library fallback holds the set's decade too.
 _suggested_eras: Dict[str, str] = {}
-# Both persist in CACHE_DIR/genre_labels.json (app.music_brain.genre_labels): lost on a
+# Both persist in CACHE_DIR/genre_labels.json (app.music_brain.analysis.genre_labels): lost on a
 # restart, the library fallback had no labelled Punjabi song (session 2026-09-30_102327).
 LABELS_PATH: Optional[Path] = None        # None: genre_labels.path(); tests point it at tmp_path
 _labels_dirty = False
@@ -2111,7 +2112,7 @@ def _save_labels() -> None:
     global _labels_dirty
     if not _labels_dirty:
         return
-    from app.music_brain import genre_labels as gl
+    from app.music_brain.analysis import genre_labels as gl
 
     if gl.save(_suggested_genres, _suggested_eras, LABELS_PATH):
         _labels_dirty = False
@@ -2120,8 +2121,8 @@ def _save_labels() -> None:
 def _load_labels() -> int:
     """Startup: the stored labels, then the knowledge export's for songs that have none
     (matched by name; no model call). Returns how many came from the export."""
-    from app.music_brain import genre_labels as gl
-    from app.music_brain import knowledge
+    from app.music_brain.analysis import genre_labels as gl
+    from app.music_brain.matching import knowledge
 
     g, e = gl.load(LABELS_PATH)
     _suggested_genres.update(g)
@@ -2138,7 +2139,7 @@ try:
     _load_labels()
 except Exception as _exc:  # noqa: BLE001 -- a bad label file must not stop the server
     print(f"WARNING [labels] not loaded: {type(_exc).__name__}: {_exc}", flush=True)
-_set_memory = None  # app.ui.set_memory.SetMemory, created on first suggest
+_set_memory = None  # app.ui.services.set_memory.SetMemory, created on first suggest
 
 
 def _clean_set_id(raw) -> str:
@@ -2148,7 +2149,7 @@ def _clean_set_id(raw) -> str:
 
 
 def _genre_key(title: str) -> str:
-    from app.ui.track_identity import clean_title
+    from app.ui.services.track_identity import clean_title
     return " ".join(clean_title(title).lower().split())
 
 
@@ -2156,7 +2157,7 @@ def _track_vibe(track_id: str) -> Dict[str, Optional[str]]:
     """track_id -> {"genre", "era"} labels the model already gave this title
     (suggestions / current_genre), same keying as the library fallback.
     Unknown -> None, which RecipeMatcher treats as no penalty."""
-    from app.ui.track_identity import clean_identity
+    from app.ui.services.track_identity import clean_identity
 
     path = _tracks.get(track_id)
     name = _track_names.get(track_id) or (path.stem if path else "")
@@ -2230,8 +2231,8 @@ def _autopilot_suggest_impl(req: AutopilotSuggestRequest):
     """Use local LLM (Ollama gemma3:4b by default) to suggest next tracks."""
     import traceback
     import numpy as np
-    from app.ui import engine
-    from app.ui.autopilot_service import SET_MODES, hit_share_note
+    from app.ui.services import engine
+    from app.ui.services.autopilot_service import SET_MODES, hit_share_note
 
     suggest_next_tracks = engine.current().suggest
 
@@ -2251,14 +2252,14 @@ def _autopilot_suggest_impl(req: AutopilotSuggestRequest):
     avg_energy = float(np.mean(curve)) if curve else 0.5
     measured_energy = None
     try:
-        from app.music_brain import energy as en
+        from app.music_brain.analysis import energy as en
 
         measured_energy = en.level(path, analysis.bpm)["level"]
     except Exception:
         measured_energy = None           # best-effort: the prompt falls back to the relative number
     camelot = analysis.key.camelot if analysis.key else "unknown"
 
-    from app.ui.track_identity import clean_identity, credited_artists
+    from app.ui.services.track_identity import clean_identity, credited_artists
 
     display = _track_names.get(req.track_id, path.stem)
     # Primary artist + clean title only: featured artists and "(Official Video)"
@@ -2288,7 +2289,7 @@ def _autopilot_suggest_impl(req: AutopilotSuggestRequest):
 
     # Cross-set memory: remember this set's songs, offer the earlier sets' ones
     # to the prompt as "heard recently, prefer fresh" (not on look-ahead calls).
-    from app.ui.set_memory import MAX_SONGS, SetMemory
+    from app.ui.services.set_memory import MAX_SONGS, SetMemory
     global _set_memory
     if _set_memory is None:
         _set_memory = SetMemory(CACHE_DIR / "set_memory.json")
@@ -2301,7 +2302,7 @@ def _autopilot_suggest_impl(req: AutopilotSuggestRequest):
     # Absolute loudness (Avg Energy is peak-normalised per song). Best-effort.
     loudness_dbfs = None
     try:
-        from app.music_brain.vibe import analyze_vibe
+        from app.music_brain.analysis.vibe import analyze_vibe
 
         loudness_dbfs = analyze_vibe(path).loudness_dbfs
     except Exception as exc:
@@ -2390,10 +2391,10 @@ class MindPlanRequest(BaseModel):
 def autopilot_plan(req: MindPlanRequest):
     """One LLM plan per song pair (candidate, exit phrase, DJ-mind moves).
 
-    The model proposes; app.ui.mind_plan.validate_plan keeps only what the
+    The model proposes; app.ui.services.mind_plan.validate_plan keeps only what the
     DJ-mind caps allow. The browser re-checks each move against live state.
     """
-    from app.ui.mind_plan import build_facts, plan_pair
+    from app.ui.services.mind_plan import build_facts, plan_pair
 
     if not req.window_hi > req.window_lo:
         raise HTTPException(status_code=400, detail="window_hi must be > window_lo")
@@ -2420,7 +2421,7 @@ def autopilot_plan(req: MindPlanRequest):
 
 @app.get("/api/live/ear")
 def get_live_ear_status():
-    from app.ui import live_ear
+    from app.ui.services import live_ear
 
     return live_ear.status()
 
@@ -2429,10 +2430,10 @@ def get_live_ear_status():
 async def post_live_ear(metrics: str = Form(...), clip: Optional[UploadFile] = None):
     """One hold-loop decision: watchdog numbers (JSON form field) plus an
     optional few-second master-bus WAV. Always answers; the model only
-    proposes (see app.ui.live_ear)."""
+    proposes (see app.ui.services.live_ear)."""
     from starlette.concurrency import run_in_threadpool
 
-    from app.ui import live_ear
+    from app.ui.services import live_ear
 
     if len(metrics) > 4000:
         raise HTTPException(status_code=400, detail="metrics too large")
@@ -2549,7 +2550,7 @@ def get_track_audio(track_id: str):
     return FileResponse(path)
 
 
-from app.ui.atlas_api import router as _atlas_router  # noqa: E402 -- pair atlas + macros (/api/atlas, /api/macros)
+from app.ui.services.atlas_api import router as _atlas_router  # noqa: E402 -- pair atlas + macros (/api/atlas, /api/macros)
 
 app.include_router(_atlas_router)
 

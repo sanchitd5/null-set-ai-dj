@@ -2,12 +2,12 @@
 //
 // Owner: "pre knowledge of songs lead to good sets", "AI needs to prefer known good combos,
 // treat like game combo moves", "i am not able to recreate the moves you play".
-//   COMBO   a pair the atlas (app/music_brain/pair_atlas.py) scores as working well AND
+//   COMBO   a pair the atlas (app/music_brain/atlas/pair_atlas.py) scores as working well AND
 //           that fits a combo move (merge -> hold, riff x rap, mashup, double drop, drop swap).
 //           The autopilot tries combos for the playing song FIRST, before asking the LLM; a
 //           song already loaded on the other deck that forms a combo is tried before them.
 //           Combos chain: COMBO x3: MERGE -> RIFF x RAP -> MASHUP in the VIBE strip.
-//   STUDIED a pair a famous studied set played (app/music_brain/studied_combos.py): tried before
+//   STUDIED a pair a famous studied set played (app/music_brain/atlas/studied_combos.py): tried before
 //           rule-only combos whatever its works score, badged in COMPATIBLE, and named
 //           "STUDIED COMBO (<DJ> set)" in the VIBE strip. Live gates still decide.
 //   MACRO   a saved, replayable set (CACHE_DIR/macros/<name>.json). When the playing song is
@@ -16,7 +16,7 @@
 //           macro deterministically. The user plays it step by step from the MACRO panel.
 // Every choice still goes through the autopilot's own gates (evaluateCandidate,
 // decideRecipe, planHold ...): a stored plan is a default, never a bypass.
-// Pure core (node-testable: app/tests/macro_mode_check.js) + a runtime mounted on the Host port.
+// Pure core (node-testable: app/tests/js/macro_mode_check.js) + a runtime mounted on the Host port.
 (function (root) {
   "use strict";
 

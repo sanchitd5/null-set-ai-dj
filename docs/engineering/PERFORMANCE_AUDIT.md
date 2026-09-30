@@ -197,7 +197,7 @@ In `app/ui/server.py`:
 ### 5.2 Optimization Blueprint
 
 #### 1. Restrict PyTorch CPU Thread Count
-In `app/music_brain/stem_service.py`, cap PyTorch CPU worker threads so background AI separation never starves the audio host process:
+In `app/music_brain/audio/stem_service.py`, cap PyTorch CPU worker threads so background AI separation never starves the audio host process:
 ```python
 import torch
 

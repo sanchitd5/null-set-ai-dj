@@ -96,8 +96,8 @@ DJ theory lives in the Obsidian vault, not here. Entries point at notes by name,
 The biggest tempo stretch allowed for key-locked (pitch-invariant) stems. Past about 8% the
 stretch smears, so bigger gaps route through Echo Out or a Stem Bridge. Lives at
 `app/ui/static/tempo-rule.js:KEYLOCK_RANGE_PCT` and its Python twin
-`app/music_brain/techniques.py:MAX_KEYLOCK_STRETCH`. Key-locked renders come from
-`app/music_brain/keylock.py` (Rubber Band), cached under `data/cache/keylock/` as 24-bit FLAC
+`app/music_brain/matching/techniques.py:MAX_KEYLOCK_STRETCH`. Key-locked renders come from
+`app/music_brain/audio/keylock.py` (Rubber Band), cached under `data/cache/keylock/` as 24-bit FLAC
 (about 0.46x the float WAV, residual -143 dB). See [tempo rules](#tempo-rules).
 
 ### agent_bridge CLI
@@ -110,7 +110,7 @@ Lives in `app/music_brain/agent_bridge.py` (`add_parser` calls). Run as
 ### AI review
 A stage of [learn-set](#learn-mode--learn-set) where the local model checks each detected move
 and keeps or rejects it. Rejected observations never count as a technique. Shows in the
-LEARNING panel as the "AI review" stage (`app/music_brain/learn_progress.py:STAGES`,
+LEARNING panel as the "AI review" stage (`app/music_brain/learning/learn_progress.py:STAGES`,
 `app/ui/static/learn-progress.js`). Skip it with `learn-set --no-ai`.
 
 ### atlas (pair_atlas)
@@ -120,9 +120,9 @@ tempo lock, energy step, vocals, recipe, merge-hold, riff, mashup, supermove) an
 [works score](#works-score). Played evidence from sessions, set logs and studied sets is
 attached, so a studied pair becomes a [combo](#combo). Stored in `data/cache/pair_atlas.json`;
 a pair is rescored only when its inputs or the [rules hash](#rules-hash) change. Code:
-`app/music_brain/pair_atlas.py`, node half `app/music_brain/pair_atlas_rules.js`. CLI:
+`app/music_brain/atlas/pair_atlas.py`, node half `app/music_brain/pair_atlas_rules.js`. CLI:
 `python -m app.music_brain.pair_atlas build | show | best | studied | import-set`. REST:
-`app/ui/atlas_api.py` (`/api/atlas/status`, `/api/atlas/partners`, `/api/atlas/pair`). Feeds
+`app/ui/services/atlas_api.py` (`/api/atlas/status`, `/api/atlas/partners`, `/api/atlas/pair`). Feeds
 [macros](#macro) and the autopilot's combo list.
 
 ### AUTO MIX / automix
@@ -137,7 +137,7 @@ The live decision loop that picks the next song, books the transition and plays 
 order: an armed [macro](#macro) step, [studied combos](#studied-combos), atlas combos, then the
 LLM. Every pick then runs the gates (`evaluateCandidate`, `decideRecipe`, `keySafeRecipe`,
 `energyStepOk`). Browser side: `app/ui/static/autopilot.js`. Server side (suggest, plan,
-genre filter): `app/ui/autopilot_service.py`. The same code runs in the [virtual set sim](#virtual-set-sim).
+genre filter): `app/ui/services/autopilot_service.py`. The same code runs in the [virtual set sim](#virtual-set-sim).
 
 ### baseline
 The committed score of the sim panel, `app/sim/baseline.json`. `suite --check` fails when a
@@ -147,19 +147,19 @@ is from the stub-LLM era until it is re-recorded. Refresh with `app.sim.suite --
 ### build-set / import-set
 `pair_atlas import-set <set_id>` registers a studied set's songs as library tracks the same way
 an upload does (id is `sha256(bytes)[:16]`), so nothing is separated or analysed twice
-(`app/music_brain/set_import.py`). `pair_atlas build` then rescores the atlas. `learn-set` runs
+(`app/music_brain/learning/set_import.py`). `pair_atlas build` then rescores the atlas. `learn-set` runs
 both at its end unless `--no-macros` is passed. **UNVERIFIED:** no subcommand literally named
 `build-set` was found; the words refer to this import-then-build step.
 
 ### BYPASS_KEY_SCORE
 The score (0.4) a key-agnostic recipe gets from the matcher when the pair's keys clash: a
-penalty, never neutral. `app/music_brain/recipe_matcher.py:BYPASS_KEY_SCORE`. See [key gate](#key-gate).
+penalty, never neutral. `app/music_brain/matching/recipe_matcher.py:BYPASS_KEY_SCORE`. See [key gate](#key-gate).
 
 ### Camelot
 The 24-slot key wheel (1A to 12B) used for harmonic mixing. The live table is
 `app/ui/static/dj-mind.js:camelotScore` (per `CLAUDE.md`: diagonal 0.75, minus two hours 0.6,
 two hours with the letter flipped 0.3, three or more hours 0), mirrored in Python as
-`app/music_brain/techniques.py:camelot_score`. Analysis reports each song's key in Camelot
+`app/music_brain/matching/techniques.py:camelot_score`. Analysis reports each song's key in Camelot
 form. Theory: [[Harmonic Mixing & Camelot System]].
 
 ### combo
@@ -189,24 +189,24 @@ Dance-floor energy on a 1 to 10 scale, measured from onset density, low-end shar
 tempo and brightness, then ranked against your own library. The next song may move at most
 `MAX_STEP` levels (`RELAXED_STEP` in a relaxed session) in the direction the set arc allows;
 the last-round `force` widens rises only, never falls. Python:
-`app/music_brain/energy.py:next_ok`; browser twin `app/ui/static/autopilot.js:energyStepOk`.
+`app/music_brain/analysis/energy.py:next_ok`; browser twin `app/ui/static/autopilot.js:energyStepOk`.
 Theory: [[Energy Management & Dynamics]].
 
 ### era gap
 Release-decade distance between two songs. A gap above `MAX_ERA_GAP` decades trims the score by
-`ERA_JUMP_PENALTY` rather than refusing. `app/music_brain/genre.py:era_gap`. Used by the matcher
+`ERA_JUMP_PENALTY` rather than refusing. `app/music_brain/analysis/genre.py:era_gap`. Used by the matcher
 and autopilot suggest.
 
 ### FOLLOW SET
 Play a song by an artist from a studied set and the autopilot follows that set's tracklist in
 order, downloading any song the library lacks. REST `GET /api/studied/sets`
-(`app/ui/atlas_api.py`); console side in `app/ui/static/autopilot.js`. A forced plan (macro
+(`app/ui/services/atlas_api.py`); console side in `app/ui/static/autopilot.js`. A forced plan (macro
 step, studied combo, FOLLOW SET) gets no LLM re-pick but still runs the gates.
 
 ### genre_near / genre scenes
 Genre-family distance shared by the autopilot's suggestion filter and the matcher, so no
 unrelated-genre jump. Genre labels come from metadata or the model, never from audio.
-`app/music_brain/genre.py:genre_near`. A scene profile can override it (see
+`app/music_brain/analysis/genre.py:genre_near`. A scene profile can override it (see
 [scene profiles](#scene-profiles-punjabi)).
 
 ### key gate
@@ -218,18 +218,18 @@ their own 0.8 floors. Key-agnostic recipes on a clashing pair score
 
 ### KEY_SAFE_MIN
 The minimum Camelot score (0.6) for a tonal blend. `app/ui/static/autopilot.js:KEY_SAFE_MIN`,
-parity-tested twin `app/music_brain/pair_atlas.py:KEY_SAFE_MIN`.
+parity-tested twin `app/music_brain/atlas/pair_atlas.py:KEY_SAFE_MIN`.
 
 ### keySafeRecipe
 Rewrites a tonal recipe to Echo Out when the key score is below KEY_SAFE_MIN.
-`app/ui/static/autopilot.js:keySafeRecipe`; Python side `app/music_brain/techniques.py:learned_pick`.
+`app/ui/static/autopilot.js:keySafeRecipe`; Python side `app/music_brain/matching/techniques.py:learned_pick`.
 
 ### knowledge/ folder
 `app/music_brain/knowledge/`, tracked in git: macros, the learner's observations and a
 [slim atlas](#slim-atlas), JSON only (no audio, stems, paths or e-mail addresses). Files:
 `macros/<name>.json`, `learned_techniques.json`, `pair_atlas.json.gz`, `names.json`. The owner's `seed_combos.json`
 sits beside it in `app/music_brain/`. CLI `python -m app.music_brain.knowledge export | import`. Import resolves
-songs by name onto the local library. Code: `app/music_brain/knowledge.py`.
+songs by name onto the local library. Code: `app/music_brain/matching/knowledge.py`.
 
 ### learn mode / learn-set
 Study a recorded DJ set: `python -m app.music_brain.agent_bridge learn-set <url|file>
@@ -237,24 +237,24 @@ Study a recorded DJ set: `python -m app.music_brain.agent_bridge learn-set <url|
 analyze, detect, lyrics, ai_review, merge, cleanup. A set longer than `--split-minutes` is learned
 in parts cut at tracklist boundaries (`set_learner.plan_parts`: neighbouring parts share one song,
 each handover belongs to one part), each part checkpointed in `sets/<set_id>/parts/` so a killed run
-resumes at the next part; the panel shows "part k/n". The cleanup (`app/music_brain/learn_cleanup.py`)
+resumes at the next part; the panel shows "part k/n". The cleanup (`app/music_brain/learning/learn_cleanup.py`)
 registers every good song and ID cut in the library first, then deletes clips, clip stems, registered
 song files, yt-dlp leftovers and the set recording; unregistered songs stay, listed in the result's
 `cleanup.kept`. `--keep-files` skips it. A progress file whose pid is gone reads `stale`. Output: [observations](#observations) in `learned_techniques.json`, then
 [import-set](#build-set--import-set) and studied macros. Code:
-`app/music_brain/set_learner.py`. Progress shows in the console LEARNING panel
+`app/music_brain/learning/set_learner.py`. Progress shows in the console LEARNING panel
 (`app/ui/static/learn-progress.js`, `GET /api/learn/progress`) or `learn-status` on the CLI.
 
 ### learned moves
 In-song moves copied from studied sets: vocal loops, vocal re-cuts, chops on the 1/8 grid, loop
 extends. The console runs one kind per phrase, and each kind has its own gates (store present,
 not disabled, seen in a studied set, user toggles). `app/ui/static/learned-moves.js`, reading
-`app/music_brain/techniques.py:learned_moves`. HUD checkboxes in `app/ui/static/index.html`.
+`app/music_brain/matching/techniques.py:learned_moves`. HUD checkboxes in `app/ui/static/index.html`.
 
 ### learned_techniques.json
 The learner's store: per technique kind, its observations, count, the tempo gap and key ranges
 it was seen at, and [user rules](#user-rules). Path `data/cache/learned_techniques.json`
-(`app/music_brain/set_learner.py:LEARNED_PATH`); a copy is exported to `knowledge/`.
+(`app/music_brain/learning/set_learner.py:LEARNED_PATH`); a copy is exported to `knowledge/`.
 
 ### list-recipes
 CLI and `GET /api/recipes`: every parsed cookbook recipe with its 17-part fields plus
@@ -262,11 +262,11 @@ CLI and `GET /api/recipes`: every parsed cookbook recipe with its 17-part fields
 
 ### live ear
 The local omni model listening to the master during a set (for example a loop that has gone on
-too long). `app/ui/live_ear.py`, console side `app/ui/static/live-ear.js`. Advisory.
+too long). `app/ui/services/live_ear.py`, console side `app/ui/static/live-ear.js`. Advisory.
 
 ### local wins
 When importing `knowledge/`, the local cache always wins: a local macro, atlas pair or studied
-set is never overwritten. `app/music_brain/knowledge.py`.
+set is never overwritten. `app/music_brain/matching/knowledge.py`.
 
 ### macro
 A fully specified, replayable set or transition: ordered track ids and per transition the
@@ -274,10 +274,10 @@ recipe, A's exit and B's entry, the merge-hold plan, the tempo decision and any 
 Stored in `data/cache/macros/<name>.json`. A stored decision that is no longer valid is logged
 and falls back. Sources: the current set, a past session, atlas-ordered picks or the CLI
 (`python -m app.music_brain.macros list | show | from-session | picks`). Code:
-`app/music_brain/macros.py`; REST `/api/macros` (`app/ui/atlas_api.py`).
+`app/music_brain/atlas/macros.py`; REST `/api/macros` (`app/ui/services/atlas_api.py`).
 
 ### macro kinds
-`studied`, `chain`, `combo`, `seed`, `yours` (`app/music_brain/macros.py:KINDS`). The MACRO
+`studied`, `chain`, `combo`, `seed`, `yours` (`app/music_brain/atlas/macros.py:KINDS`). The MACRO
 dropdown groups them as STUDIED SETS, CHAINS, COMBOS, YOUR MACROS
 (`app/ui/static/macro-mode.js:MACRO_GROUPS`).
 
@@ -297,7 +297,7 @@ Merge, then hold, then transition: the two tracks share stems (B's drums and bas
 and synths, one tonal owner, one sub owner), hold together for whole 8-bar phrases while the pair
 stays clean, then hand over on a downbeat. Hold length comes from measured stem energy and vocal
 gaps, never a fixed constant. `app/ui/static/stem-moves.js:holdPlan` and `mergeTransitionPlan`;
-Python scoring `app/music_brain/merge.py`. It is what a merge combo plays. Theory:
+Python scoring `app/music_brain/render/merge.py`. It is what a merge combo plays. Theory:
 [[Stems Transition]].
 
 ### observations
@@ -307,11 +307,11 @@ key score). Stored per kind in `learned_techniques.json`; counted in `knowledge 
 ### octave fold
 Tempos are folded so half and double time count as a match: `app/ui/static/tempo-rule.js:lockRate`
 tries rates 1, 2 and 0.5 and takes the closest. Energy folds tempo into 80 to 150 BPM, so half-time
-DnB counts at its full feel (`app/music_brain/energy.py`).
+DnB counts at its full feel (`app/music_brain/analysis/energy.py`).
 
 ### pair atlas vs matcher
 The [atlas](#atlas-pair_atlas) is an offline table over the whole library, scored with the
-console's own JS rules. The matcher (`app/music_brain/recipe_matcher.py:RecipeMatcher`) scores
+console's own JS rules. The matcher (`app/music_brain/matching/recipe_matcher.py:RecipeMatcher`) scores
 one pair on request (`agent_bridge match`, `POST /api/match`) against the cookbook recipes and
 returns explained candidates. Manual points go through `RecipeMatcher.resolve_candidate`.
 
@@ -328,7 +328,7 @@ Theory: [[Phrasing & Structure]].
 
 ### recipes
 The 28 cookbook transitions (the 17-part notes in `DJ/05 - Transition Cookbook/`), parsed into
-executable recipes by `app/music_brain/knowledge_parser.py:TransitionRecipe`.
+executable recipes by `app/music_brain/matching/knowledge_parser.py:TransitionRecipe`.
 
 ### recordings
 MediaRecorder captures of a live console mix, uploaded with `POST /api/recordings` and stored in
@@ -336,7 +336,7 @@ MediaRecorder captures of a live console mix, uploaded with `POST /api/recording
 
 ### REST surface
 `uvicorn app.ui.server:app`. Tracks, analysis, separation, recipes, match, preview, audio,
-samples, recordings (`app/ui/server.py`), atlas, macros and studied sets (`app/ui/atlas_api.py`).
+samples, recordings (`app/ui/server.py`), atlas, macros and studied sets (`app/ui/services/atlas_api.py`).
 All ids are content hashes.
 
 ### replay
@@ -344,30 +344,30 @@ Running the sim from a recorded fixture with zero network: `virtual_set --replay
 subject, not prompt text; a call with no recorded reply is a replay miss. See `app/sim/README.md`.
 
 ### rules hash
-A hash of the files whose rules the atlas applies (`app/music_brain/pair_atlas.py:RULE_FILES`,
+A hash of the files whose rules the atlas applies (`app/music_brain/atlas/pair_atlas.py:RULE_FILES`,
 `rules_hash`). Editing any of them invalidates every atlas pair; `knowledge import` checks it.
 
 ### scene profiles (Punjabi)
 The autopilot's rules for a Punjabi / bhangra / desi set, with the console setting `PUNJABI`
 (sent as `punjabi_profile`) set to `off`, `auto` or `on`. `off` is today's behaviour byte for
 byte; `auto` applies the full profile when both songs are Punjabi and a handover-only level
-(Quick Cut fallback, no era gate) when one is. Code: `app/music_brain/scene_profile.py`, console
+(Quick Cut fallback, no era gate) when one is. Code: `app/music_brain/analysis/scene_profile.py`, console
 copy `app/ui/static/scene-profile.js`. Most values are marked GUESS in their source note. The task
 brief said this lives only on branch `punjabi-scene-profile`; in fact that branch is already
 merged into main (commit c28f1ee), so this entry describes main.
 
 ### seed combos / auto_seed
 `app/music_brain/seed_combos.json` (beside `knowledge/`) holds the owner's committed combos for pairs the atlas
-does not serve yet. `app/music_brain/knowledge.py:auto_seed` imports `knowledge/` when it or the
+does not serve yet. `app/music_brain/matching/knowledge.py:auto_seed` imports `knowledge/` when it or the
 local library changes.
 
 ### set_learner
 The learning pipeline behind [learn-set](#learn-mode--learn-set), plus the user-rule store.
-`app/music_brain/set_learner.py`.
+`app/music_brain/learning/set_learner.py`.
 
 ### slim atlas
 A compact copy of the atlas (the best partners per song and per move) for git.
-`app/music_brain/knowledge.py:slim_atlas`.
+`app/music_brain/matching/knowledge.py:slim_atlas`.
 
 ### stem intro
 Bringing B in stem by stem (for example synths first) instead of a full-track fade. A learned stem
@@ -377,7 +377,7 @@ intro is a tonal blend, so it obeys the key gate. Refused when the stem has no e
 ### stems / Demucs / separation
 4-stem (vocals, drums, bass, other) or 2-stem (vocals, instrumental) separation with Demucs
 (`htdemucs_ft`), keyed by SHA-256 and cached under `data/cache/stems/`, so a track is never
-separated twice. `app/music_brain/stem_service.py`; CLI `agent_bridge separate`; REST
+separated twice. `app/music_brain/audio/stem_service.py`; CLI `agent_bridge separate`; REST
 `POST /api/tracks/{id}/separate`. Stems are stored as 16-bit FLAC (bit-exact, about 0.42x the
 WAV size) with a v2 `manifest.json` (`version`, `format`, `stems`). Readers try `.flac` first and
 fall back to `.wav`, so old WAV entries still load. `python3 -m app.music_brain.audio_convert`
@@ -389,13 +389,13 @@ running ones finish, so every folder ends all-WAV or all-FLAC.
 
 ### step log
 Per-song log of each step the autopilot took (song, recipe, why), shown in the browser and saved
-server side. `app/ui/static/step-log.js`, `app/ui/song_log.py`, `/api/session/steps`.
+server side. `app/ui/static/step-log.js`, `app/ui/services/song_log.py`, `/api/session/steps`.
 
 ### studied combos
 The transitions real DJs played in studied sets, taken from each studied set's tracklist and
 learner observations. Both songs resolve to library ids by name; a resolved pair becomes the
 `studied` evidence class on its atlas pair and a combo the console tries first, badged
-"STUDIED COMBO (&lt;DJ&gt; set)". `app/music_brain/studied_combos.py`.
+"STUDIED COMBO (&lt;DJ&gt; set)". `app/music_brain/atlas/studied_combos.py`.
 
 ### suite
 The regression gate: the fixed panel of recorded sets (`app/sim/panel.json`), replayed and scored.
@@ -405,21 +405,21 @@ The regression gate: the fixed panel of recorded sets (`app/sim/panel.json`), re
 ### supermove
 The big announced moves: double drop, drop swap, plus merge, mashup and riff over rap, called out
 by the mascot. `app/ui/static/dj-mind.js:peakTransition`, `app/ui/static/mascot.js:CUE_MOVES`; the
-atlas scores them as the `supermove` move (`app/music_brain/pair_atlas.py:MOVE_ALIASES`).
+atlas scores them as the `supermove` move (`app/music_brain/atlas/pair_atlas.py:MOVE_ALIASES`).
 
 ### tempo rules
-- Pitch-locked blends: within about 6% (`app/ui/autopilot_service.py:TEMPO_LOCK_PCT`).
+- Pitch-locked blends: within about 6% (`app/ui/services/autopilot_service.py:TEMPO_LOCK_PCT`).
 - Key-locked stems: up to [8%](#8-keylock).
 - Console pitch fader range: `app/ui/static/tempo-rule.js:PITCH_RANGE_PCT`.
 - Tempo changes are gradual: at most `MAX_TEMPO_PCT_PER_BAR` per bar on an audible deck.
 - Half and double time count as a match ([octave fold](#octave-fold)).
 - Bigger gaps go Echo Out or Stem Bridge. Theory: [[Beatmatching & Tempo]], [[Genre Bridge Playbook]].
 
-Whole-song BPM uses a section-consensus estimate (`app/music_brain/tempo.py:robust_tempo`).
+Whole-song BPM uses a section-consensus estimate (`app/music_brain/analysis/tempo.py:robust_tempo`).
 
 ### titles
 Human names for macros, shown in the MACRO dropdown, for example "Anyma @ Live from Atomium
-(studied set, 12 songs)". The slug stays the stable id. `app/music_brain/macros.py:title_of`.
+(studied set, 12 songs)". The slug stays the stable id. `app/music_brain/atlas/macros.py:title_of`.
 
 ### toggle drawer
 The panel of on/off switches for console features, grouped by kind.
@@ -432,12 +432,12 @@ Its macros are `studied-set-<set_id>` (whole set) and `studied-<set_id>-<n>` (pe
 ### user rules
 The owner's refinement of a learned technique after hearing it live (for example "rap about 9 dB
 under the riff"), or `--disable` to keep it out of ranking. Kept across re-learning.
-`app/music_brain/set_learner.py:add_user_rule`.
+`app/music_brain/learning/set_learner.py:add_user_rule`.
 
 ### vibe
 Measured "vibe" features the name cannot tell the LLM: loudness, brightness, percussive density,
 mean energy. `vibe_distance` turns the deltas into one number plus reasons, so the autopilot can
-reject a mood flip. `app/music_brain/vibe.py:vibe_distance`. The VIBE strip in the console
+reject a mood flip. `app/music_brain/analysis/vibe.py:vibe_distance`. The VIBE strip in the console
 (`app/ui/static/vibe-ui.js`) shows what the AI hears, plans and does, including the combo streak.
 
 ### virtual set sim
@@ -448,19 +448,19 @@ whole set with one number (lower is better). Record once with the real model, th
 
 ### works score
 The atlas's 0 to 1 blend (shown as 0 to 100) of key, tempo gap, energy, vocal cleanliness, stems,
-merge and combo fit for one pair. `app/music_brain/pair_atlas.py:works_score`.
+merge and combo fit for one pair. `app/music_brain/atlas/pair_atlas.py:works_score`.
 
 ## Key numbers
 
 | Name | Value | Source |
 |---|---|---|
 | KEY_SAFE_MIN | 0.6 | `app/ui/static/autopilot.js:KEY_SAFE_MIN` |
-| BYPASS_KEY_SCORE | 0.4 | `app/music_brain/recipe_matcher.py:BYPASS_KEY_SCORE` |
+| BYPASS_KEY_SCORE | 0.4 | `app/music_brain/matching/recipe_matcher.py:BYPASS_KEY_SCORE` |
 | Key-lock stretch cap | 8% | `app/ui/static/tempo-rule.js:KEYLOCK_RANGE_PCT` |
-| Pitch-lock tempo gap | 6% | `app/ui/autopilot_service.py:TEMPO_LOCK_PCT` |
+| Pitch-lock tempo gap | 6% | `app/ui/services/autopilot_service.py:TEMPO_LOCK_PCT` |
 | Max tempo change per bar | 0.25% | `app/ui/static/tempo-rule.js:MAX_TEMPO_PCT_PER_BAR` |
 | Combo min works score | 65 | `app/ui/static/macro-mode.js:COMBO_MIN_WORKS` |
 | Macro step preference | 0.8 | `app/ui/static/macro-mode.js:MACRO_PREFERENCE` |
-| Max era gap (decades) | 1 | `app/music_brain/genre.py:MAX_ERA_GAP` |
+| Max era gap (decades) | 1 | `app/music_brain/analysis/genre.py:MAX_ERA_GAP` |
 | Phrase | 8 bars / 32 beats | [[Phrasing & Structure]] |
 | Sub-bass owner | below 120 Hz, one deck | [[EQ & Frequency Management]] |

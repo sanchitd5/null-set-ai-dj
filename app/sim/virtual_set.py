@@ -153,7 +153,7 @@ def run_set(a: argparse.Namespace) -> dict:
 
 def _catalog_for(world_mode: str, library, pool) -> list:
     """The songs the stub may suggest: every pool track (replay) or every usable library song (library)."""
-    from app.music_brain import energy as en
+    from app.music_brain.analysis import energy as en
 
     cat = []
     if world_mode == "library":

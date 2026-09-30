@@ -228,7 +228,7 @@ def set_level_report(js: dict, run: dict, by_name: dict, fame: Optional[dict] = 
     exits that started inside A's breakdown (A's song position at transition_start, the shared
     preplan.breakdown_spans rule on A's analysis), the overlap seconds of each transition, the share
     of famous songs among those with a fame answer (S16, fame: name -> famous) and of edits (S17)."""
-    from app.music_brain import preplan
+    from app.music_brain.render import preplan
 
     names = [s.get("name") or "" for s in run.get("songs") or []]
     known = [bool(fame[n]) for n in names if fame and n in fame]
@@ -584,9 +584,9 @@ def feature_table(js: dict, world, run: dict) -> dict:
 def recipe_probe(run: dict, by_name: dict) -> dict:
     """Every cookbook recipe, scored by the real matcher on every played pair: which are viable
     (score > 0), which the matcher ranks first, and whether its a_time / b_time sit on the 8-bar grid."""
-    from app.music_brain.analyzer import _from_dict
-    from app.music_brain.knowledge_parser import KnowledgeParser
-    from app.music_brain.recipe_matcher import RecipeMatcher, nearest_phrase_boundary
+    from app.music_brain.analysis.analyzer import _from_dict
+    from app.music_brain.matching.knowledge_parser import KnowledgeParser
+    from app.music_brain.matching.recipe_matcher import RecipeMatcher, nearest_phrase_boundary
 
     km = RecipeMatcher(KnowledgeParser())
     names = sorted(r.name for r in km.knowledge.get_all()) if hasattr(km, "knowledge") else []

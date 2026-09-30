@@ -695,7 +695,7 @@
       : ctx.vocal >= 0.15 ? ["bass_out", "drum_break", "synth_hold"] : ["drum_break", "synth_hold", "bass_out"];
     return menu.find((k) => !used.has(k) && (ctx.othersCarry || keepsVibe(k, 16, ctx.energy))) || null;
   }
-  // Hook drop (app/music_brain/hook_drop.py plan items: {cut_at, drop_at, text}):
+  // Hook drop (app/music_brain/analysis/hook_drop.py plan items: {cut_at, drop_at, text}):
   // drums + bass leave over a quarter bar ending on cut_at, synths duck to
   // HOOK_OTHER, the voice carries the line alone, everything slams back on
   // drop_at (5 ms: no click). Same shape as hook_drop.render(), the audition file.
@@ -735,7 +735,7 @@
   // ---- SONG MERGE (user: "A drums, A bass, B vox, B synth; different combinations
   // where possible"). For M bars each role plays from ONE deck (one sub owner,
   // one singer), then B takes everything on the line. Same rules as
-  // app/music_brain/merge.py rank() (golden vectors: app/tests/fixtures/rule_vectors.json);
+  // app/music_brain/render/merge.py rank() (golden vectors: app/tests/fixtures/rule_vectors.json);
   // the silent ear (/api/merge/audition) re-ranks.
   const TONAL = ["bass", "vocals", "other"];
   const MERGE_KEY_OK = 0.8;

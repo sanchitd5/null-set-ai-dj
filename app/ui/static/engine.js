@@ -8,7 +8,7 @@
 //              sim       app/sim/js/host-sim.js: virtual clock, recording audio graph, the real API over HTTP
 //   Ai     = the model client the engine talks to for its two LLM jobs (suggestion, transition plan):
 //            {suggest(body), plan(body)}. The default is HTTP to the server's /api/autopilot/*; which
-//            model answers (local LLM, a replay fixture, a stub) is the SERVER's Engine (app/ui/engine.py).
+//            model answers (local LLM, a replay fixture, a stub) is the SERVER's Engine (app/ui/services/engine.py).
 //
 // Plain dependency injection, no framework: every engine module is `create({host, ai})` and returns its API;
 // this file's `mount(name, create)` is how a module file hands its factory to the composition root of

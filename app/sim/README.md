@@ -74,7 +74,7 @@ Readiness model (replay / library worlds): a downloaded song's stems are install
 its registration on ONE serial worker (the median gap between consecutive real separations, 361 gaps in
 `data/cache/stems`), a key-locked tempo set is served `World.TEMPO_S` = 30 s after the first ask on one serial
 worker (the keylock.py docstring figure, UNVERIFIED), a song already separated this run is a cache hit. Server
-side `app/ui/prerender.py` is stepped by the requests themselves (no worker thread: `SimHost.threaded = False`).
+side `app/ui/services/prerender.py` is stepped by the requests themselves (no worker thread: `SimHost.threaded = False`).
 
 ## Baseline, the gates and the improvement loop
 
@@ -105,9 +105,9 @@ window/document/AudioContext/Date/timer/fetch: `autopilot`, `dj-mind`, `stem-mov
 
 * Live console host: `host-browser.js` (`createWindowHost(window, ...)`).
 * Sim host: `js/host-sim.js` (virtual clock, recording graph, fetch to the real API).
-* Contract: `app/tests/host_contract_check.js`.
+* Contract: `app/tests/js/host_contract_check.js`.
 
-Brain (Python): `app/ui/engine.py` is `Engine(host, ai_backend, config)`, plain constructor
+Brain (Python): `app/ui/services/engine.py` is `Engine(host, ai_backend, config)`, plain constructor
 injection. `Host` (production) is the world: YouTube search / verify / views / download, stem queue,
 separation, vocals stem, hook drops, key-lock renders, audio reads, file hash, the library's energy
 distribution, the session and song logs, background job execution, ids, clock. `AIBackend`
@@ -141,7 +141,7 @@ learners (`set_learner`, `sources`, `agent_bridge`) call `stem_service` directly
 Seeded `Math.random`, virtual `Date`/`performance`/timers/rAF, serialised fetch with modelled
 latency, inline job executors, counter job ids, the virtual clock as `Host.now`, wall-clock
 `elapsed` fields dropped from the event log, verify-pool misses sorted. Same fixture twice gives
-byte-identical outputs: every file under the run dir (`app/tests/test_sim_replay.py`, marked slow).
+byte-identical outputs: every file under the run dir (`app/tests/py/test_sim_replay.py`, marked slow).
 
 Replay is keyed by subject, not prompt text (`World._replayed`): a suggestion by the song playing,
 a plan by its tempo / key pair, an ear call by its loop. A reworded prompt gets the reply recorded

@@ -32,7 +32,7 @@ python3 -m app.sim.suite --update-baseline                                      
    `worst` (five worst transitions with reasons). Reports go to `app/sim/out/<dir>/` (`report.json`,
    `audible.json`, `events.jsonl`, `console.jsonl`, `songs/*/steps.jsonl`).
 3. **fix** one rule per commit; respect CLAUDE.md section 4. Put logic in pure `core` functions so a
-   node check can pin it (`app/tests/*_check.js`).
+   node check can pin it (`app/tests/js/*_check.js`).
 4. **compare** before and after with `compare`. Keep the change only if the mean score improves and no
    HARD metric worsens (`suite --check`: tempo over cap, key-clash blends, repeat songs, stalls,
    feature coverage). Revert otherwise and log why.
@@ -158,7 +158,7 @@ dead ends in (c); re-rank (d).
   stems were "not loaded"; (2) `evaluateCandidate` waited only 20 s for the stems before asking for the tempo set, so with stems landing
   40-160 s after the load the tempo set was never asked for ("B has no key-locked tempo stems yet"); (3) the tempo sets were asked for
   A's tempo at that instant, and A was still easing home (a moving target).
-- Change: `app/ui/prerender.py` (ranked candidates, stems then tempo sets, one heavy job at a time, cancel on drop),
+- Change: `app/ui/services/prerender.py` (ranked candidates, stems then tempo sets, one heavy job at a time, cancel on drop),
   `autopilot.js` (`syncPrerender`, `orderByReadiness`, `awaitBReady`, `aTempoAtEntry`), `deck-controller.js` stem poll 10 s -> 3 s.
 - Panel: `lib-s1-long` replay (StubLLM), one run, sim world with modelled separation (26 s) and tempo render (30 s) latency.
 - Before (the merge-hold agent, same stub replays, instant server-side stems): every merge refused, 4 of 8 "B stems not loaded",
@@ -168,7 +168,7 @@ dead ends in (c); re-rank (d).
 - Verdict: open. The fix for cause (3) landed after the single allowed sim run and is covered by node checks only (UNVERIFIED in the sim).
 - Cache growth: `keylock/t*` tempo sets are now capped by `KEYLOCK_CACHE_MAX_GB` (default 20, negative disables), evicted
   oldest-first by dir mtime (bumped on every serve, at most once a minute), never while rendering, in `protect`, or younger than
-  30 min; runs at server start and after each tempo render (`app/music_brain/keylock_cache.py`). Preview with
+  30 min; runs at server start and after each tempo render (`app/music_brain/audio/keylock_cache.py`). Preview with
   `python3 -m app.music_brain.keylock_cache --dry-run [--max-gb N]`, delete with `--apply`. `data/cache/stems` (98.9 GB / 615 sets)
   stays uncapped: each set costs a Demucs run (~26 s). A separate policy is needed (e.g. by last use, sparing library songs); not implemented.
 
