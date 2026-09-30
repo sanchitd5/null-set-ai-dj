@@ -172,10 +172,12 @@ Logs: `/tmp/ai-dj-server.log` (app), `/tmp/ai-dj-omni-server.log` (model).
 | `OLLAMA_URL` / `OLLAMA_MODEL` | `http://localhost:11434` / `gemma3:27b` | fallback backend |
 | `YTDLP_COOKIES_FILE` | `~/.config/ai-dj/youtube-cookies.txt` | YouTube cookies for yt-dlp (keep it out of the repo) |
 | `YT_GUARD` | `off` | `on` brings back the bot-check cooldown breaker |
-| `KEYLOCK_CACHE_MAX_GB` | `20` | cap for regenerable key-locked tempo stems (oldest evicted first) |
+| `KEYLOCK_CACHE_MAX_GB` | `20` | cap for regenerable key-locked tempo stems (oldest evicted first; counts FLAC bytes) |
 | `SUGGEST_BUDGET_S` / `SUGGEST_VERIFY` | `15` / `1` | suggestion time budget / check picks against YouTube |
 | `DJ_LIBRARY_DIRS` | none | semicolon-separated local music folders |
 | `LOG_LEVEL` / `CONSOLE_LEVEL` | `info` / `warn` | app log and `start.sh` console verbosity |
+
+Disk use: stems (`data/cache/stems/`) are 16-bit FLAC and key-locked renders (`data/cache/keylock/`) are 24-bit FLAC, both lossless. An older WAV cache keeps working; convert it in place with `python3 -m app.music_brain.audio_convert` (dry run, prints the projected saving) and then `--apply` while the app is idle.
 
 ---
 

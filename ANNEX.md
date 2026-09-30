@@ -97,7 +97,8 @@ The biggest tempo stretch allowed for key-locked (pitch-invariant) stems. Past a
 stretch smears, so bigger gaps route through Echo Out or a Stem Bridge. Lives at
 `app/ui/static/tempo-rule.js:KEYLOCK_RANGE_PCT` and its Python twin
 `app/music_brain/techniques.py:MAX_KEYLOCK_STRETCH`. Key-locked renders come from
-`app/music_brain/keylock.py` (Rubber Band), cached under `data/cache/`. See [tempo rules](#tempo-rules).
+`app/music_brain/keylock.py` (Rubber Band), cached under `data/cache/keylock/` as 24-bit FLAC
+(about 0.46x the float WAV, residual -143 dB). See [tempo rules](#tempo-rules).
 
 ### agent_bridge CLI
 The engine's command line and Python API. Every command prints JSON and failures print
@@ -377,7 +378,11 @@ intro is a tonal blend, so it obeys the key gate. Refused when the stem has no e
 4-stem (vocals, drums, bass, other) or 2-stem (vocals, instrumental) separation with Demucs
 (`htdemucs_ft`), keyed by SHA-256 and cached under `data/cache/stems/`, so a track is never
 separated twice. `app/music_brain/stem_service.py`; CLI `agent_bridge separate`; REST
-`POST /api/tracks/{id}/separate`.
+`POST /api/tracks/{id}/separate`. Stems are stored as 16-bit FLAC (bit-exact, about 0.42x the
+WAV size) with a v2 `manifest.json` (`version`, `format`, `stems`). Readers try `.flac` first and
+fall back to `.wav`, so old WAV entries still load. `python3 -m app.music_brain.audio_convert`
+converts an existing WAV cache in place (dry run by default; `--apply`, `--only stems|keylock`,
+`--limit N`); every file is decoded and compared before its WAV is deleted.
 
 ### step log
 Per-song log of each step the autopilot took (song, recipe, why), shown in the browser and saved
