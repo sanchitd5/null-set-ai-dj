@@ -151,7 +151,7 @@ def test_merge_audition_endpoint_runs_as_a_job(monkeypatch):
     import pytest
     from fastapi import HTTPException
 
-    from app.music_brain import merge
+    from app.music_brain.render import merge
     from app.ui import server
 
     monkeypatch.setattr(server, "_cached_stems4", lambda tid: {"drums": "x"})

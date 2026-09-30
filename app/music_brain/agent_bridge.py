@@ -21,7 +21,7 @@ from app.music_brain.analysis.analyzer import analyze as _analyze
 from app.music_brain.matching.knowledge_parser import KnowledgeParser
 from app.music_brain.matching.recipe_matcher import RecipeMatcher
 from app.music_brain.audio.stem_service import separate as _separate
-from app.music_brain.transition_renderer import render_preview
+from app.music_brain.render.transition_renderer import render_preview
 
 _knowledge = None
 

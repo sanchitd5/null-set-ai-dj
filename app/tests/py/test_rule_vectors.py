@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from app.music_brain.analysis import energy
-from app.music_brain import merge, preplan
+from app.music_brain.render import merge, preplan
 
 HERE = Path(__file__).parents[1]  # app/tests
 V = json.loads((HERE / "fixtures" / "rule_vectors.json").read_text(encoding="utf-8"))

@@ -735,7 +735,7 @@
   // ---- SONG MERGE (user: "A drums, A bass, B vox, B synth; different combinations
   // where possible"). For M bars each role plays from ONE deck (one sub owner,
   // one singer), then B takes everything on the line. Same rules as
-  // app/music_brain/merge.py rank() (golden vectors: app/tests/fixtures/rule_vectors.json);
+  // app/music_brain/render/merge.py rank() (golden vectors: app/tests/fixtures/rule_vectors.json);
   // the silent ear (/api/merge/audition) re-ranks.
   const TONAL = ["bass", "vocals", "other"];
   const MERGE_KEY_OK = 0.8;

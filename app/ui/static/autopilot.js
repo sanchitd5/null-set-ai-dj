@@ -3552,7 +3552,7 @@ function createAutopilotEngine({ host, ai }) {
       song: history[history.length - 1] || null, pos: dk && dk._currentPosition ? Math.round(dk._currentPosition() * 10) / 10 : null });
   });
 
-  // POST /api/transition/preplan (app/music_brain/preplan.py) for the booked pair:
+  // POST /api/transition/preplan (app/music_brain/render/preplan.py) for the booked pair:
   // the exit window of this song, now, and A's live tempo. null when stems are
   // missing, B can't sit on A's tempo, the toggle is off, or nothing fits.
   async function requestPreplan(currentId, nextId, candidate) {

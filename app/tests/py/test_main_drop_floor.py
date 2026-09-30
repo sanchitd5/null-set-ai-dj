@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from app.music_brain import blend
+from app.music_brain.render import blend
 
 
 def _track(duration, bpm, energy_fn):

@@ -2,7 +2,7 @@
 import numpy as np
 import soundfile as sf
 
-from app.music_brain import preplan
+from app.music_brain.render import preplan
 
 BPM = 120.0
 BAR = 240 / BPM

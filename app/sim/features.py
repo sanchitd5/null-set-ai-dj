@@ -228,7 +228,7 @@ def set_level_report(js: dict, run: dict, by_name: dict, fame: Optional[dict] = 
     exits that started inside A's breakdown (A's song position at transition_start, the shared
     preplan.breakdown_spans rule on A's analysis), the overlap seconds of each transition, the share
     of famous songs among those with a fame answer (S16, fame: name -> famous) and of edits (S17)."""
-    from app.music_brain import preplan
+    from app.music_brain.render import preplan
 
     names = [s.get("name") or "" for s in run.get("songs") or []]
     known = [bool(fame[n]) for n in names if fame and n in fame]

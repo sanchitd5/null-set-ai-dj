@@ -50,7 +50,7 @@ class AIBackend:
 
     def audition(self, system: str, wav: bytes, text: str) -> str:
         """The silent ear rating one rendered merge clip (merge.ear_rate)."""
-        from app.music_brain import merge
+        from app.music_brain.render import merge
 
         return merge._ask_omni(system, wav, text)
 

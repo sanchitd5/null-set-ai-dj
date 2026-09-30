@@ -297,7 +297,7 @@ Merge, then hold, then transition: the two tracks share stems (B's drums and bas
 and synths, one tonal owner, one sub owner), hold together for whole 8-bar phrases while the pair
 stays clean, then hand over on a downbeat. Hold length comes from measured stem energy and vocal
 gaps, never a fixed constant. `app/ui/static/stem-moves.js:holdPlan` and `mergeTransitionPlan`;
-Python scoring `app/music_brain/merge.py`. It is what a merge combo plays. Theory:
+Python scoring `app/music_brain/render/merge.py`. It is what a merge combo plays. Theory:
 [[Stems Transition]].
 
 ### observations

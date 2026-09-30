@@ -37,7 +37,7 @@ from app.music_brain.config import (
 )
 from app.music_brain.matching.knowledge_parser import KnowledgeParser
 from app.music_brain.matching.recipe_matcher import RecipeMatcher
-from app.music_brain.transition_renderer import render_full_mix, render_preview
+from app.music_brain.render.transition_renderer import render_full_mix, render_preview
 from app.music_brain.learning.set_log import export_set_log_markdown, validate_set_log
 from app.ui.services import engine as _engine
 from app.ui.services.bg_jobs import DONE as _JOB_DONE, ERROR as _JOB_ERROR, EXPIRED as _JOB_EXPIRED, JobRunner
@@ -498,7 +498,7 @@ def _cached_vocal_regions(track_id: str) -> Optional[list]:
     matching must never start a separation."""
     from app.music_brain.audio import stem_service
     from app.music_brain.config import DEMUCS_MODEL
-    from app.music_brain.mashup import MASHUP_DEMUCS_MODEL
+    from app.music_brain.render.mashup import MASHUP_DEMUCS_MODEL
 
     if track_id in _vocal_regions:
         return _vocal_regions[track_id]
@@ -1245,7 +1245,7 @@ def _job_answer(job, kind: str, fresh=None):
 
 def _preplan_fresh(now: Optional[float]):
     """A finished plan whose B start is already too close to A's playhead is no plan."""
-    from app.music_brain.preplan import MIN_LEAD_S
+    from app.music_brain.render.preplan import MIN_LEAD_S
 
     def check(res: dict) -> dict:
         p = res.get("plan") if isinstance(res, dict) else None
@@ -1257,7 +1257,7 @@ def _preplan_fresh(now: Optional[float]):
 
 
 def _run_preplan(req: PreplanRequest, sa: dict, sb: dict) -> dict:
-    from app.music_brain import preplan
+    from app.music_brain.render import preplan
     from app.music_brain.matching import techniques as tq
     from app.ui.services import session_log
 
@@ -1283,7 +1283,7 @@ def _run_preplan(req: PreplanRequest, sa: dict, sb: dict) -> dict:
 
 @app.post("/api/transition/preplan")
 def post_transition_preplan(req: PreplanRequest):
-    """The silent ear pre-plans the whole transition (app.music_brain.preplan):
+    """The silent ear pre-plans the whole transition (app.music_brain.render.preplan):
     when B starts inside A, from which of B's lines, for how long both play and
     which deck owns each stem; rendered offline and heard before the master plays it.
     Starts or joins a background job: {"status": "pending", "job": id} until
@@ -1325,12 +1325,12 @@ class MergeAuditionRequest(BaseModel):
 
 @app.post("/api/merge/audition")
 def post_merge_audition(req: MergeAuditionRequest):
-    """The silent ear on candidate song merges (app.music_brain.merge): each combo is
+    """The silent ear on candidate song merges (app.music_brain.render.merge): each combo is
     rendered offline from the cached stems (B key-locked to A's tempo) and the local
     omni model rates it. Advisory and cached; {"results": [...], "ear": bool}.
     Starts or joins a background job: {"status": "pending", "job": id} until
     GET /api/merge/audition/{job} returns that result."""
-    from app.music_brain import merge
+    from app.music_brain.render import merge
 
     sa, sb = _cached_stems4(req.a_id), _cached_stems4(req.b_id)
     if not sa or not sb:
@@ -1631,7 +1631,7 @@ def _vocals_stem(track_id: str) -> str:
 
 
 def _vocals_stem_impl(track_id: str) -> str:
-    from app.music_brain.mashup import MASHUP_DEMUCS_MODEL
+    from app.music_brain.render.mashup import MASHUP_DEMUCS_MODEL
 
     result = separate_stems(_track_path(track_id), two_stems="vocals", model=MASHUP_DEMUCS_MODEL)
     path = result.stems.get("vocals")
@@ -1673,7 +1673,7 @@ class BlendRequest(BaseModel):
 def post_blend_plan(req: BlendRequest):
     """Beat-to-beat blend: vocal-free exit phrase in A, vocal-free entry phrase
     in B, and the playback rate that locks B's tempo to A's."""
-    from app.music_brain.blend import ALLOWED_BARS, ENTRY_MODES, plan_blend
+    from app.music_brain.render.blend import ALLOWED_BARS, ENTRY_MODES, plan_blend
 
     if req.bars not in ALLOWED_BARS:
         raise HTTPException(status_code=400, detail=f"bars must be one of {list(ALLOWED_BARS)}")
@@ -1698,7 +1698,7 @@ def post_blend_plan(req: BlendRequest):
 def post_mashup_plan(req: MashupRequest):
     """Plan guest-vocal-over-host-beat ("A x B"). Separates vocals (cached) only
     after the key/tempo checks pass, so incompatible pairs return quickly."""
-    from app.music_brain.mashup import ALLOWED_BARS, plan_mashup
+    from app.music_brain.render.mashup import ALLOWED_BARS, plan_mashup
 
     if req.bars not in ALLOWED_BARS:
         raise HTTPException(status_code=400, detail=f"bars must be one of {list(ALLOWED_BARS)}")
@@ -1740,7 +1740,7 @@ def _vocals_cached(track_id: str) -> bool:
     """True when the track's vocal stem is already separated (never runs Demucs)."""
     if track_id in _vocal_regions:
         return True
-    from app.music_brain.mashup import MASHUP_DEMUCS_MODEL
+    from app.music_brain.render.mashup import MASHUP_DEMUCS_MODEL
     from app.music_brain.audio.stem_service import _cache_dir_for, _load_from_cache, file_hash
 
     try:
@@ -1753,9 +1753,9 @@ def _vocals_cached(track_id: str) -> bool:
 def _layer_third(req: LayerRequest, a, b, layer: dict) -> Optional[dict]:
     """Vocal stem of a third song over the layer: cached stems only, key and
     tempo fit BOTH playing songs, on a B phrase with no vocal from A or B."""
-    from app.music_brain.blend import tempo_lock
-    from app.music_brain.layer import key_fits, pitch_fits, vocal_clash
-    from app.music_brain.mashup import MAX_RATE_DEVIATION, plan_mashup
+    from app.music_brain.render.blend import tempo_lock
+    from app.music_brain.render.layer import key_fits, pitch_fits, vocal_clash
+    from app.music_brain.render.mashup import MAX_RATE_DEVIATION, plan_mashup
 
     a_eff = req.a_bpm_effective or a.bpm
     a_key = a.key.camelot if a.key else ""
@@ -1808,7 +1808,7 @@ def _layer_third(req: LayerRequest, a, b, layer: dict) -> Optional[dict]:
 def post_layer_plan(req: LayerRequest):
     """LAYER transition: B under A as a texture for 16-64 bars, bass to B on a
     phrase line, A unwound over 8-16 bars; optional third vocal-stem layer."""
-    from app.music_brain.layer import LAYER_HOLD_BARS, LAYER_UNWIND_BARS, plan_layer
+    from app.music_brain.render.layer import LAYER_HOLD_BARS, LAYER_UNWIND_BARS, plan_layer
 
     if req.max_hold_bars not in LAYER_HOLD_BARS:
         raise HTTPException(status_code=400, detail=f"max_hold_bars must be one of {list(LAYER_HOLD_BARS)}")
@@ -1849,7 +1849,7 @@ class BridgeRequest(BaseModel):
 @app.post("/api/bridge/plan")
 def post_bridge_plan(req: BridgeRequest):
     """BRIDGE PATH: BPM ladder (<= max_step_pct per song, half/double links)."""
-    from app.music_brain.bridge import bridge_ladder
+    from app.music_brain.render.bridge import bridge_ladder
 
     try:
         return bridge_ladder(req.from_bpm, req.to_bpm, req.max_step_pct, req.max_steps)

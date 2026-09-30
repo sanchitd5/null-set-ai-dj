@@ -23,7 +23,7 @@ import time
 from functools import lru_cache
 from typing import Any, Optional
 
-from app.music_brain.blend import drop_lines
+from app.music_brain.render.blend import drop_lines
 from app.ui.services import llm_gate
 from app.ui.services.autopilot_service import STRICT_RETRY, _extract_json, chat_raw, failure_reason, note_retry
 

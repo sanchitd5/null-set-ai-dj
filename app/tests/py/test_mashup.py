@@ -5,7 +5,7 @@ Vocal activity is injected (no Demucs), so these run fast.
 
 import pytest
 
-from app.music_brain import mashup
+from app.music_brain.render import mashup
 from app.music_brain.analysis.analyzer import KeyEstimate, StructureSection, TrackAnalysis
 
 

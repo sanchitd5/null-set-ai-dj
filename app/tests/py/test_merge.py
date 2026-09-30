@@ -4,7 +4,7 @@ import json
 import numpy as np
 import soundfile as sf
 
-from app.music_brain import merge
+from app.music_brain.render import merge
 
 FULL = {"drums": 0.2, "bass": 0.2, "vocals": 0.1, "other": 0.1}
 

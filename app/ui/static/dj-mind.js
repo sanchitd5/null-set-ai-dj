@@ -116,7 +116,7 @@
                       stutter: ["STUTTER", "accent"], filter_build: ["FILTER BUILD", "accent"], echo_freeze: ["ECHO FREEZE", "accent"] };
   // Drop line: labels flicker (1-3 s slivers), so a drop is found by energy:
   // the phrase is in the song's top quartile and jumps >= DROP_JUMP over the
-  // phrase before. Same rule as drop_lines() in app/music_brain/blend.py.
+  // phrase before. Same rule as drop_lines() in app/music_brain/render/blend.py.
   const DROP_JUMP = 0.2;
 
   // ---------------------------------------------------------------- pure core

@@ -1,11 +1,11 @@
-"""LAYER planner (app/music_brain/layer.py) and BRIDGE PATH ladder (bridge.py)."""
+"""LAYER planner (app/music_brain/render/layer.py) and BRIDGE PATH ladder (bridge.py)."""
 
 import pytest
 
 from app.music_brain.analysis.analyzer import KeyEstimate, StructureSection, TrackAnalysis
-from app.music_brain.blend import plan_blend
-from app.music_brain.bridge import bridge_ladder
-from app.music_brain.layer import groove_steady, hold_options, plan_layer, vocal_clash
+from app.music_brain.render.blend import plan_blend
+from app.music_brain.render.bridge import bridge_ladder
+from app.music_brain.render.layer import groove_steady, hold_options, plan_layer, vocal_clash
 
 
 def _track(bpm, duration=300.0, key="8A", jitter=0.0):

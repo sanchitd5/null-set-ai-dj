@@ -16,7 +16,7 @@ from app.music_brain.analysis.analyzer import KeyEstimate, StructureSection, Tra
 from app.music_brain.config import ROOT_DIR
 from app.music_brain.matching.knowledge_parser import KnowledgeParser
 from app.music_brain.matching.recipe_matcher import RecipeMatcher, TransitionCandidate
-from app.music_brain.transition_renderer import render_full_mix, render_preview
+from app.music_brain.render.transition_renderer import render_full_mix, render_preview
 
 SAMPLE_A = ROOT_DIR / "data" / "songs" / "input.mp3"
 SAMPLE_B = ROOT_DIR / "data" / "songs" / "input2.mp3"

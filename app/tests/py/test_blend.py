@@ -3,7 +3,7 @@
 import pytest
 
 from app.music_brain.analysis.analyzer import StructureSection, TrackAnalysis
-from app.music_brain.blend import plan_blend, tempo_lock
+from app.music_brain.render.blend import plan_blend, tempo_lock
 
 
 def _track(bpm, duration=240.0, sections=None):
@@ -102,7 +102,7 @@ def test_match_mode_unchanged_by_drop_fields():
 
 
 def test_drop_lines_found_by_energy_jump_not_labels():
-    from app.music_brain.blend import drop_lines
+    from app.music_brain.render.blend import drop_lines
     # 2 s bars, 16 s phrases; energy low, then a jump at 64 s and 160 s
     phr = [i * 16.0 for i in range(14)]
     lvl = {0: 0.3, 1: 0.35, 2: 0.4, 3: 0.5, 4: 0.9, 5: 0.9, 6: 0.4, 7: 0.45, 8: 0.5, 9: 0.55, 10: 0.95, 11: 0.9, 12: 0.4, 13: 0.3}
@@ -126,8 +126,8 @@ def test_drop_entry_uses_energy_drop_when_labels_are_slivers():
 def test_drop_rule_matches_dj_mind_js():
     import re
     from pathlib import Path
-    from app.music_brain import blend
-    js = (Path(blend.__file__).parents[1] / "ui" / "static" / "dj-mind.js").read_text(encoding="utf-8")
+    from app.music_brain.render import blend
+    js = (Path(blend.__file__).parents[2] / "ui" / "static" / "dj-mind.js").read_text(encoding="utf-8")
     assert float(re.search(r"\bDROP_JUMP = ([0-9.]+)", js).group(1)) == blend.DROP_JUMP
     assert float(re.search(r"\bPEAK_QUARTILE = ([0-9.]+)", js).group(1)) == blend.DROP_QUARTILE
 
