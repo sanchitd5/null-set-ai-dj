@@ -312,7 +312,12 @@ def decide(wav: Optional[bytes], m: dict) -> dict:
         _lat.append(time.monotonic() - t0 - (waited or 0.0))
     except Exception as exc:  # network, auth, bad JSON: rules answer instead
         res = rule_decision(m)
-        res["fallback"] = f"Qwen-Omni error: {type(exc).__name__}: {str(exc)[:160]}"
+        # A timeout is our own adaptive wait cutting the call (the client closes the stream, so mlx
+        # logs stream_closed_before_completion), not a server fault: say so.
+        cut = "Timeout" in type(exc).__name__
+        res["fallback"] = (f"Qwen-Omni slower than the adaptive wait ({cc['timeout']:.1f}s, "
+                           f"{ADAPT_FACTOR:g}x median of recent calls): {type(exc).__name__}" if cut
+                           else f"Qwen-Omni error: {type(exc).__name__}: {str(exc)[:160]}")
         quality = quality if quality not in (None, "ok") else type(exc).__name__
         print(f"WARNING [ear] {res['fallback']} (rules answered after {time.monotonic() - t0:.1f}s, "
               f"wait was {cc['timeout']:.1f}s)", flush=True)
