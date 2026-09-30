@@ -76,8 +76,20 @@
     return `Punjabi profile active (${m === "on" ? "on" : "auto"}, ${lvl})`;
   }
 
+  // OWNER RULE "dhol drop only for punjabi songs, shouldn't experiment": the ONE gate for every dhol / bhangra
+  // sample or pattern (beat-grid-ai.js presets, artist-moves.js dhol_drop, the sampler's AI use). The playing
+  // song must resolve to the Punjabi scene, and in a transition (genreB given) the incoming one too. Whatever
+  // the PUNJABI mode says: "on" forces the profile's mixing, never a dhol on a song that is not Punjabi.
+  // -> {ok, why}
+  function dholOk(genreA, genreB) {
+    if (!isPunjabi(genreA)) return { ok: false, why: `dhol only on Punjabi songs: the playing song is ${genreA ? `"${genreA}"` : "unlabelled"}` };
+    if (genreB !== undefined && !isPunjabi(genreB)) return { ok: false, why: `dhol only between Punjabi songs: the incoming song is ${genreB ? `"${genreB}"` : "unlabelled"}` };
+    return { ok: true, why: "Punjabi scene" };
+  }
+
   const core = { MODES, DEFAULT_MODE, PUNJABI_PROFILE, FULL, HANDOVER, normalizeMode, isPunjabi, isNeighbour, level,
-    fallbackRecipe, playWindow, foldBpm, statusLabel, learnedScene, learnedClashOk, learnedTempoOk };
+    fallbackRecipe, playWindow, foldBpm, statusLabel, learnedScene, learnedClashOk, learnedTempoOk, dholOk };
+  root.sceneProfileCore = core;   // beat-grid-ai.js / auto-sampler.js read the dhol gate before the Engine mounts
   if (typeof module !== "undefined" && module.exports) module.exports = core;
   if (root.Engine) root.Engine.mount("sceneProfile", () => core);
 })(typeof window !== "undefined" ? window : globalThis);

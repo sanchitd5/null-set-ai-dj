@@ -25,6 +25,7 @@ from typing import Callable, List, Optional, Tuple
 from app.music_brain.analysis import waveform_params as wp
 from app.music_brain.analysis.analyzer import TrackAnalysis, vocal_presence_map
 from app.music_brain.matching.recipe_matcher import camelot_distance_score
+from app.music_brain.render import drop_line
 
 MASHUP_DEMUCS_MODEL = "htdemucs"  # single model: ~4x faster than htdemucs_ft
 MAX_RATE_DEVIATION = 0.04
@@ -34,6 +35,26 @@ MAX_HOST_VOCAL_COVERAGE = 0.2
 ALLOWED_BARS = (8, 16, 32)  # 32 = full mashup: the guest's whole vocal phrase over the host
 
 Regions = List[Tuple[float, float]]
+
+_NO_GENRES = object()
+
+
+def scene_gate(host_genre, guest_genre) -> Optional[str]:
+    """None when the guest's vocal may ride the host's beat, else the refusal.
+
+    Owner: Santigold (indie pop) over Sammy Virji - Hackney Pigeon (uk garage) and an electronic vocal
+    over the Punjabi "Sadi Gali" were vibe killers (session 2026-09-30_154332 events #401 / #228): a
+    mashup never crosses into another music world. NARROW (owner: "more quality mashups, not less"):
+    only a CLEAR mismatch refuses, both labels known and no shared genre family (genre.family_jump:
+    punjabi / south asian vs electronic, pop vs electronic), the rule the song picks score as a
+    genre jump. House <-> techno <-> garage stay one world; an unknown genre on either side passes.
+    (genre_near, the scene-term test, would have refused 8462 of the atlas's 11208 mashup pairs,
+    4518 of them inside one family: far too wide.)"""
+    from app.music_brain.analysis.genre import family_jump
+
+    if family_jump(host_genre, guest_genre):
+        return f"scene: {guest_genre} vocal over {host_genre} crosses genre families"
+    return None
 
 
 def _coverage(regions: Regions, start: float, end: float) -> float:
@@ -102,6 +123,7 @@ def plan_mashup(
     guest_vocals_path: Callable[[], str],
     bars: int = 8,
     host_mutable: bool = False,
+    genres=_NO_GENRES,
 ) -> dict:
     """Plan a guest-vocal-over-host-beat layer.
 
@@ -111,9 +133,18 @@ def plan_mashup(
     host_mutable: the host deck has live stems, so its own vocal can be muted
     under the guest's (stem mashup). Any host phrase then qualifies; phrases
     that are already instrumental come first.
+
+    genres: (host_genre, guest_genre) labels; when given, the scene gate (scene_gate) runs first.
+    Every host entry whose window touches a host drop or its drop vocal line is dropped (owner:
+    "never vocal mix a drop line", drop_line.song_busy).
     """
     if bars not in ALLOWED_BARS:
         raise ValueError(f"bars must be one of {ALLOWED_BARS}")
+    if genres is not _NO_GENRES:
+        hg, gg = (tuple(genres) + (None, None))[:2] if genres else (None, None)
+        why = scene_gate(hg, gg)
+        if why:
+            return {"ok": False, "reasons": [why], "gate": "scene"}
     reasons: List[str] = []
 
     lock = tempo_lock(host.bpm, guest.bpm)
@@ -148,10 +179,16 @@ def plan_mashup(
     host_regions = vocal_presence_map(Path(host_vocals_path()))
     h_len = bars * host_bar
     entries, muted = [], []
+    drop_refused = 0
     for b in host.phrase_boundaries_8bar:
         if b + h_len > host.duration - 8 * host_bar:
             break
         if _touches_edge_section(host, b, b + h_len):
+            continue
+        # the guest's phrase from best_start rides this host phrase bar for bar: refused only where it sings
+        # over the host's drop window or the host's sung line into it
+        if drop_line.song_busy(host, b, b + h_len, sings=drop_line.mapped_sings(guest_regions, b, best_start, guest_bar / host_bar)):
+            drop_refused += 1
             continue
         cov = _coverage(host_regions, b, b + h_len)
         if cov <= MAX_HOST_VOCAL_COVERAGE:
@@ -162,6 +199,9 @@ def plan_mashup(
     if not entries and muted:
         entries, mute_host = muted, True
     if not entries:
+        if drop_refused:
+            return {"ok": False, "gate": "drop_line",
+                    "reasons": [f"every free host phrase touches a drop line ({drop_refused}): never vocal mix a drop line"]}
         return {"ok": False, "reasons": ["host has no instrumental phrase long enough"]}
 
     levels, hp_hz, sources = _layer_mix(host, guest, guest_vocals_path, best_start, g_len, entries, h_len)

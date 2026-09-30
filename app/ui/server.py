@@ -1489,6 +1489,9 @@ def post_riff_plan(req: RiffRequest):
     plan["timeline"], line_src = keylock.measured_lines(plan["timeline"], wp.profile(sb["vocals"]), plan["b_entry"], plan["bar_s"])
     plan["param_sources"] = {"mashup_bars": "measured" if vr else "fallback", **line_src}
     wp.note("riff_lines", plan["param_sources"], fit=plan["timeline"].get("fit"))
+    dl = keylock.drop_clear(plan["timeline"])      # "never vocal mix a drop line": A's drop window plays clean
+    if dl:
+        return {"ok": False, "reasons": [dl]}
     key, state = keylock.ensure(stem_service.file_hash(_track_path(req.a_id)), _cached_stems4(req.a_id), plan)
     # B's levels where it drops (16 bars from the rap), for the balance
     lo, hi = plan["b_entry"], plan["b_entry"] + 16 * plan["bar_s"]
@@ -1723,6 +1726,7 @@ def post_mashup_plan(req: MashupRequest):
             guest_vocals_path=lambda: _vocals_stem(req.guest_id),
             bars=req.bars,
             host_mutable=req.host_mutable,
+            genres=(_track_vibe(req.host_id)["genre"], _track_vibe(req.guest_id)["genre"]),   # scene gate
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"mashup plan error: {exc}") from exc
@@ -1795,7 +1799,8 @@ def _layer_third(req: LayerRequest, a, b, layer: dict) -> Optional[dict]:
             continue
         try:
             plan = plan_mashup(b, guest, host_vocals_path=lambda: _vocals_stem(req.b_id),
-                               guest_vocals_path=lambda gid=gid: _vocals_stem(gid), bars=bars)
+                               guest_vocals_path=lambda gid=gid: _vocals_stem(gid), bars=bars,
+                               genres=(_track_vibe(req.b_id)["genre"], _track_vibe(gid)["genre"]))   # scene gate
         except Exception as exc:
             print(f"[layer] third layer {gid} skipped: {exc}", flush=True)
             continue
@@ -2178,6 +2183,115 @@ def _track_vibe(track_id: str) -> Dict[str, Optional[str]]:
         return {"genre": None, "era": None}
     key = _genre_key(clean_identity(name)[1])
     return {"genre": _suggested_genres.get(key) or None, "era": _suggested_eras.get(key) or None}
+
+
+def _vibe_by_name(name: str) -> Dict[str, Optional[str]]:
+    from app.ui.services.track_identity import clean_identity
+
+    key = _genre_key(clean_identity(str(name or ""))[1]) if name else ""
+    return {"genre": _suggested_genres.get(key) or None, "era": _suggested_eras.get(key) or None}
+
+
+# ---- OWNER VETO + booking vet (app/music_brain/atlas/vetoes.py, app/ui/services/booking_vet.py) ----
+_VETO_MEMO: dict = {}
+
+
+def _vetoes() -> list:
+    """The owner's vetoes (seed + CACHE_DIR/vetoes.json), re-read when the file changes."""
+    from app.music_brain.atlas import vetoes as vt
+
+    p = vt.path(CACHE_DIR)
+    stamp = (str(p), p.stat().st_mtime_ns if p.exists() else None)
+    if _VETO_MEMO.get("stamp") != stamp:
+        _VETO_MEMO.update(stamp=stamp, rows=vt.load(CACHE_DIR))
+    return _VETO_MEMO["rows"]
+
+
+def _name_of(track_id: str) -> str:
+    path = _tracks.get(track_id)
+    return _track_names.get(track_id) or (path.stem if path else "")
+
+
+class VetoRequest(BaseModel):
+    kind: str = "pair"                          # "pair" (A -> B) | "song" (B in A's scene)
+    a_id: Optional[str] = Field(default=None, max_length=64)
+    b_id: Optional[str] = Field(default=None, max_length=64)
+    a_name: Optional[str] = Field(default=None, max_length=300)
+    b_name: Optional[str] = Field(default=None, max_length=300)
+    note: str = Field(default="", max_length=200)
+
+
+@app.get("/api/vetoes")
+def get_vetoes():
+    return {"vetoes": _vetoes()}
+
+
+@app.post("/api/vetoes")
+def post_veto(req: VetoRequest):
+    """Console "bad pair": the owner's live veto. Stored at once (atomic) and read by every booking
+    path through /api/autopilot/vet; the next atlas build turns it into PLAYED_BAD evidence."""
+    from app.music_brain.atlas import vetoes as vt
+    from app.music_brain.analysis.genre import genre_scenes
+
+    a = req.a_name or (_name_of(req.a_id) if req.a_id else "")
+    b = req.b_name or (_name_of(req.b_id) if req.b_id else "")
+    scene = ""
+    if req.kind == "song" and a:
+        sc = sorted(genre_scenes(_vibe_by_name(a)["genre"]))
+        scene = sc[0] if sc else ""
+    try:
+        e = vt.make(req.kind, b, a, scene=scene, source="console", note=req.note)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    added = vt.add(e, CACHE_DIR)
+    _VETO_MEMO.clear()
+    print(f"[veto] {'added' if added else 'already there'}: {e.get('a', '')} -> {e['b']}", flush=True)
+    return {"added": added, "veto": e}
+
+
+class VetCand(BaseModel):
+    track_id: Optional[str] = Field(default=None, max_length=64)
+    name: str = Field(default="", max_length=300)
+    stored: bool = False                        # a macro step / FOLLOW SET song / studied combo
+
+
+class VetRequest(BaseModel):
+    a_id: Optional[str] = Field(default=None, max_length=64)
+    a_name: str = Field(default="", max_length=300)
+    history: List[str] = Field(default_factory=list, max_length=400)
+    set_id: str = Field(default="", max_length=64)
+    punjabi_profile: str = "off"
+    cands: List[VetCand] = Field(default_factory=list, max_length=60)
+
+
+@app.post("/api/autopilot/vet")
+def autopilot_vet(req: VetRequest):
+    """Every candidate the console is about to book, whatever path found it (booking_vet.py)."""
+    from app.ui.services import booking_vet as bv
+    from app.ui.services.set_memory import MAX_SONGS, SetMemory
+
+    global _set_memory
+    a_name = req.a_name or (_name_of(req.a_id) if req.a_id else "")
+    av = _track_vibe(req.a_id) if req.a_id else _vibe_by_name(a_name)
+    if not av["genre"] and a_name:
+        av = _vibe_by_name(a_name)
+    earlier: List[str] = []
+    if any(c.stored for c in req.cands):
+        if _set_memory is None:
+            _set_memory = SetMemory(CACHE_DIR / "set_memory.json")
+        earlier = _set_memory.earlier_sets(list(req.history), set_id=_clean_set_id(req.set_id), limit=MAX_SONGS)
+    rows = []
+    for c in req.cands:
+        name = c.name or (_name_of(c.track_id) if c.track_id else "")
+        v = _track_vibe(c.track_id) if c.track_id else {"genre": None, "era": None}
+        if not v["genre"]:
+            v = _vibe_by_name(name)
+        rows.append({"track_id": c.track_id, "name": name, "genre": v["genre"], "era": v["era"], "stored": c.stored})
+    res = bv.vet(a_name, rows, a_genre=av["genre"], a_era=av["era"], history=req.history, earlier=earlier,
+                 vetoes=_vetoes(), punjabi_profile=req.punjabi_profile)
+    for r, row in zip(res, rows):
+        r["genre"], r["era"] = row["genre"], row["era"]
+    return {"a_name": a_name, "a_genre": av["genre"], "a_era": av["era"], "results": res}
 
 
 def _pair_vibe(track_a_id: str, track_b_id: str) -> Dict[str, Optional[str]]:

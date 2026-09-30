@@ -43,6 +43,7 @@
   "use strict";
 
   const lm = root.learnedMovesCore || (typeof require === "function" ? require("./learned-moves.js") : null);
+  const dl = root.dropLineCore || (typeof require === "function" ? require("./drop-line.js") : null);   // the shared drop-line rule
   const { envelope, snapBeat, median } = lm;
 
   const KINDS = ["slip_loop", "cue_tease", "roll", "perc_bridge", "pad_lead", "chant_gate", "dhol_drop", "chop_duck"];
@@ -238,16 +239,8 @@
   }
 
   // drop spans [[t0, t1]] overlapping [t0, t1) -> the first one, else null
-  function dropHit(drops, t0, t1) {
-    for (const x of drops || []) if (Array.isArray(x) && Math.min(t1, x[1]) - Math.max(t0, x[0]) > 1e-6) return x;
-    return null;
-  }
-  // a vocal region that starts before `at` and runs past it into a drop starting there: the drop's vocal line
-  function dropVocalLine(drops, vocals, t0, at) {
-    const d = (drops || []).find((x) => Array.isArray(x) && Math.abs(x[0] - at) < 1e-3);
-    if (!d) return null;
-    return (vocals || []).find((r) => r[1] > at + 1e-3 && r[0] < at && r[1] > t0) || null;
-  }
+  // (drop-line.js owns both; kept on the core for older callers)
+  const dropHit = dl.dropHit, dropVocalLine = dl.dropVocalLine;
 
   // ---- Lane 8 pad lead -------------------------------------------------------------------------
   // c: {pos, exitT (A song s at B's entry), aBpm, aRate, bBpm, bEntry (B song s), bPlaying,
@@ -318,11 +311,8 @@
       if (nb.t < c.pos + MIN_LEAD_S * rate) { last = no("late", `no ${W} bar window left before the line`); continue; }
       const share = vocalShare(c.vocals, nb.t, c.lineT);
       if (share < CHANT_MIN_VOCAL) { last = no("no_vocal", `A sings ${Math.round(share * 100)}% of the ${W} bars: nothing to gate`); continue; }
-      if (!Array.isArray(c.drops)) return no("unmeasured", "no drop map: cannot rule out a drop line");
-      const hit = dropHit(c.drops, nb.t, c.lineT);
-      if (hit) return no("drop_line", `the window overlaps the drop at ${hit[0].toFixed(1)} s: never vocal mix a drop line`);
-      const vl = dropVocalLine(c.drops, c.vocals, nb.t, c.lineT);
-      if (vl) return no("drop_line", `the sung line ${vl[0].toFixed(1)}-${vl[1].toFixed(1)} s runs into the drop: never vocal mix a drop line`);
+      const busy = dl.dropLineBusy(c.drops, c.vocals, nb.t, c.lineT);
+      if (busy) return no(busy.gate, busy.reason);
       if (nb.grid && !fallbacks.includes("beat grid from bpm")) fallbacks.push("beat grid from bpm");
       const n = Math.round(W * 4 / CHANT_STEP_BEATS), stepS = (c.lineT - nb.t) / n, steps = [];
       for (let i = 0; i < n; i += 2) steps.push({ t0: nb.t + i * stepS, t1: nb.t + (i + 1) * stepS });
@@ -380,9 +370,8 @@
   //     level of the chop sources on the vocal stem), start / end (the chop window, song s), drops ([[t0, t1]]), relaxed, onDemand}
   function planChopDuck(c) {
     if (c.kind !== "vocal_chop") return no("not_chop", `${c.kind || "no move"} is not a vocal chop`);
-    if (!Array.isArray(c.drops)) return no("unmeasured", "no drop map: cannot rule out a drop line");
-    const hit = dropHit(c.drops, c.start, c.end);
-    if (hit) return no("drop_line", `the chops overlap the drop at ${hit[0].toFixed(1)} s: never vocal mix a drop line`);
+    const busy = dl.dropLineBusy(c.drops, c.vocals, c.start, c.end);
+    if (busy) return no(busy.gate, busy.reason);
     if (c.relaxed && !c.onDemand) return no("relaxed", "relaxed session: no artist moves");
     if (!fin(c.drumsRms) || !fin(c.chopRms)) return no("unmeasured", "no drum / vocal stem level over the window");
     if (c.drumsRms < MIN_RMS) return no("no_drums", "A's drums are silent under the chops: nothing to duck");
@@ -442,13 +431,8 @@
     }
     // drop spans of deck d's song: section-map "drop" labels, plus dj-mind's energy drop lines (one phrase each)
     function dropSpans(d) {
-      const a = d.analysis || {}, out = [];
-      for (const x of a.sections || []) if (x && /drop/i.test(String(x.label || "")) && fin(x.start) && fin(x.end)) out.push([x.start, x.end]);
-      const djc = host.mod.djMind && host.mod.djMind.core, bar = 240 / (d.bpm || 128);
-      if (djc && typeof djc.dropLines === "function") {
-        for (const x of djc.dropLines(a.phrase_boundaries_8bar, a.energy_times, a.energy_curve, bar) || []) if (fin(x.t)) out.push([x.t, x.t + 8 * bar]);
-      }
-      return out;
+      const djc = host.mod.djMind && host.mod.djMind.core;
+      return dl.dropSpans(d.analysis, d.bpm || 128, djc && djc.dropLines);
     }
     const audioAt = (d, o, t) => audioCtx.currentTime + (t - o.pos) / rateOf(d);
 
@@ -557,7 +541,7 @@
       const dr = stemEnv(d, "drums", plan.start, plan.end, beat);
       const lv = (plan.slices || []).map((x) => { const e = stemEnv(d, "vocals", x.from, x.from + x.dur, Math.max(0.01, x.dur)); return e && e.v.length ? e.v[0] : null; })
         .filter((x) => fin(x));
-      const p = planChopDuck({ kind: plan.kind, relaxed: relaxed(), onDemand, start: plan.start, end: plan.end, drops: dropSpans(d),
+      const p = planChopDuck({ kind: plan.kind, relaxed: relaxed(), onDemand, start: plan.start, end: plan.end, drops: dropSpans(d), vocals: d.analysis && d.analysis.vocal_active_regions,
         drumsRms: dr && dr.v.length ? median(dr.v) : null, chopRms: lv.length ? median(lv) : null });
       if (!p.ok) { refuse(d, "chop_duck", (plan.start || 0).toFixed(1), p); return null; }
       if (!d.stemMix({ drums: p.gain }, at, beat / rate)) return null;

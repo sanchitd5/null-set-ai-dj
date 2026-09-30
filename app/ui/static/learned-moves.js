@@ -454,6 +454,14 @@
       why: `build: a ${best.L}-beat vocal fragment x${plays} up to the drop line, released on it` };
   }
   const ARTIST_PLANNERS = { vocal_swap: planVocalSwap, acapella_build: planAcapellaBuild };
+  // OWNER RULE "never vocal mix a drop line" (drop-line.js, the one shared rule): a vocal plan whose window
+  // [start, end) touches a drop or the sung line into it is refused (gate drop_line; no drop map: unmeasured).
+  // c.drops: the song's drop spans (runtime songCtx sets it); a caller that never set the key is not gated.
+  const DL = root.dropLineCore || (typeof require === "function" ? require("./drop-line.js") : null);
+  function dropGate(p, c) {
+    if (!p || !(p.stem === "vocals" || /^vocal|acapella/.test(String(p.kind || ""))) || !c || !("drops" in c) || !DL) return null;
+    return DL.dropLineBusy(c.drops, c.vocals, p.start, p.end);
+  }
   // The artist kinds on c: toggles, the song gates (unless on demand: `force` skips only the cap / spacing /
   // early gates, never a safety gate), the planner. -> {plan | null, refusals}
   const RATE_GATES = new Set(["cap", "cooldown", "early"]);
@@ -466,6 +474,8 @@
       let p;
       try { p = ARTIST_PLANNERS[kind](c); } catch (e) { p = no("error", String((e && e.message) || e)); }
       if (!p.ok) { refusals.push({ kind, gate: p.gate, reason: p.reason }); continue; }
+      const dg = dropGate(p, c);
+      if (dg) { refusals.push({ kind, gate: dg.gate, reason: dg.reason }); continue; }
       return { plan: p, refusals };
     }
     return { plan: null, refusals };
@@ -490,6 +500,8 @@
       let p;
       try { p = PLANNERS[kind](Object.assign({}, c, { params: (store[kind] && store[kind].params) || {} })); } catch (e) { p = no("error", String(e && e.message || e)); }
       if (!p.ok) { refusals.push({ kind, gate: p.gate, reason: p.reason }); continue; }
+      const dg = dropGate(p, c);
+      if (dg) { refusals.push({ kind, gate: dg.gate, reason: dg.reason }); continue; }
       plans.push({ p, w: ctxWeight(kind, c.vocalShare || 0) + 0.5 * (store[kind].seen / maxSeen) });
     }
     plans.sort((a, b) => b.w - a.w);
@@ -499,7 +511,7 @@
   const core = { KINDS, LABEL, CAP_BEATS, MAX_PER_SONG, GAP_BARS, EXIT_GUARD_BARS, MIN_LEAD_S, MIN_RMS, LOOP_LEN_BEATS, EXTEND_LOOP_BEATS,
     median, quantile, snapBeat, stemPlays, envelope, envAt, coverage, vocalLines, ruleBlocks, parseStore, moveGate, songGate, vocalGate,
     planVocalLoop, planResequence, planChop, planLoopExtend, pick,
-    ARTIST_KINDS, ARTIST_LABEL, planVocalSwap, planAcapellaBuild, artistPick };
+    ARTIST_KINDS, ARTIST_LABEL, planVocalSwap, planAcapellaBuild, artistPick, dropGate };
   root.learnedMovesCore = core;
   if (typeof module !== "undefined" && module.exports) module.exports = core;
 
@@ -660,6 +672,7 @@
         othersVocal: othersVocal(d), variant: r.variant, label: st.phraseSection, nextLabel: st.nextPhraseSection, onAir: st.onAir,
         vocalShare: sm ? sm.vocalShare(d.analysis && d.analysis.vocal_active_regions, o.lineT, o.lineT + PHRASE_BARS * o.bar) : 0,
         vocals: d.analysis && d.analysis.vocal_active_regions,
+        drops: DL && d.analysis ? DL.dropSpans(d.analysis, d.bpm || d.analysis.bpm) : null,   // drop-line rule (dropGate)
       };
       // measured inputs, only when a vocal kind could run (the envelope reads the stem buffers)
       if (d.stemsReady && sm) {

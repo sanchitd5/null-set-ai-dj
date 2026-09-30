@@ -421,7 +421,8 @@ var autopilotCore = (function () {
     for (const r of rows || []) {
       if (!r || !r.b || r.b === o.aId) continue;
       const name = r.b_name || r.b;
-      let why = played.has(r.b) || recent.has(name) ? "already played this set"
+      let why = r.vetoed ? String(r.vetoed)                          // OWNER VETO (atlas_api marks the row)
+        : played.has(r.b) || recent.has(name) ? "already played this set"
         : (r.played_bad || 0) > (r.played_good || 0) ? `bad played evidence (-${r.played_bad})` : null;
       if (!why && o.spacing) why = o.spacing(name) || null;
       if (!why && o.rejected) { const k = o.rejected(r.b); if (k) why = k.why || String(k); }
@@ -439,6 +440,53 @@ var autopilotCore = (function () {
     list.sort((x, y) => (x.earlier - y.earlier) || (rank[x.tier] - rank[y.tier]) || (y.fit - x.fit)
       || (y.works - x.works) || (x.track_id < y.track_id ? -1 : x.track_id > y.track_id ? 1 : 0));
     return { list, skipped };
+  }
+  // ---- booking vet (server booking_vet.py) ----
+  // A stored move replayed from memory (a macro step, a FOLLOW SET song, a studied combo) obeys the picks'
+  // repeat / earlier-set / scene rules; a step the owner armed by hand is his call (only his veto
+  // applies to it, as to every candidate).
+  function storedMove(cand) {
+    if (!cand || (cand._macro && cand._macro.byUser)) return false;
+    return !!(cand._macro || cand._follow || (cand._combo && cand._combo.studied));
+  }
+  // the server's answer for the first candidate -> {gate, why} when refused, else null
+  function vetRefusal(res) {
+    const r = res && Array.isArray(res.results) ? res.results[0] : null;
+    return r && r.ok === false ? { gate: r.gate || "vet", why: r.why || r.gate || "refused" } : null;
+  }
+  // how a refusal is logged: the stored move's own step kind (studied / macro) or a candidate reject;
+  // keep: a pairwise refusal may fit after another song, a repeat never does
+  function vetStep(cand, v) {
+    const kind = cand && cand._macro ? "macro" : cand && (cand._follow || cand._combo) ? "studied" : "candidate_reject";
+    const src = cand && cand._macro ? "macro step" : cand && cand._follow ? "follow set" : cand && cand._combo ? "studied combo" : "pick";
+    return { kind, decision: v.gate === "veto" ? "owner veto" : "refused", why: `${src} refused (${v.gate}): ${v.why}`,
+             keep: !(v.gate === "repeat" || v.gate === "earlier_set") };
+  }
+  // Mashup → Transition (B's vocal over A's instrumental), narrow: refused on a CLEAR scene mismatch (clash:
+  // both genres known, no shared family, render/mashup.py scene_gate; unknown passes) or when B's vocal would
+  // sing over A's drop window / the sung line into it (busy: drop-line.js dropLineBusy). o: {clash, busy}
+  function mashupGate(o) {
+    if (o && o.clash === true) return { gate: "scene", why: "B's vocal over A's beat crosses genre families" };
+    if (o && o.busy) return { gate: o.busy.gate, why: o.busy.reason };
+    return null;
+  }
+  // The mashup's length under the drop-line rule: a 32-bar mashup whose vocal would sing over A's drop window
+  // keeps its existing 16-bar variant when that one is clear (B's 16-bar phrase sings enough: vocal16 >= 0.5),
+  // else the refusal stands. busyAt(M) -> {gate, reason} | null. -> {M, busy} (= pair_atlas.py mashup_bars)
+  function mashupBars(M, ve, busyAt) {
+    const busy = busyAt(M);
+    if (busy && M === 32 && ve && ve.vocal16 >= 0.5 && !busyAt(16)) return { M: 16, busy: null };
+    return { M, busy };
+  }
+  // OWNER VETO "bad pair": the pair the owner is hearing. o: {history (names), playedIds, mixing: {aId, aName,
+  // bId, bName} while a transition runs, else null} -> {a_id, a_name, b_id, b_name} | null (no pair yet)
+  function badPairOf(o) {
+    const m = o && o.mixing;
+    if (m && m.aName && m.bName) return { a_id: m.aId || null, a_name: m.aName, b_id: m.bId || null, b_name: m.bName };
+    const h = (o && o.history) || [], ids = (o && o.playedIds) || [];
+    if (h.length < 2) return null;
+    return { a_id: ids.length >= 2 ? ids[ids.length - 2] : null, a_name: h[h.length - 2],
+             b_id: ids.length >= 2 ? ids[ids.length - 1] : null, b_name: h[h.length - 1] };
   }
   // The backup is re-ranked when A changed, a song was played since, or A's energy became known / changed.
   function backupStale(b, ctx) {
@@ -734,7 +782,8 @@ var autopilotCore = (function () {
   const api = { prerenderTargets, readinessNeeds, aTempoAtEntry, deferBudgetS, deferDecision, orderByReadiness, DEFER_MAX_S, DEFER_MIN_LEAD_S, PREFER_READY_JUMP,
     emptyRetryMs, useLibraryFallback, searchPlan, DEADLINE_LEAD_S, rankAtlasBackups, backupStale, backupNeedsStems, rememberPairReject, pairRejected, awaitJob, keySafeRecipe, KEY_SAFE_MIN, energyStepOk, hybridWindowKey, highSpans, quantileLinear, median, exitPastHigh, learnedRecipe, vocalRecipe, stemBlendBars, stemBlendFader, phraseWaitS, introBars, FADER_PARK_BARS, homePlan, maskedGlideBars, maskedDropAt, HOME_DROP_PCT, LADDER_STEP_PCT,
     tempoLockableAt, recipeKind, decideRecipe, planSkipReason, WINDOWS, playWindowFor, exitBounds, exitPick, exitTiming, exitHighPush, audibleEnd, entryClamp, SILENT_FLOOR,
-    breakdownSpans, exitOutOfBreakdown, exitBreakdownPush, energyAtTarget, FINISH_MAX_S, forcedExit, forcedRecipe, forcedLine, forcedBooking };
+    breakdownSpans, exitOutOfBreakdown, exitBreakdownPush, energyAtTarget, FINISH_MAX_S, forcedExit, forcedRecipe, forcedLine, forcedBooking,
+    storedMove, vetRefusal, vetStep, badPairOf, pairKey, mashupGate, mashupBars };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   return api;
 })();
@@ -783,6 +832,8 @@ function createAutopilotEngine({ host, ai }) {
   let active = false;
   let activeDeck = "a";       // which deck is currently playing
   let currentTrackId = null;
+  let bookedPair = null, mixingPair = null;   // OWNER VETO "bad pair": the booked / the sounding A -> B
+  const pairClash = new Map();                // "A>B" -> true on a CLEAR genre-family mismatch (booking vet scene_clash)
   let occasion = "";
   let history = [];           // display names of played tracks (last 5 kept)
   let mashupTag = "";         // status suffix while a vocal layer is booked
@@ -1081,6 +1132,17 @@ function createAutopilotEngine({ host, ai }) {
   // (null at booking). Artist variants (stem-moves.js, batch B): a sung vocal over clashing keys may still ride
   // A's drums alone (S9 drums host, owner's drumsOnlyKeyWaiver); no room left in A for the full mashup: a
   // filtered loop of A's last vocal-free bars under B's vocal (S1 filter loop).
+  // ---- OWNER RULE "never vocal mix a drop line" (drop-line.js): the one predicate, per deck ----
+  const dropLine = () => (typeof window !== "undefined" ? window : globalThis).dropLineCore || null;
+  // (merges / holds are not gated: the owner-liked PACS & Ruiz -> Neverland hold sings B's voice over A's drop)
+  // a vocal layered over deck d's song time [t0, t1): {gate, reason} | null (sings: drop-line.js dropLineBusy)
+  function deckDropBusy(d, t0, t1, sings = null) { const DL = dropLine(); return DL ? DL.deckBusy(d, t0, t1, sings) : null; }
+  // sings() for the singing deck s laid over another song: that song's s t0 <-> s's song s at0, ratio = s's
+  // song seconds per the other's; unknown vocal regions: null (the voice counts as sounding)
+  function vocalSings(s, t0, at0, ratio) {
+    const DL = dropLine(), v = s && s.analysis && s.analysis.vocal_active_regions;
+    return DL && Array.isArray(v) && Number.isFinite(at0) && ratio > 0 ? DL.mappedSings(v, t0, at0, ratio) : null;
+  }
   let lastVariantTag = "";   // the variant line is logged when it changes, not on every poll
   function mashupFits(od, idk, t0) {
     const ve = idk._vocalEntry;
@@ -1094,8 +1156,21 @@ function createAutopilotEngine({ host, ai }) {
     const keyOk = !cs || !ka || !kb || cs(ka, kb) >= 0.8;
     const barS = 240 / aEff;
     const aLeft = od.buffer ? (od.buffer.duration - od._currentPosition()) / od._playbackRate() : 0;
-    const M = ve.vocal32 >= 0.7 && aLeft >= 44 * barS ? 32 : aLeft >= 26 * barS && ve.vocal16 >= 0.5 ? 16 : 0;
+    let M = ve.vocal32 >= 0.7 && aLeft >= 44 * barS ? 32 : aLeft >= 26 * barS && ve.vocal16 >= 0.5 ? 16 : 0;
     const sm = host.mod.stemMoves, pA = Number.isFinite(t0) && od._positionAt ? od._positionAt(t0) : null;
+    {   // scene: every variant is B's vocal over A; the drop window: the plain M-bar mashup from pA
+      const bId = bookedPair && bookedPair.bId, clash = bId ? pairClash.get(autopilotCore.pairKey(currentTrackId, bId)) : null;
+      // B's phrase from its vocal entry rides A bar for bar: refused only where it sings over A's drop window
+      const busyAt = (m) => deckDropBusy(od, pA, pA + m * (240 / od.bpm), vocalSings(idk, pA, ve.entry, od.bpm / idk.bpm));
+      const mb = M && Number.isFinite(pA) ? autopilotCore.mashupBars(M, ve, busyAt) : { M, busy: null };
+      M = mb.M;
+      const mg = autopilotCore.mashupGate({ clash, busy: mb.busy });
+      if (mg) {
+        const tag = `mashup gate: ${mg.gate}: ${mg.why}`;
+        if (tag !== lastVariantTag) { lastVariantTag = tag; console.info(tag); host.log.step("merge_gate", { deck: od.id, decision: "refused", why: `mashup ${mg.gate}: ${mg.why}`, result: { gate: mg.gate } }); }
+        return null;
+      }
+    }
     const choose = sm && sm.core && sm.core.mashupVariant;
     const v = choose ? choose({ keyOk, rap: !!ve.rap, M,
       drums: () => (sm.drumsHostFits ? sm.drumsHostFits(od, idk, M, pA) : null),
@@ -1526,6 +1601,11 @@ function createAutopilotEngine({ host, ai }) {
     const outVocal = host.mod.stemMoves.vocalShare(od.analysis && od.analysis.vocal_active_regions, p0, p0 + totalS);
     if (!od.stemsReady && od.rearmStems) od.rearmStems("vocal handoff");
     const fits = host.mod.stemMoves.core.handoffFits({ outStems: od.stemsReady, inStems: id.stemsReady, keyScore, outVocal });
+    // "never vocal mix a drop line": A's voice must not ride B's drop window (refused: the EQ intro, as today)
+    const pB = fits && id._positionAt ? id._positionAt(xT0) : null;
+    const rB = (id._playbackRate && id._playbackRate()) || 1, rA = (od._playbackRate && od._playbackRate()) || 1;
+    const busy = fits && Number.isFinite(pB) ? deckDropBusy(id, pB, pB + totalS * rB, vocalSings(od, pB, p0, rA / rB)) : null;
+    if (busy) { host.log.step("merge_gate", { deck: out, decision: "refused", why: `vocal handoff ${busy.gate}: ${busy.reason}`, result: { gate: busy.gate } }); return false; }
     return fits && host.mod.stemMoves.handoff(out, inn, xT0, totalS,
       `${Math.round(outVocal * 100)}% vocal in the blend, keys ${ka}->${kb}: one singer, A's voice over B's beat`, swapS);
   }
@@ -2304,6 +2384,23 @@ function createAutopilotEngine({ host, ai }) {
     return res;
   }
 
+  // POST /api/autopilot/vet (app/ui/services/booking_vet.py) for one candidate -> {gate, why} | null.
+  // An unreachable server leaves today's behaviour (logged): the live gates below still run.
+  async function vetCandidate(currentId, cand) {
+    try {
+      const res = await fetch("/api/autopilot/vet", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ a_id: currentId, a_name: history[history.length - 1] || "", history: history.slice(-400), set_id: setId || "",
+          punjabi_profile: punjabiMode(), cands: [{ track_id: cand.track_id || null, name: cand.name || "", stored: autopilotCore.storedMove(cand) }] }),
+      });
+      if (!res.ok) { console.warn("vet: HTTP", res.status); return null; }
+      const j = await res.json();
+      const r0 = j && Array.isArray(j.results) ? j.results[0] : null;
+      if (r0 && cand.track_id) pairClash.set(autopilotCore.pairKey(currentId, cand.track_id), r0.scene_clash === true);   // mashupFits' scene gate
+      return autopilotCore.vetRefusal(j);
+    } catch (e) { console.warn("vet:", e && e.message); return null; }
+  }
+
   async function evaluateCandidate(currentId, cand, gen) {
     if (!active || !cand) return false;
     const nextId = cand.track_id;
@@ -2338,6 +2435,20 @@ function createAutopilotEngine({ host, ai }) {
       apStatus(`Skipping ${nextName}: ${fmtTime(cand.duration)} is too short for a ${setMode().toUpperCase()} set`);
       return false;
     }
+
+    // Booking vet: the owner's vetoes for every candidate; a stored move also obeys the picks' repeat,
+    // earlier-set and scene rules ("a studied pair is evidence, not an override of the vibe rules")
+    const vetoed = await vetCandidate(currentId, cand);
+    if (vetoed) {
+      const vs = autopilotCore.vetStep(cand, vetoed);
+      console.warn(`[vet] ${nextName}: ${vs.why}`);
+      host.log.step(vs.kind, { track_id: nextId, phase: "selection", decision: vs.decision, why: vs.why, result: { gate: vetoed.gate } });
+      apStatus(`Not after this song: ${nextName} (${vetoed.why})`);
+      autopilotCore.rememberPairReject(pairRejects, currentId, nextId, vs.why, true);
+      cand.keep = vs.keep;
+      return false;
+    }
+    if (!active) return false;
 
     const known = autopilotCore.pairRejected(pairRejects, currentId, nextId, forceJump);
     if (known) {
@@ -3071,6 +3182,7 @@ function createAutopilotEngine({ host, ai }) {
   }
 
   function scheduleTransition(currentId, nextId, nextName, candidate, blend = null, minExit = null, layer = null) {
+    bookedPair = { aId: currentId, aName: history[history.length - 1] || "", bId: nextId, bName: nextName };
     // Tempo gap 2-15 %: render B's stems key-locked at A's tempo now, while A plays
     // (multi-BPM stem sets, cached on the server), so the blend keeps B's key.
     {
@@ -3474,6 +3586,7 @@ function createAutopilotEngine({ host, ai }) {
         resetDeck(outgoing);
 
         history.push(nextName);
+        mixingPair = null;
         dipAsked = false;
         sessionEvent("track", { event: "transition_end", now_playing: nextName, deck: incoming, set_songs: history.length });
         if (host.mod.liveEar && host.mod.liveEar.flush) host.mod.liveEar.flush("transition done");
@@ -3550,12 +3663,40 @@ function createAutopilotEngine({ host, ai }) {
   // Restraint: at most one layer per track; skipped unless key and tempo fit.
   // One line in this session's event log (app/ui/services/session_log.py). Fire and forget.
   function sessionEvent(kind, data) {
+    if (kind === "track" && data && data.event === "transition_start") mixingPair = bookedPair;   // "bad pair" target
     try {
       fetch("/api/session/event", { method: "POST", headers: { "Content-Type": "application/json" }, keepalive: true,
         body: JSON.stringify({ kind, data }) }).catch(() => {});
     } catch (e) { /* logging never breaks the set */ }
   }
   host.bus.on("ear-flush", (e) => sessionEvent("ear_flush", e.detail));
+
+  // OWNER VETO "bad pair" (button #ap-bad-pair, Shift+B; plain keys belong to performance.js): the pair playing now (the blend running, else
+  // the last one) never happens again. POST /api/vetoes stores it at once (atomic, persistent); every
+  // booking path asks /api/autopilot/vet, and the next atlas build counts it as PLAYED_BAD evidence.
+  async function markBadPair() {
+    const p = autopilotCore.badPairOf({ history, playedIds, mixing: mixingPair });
+    if (!p) { apStatus("Bad pair: no pair played yet"); return null; }
+    try {
+      const res = await fetch("/api/vetoes", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kind: "pair", a_id: p.a_id, b_id: p.b_id, a_name: p.a_name, b_name: p.b_name }) });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j.detail || `HTTP ${res.status}`);
+      if (p.a_id && p.b_id) autopilotCore.rememberPairReject(pairRejects, p.a_id, p.b_id, "owner veto", true);
+      atlasBackup = null;                                    // re-ranked without it
+      host.log.step("veto", { phase: "selection", decision: "bad pair", why: `owner veto: ${p.a_name} -> ${p.b_name}`, result: { added: !!j.added } });
+      sessionEvent("veto", { a: p.a_name, b: p.b_name, added: !!j.added });
+      apStatus(`BAD PAIR: ${p.a_name} -> ${p.b_name} never again`);
+      return j;
+    } catch (e) {
+      apStatus(`Bad pair not saved: ${e && e.message}`);
+      return null;
+    }
+  }
+  { const btn = ui.el("ap-bad-pair"); if (btn) btn.addEventListener("click", () => { markBadPair(); }); }
+  if (host.bus && host.bus.on) host.bus.on("keydown", (e) => {
+    if (e && e.key === "B" && e.shiftKey && !(e.target && /input|select|textarea/i.test(e.target.tagName || ""))) markBadPair();
+  });
   // every AI move (stem moves, remix, merges, hook drops, learned moves) with the deck
   // position, so a move that "killed the vibe" can be found in the session log
   host.bus.on("ai-activity", (e) => {
@@ -3877,6 +4018,7 @@ function createAutopilotEngine({ host, ai }) {
     get activeDeck() { return activeDeck; },
     get trackId() { return currentTrackId; },
     get genre() { return currentGenre; },
+    get nextGenre() { return scheduledNext ? profileNext : null; },   // the booked incoming song's genre (dhol gate)
     get entryPos() { return entryPos; },
     get energy() { return currentEnergy; },
     get fireAt() { return scheduledNext ? scheduledFireAt : null; },

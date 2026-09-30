@@ -420,6 +420,8 @@
       const kept = mm && mm.storedMove ? mm.storedMove(out === "a" ? ids.trackA : ids.trackB, inn === "a" ? ids.trackA : ids.trackB, "vocal_throw") : null;
       if (kept && kept.params) r.plan = storedThrow(r.plan, kept.params).plan;
       const tw = o.t0 + (r.plan.wordS - p0) / rA, te = o.t0 + (r.plan.lineEnd - p0) / rA;
+      const dlc = root.dropLineCore, dlB = dlc && id && id.analysis ? dlc.deckBusy(id, posAt(id, tw), posAt(id, te + r.plan.gapS / rA)) : null;   // the echo never rides B's drop line
+      if (dlB) return refuse(out, "vocal_throw", dlB.gate, dlB.reason) || false;
       if (tw - audioCtx.currentTime < 0.05 || !od.stemsLiveAt || !od.stemsLiveAt(tw)) return refuse(out, "vocal_throw", "stems_not_live", "A's stems are not sounding at the last word") || false;
       if (!wetFree(out, "vocal_throw", tw, 8 * o.barS)) return false;
       const edges = bandFor(od), send = audioCtx.createGain(), delay = audioCtx.createDelay(2), fb = audioCtx.createGain();

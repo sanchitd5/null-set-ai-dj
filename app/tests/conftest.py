@@ -31,6 +31,14 @@ def _private_genre_labels(tmp_path_factory, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _private_vetoes(tmp_path_factory, monkeypatch):
+    """Tests never write the real data/cache/vetoes.json (the owner's private vetoes)."""
+    from app.music_brain.atlas import vetoes
+    p = tmp_path_factory.mktemp("vetoes") / "vetoes.json"
+    monkeypatch.setattr(vetoes, "path", lambda cache_dir=None: p)
+
+
+@pytest.fixture(autouse=True)
 def _no_tracked_knowledge(tmp_path_factory, monkeypatch):
     """Tests never seed from, or export into, the tracked app/music_brain/knowledge/."""
     from app.music_brain.matching import knowledge

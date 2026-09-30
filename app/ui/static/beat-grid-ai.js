@@ -16,6 +16,32 @@
 // (autopilot.js), window.decks (deck-controller.js).
 
 (function () {
+  // The pattern for the playing song. "bhangra" (dhol chaal) only when scene-profile.js dholOk says the
+  // song is Punjabi (owner: "dhol drop only for punjabi songs, shouldn't experiment"); otherwise the next
+  // rule that fits (a "desi"-looking word inside another label, or a guess from tempo, never picks it).
+  // Pure: node-tested (app/tests/js/dhol_gate_check.js).
+  const SP = (typeof window !== "undefined" && window.sceneProfileCore) || (typeof require === "function" ? require("./scene-profile.js") : null);
+  const GENRE_PRESETS = [
+    [/drum.?(and|&|n).?bass|\bdnb\b|jungle|liquid/i, "dnb"],
+    [/bhangra|punjabi|dhol|desi/i, "bhangra"],
+    [/reggaeton|dembow|latin|dancehall|moombah/i, "dembow"],
+    [/trap|hip.?hop|\brap\b|hyperpop|dubstep|drill|halftime|r&b|rnb/i, "halftime"],
+    [/breaks|breakbeat|2.?step|uk garage|ukg|electro/i, "breaks"],
+    [/house|techno|melodic|edm|disco|dance|progressive|trance|afro/i, "house"],
+  ];
+  function presetFor(genre, bpm) {
+    for (const [re, name] of GENRE_PRESETS) {
+      if (!re.test(genre || "")) continue;
+      if (name === "bhangra" && !(SP && SP.dholOk(genre).ok)) continue;
+      return name;
+    }
+    if (bpm >= 160) return "dnb";
+    if (bpm && bpm < 105) return "halftime";
+    return "tops";
+  }
+  if (typeof module !== "undefined" && module.exports) module.exports = { presetFor, GENRE_PRESETS };
+  if (typeof window === "undefined") return;
+
   const grid = window.beatGrid;
   if (!grid || !grid.runAs) return;
 
@@ -26,22 +52,6 @@
   const EXIT_GUARD_BARS = 8;
   const DROP_JUMP = 0.15;
   const LEVEL = 0.3;
-
-  const GENRE_PRESETS = [
-    [/drum.?(and|&|n).?bass|\bdnb\b|jungle|liquid/i, "dnb"],
-    [/bhangra|punjabi|dhol|desi/i, "bhangra"],
-    [/reggaeton|dembow|latin|dancehall|moombah/i, "dembow"],
-    [/trap|hip.?hop|\brap\b|hyperpop|dubstep|drill|halftime|r&b|rnb/i, "halftime"],
-    [/breaks|breakbeat|2.?step|uk garage|ukg|electro/i, "breaks"],
-    [/house|techno|melodic|edm|disco|dance|progressive|trance|afro/i, "house"],
-  ];
-
-  function presetFor(genre, bpm) {
-    for (const [re, name] of GENRE_PRESETS) if (re.test(genre || "")) return name;
-    if (bpm >= 160) return "dnb";
-    if (bpm && bpm < 105) return "halftime";
-    return "tops";
-  }
 
   function toggleOn() {
     const el = document.getElementById("ap-grid-toggle");
