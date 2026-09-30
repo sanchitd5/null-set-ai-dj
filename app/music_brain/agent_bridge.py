@@ -196,6 +196,84 @@ def learned() -> dict:
     return {"learned": load_learned()}
 
 
+def stem_preview(
+    track_a_path: str,
+    track_b_path: str,
+    recipe_name: str,
+    a_time: float,
+    b_time: float,
+    out: str,
+    pre: float = 30.0,
+    post: float = 30.0,
+    peak_dbfs: float = -1.0,
+) -> dict:
+    """The transition exactly as the live console plays it, on the real audio (stems included).
+
+    The console's own scripts play A -> B headless (app/sim/stem_capture.py: the macro PLAY
+    STEP path, recipe forced, the console's gates may still refuse it) and every automation
+    they schedule is rendered on the real mix and stem files (render/graph_render.py): A from
+    `pre` s before the move, B until `post` s after it ends, the master limiter, then peak
+    normalised to `peak_dbfs`. Both songs need cached 4-stem sets (nothing is separated).
+    """
+    import math
+    import time as _time
+
+    from app.music_brain.render import graph_render as gr
+    from app.sim.stem_capture import STEM_NAMES, capture
+
+    if not out:
+        raise ValueError("--out is required")
+    t_start = _time.monotonic()
+    cap = capture(track_a_path, track_b_path, recipe_name, a_time, b_time, pre=pre, post=post)
+    files = {}
+    for side in ("a", "b"):
+        s = cap["songs"][side]
+        files[f"{s['id']}:mix"] = Path(s["path"])
+        for n in STEM_NAMES:
+            for ext in (".flac", ".wav"):
+                p = Path(s["stem_dir"]) / f"{n}{ext}"
+                if p.exists():
+                    files[f"{s['id']}:{n}"] = p
+                    break
+    res = gr.render(cap, files)
+    raw_peak = float(abs(res["audio"]).max()) if res["audio"].size else 0.0
+    audio = gr.normalise(res["audio"], peak_dbfs)
+    out_path = Path(out).expanduser().resolve()
+    if out_path.suffix.lower() == ".mp3":
+        import subprocess
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            wav = Path(d) / "x.wav"
+            gr.write_wav(wav, audio)
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(wav), "-b:a", "320k", str(out_path)], check=True)
+    else:
+        gr.write_wav(out_path, audio)
+    w0, w1 = cap["window"]
+    t_end = cap.get("t_end")
+    return {
+        "recipe": recipe_name,
+        "ran": cap.get("ran"),
+        "refused": cap.get("refused"),
+        "line": cap.get("line"),
+        "output_path": str(out_path),
+        "duration_seconds": round(w1 - w0, 3),
+        "sample_rate": gr.SR,
+        "transition_start_s": round(cap["t0"] - w0, 3),
+        "transition_end_s": round(t_end - w0, 3) if t_end is not None else None,
+        "a_time": a_time,
+        "b_time": b_time,
+        "peak_dbfs": peak_dbfs,
+        "pre_normalise_peak_dbfs": round(20 * math.log10(raw_peak), 2) if raw_peak > 0 else None,
+        "console_notes": [c.get("text", "")[:240] for c in cap.get("console", [])][-20:],
+        "automation": gr.automation_summary(cap),
+        "not_rendered": res["not_rendered"],
+        "approximations": res["approximations"],
+        "not_served_to_console": cap.get("unserved", []),
+        "render_time_seconds": round(_time.monotonic() - t_start, 2),
+    }
+
+
 def list_recipes() -> dict:
     """Every parsed transition recipe with its tags/prerequisites."""
     return {"recipes": [r.to_dict() for r in _get_knowledge().get_all()]}
@@ -236,6 +314,16 @@ def _build_parser() -> argparse.ArgumentParser:
         p.add_argument("--genre-b", default=None, help="Genre label for track_b.")
         p.add_argument("--era-a", default=None, help="Release era for track_a (e.g. '1990s'); penalises a multi-decade jump.")
         p.add_argument("--era-b", default=None, help="Release era for track_b.")
+
+    p_sp = sub.add_parser("stem-preview", help="Render a transition as the live console plays it (stems, EQ, FX) on the real audio.")
+    p_sp.add_argument("track_a")
+    p_sp.add_argument("track_b")
+    p_sp.add_argument("--recipe", required=True)
+    p_sp.add_argument("--a-time", type=float, required=True, help="A's exit (song seconds): the move starts here.")
+    p_sp.add_argument("--b-time", type=float, required=True, help="B's entry (song seconds).")
+    p_sp.add_argument("--pre", type=float, default=30.0, help="Seconds of A before the move.")
+    p_sp.add_argument("--post", type=float, default=30.0, help="Seconds of B after the move ends.")
+    p_sp.add_argument("--out", required=True, help=".wav (44.1 kHz stereo 16-bit) or .mp3")
 
     sub.add_parser("list-recipes", help="List every parsed transition recipe.")
 
@@ -333,6 +421,9 @@ def main(argv: Optional[list[str]] = None) -> int:
                 a_time=args.a_time, b_time=args.b_time,
                 genre_a=args.genre_a, genre_b=args.genre_b, era_a=args.era_a, era_b=args.era_b,
             )
+        elif args.command == "stem-preview":
+            payload = stem_preview(args.track_a, args.track_b, args.recipe, args.a_time, args.b_time,
+                                   out=args.out, pre=args.pre, post=args.post)
         elif args.command == "list-recipes":
             payload = list_recipes()
         elif args.command == "learn-set":
