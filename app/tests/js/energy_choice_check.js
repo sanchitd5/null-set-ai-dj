@@ -91,4 +91,37 @@ assert.strictEqual(ap.windowLevel(6, 2, 1), 10); n++;
 assert.strictEqual(ap.windowLevel(6, 0.5, 1), 3); n++;
 assert.strictEqual(ap.windowLevel(null, 1, 1), null); n++;
 
+// ---- golden: owner-liked pairs play as stored at every set energy -------------------------
+{
+  const fs = require("fs"), path = require("path");
+  const tr = require("../../ui/static/tempo-rule.js");
+  const mm = require("../../ui/static/macro-mode.js");
+  const gold = JSON.parse(fs.readFileSync(path.join(__dirname, "../fixtures/owner_liked_pairs.json"), "utf8"));
+  const bands = { relaxed: 4, middle: 6, high: 8 };
+  for (const [band, setLevel] of Object.entries(bands)) {
+    for (const kind of ["low", "beat", null]) {
+      const energy = { band, setLevel, mashupKind: kind, levels: { mashup: setLevel, bass: setLevel, blend: setLevel } };
+      // the atlas / decideRecipe path on the liked rows' own facts: recipe unchanged
+      for (const [k, p] of Object.entries(gold.pairs)) {
+        const fa = gold.tracks[p.a].bpm, fbpm = gold.tracks[p.b].bpm, r0 = tr.lockRate(fa, fbpm);
+        const both = p.stems[0] && p.stems[1], lockGap = Math.abs(r0 - 1);
+        const d = ap.decideRecipe({ recipe: "Long Blend", blend: p.blend && p.blend.ok ? Object.assign({}, p.blend) : null, layer: false,
+          aStems: p.stems[0], bStems: p.stems[1], aEff: fa, bBpm: fbpm, tempoStemsBpm: both && lockGap <= 0.08 ? fbpm * r0 : null,
+          keyScore: p.key, mashupFits: () => !!p.mashup.ok, energy }, tr);
+        assert.strictEqual(d.recipe, p.recipe, `${k} at ${band}/${kind}: stored recipe`); n++;
+      }
+      // the liked Neverland -> Nocturnal step, booked forced: Echo Out with the stored exit / entry
+      const nv = gold.pairs["c4a392ce13e82bc9>3ef9ad4b3fd01c79"];
+      const eo = ap.forcedBooking({ forced: mm.forcedOf({ n: 1, a: nv.a, b: nv.b, recipe: "Echo Out", a_time: nv.exit, b_time: nv.entry }),
+        nowPos: 0, phraseS: 7.5, trackEnd: 400, liveATime: 1, liveBTime: 2, beat: true, stemsBoth: true, keyScore: nv.key,
+        mashupFits: true, mergeOn: true, mergeGate: () => null, energy });
+      assert.strictEqual(eo.recipe, "Echo Out", `liked Echo Out at ${band}`); assert.strictEqual(eo.refused, null);
+      assert.strictEqual(eo.aT, nv.exit); assert.strictEqual(eo.bT, nv.entry); n++;
+    }
+  }
+  // the booking never computes set energy for a forced (macro / studied / FOLLOW SET / liked) step
+  const src = fs.readFileSync(path.join(__dirname, "../../ui/static/autopilot.js"), "utf8");
+  assert.ok(/if \(!forced\) \{\s*try \{ setEn = liveSetEnergy/.test(src), "set energy skipped when forced"); n++;
+}
+
 console.log(`energy_choice_check: ${n} checks ok`);
