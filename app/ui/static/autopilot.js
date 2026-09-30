@@ -440,6 +440,20 @@ var autopilotCore = (function () {
       || (y.works - x.works) || (x.track_id < y.track_id ? -1 : x.track_id > y.track_id ? 1 : 0));
     return { list, skipped };
   }
+  // Mashup → Transition (B's vocal over A's instrumental), narrow: refused when B's vocal would sing over A's
+  // drop window / the sung line into it (busy: drop-line.js dropLineBusy). o: {busy} -> {gate, why} | null
+  function mashupGate(o) {
+    if (o && o.busy) return { gate: o.busy.gate, why: o.busy.reason };
+    return null;
+  }
+  // The mashup's length under the drop-line rule: a 32-bar mashup whose vocal would sing over A's drop window
+  // keeps its existing 16-bar variant when that one is clear (B's 16-bar phrase sings enough: vocal16 >= 0.5),
+  // else the refusal stands. busyAt(M) -> {gate, reason} | null. -> {M, busy} (= pair_atlas.py mashup_bars)
+  function mashupBars(M, ve, busyAt) {
+    const busy = busyAt(M);
+    if (busy && M === 32 && ve && ve.vocal16 >= 0.5 && !busyAt(16)) return { M: 16, busy: null };
+    return { M, busy };
+  }
   // The backup is re-ranked when A changed, a song was played since, or A's energy became known / changed.
   function backupStale(b, ctx) {
     return !b || b.for !== ctx.aId || b.played !== (ctx.played || []).length || b.energyA !== ctx.energyA;
@@ -734,7 +748,8 @@ var autopilotCore = (function () {
   const api = { prerenderTargets, readinessNeeds, aTempoAtEntry, deferBudgetS, deferDecision, orderByReadiness, DEFER_MAX_S, DEFER_MIN_LEAD_S, PREFER_READY_JUMP,
     emptyRetryMs, useLibraryFallback, searchPlan, DEADLINE_LEAD_S, rankAtlasBackups, backupStale, backupNeedsStems, rememberPairReject, pairRejected, awaitJob, keySafeRecipe, KEY_SAFE_MIN, energyStepOk, hybridWindowKey, highSpans, quantileLinear, median, exitPastHigh, learnedRecipe, vocalRecipe, stemBlendBars, stemBlendFader, phraseWaitS, introBars, FADER_PARK_BARS, homePlan, maskedGlideBars, maskedDropAt, HOME_DROP_PCT, LADDER_STEP_PCT,
     tempoLockableAt, recipeKind, decideRecipe, planSkipReason, WINDOWS, playWindowFor, exitBounds, exitPick, exitTiming, exitHighPush, audibleEnd, entryClamp, SILENT_FLOOR,
-    breakdownSpans, exitOutOfBreakdown, exitBreakdownPush, energyAtTarget, FINISH_MAX_S, forcedExit, forcedRecipe, forcedLine, forcedBooking };
+    breakdownSpans, exitOutOfBreakdown, exitBreakdownPush, energyAtTarget, FINISH_MAX_S, forcedExit, forcedRecipe, forcedLine, forcedBooking,
+    mashupGate, mashupBars };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   return api;
 })();
@@ -1081,6 +1096,17 @@ function createAutopilotEngine({ host, ai }) {
   // (null at booking). Artist variants (stem-moves.js, batch B): a sung vocal over clashing keys may still ride
   // A's drums alone (S9 drums host, owner's drumsOnlyKeyWaiver); no room left in A for the full mashup: a
   // filtered loop of A's last vocal-free bars under B's vocal (S1 filter loop).
+  // ---- OWNER RULE "never vocal mix a drop line" (drop-line.js): the one predicate, per deck ----
+  const dropLine = () => (typeof window !== "undefined" ? window : globalThis).dropLineCore || null;
+  // (merges / holds are not gated: the owner-liked PACS & Ruiz -> Neverland hold sings B's voice over A's drop)
+  // a vocal layered over deck d's song time [t0, t1): {gate, reason} | null (sings: drop-line.js dropLineBusy)
+  function deckDropBusy(d, t0, t1, sings = null) { const DL = dropLine(); return DL ? DL.deckBusy(d, t0, t1, sings) : null; }
+  // sings() for the singing deck s laid over another song: that song's s t0 <-> s's song s at0, ratio = s's
+  // song seconds per the other's; unknown vocal regions: null (the voice counts as sounding)
+  function vocalSings(s, t0, at0, ratio) {
+    const DL = dropLine(), v = s && s.analysis && s.analysis.vocal_active_regions;
+    return DL && Array.isArray(v) && Number.isFinite(at0) && ratio > 0 ? DL.mappedSings(v, t0, at0, ratio) : null;
+  }
   let lastVariantTag = "";   // the variant line is logged when it changes, not on every poll
   function mashupFits(od, idk, t0) {
     const ve = idk._vocalEntry;
@@ -1094,8 +1120,20 @@ function createAutopilotEngine({ host, ai }) {
     const keyOk = !cs || !ka || !kb || cs(ka, kb) >= 0.8;
     const barS = 240 / aEff;
     const aLeft = od.buffer ? (od.buffer.duration - od._currentPosition()) / od._playbackRate() : 0;
-    const M = ve.vocal32 >= 0.7 && aLeft >= 44 * barS ? 32 : aLeft >= 26 * barS && ve.vocal16 >= 0.5 ? 16 : 0;
+    let M = ve.vocal32 >= 0.7 && aLeft >= 44 * barS ? 32 : aLeft >= 26 * barS && ve.vocal16 >= 0.5 ? 16 : 0;
     const sm = host.mod.stemMoves, pA = Number.isFinite(t0) && od._positionAt ? od._positionAt(t0) : null;
+    {   // the drop window: the plain M-bar mashup from pA
+      // B's phrase from its vocal entry rides A bar for bar: refused only where it sings over A's drop window
+      const busyAt = (m) => deckDropBusy(od, pA, pA + m * (240 / od.bpm), vocalSings(idk, pA, ve.entry, od.bpm / idk.bpm));
+      const mb = M && Number.isFinite(pA) ? autopilotCore.mashupBars(M, ve, busyAt) : { M, busy: null };
+      M = mb.M;
+      const mg = autopilotCore.mashupGate({ busy: mb.busy });
+      if (mg) {
+        const tag = `mashup gate: ${mg.gate}: ${mg.why}`;
+        if (tag !== lastVariantTag) { lastVariantTag = tag; console.info(tag); host.log.step("merge_gate", { deck: od.id, decision: "refused", why: `mashup ${mg.gate}: ${mg.why}`, result: { gate: mg.gate } }); }
+        return null;
+      }
+    }
     const choose = sm && sm.core && sm.core.mashupVariant;
     const v = choose ? choose({ keyOk, rap: !!ve.rap, M,
       drums: () => (sm.drumsHostFits ? sm.drumsHostFits(od, idk, M, pA) : null),
@@ -1526,6 +1564,11 @@ function createAutopilotEngine({ host, ai }) {
     const outVocal = host.mod.stemMoves.vocalShare(od.analysis && od.analysis.vocal_active_regions, p0, p0 + totalS);
     if (!od.stemsReady && od.rearmStems) od.rearmStems("vocal handoff");
     const fits = host.mod.stemMoves.core.handoffFits({ outStems: od.stemsReady, inStems: id.stemsReady, keyScore, outVocal });
+    // "never vocal mix a drop line": A's voice must not ride B's drop window (refused: the EQ intro, as today)
+    const pB = fits && id._positionAt ? id._positionAt(xT0) : null;
+    const rB = (id._playbackRate && id._playbackRate()) || 1, rA = (od._playbackRate && od._playbackRate()) || 1;
+    const busy = fits && Number.isFinite(pB) ? deckDropBusy(id, pB, pB + totalS * rB, vocalSings(od, pB, p0, rA / rB)) : null;
+    if (busy) { host.log.step("merge_gate", { deck: out, decision: "refused", why: `vocal handoff ${busy.gate}: ${busy.reason}`, result: { gate: busy.gate } }); return false; }
     return fits && host.mod.stemMoves.handoff(out, inn, xT0, totalS,
       `${Math.round(outVocal * 100)}% vocal in the blend, keys ${ka}->${kb}: one singer, A's voice over B's beat`, swapS);
   }

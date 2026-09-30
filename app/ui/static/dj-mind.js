@@ -1224,7 +1224,15 @@
       energy: sm.remixEnergy(d, lineT, bar),
       othersCarry: !!(d._othersCarry && d._othersCarry()),     // a drum break only while the other deck plays too
     });
-    if (!kind || !sm.remix(d, lineT, kind, 16)) return false;
+    if (!kind) return false;
+    // "never vocal mix a drop line" (drop-line.js): the held (looped) vocal bar must not run over a drop or
+    // the sung line into it; refused like any other remix gate (nothing this section)
+    const dlc = root.dropLineCore;
+    if (kind === "vocal_hold" && dlc) {
+      const busy = dlc.deckBusy(d, lineT + 12 * bar, lineT + 16 * bar);
+      if (busy) { console.info(`remix: vocal_hold refused (${busy.gate}): ${busy.reason}`); return false; }
+    }
+    if (!sm.remix(d, lineT, kind, 16)) return false;
     r.used.push(kind); r.count++; r.lastAtBar = atBar;
     busyUntil = nowS() + (16 * bar) / ((d._playbackRate && d._playbackRate()) || 1);
     say({ action: "stem_remix", source: "STEMS", why: `REMIX: ${sm.REMIX_LABEL[kind]} in this 16-bar section` }, pos);

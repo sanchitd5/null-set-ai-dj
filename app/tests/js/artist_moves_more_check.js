@@ -189,6 +189,7 @@ function mount(H) {
   const sb = { Engine: { mount: (n, create) => { if (n === "artistMoves") api = create({ host: H.host }); } }, console: { info() {}, warn() {} }, Math, Object, Array, Number, JSON, String, RegExp, Float32Array, require };
   sb.window = sb;
   vm.createContext(sb);
+  vm.runInContext(fs.readFileSync(path.join(STATIC, "drop-line.js"), "utf8"), sb);   // index.html order
   vm.runInContext(fs.readFileSync(path.join(STATIC, "learned-moves.js"), "utf8"), sb);
   vm.runInContext(fs.readFileSync(path.join(STATIC, "artist-moves.js"), "utf8"), sb);
   return api;

@@ -53,6 +53,19 @@ def timeline(mashup_bars: int = MASHUP_BARS_SHORT) -> dict:
             "mashup_bars": mashup_bars}
 
 
+def drop_clear(tl: dict) -> Optional[str]:
+    """OWNER RULE "never vocal mix a drop line" for riff over rap: A's drop window (its first SOLO_BARS)
+    plays clean, as is, before B's rap comes in over the looped half. None when the timeline keeps it,
+    else the refusal (the normal transition then runs, as for any refused riff)."""
+    try:
+        brk, rap, mash = float(tl["break"]), float(tl.get("rap", tl["mashup"])), float(tl["mashup"])
+    except (KeyError, TypeError, ValueError):
+        return "drop_line: no riff timeline to check"
+    if min(rap, mash) < brk + SOLO_BARS:
+        return f"drop_line: B's rap at bar {min(rap, mash):g} runs over A's drop window (bars {brk:g}-{brk + SOLO_BARS:g})"
+    return None
+
+
 def measured_lines(tl: dict, rap_profile: Optional[dict], line_start_s: float, bar_s: float) -> Tuple[dict, Dict[str, str]]:
     """The timeline with the rap moves placed from the rap's own vocal stem: `holds` (per 16-bar segment, the
     bar the "hold on" loops) and `dropout` (32-bar mashups: where A drops out under the rap). Bars are counted
