@@ -234,7 +234,8 @@ async function main() {
   const ap = g.Engine && g.Engine.mods && g.Engine.mods.autopilot;
   if (!ap || !ap.performNow) throw new Error("autopilot.performNow not mounted");
   const forced = { source: "stem-preview", macro: null, n: 1, a: cfg.a.id, b: cfg.b.id, a_name: cfg.a.name, b_name: cfg.b.name,
-                   recipe: cfg.recipe, a_time: cfg.aTime, b_time: cfg.bTime, merge: null };
+                   recipe: cfg.recipe, a_time: cfg.aTime, b_time: cfg.bTime, merge: null,
+                   energy_no_mashup: !!cfg.energyNoMashup };   // stem-preview --set-energy refused the mashup
   const r = ap.performNow({ out: "a", inn: "b", aId: cfg.a.id, bId: cfg.b.id, aT: cfg.aTime, t0, forced });
   if (!r || !r.ok) throw new Error(`the console refused the move: ${r && r.why}`);
 

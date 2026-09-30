@@ -589,10 +589,100 @@ var autopilotCore = (function () {
     let cutRewrite = false;
     if (!keepCut && /\bcut\b/i.test(String(recipe || ""))) { recipe = "Bass Swap"; vocalShort = true; cutRewrite = true; }
     // Mashup -> transition beats every other move when the pair fits (user)
-    if (lockS.beat && stemsBoth && o.mashupFits && o.mashupFits()) recipe = "Mashup → Transition";
+    const mashupOk = lockS.beat && stemsBoth && !!o.mashupFits && !!o.mashupFits();
+    // SET ENERGY (owner, energy-recipe-choice): o.energy = {band, setLevel, mashupKind, cleanBoth, levels}
+    // re-orders Mashup / Bass Swap / Long Blend by the set's energy. Only when the console passes it
+    // (never for a forced / stored / liked step, never under the Punjabi profile at its full level);
+    // only among the three, never over a vocal rule, a key rewrite, a cut rewrite or a missing lock.
+    let energyPick = null;
+    const eOn = !!o.energy && !o.layer && lockS.beat && !(o.profile && o.profile.level === "full");
+    if (!eOn) { if (mashupOk) recipe = "Mashup → Transition"; }
+    else {
+      const blendOpen = (recipe === "Bass Swap" || recipe === "Long Blend") && !vocalRule && !keyRewrite && !cutRewrite && !oneSong;
+      // clean instrumental overlap: the blend plan measured no sung vocal on EITHER side (unknown is not clean)
+      const cov = (v) => v != null && Number.isFinite(v) && v <= 0.15;
+      const cleanBoth = !!blend && (blend.instrumental === true || (cov(blend.a_vocal_coverage) && cov(blend.b_vocal_coverage)));
+      energyPick = energyRecipeChoice({ band: o.energy.band, setLevel: o.energy.setLevel, levels: o.energy.levels,
+        mashupFits: mashupOk, mashupKind: o.energy.mashupKind, blendOpen, cleanBoth, longBlendOk: cleanBoth || (!!blend && blendClean === true) });
+      if (energyPick.recipe) recipe = energyPick.recipe;
+    }
     const out = { recipe, blend, dropLayer, blendClean, vocalShort, vocalCut, vocalRule, oneSong, stemsBoth, lockS, keyRewrite, cutRewrite };
+    if (energyPick) out.energyPick = energyPick;
     if (o.profile) { out.profileCut = profileCut; out.quickCut = recipe === "Quick Cut"; }
     return out;
+  }
+
+  // ---- SET ENERGY (owner spec, energy-recipe-choice) -------------------------------------------------
+  // The set's energy = the planned arc target and the recent songs actually played, combined.
+  // Arc by set position (the console's setPos = songs played / 10, capped at 1): warm-up < 0.1,
+  // build < 0.3, peak <= 0.85, cool-down after (the same 0.3 / 0.85 lines as energyStepOk).
+  // Targets on the 1-10 energy.py scale: GUESS numbers (DJ/06 set curves: warm-up low, peak high).
+  const ARC_TARGET = { "warm-up": 4, build: 6, peak: 8, "cool-down": 5 };
+  const SET_RECENT = 4;                 // rolling window: the last 4 played levels, newest weighted most (4,3,2,1)
+  const SET_ARC_W = 0.5;                // combined = 0.5 * arc target + 0.5 * rolling played level
+  const SET_RELAXED_MAX = 5, SET_HIGH_MIN = 7;   // bands (owner): relaxed <= 5, high >= 7, middle = 6
+  const ENERGY_MATCH_TOL = 3;           // an option whose window level is > 3 off the set level is vetoed (GUESS)
+  function arcAt(setPos) {
+    if (setPos == null || !Number.isFinite(setPos)) return null;
+    return setPos < 0.1 ? "warm-up" : setPos < 0.3 ? "build" : setPos <= 0.85 ? "peak" : "cool-down";
+  }
+  const half = (x) => Math.floor(x + 0.5);       // round half up (Python twin uses the same, not banker's)
+  // o: {setPos, recent (played levels, oldest first)} -> {level, band, arc, target, played, why}
+  function setEnergy(o) {
+    const arc = arcAt(o.setPos), target = arc ? ARC_TARGET[arc] : null;
+    const lv = (o.recent || []).filter((v) => v != null && Number.isFinite(v)).slice(-SET_RECENT);
+    let played = null;
+    if (lv.length) { let s = 0, w = 0; lv.forEach((v, i) => { s += v * (i + 1); w += i + 1; }); played = s / w; }
+    let raw = target == null ? played : played == null ? target : SET_ARC_W * target + (1 - SET_ARC_W) * played;
+    if (raw == null) return { level: null, band: null, arc, target, played, why: "no arc, no measured songs" };
+    const level = Math.max(1, Math.min(10, half(raw)));
+    const band = level <= SET_RELAXED_MAX ? "relaxed" : level >= SET_HIGH_MIN ? "high" : "middle";
+    const pl = played == null ? "none" : played.toFixed(1);
+    return { level, band, arc, target, played, why: `set ${level} (${band}): arc ${arc || "-"} ${target == null ? "-" : target}, played ${pl}` };
+  }
+  // A window's level on the 1-10 scale, from measured stem RMS: the song's own level scaled by how loud
+  // the window's stems sum against the song's mean stem sum. Null when unmeasured.
+  function windowLevel(songLevel, windowSum, songSum) {
+    if (!Number.isFinite(songLevel) || !(windowSum >= 0) || !(songSum > 0)) return null;
+    return Math.max(1, Math.min(10, songLevel * windowSum / songSum));
+  }
+  // The choice table (owner). o: {band, setLevel, mashupFits, mashupKind "low"|"beat"|null, blendOpen
+  // (the blend recipes are the console's call here), cleanBoth, levels {mashup, bass, blend}}
+  // -> {recipe (null: keep what decideRecipe had), allowed[], order[], vetoed[], why}
+  // 1) priority Mashup > Bass Swap > Long Blend; 2) a low-energy mashup only when relaxed, a beat-keeping one
+  // when middle or high; 3) Long Blend over Bass Swap only for a clean instrumental overlap (both sides no
+  // sung vocal); 5b) priority first, window-energy match as a veto for a mismatch over ENERGY_MATCH_TOL.
+  function energyRecipeChoice(o) {
+    const band = o.band;
+    const mashupAllowed = !!o.mashupFits && (o.mashupKind === "low" ? band === "relaxed" : o.mashupKind === "beat" ? band === "middle" || band === "high" : false);
+    const order = [];
+    if (mashupAllowed) order.push("Mashup → Transition");
+    // Long Blend stays a lower option only where it was legal before (B's side clean: longBlendOk)
+    if (o.blendOpen) { if (o.cleanBoth) order.push("Long Blend", "Bass Swap"); else { order.push("Bass Swap"); if (o.longBlendOk) order.push("Long Blend"); } }
+    const key = { "Mashup → Transition": "mashup", "Bass Swap": "bass", "Long Blend": "blend" };
+    const lv = o.levels || {}, vetoed = [];
+    const off = (r) => { const l = lv[key[r]]; return Number.isFinite(l) && Number.isFinite(o.setLevel) ? Math.abs(l - o.setLevel) : null; };
+    let pick = order.find((r) => { const d = off(r); if (d != null && d > ENERGY_MATCH_TOL) { vetoed.push(r); return false; } return true; });
+    if (!pick) pick = order[0] || null;             // every option mismatched: priority wins (never nothing)
+    const mk = o.mashupFits ? `mashup ${o.mashupKind || "unclassified"}${mashupAllowed ? "" : " not allowed"}` : "no mashup fits";
+    const why = `${band || "?"} set: ${mk}${o.blendOpen ? `, ${o.cleanBoth ? "clean instrumental" : "vocal"} overlap` : ""}` +
+      `${vetoed.length ? `, vetoed ${vetoed.join("/")} (window energy)` : ""} -> ${pick || "unchanged"}`;
+    // a mashup the band refuses leaves the blend recipe decideRecipe already booked (never a new move)
+    return { recipe: pick, allowed: order, vetoed, why };
+  }
+  // B's entry among the console's phrase-aligned candidates: the one whose window level is nearest the set
+  // level; ties (and unmeasured candidates) keep the first, the console's own. cands: [{t, level}]
+  function pickEntryByEnergy(cands, setLevel) {
+    const c = (cands || []).filter((x) => x && Number.isFinite(x.t));
+    if (!c.length) return null;
+    if (!Number.isFinite(setLevel)) return c[0].t;
+    let best = c[0], bd = Number.isFinite(c[0].level) ? Math.abs(c[0].level - setLevel) : Infinity;
+    for (const x of c.slice(1)) {
+      if (!Number.isFinite(x.level)) continue;
+      const d = Math.abs(x.level - setLevel);
+      if (d < bd - 0.5) { best = x; bd = d; }      // a clear gain only (half a level): the console's line stays otherwise
+    }
+    return best.t;
   }
   // Would the plan LLM call change what plays? With stems on both decks and a beat lock,
   // decideRecipe forces the recipe, the blend plan owns the exit, LAYER is rule-gated,
@@ -783,7 +873,8 @@ var autopilotCore = (function () {
     emptyRetryMs, useLibraryFallback, searchPlan, DEADLINE_LEAD_S, rankAtlasBackups, backupStale, backupNeedsStems, rememberPairReject, pairRejected, awaitJob, keySafeRecipe, KEY_SAFE_MIN, energyStepOk, hybridWindowKey, highSpans, quantileLinear, median, exitPastHigh, learnedRecipe, vocalRecipe, stemBlendBars, stemBlendFader, phraseWaitS, introBars, FADER_PARK_BARS, homePlan, maskedGlideBars, maskedDropAt, HOME_DROP_PCT, LADDER_STEP_PCT,
     tempoLockableAt, recipeKind, decideRecipe, planSkipReason, WINDOWS, playWindowFor, exitBounds, exitPick, exitTiming, exitHighPush, audibleEnd, entryClamp, SILENT_FLOOR,
     breakdownSpans, exitOutOfBreakdown, exitBreakdownPush, energyAtTarget, FINISH_MAX_S, forcedExit, forcedRecipe, forcedLine, forcedBooking,
-    storedMove, vetRefusal, vetStep, badPairOf, pairKey, mashupGate, mashupBars };
+    storedMove, vetRefusal, vetStep, badPairOf, pairKey, mashupGate, mashupBars,
+    setEnergy, arcAt, windowLevel, energyRecipeChoice, pickEntryByEnergy, ARC_TARGET, SET_RECENT, SET_ARC_W, SET_RELAXED_MAX, SET_HIGH_MIN, ENERGY_MATCH_TOL };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   return api;
 })();
@@ -1144,6 +1235,7 @@ function createAutopilotEngine({ host, ai }) {
     return DL && Array.isArray(v) && Number.isFinite(at0) && ratio > 0 ? DL.mappedSings(v, t0, at0, ratio) : null;
   }
   let lastVariantTag = "";   // the variant line is logged when it changes, not on every poll
+  let energyNoMashup = false;   // set by the booking when the set-energy choice refused the mashup (executeTransition)
   function mashupFits(od, idk, t0) {
     const ve = idk._vocalEntry;
     if (!od.stemsReady || !idk.stems || !ve || ve.entry == null || !od.bpm || !idk.bpm) return null;
@@ -1204,6 +1296,46 @@ function createAutopilotEngine({ host, ai }) {
     const m = {};
     for (const n of ["drums", "bass", "vocals", "other"]) m[n] = e[n].reduce((a, b) => a + b, 0) / (e[n].length || 1);
     return m;
+  }
+  const stemSum = (m) => (m ? m.drums + m.bass + m.vocals + m.other : NaN);
+  // Deck d's level over [t, t + bars): its measured song level scaled by the window's stem sum
+  // against the whole song's (autopilotCore.windowLevel). null: unmeasured.
+  function deckWindowLevel(d, id, t, bars) {
+    if (!d || !d.stemsReady || !Number.isFinite(t)) return null;
+    const songBars = d.buffer ? Math.floor(d.buffer.duration / (240 / (d.bpm || 128))) : 0;
+    if (!(songBars > 0)) return null;
+    return autopilotCore.windowLevel(measuredById[id], stemSum(stemMeans(d, t, bars)), stemSum(stemMeans(d, 0, songBars)));
+  }
+  const meanLvl = (a, b) => (a != null && b != null ? (a + b) / 2 : a != null ? a : b);
+  // SET ENERGY facts for decideRecipe (energy-recipe-choice): the set level, the mashup's class from
+  // its stem plan, each option's window level, and B's energy-picked entry for a blend.
+  function liveSetEnergy(od, sd, aId, bId, aT, bT, blend) {
+    const se = autopilotCore.setEnergy({ setPos: Math.min(history.length / 10, 1), recent: playedEnergies() });
+    if (!se.band || !od || !sd) return null;
+    const sm = host.mod.stemMoves, mf = od.stemsReady && sd.stemsReady ? mashupFits(od, sd) : null;
+    let mashupKind = null, mashupLevel = null;
+    if (mf && sm && sm.core) {
+      // drums-host / filter-loop variants keep a beat running by construction
+      if (mf.variant) mashupKind = "beat";
+      else {
+        const plan = sm.core.mashupTransitionPlan(mf.M, MASHUP_VOX);
+        const ea = sm.stemEnergyBars(od, aT, 240 / (od.bpm || 128), plan.total);
+        const eb = sm.stemEnergyBars(sd, mf.entry, 240 / (sd.bpm || 128), plan.total);
+        const k = sm.core.mashupEnergyKind ? sm.core.mashupEnergyKind(plan, ea, eb) : null;
+        mashupKind = k && k.kind;
+      }
+      mashupLevel = meanLvl(deckWindowLevel(od, aId, aT, mf.M + 8), deckWindowLevel(sd, bId, mf.entry, mf.M + 8));
+    }
+    // B's entry: the blend's own entry plus B's 8-bar phrase lines in its first 45 %, never where
+    // B sings inside the 16-bar overlap (the vocal rule stays the blend plan's own)
+    const bBar = 240 / (sd.bpm || 128), aL = deckWindowLevel(od, aId, aT, 16);
+    const an = sd.analysis || {}, dur = sd.buffer ? sd.buffer.duration : 0;
+    const sings = (t) => (an.vocal_active_regions || []).some((r) => r && r[0] < t + 16 * bBar && r[1] > t);
+    const pts = [bT].concat((an.phrase_boundaries_8bar || []).filter((t) => t !== bT && t < dur * 0.45 && !sings(t)));
+    const cands = pts.filter(Number.isFinite).map((t) => ({ t, level: meanLvl(aL, deckWindowLevel(sd, bId, t, 16)) }));
+    const blendLevel = cands.length ? cands[0].level : aL;
+    return { band: se.band, setLevel: se.level, why: se.why, mashupKind,
+      levels: { mashup: mashupLevel, bass: blendLevel, blend: blendLevel }, entryCands: cands };
   }
   // The gate that stopped the hold plan (or every merge): one console line the sim parses
   // ("merge gate: <gate>: <why>[; classic merge]") and one step for the live step log.
@@ -1313,6 +1445,7 @@ function createAutopilotEngine({ host, ai }) {
   // that was refused and fell to the EQ path must not be logged as a Stem Bridge).
   let executedMove = null;
   function executeTransition(recipe, out, inn, xfDuration, t0Audio) {
+    const noMash = energyNoMashup; energyNoMashup = false;   // one booking's set-energy veto, consumed here
     executedMove = recipe;
     clearRun();
     xT0 = Number.isFinite(t0Audio) ? t0Audio : audioCtx.currentTime;
@@ -1395,7 +1528,10 @@ function createAutopilotEngine({ host, ai }) {
     // B on key-locked tempo stems at A's tempo when they differ.
     {
       const sm1 = host.mod.stemMoves, od1 = host.decks && host.decks[out], id1 = host.decks && host.decks[inn];
-      const mt = sm1 && od1 && id1 ? mashupFits(od1, id1, xT0) : null;
+      // SET ENERGY: a booking whose set-energy choice refused the mashup (a low-energy one at a middle /
+      // high set, or a match veto) plays what it booked (noMash: read at the top of this function)
+      const mt = sm1 && od1 && id1 && !noMash ? mashupFits(od1, id1, xT0) : null;
+      if (noMash) console.info("transition energy:", `mashup not upgraded at fire time (booked ${recipe})`);
       if (mt && kind !== "double" && kind !== "profile-cut") {
         ["low", "mid", "high"].forEach((b) => { setRange(eqEl(out, b), 0); setRange(eqEl(inn, b), 0); });
         const secs = sm1.mashupTransition(out, inn, xT0, mt.entry, mt.M, MASHUP_VOX, mt.why, mt.variant || null);
@@ -3243,7 +3379,18 @@ function createAutopilotEngine({ host, ai }) {
       mashupFits: () => !!(odS && sdS && mashupFits(odS, sdS)),
     };
     if (profLvl) decIn.profile = { level: profLvl, fallback: sceneProfile().PUNJABI_PROFILE.fallback_recipe };
+    let setEn = null;
+    // forced covers every stored step: macro, studied combo, FOLLOW SET and liked (macro-mode source "liked")
+    if (!forced) {
+      try { setEn = liveSetEnergy(odS, sdS, currentId, nextId, candidate.a_time, blend ? blend.entry : bTime, blend); } catch (e) { setEn = null; }
+    }
+    if (setEn) decIn.energy = setEn;
     const dec = autopilotCore.decideRecipe(decIn, host.mod.tempoRule);
+    energyNoMashup = !!(dec.energyPick && dec.recipe !== "Mashup → Transition");
+    if (dec.energyPick) {
+      console.info("transition energy:", dec.energyPick.why);
+      host.log.step("set_energy", { deck: activeDeck, decision: dec.recipe, why: `${setEn.why}; ${dec.energyPick.why}` });
+    }
     bookedProfileCut = !!(profLvl && dec.quickCut);
     showProfile(profLvl);
     if (profLvl) {
@@ -3264,6 +3411,16 @@ function createAutopilotEngine({ host, ai }) {
     // B enters on the blend's line even when a key rewrite then drops the blend itself
     if (blend && !dec.dropLayer) { bTime = blend.entry; blend.clean = dec.blendClean; }
     blend = dec.blend;
+    // B's entry for a blend follows the set level (5c): phrase lines where B does not sing in the
+    // overlap only; ties keep the console's line
+    if (dec.energyPick && /bass swap|long blend/i.test(dec.recipe) && !layer && setEn.entryCands.length > 1) {
+      const t = autopilotCore.pickEntryByEnergy(setEn.entryCands, setEn.setLevel);
+      if (t != null && t !== bTime) {
+        console.info("transition energy entry:", `B enters at ${fmtTime(t)} (window near set level ${setEn.setLevel})`);
+        bTime = t;
+        if (blend) blend = Object.assign({}, blend, { entry: t });
+      }
+    }
     recipe = dec.recipe; vocalShort = dec.vocalShort; vocalCut = dec.vocalCut; vocalRule = dec.vocalRule;
     if (dec.keyRewrite) console.info("transition recipe:", `${dec.keyRewrite.from} -> ${dec.keyRewrite.to} (keys clash, camelot ${keyScoreS})`);
     if (dec.cutRewrite) console.info("transition recipe:", "cut -> 4-bar Bass Swap (no hard cuts)");
@@ -4144,6 +4301,8 @@ function createAutopilotEngine({ host, ai }) {
     if (fb.refused) console.warn(`macro: step ${f.n} refused: ${fb.refused} -> ${fb.recipe}`);
     if (lk.ok) setDeckPitch(o.inn, lk.pct, lk.range);
     // a merge plays B itself from its plan's line; every other move needs B running from the stored entry
+    // preview only (stem-preview --set-energy): the set-energy choice refused the mashup; stored steps never carry it
+    energyNoMashup = !!f.energy_no_mashup && fb.recipe !== "Mashup → Transition";
     if (fb.recipe !== "Stem Merge") idk.play(autopilotCore.entryClamp(fb.bT || 0, autopilotCore.audibleEnd(idk.analysis, idk.buffer.duration)), false, o.t0);
     const totalMs = executeTransition(fb.recipe, o.out, o.inn, 16, o.t0);
     later(Math.max(0, (o.t0 - audioCtx.currentTime) * 1000) + totalMs + 300, () => { if (!active) od.stopNow(); });

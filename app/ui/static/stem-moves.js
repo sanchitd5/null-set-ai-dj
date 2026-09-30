@@ -936,7 +936,30 @@
       },
     };
   }
-  const core = { holdPlan, subOwnerCheck, holdUnclean, overlapBars, regionsToBars, HOLD_PHRASE_BARS, HOLD_MAX_PHRASES, HANDOVER_BARS, MERGE_START_BARS, HOLD_TEMPO_CAP, HOLD_KEY_MIN, gates, keepsVibe, breakdownVocalOk, introAudible, introGate, INTRO_MAX_UNDER_DB, mergeCombos, mergeRank, mergeLabel, mergeTransitionPlan, mergeWithEar, keepOneStem, hookDropEvents, hookDropDue, HOOK_OTHER, BREAKDOWN, breakdownFits, handoffFits, vocalShare, stemBlendPlan, STEM_BLEND_KINDS, remixEvents, remixPick, stemBridgePlan, mashupTransitionPlan,
+  // SET ENERGY mashup classes (owner, energy-recipe-choice): LOW-ENERGY when the beat (drums + bass of
+  // both decks, at the plan's stem gains) drops out for a bar or more inside the window (the plain
+  // mashup's A-beat-out gap: Neverland -> No Control, 3.3 s), BEAT-KEEPING when a beat runs the whole
+  // way. eA / eB: stemEnergyBars per bar of the window (bar 0 = the mashup's bar 0; B from its entry).
+  // A bar is beatless under BEAT_GAP_FRAC of A's own median beat in the window (GUESS).
+  // -> {kind: "low" | "beat", gapBars, ref} | null (unmeasured)
+  const BEAT_GAP_FRAC = 0.25;
+  function mashupEnergyKind(plan, eA, eB) {
+    if (!plan || !plan.events || !eA || !eA.drums || !eA.bass) return null;
+    const n = Math.min(plan.total, eA.drums.length);
+    const at = (e, s, b) => (e && e[s] && Number.isFinite(e[s][b]) ? e[s][b] : 0);
+    const own = [];
+    for (let b = 0; b < n; b++) own.push(at(eA, "drums", b) + at(eA, "bass", b));
+    const ref = medianOf(own);
+    if (!(ref > 0)) return null;
+    let gapBars = 0;
+    for (let b = 0; b < n; b++) {
+      const gA = gainsAt(plan.events, "out", b + 0.5), gB = gainsAt(plan.events, "in", b + 0.5);
+      const beat = gA.drums * at(eA, "drums", b) + gA.bass * at(eA, "bass", b) + gB.drums * at(eB, "drums", b) + gB.bass * at(eB, "bass", b);
+      if (beat < BEAT_GAP_FRAC * ref) gapBars++;
+    }
+    return { kind: gapBars >= 1 ? "low" : "beat", gapBars, ref: +ref.toFixed(4) };
+  }
+  const core = { mashupEnergyKind, BEAT_GAP_FRAC, holdPlan, subOwnerCheck, holdUnclean, overlapBars, regionsToBars, HOLD_PHRASE_BARS, HOLD_MAX_PHRASES, HANDOVER_BARS, MERGE_START_BARS, HOLD_TEMPO_CAP, HOLD_KEY_MIN, gates, keepsVibe, breakdownVocalOk, introAudible, introGate, INTRO_MAX_UNDER_DB, mergeCombos, mergeRank, mergeLabel, mergeTransitionPlan, mergeWithEar, keepOneStem, hookDropEvents, hookDropDue, HOOK_OTHER, BREAKDOWN, breakdownFits, handoffFits, vocalShare, stemBlendPlan, STEM_BLEND_KINDS, remixEvents, remixPick, stemBridgePlan, mashupTransitionPlan,
                  pickIntro, introBars, INTRO_LEVEL, levelCheck, gainsAt, faderAt, fitStemBlend, breakdownEvents,
                  masterAudibility, audibleRms, mergeFader, rawFader, deckFaderGains, mergeBooking, onTime, AUDIBLE_HZ, SILENCE_DB,
                  LEVEL_FLOOR_DB, AUDIBLE_GAIN, FADER_PARK_BARS, TYPICAL_SHARE, DIP_ALLOWED,
