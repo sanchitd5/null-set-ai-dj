@@ -1,4 +1,4 @@
-from app.ui import download_service as ds
+from app.ui.services import download_service as ds
 
 
 def test_pasted_url_may_be_a_live_version_search_may_not():

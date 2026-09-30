@@ -376,7 +376,7 @@ def main(argv: Optional[list[str]] = None) -> int:
 
             payload = {"technique": add_user_rule(args.kind, args.rule, disable=args.disable)}
         elif args.command == "session-report":
-            from app.ui import song_log
+            from app.ui.services import song_log
 
             payload = song_log.report(args.session)
             if args.render and payload["session"]:

@@ -7,7 +7,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 import pytest
 
 from app.sim import llm_probe
-from app.ui import engine
+from app.ui.services import engine
 
 
 class _Model(BaseHTTPRequestHandler):
@@ -69,7 +69,7 @@ def test_a_recording_keeps_the_real_reply_latency_and_quality(model_server, monk
     monkeypatch.setenv("AUTOPILOT_MODEL", "fake-model")
     w = World("live", "t", 1, tmp_path, record=True, fixtures_dir=tmp_path)
     with engine.using(engine.Engine(SimHost(w), SimAI(w))):
-        from app.ui import autopilot_service as svc
+        from app.ui.services import autopilot_service as svc
 
         w.begin_request()
         raw = svc.chat_raw("system", 'NOW PLAYING: "Song X" by Y | 120 BPM\n')      # the app's own client, through the gate

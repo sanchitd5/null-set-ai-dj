@@ -219,7 +219,7 @@ def export(cache_dir: Optional[Path] = None, out: Optional[Path] = None,
     mirror the cache when it has them. ValueError (nothing written) on a privacy hit."""
     from app.music_brain import macros as mc
     from app.music_brain import studied_combos as sc
-    from app.ui import dedup_songs as ds
+    from app.ui.services import dedup_songs as ds
 
     cache, out = _cache(cache_dir), Path(out or KNOWLEDGE_DIR)
     names_local, aliases = sc.library_names(cache), ds.load_aliases(cache)
@@ -298,7 +298,7 @@ class _Resolver:
 
     def __init__(self, cache: Path, tracked_names: Dict[str, str]):
         from app.music_brain import studied_combos as sc
-        from app.ui import dedup_songs as ds
+        from app.ui.services import dedup_songs as ds
 
         self.ds, self.cache, self.tracked = ds, cache, tracked_names
         self.aliases = ds.load_aliases(cache)

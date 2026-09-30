@@ -109,7 +109,7 @@ _lib_cache: tuple = (None, [])
 
 def library_raws() -> List[float]:
     """The library's raw energy scores, through the installed engine's host."""
-    from app.ui import engine
+    from app.ui.services import engine
 
     return engine.current().host.library_raws()
 

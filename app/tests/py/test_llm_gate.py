@@ -1,12 +1,12 @@
-"""LLM priority gate (app/ui/llm_gate.py) and suggest JSON repair."""
+"""LLM priority gate (app/ui/services/llm_gate.py) and suggest JSON repair."""
 import threading
 import time
 
 import pytest
 
-from app.ui import autopilot_service as svc
-from app.ui import llm_gate
-from app.ui.llm_gate import LOOKAHEAD, PLAN, SUGGEST, GateTimeout, PriorityGate
+from app.ui.services import autopilot_service as svc
+from app.ui.services import llm_gate
+from app.ui.services.llm_gate import LOOKAHEAD, PLAN, SUGGEST, GateTimeout, PriorityGate
 
 
 def _run(gate, prio, order, hold=0.0):
@@ -86,7 +86,7 @@ def test_suggest_retries_once_on_bad_json(monkeypatch):
 def test_lookahead_never_piles_up():
     import threading
     import pytest
-    from app.ui import llm_gate as g
+    from app.ui.services import llm_gate as g
     gate = g.PriorityGate()
     release = threading.Event()
     def hold():
@@ -229,7 +229,7 @@ def test_a_waiting_live_call_goes_before_queued_work():
 
 
 def test_live_ear_takes_the_gate_only_on_the_shared_model(monkeypatch):
-    from app.ui import live_ear
+    from app.ui.services import live_ear
 
     monkeypatch.setenv("OLLAMA_BASE_URL", "http://127.0.0.1:8901/v1")
     assert live_ear.shares_text_model({"base_url": "http://localhost:8901/v1"})

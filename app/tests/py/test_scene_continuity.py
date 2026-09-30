@@ -1,5 +1,5 @@
 """Scene continuity: owner, Anyma "Atoma" went to a pop MashMIX."""
-from app.ui.autopilot_service import _filter_suggestions, mashup_title, scene_of
+from app.ui.services.autopilot_service import _filter_suggestions, mashup_title, scene_of
 
 
 def _sugg(artist, title, genre="melodic techno", hop=0):

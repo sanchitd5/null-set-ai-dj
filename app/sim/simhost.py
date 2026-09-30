@@ -1,4 +1,4 @@
-"""The sim's Host and AIBackend: the ports of `app.ui.engine`, filled by a `World` (world.py).
+"""The sim's Host and AIBackend: the ports of `app.ui.services.engine`, filled by a `World` (world.py).
 
 The brain (server, autopilot_service, download jobs, live ear ...) finds its edges through the
 installed `Engine`, so the sim needs no monkeypatching: `World.engine()` builds
@@ -17,7 +17,7 @@ import itertools
 from pathlib import Path
 
 from app.sim.synth import read_tag
-from app.ui.engine import AIBackend, Host
+from app.ui.services.engine import AIBackend, Host
 
 _STEMS = ("drums", "bass", "vocals", "other")
 

@@ -103,7 +103,7 @@ def test_quick_cut_survives_no_cuts_only_under_profile(matcher):
 
 def test_suggest_filter_under_profile():
     import contextlib, io
-    from app.ui import autopilot_service as svc
+    from app.ui.services import autopilot_service as svc
     case = vectors.SUGGEST_CASES[0]                                     # punjabi 1980s playing
     with contextlib.redirect_stdout(io.StringIO()):
         off = svc._filter_suggestions(json.loads(json.dumps(case)), [])

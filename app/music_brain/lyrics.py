@@ -186,7 +186,7 @@ def fetch(title: str, cache_dir: Optional[Path] = None, search: Optional[callabl
         pass
     artist, track = split_title(title)
     try:
-        from app.ui import engine
+        from app.ui.services import engine
 
         cands = (search or engine.current().host.lrclib_search)(artist, track)
     except Exception:              # network / provider failure: not cached, retried next time

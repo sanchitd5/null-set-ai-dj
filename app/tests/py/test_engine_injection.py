@@ -3,7 +3,7 @@ globals; the production Host / AIBackend late-bind the real functions, so existi
 import json
 from pathlib import Path
 
-from app.ui import engine
+from app.ui.services import engine
 
 
 class FakeAI(engine.AIBackend):
@@ -50,8 +50,8 @@ def test_default_engine_is_production_and_installable():
 
 
 def test_chat_verify_and_log_go_through_the_injected_ports(monkeypatch):
-    from app.ui import autopilot_service as svc
-    from app.ui import session_log
+    from app.ui.services import autopilot_service as svc
+    from app.ui.services import session_log
 
     monkeypatch.undo()                        # conftest stubs svc._verify_song for every test: use the real one here
     host, ai = FakeHost(), FakeAI()
@@ -71,7 +71,7 @@ def test_suggest_budget_comes_from_the_config():
 
 
 def test_download_and_background_jobs_use_the_host_clock_ids_and_executor(tmp_path):
-    from app.ui import bg_jobs, download_jobs
+    from app.ui.services import bg_jobs, download_jobs
 
     host = FakeHost()
     with engine.using(engine.Engine(host, FakeAI())):

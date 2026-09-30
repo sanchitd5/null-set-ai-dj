@@ -1,4 +1,4 @@
-from app.ui.autopilot_service import _filter_suggestions
+from app.ui.services.autopilot_service import _filter_suggestions
 
 
 def _s(title, energy, artist="A"):

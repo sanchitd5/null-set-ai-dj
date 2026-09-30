@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from app.ui import live_ear as ear
+from app.ui.services import live_ear as ear
 
 
 def _wav(seconds=0.5, rate=16000):

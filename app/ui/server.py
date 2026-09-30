@@ -39,9 +39,9 @@ from app.music_brain.knowledge_parser import KnowledgeParser
 from app.music_brain.recipe_matcher import RecipeMatcher
 from app.music_brain.transition_renderer import render_full_mix, render_preview
 from app.music_brain.set_log import export_set_log_markdown, validate_set_log
-from app.ui import engine as _engine
-from app.ui.bg_jobs import DONE as _JOB_DONE, ERROR as _JOB_ERROR, EXPIRED as _JOB_EXPIRED, JobRunner
-from app.ui.library_service import scan_library
+from app.ui.services import engine as _engine
+from app.ui.services.bg_jobs import DONE as _JOB_DONE, ERROR as _JOB_ERROR, EXPIRED as _JOB_EXPIRED, JobRunner
+from app.ui.services.library_service import scan_library
 
 
 def _host():
@@ -67,7 +67,7 @@ app = FastAPI(title="AI Music Brain", version="0.1.0")
 def _boot_llm() -> None:
     """Load the DJ's LLM (MLX on Apple Silicon, Ollama fallback) in the
     background at startup, so the first suggestion does not pay model load."""
-    from app.ui import model_runtime
+    from app.ui.services import model_runtime
 
     model_runtime.start_background()
 
@@ -90,8 +90,8 @@ def _cap_keylock_cache() -> None:
 
 @app.get("/api/llm/status")
 def get_llm_status():
-    from app.ui import model_runtime
-    from app.ui.llm_gate import gate
+    from app.ui.services import model_runtime
+    from app.ui.services.llm_gate import gate
 
     return {**model_runtime.status(), "gate": gate.snapshot()}
 
@@ -143,7 +143,7 @@ _load_registry_from_disk()
 def _track_path(track_id: str) -> Path:
     path = _tracks.get(track_id)
     if path is None or not path.exists():
-        from app.ui import dedup_songs
+        from app.ui.services import dedup_songs
 
         canonical = dedup_songs.resolve_alias(track_id, CACHE_DIR)   # a quarantined duplicate resolves to its kept copy
         path = _tracks.get(canonical) if canonical != track_id else None
@@ -252,7 +252,7 @@ class DownloadRequest(BaseModel):
 @app.post("/api/download")
 async def download_from_url(req: DownloadRequest):
     """Download a YouTube or YouTube Music URL and register as a track."""
-    from app.ui.download_service import detect_source
+    from app.ui.services.download_service import detect_source
 
     download_to_dir = _host().download_to_dir
     source = detect_source(req.url)
@@ -293,7 +293,7 @@ async def download_from_url(req: DownloadRequest):
 def _reuse_existing(url: str) -> Optional[List[dict]]:
     """A search URL for "Artist - Title" that the library already holds (same recording, remix markers
     included, aliases resolved): the existing track, so no second upload of it is downloaded."""
-    from app.ui import dedup_songs
+    from app.ui.services import dedup_songs
 
     wanted = dedup_songs.wanted_from_url(url)
     if not wanted:
@@ -362,8 +362,8 @@ def get_youtube_status():
 @app.post("/api/download/jobs")
 def post_download_job(req: DownloadJobRequest):
     """Start a background download (pre-download / prefetch); poll for progress."""
-    from app.ui import download_jobs
-    from app.ui.download_service import detect_source
+    from app.ui.services import download_jobs
+    from app.ui.services.download_service import detect_source
 
     if detect_source(req.url) == "unknown":
         raise HTTPException(status_code=400, detail="Unsupported URL.")
@@ -379,14 +379,14 @@ def post_download_job(req: DownloadJobRequest):
 
 @app.get("/api/download/jobs")
 def get_download_jobs():
-    from app.ui import download_jobs
+    from app.ui.services import download_jobs
 
     return {"jobs": download_jobs.list_jobs()[:20]}
 
 
 @app.get("/api/download/jobs/{job_id}")
 def get_download_job(job_id: str):
-    from app.ui import download_jobs
+    from app.ui.services import download_jobs
 
     job = download_jobs.get_job(job_id)
     if job is None:
@@ -431,7 +431,7 @@ def _name_from_tags(track_id: str, path: Path) -> Optional[str]:
 
 @app.get("/api/tracks")
 def list_tracks():
-    from app.ui.download_service import _is_live, _is_mix
+    from app.ui.services.download_service import _is_live, _is_mix
 
     def _entry(tid, p):
         name = _track_names.get(tid) or _name_from_tags(tid, p) or p.stem
@@ -547,7 +547,7 @@ def _cached_stems4(track_id: str) -> Optional[Dict[str, str]]:
 
 
 def _llm_busy() -> bool:
-    from app.ui.llm_gate import gate
+    from app.ui.services.llm_gate import gate
 
     snap = gate.snapshot()
     return bool(snap["in_flight"] or snap["queued"] or snap.get("live"))
@@ -556,7 +556,7 @@ def _llm_busy() -> bool:
 def _stem_wait_note() -> str:
     """Why the background stem backfill is waiting, in the owner's words: the STEMS wait
     for the AI, the AI is not paused ("llm shows llm paused" was read the other way round)."""
-    from app.ui.llm_gate import gate
+    from app.ui.services.llm_gate import gate
 
     snap = gate.snapshot()
     doing = "live ear" if snap.get("live") else snap["in_flight"] or (snap["queued"][0] if snap["queued"] else "")
@@ -696,7 +696,7 @@ class PrerenderRequest(BaseModel):
 
 
 def _prerender_loop() -> None:
-    from app.ui import prerender
+    from app.ui.services import prerender
 
     while True:
         try:
@@ -717,7 +717,7 @@ def post_prerender(req: PrerenderRequest):
     """The ranked next-song candidates (best first) and the tempi they may have to play at. The server
     makes their stems and key-locked tempo sets ahead of the booking, one heavy job at a time, and
     drops the queued work of any candidate that is no longer listed. Answers each one's readiness."""
-    from app.ui import prerender
+    from app.ui.services import prerender
 
     items = [{"track_id": i.track_id, "bpms": i.bpms} for i in req.items if i.track_id in _tracks]
     sched = prerender.current()
@@ -729,7 +729,7 @@ def post_prerender(req: PrerenderRequest):
 
 @app.get("/api/prerender")
 def get_prerender():
-    from app.ui import prerender
+    from app.ui.services import prerender
 
     sched = prerender.current()
     sched.step()
@@ -743,7 +743,7 @@ def _backfill_stems() -> None:
     def scan():
         import soundfile as _sf
 
-        from app.ui.download_service import _is_live, _is_mix
+        from app.ui.services.download_service import _is_live, _is_mix
 
         missing = []
         for tid in list(_tracks):
@@ -852,8 +852,8 @@ def get_library_lockable(bpm: float, key: str = "", exclude: str = "", limit: in
     here; unmeasured songs rank in between."""
     from app.music_brain import techniques as tq
     from app.music_brain.genre import MAX_ERA_GAP, era_gap, genre_near
-    from app.ui.download_service import _is_live, _is_mix
-    from app.ui.track_identity import clean_identity
+    from app.ui.services.download_service import _is_live, _is_mix
+    from app.ui.services.track_identity import clean_identity
 
     skip = set(filter(None, exclude.split(",")))
     # Punjabi scene profile: one scene (punjabi / bhangra / desi, bollywood near) and
@@ -1086,9 +1086,9 @@ def get_hook_drops(track_id: str, top_n: int = 3, ai: bool = True):
 
 
 def _song_step(kind: str, track_id: Optional[str], **fields) -> None:
-    """One AI step into the per-song log (app/ui/song_log.py). Never raises."""
+    """One AI step into the per-song log (app/ui/services/song_log.py). Never raises."""
     try:
-        from app.ui import song_log
+        from app.ui.services import song_log
         _host().song_step(kind, track_id, **fields)
     except Exception:
         pass
@@ -1102,7 +1102,7 @@ class SessionEvent(BaseModel):
 @app.post("/api/session/event")
 def post_session_event(ev: SessionEvent):
     """The console's side of this session's log (track changes, ear flushes)."""
-    from app.ui import session_log
+    from app.ui.services import session_log
 
     if ev.kind not in ("track", "ear_flush", "note", "glitch", "move"):
         raise HTTPException(status_code=400, detail="kind must be track, ear_flush, glitch, move or note")
@@ -1110,7 +1110,7 @@ def post_session_event(ev: SessionEvent):
     # those are kept as "<name>_" instead of clashing
     fields = {(f"{k}_" if k in ("kind", "t", "at") else k): v for k, v in list(ev.data.items())[:20] if isinstance(k, str)}
     session_log.log(ev.kind, **fields)
-    from app.ui import song_log
+    from app.ui.services import song_log
     _host().session_event(ev.kind, fields)   # transitions / glitches also land on the song
     return {"ok": True, "session": session_log.SESSION_ID}
 
@@ -1119,7 +1119,7 @@ def post_session_event(ev: SessionEvent):
 def get_session_log(session: Optional[str] = None, limit: int = 500):
     """This session's events (track changes, every LLM / ear call with its timing),
     a summary, and the list of past sessions. ?session=<id> for an earlier one."""
-    from app.ui import session_log
+    from app.ui.services import session_log
 
     try:
         events = session_log.read(session, max(1, min(limit, 5000)))
@@ -1135,7 +1135,7 @@ class StepBatch(BaseModel):
 
 def _song_resolvers() -> None:
     """How song_log finds a track's file, analysis, stems, name and energy (for waveforms)."""
-    from app.ui import song_log
+    from app.ui.services import song_log
 
     def energy(path: Path, bpm: float) -> dict:
         from app.music_brain import energy as en
@@ -1157,7 +1157,7 @@ _song_resolvers()
 @app.post("/api/session/steps")
 def post_session_steps(batch: StepBatch):
     """A batch of AI steps from the console (app/ui/static/step-log.js), filed per song."""
-    from app.ui import song_log
+    from app.ui.services import song_log
 
     if len(batch.steps) > song_log.MAX_BATCH:
         raise HTTPException(status_code=413, detail=f"at most {song_log.MAX_BATCH} steps per batch")
@@ -1167,7 +1167,7 @@ def post_session_steps(batch: StepBatch):
 @app.get("/api/session/songs")
 def get_session_songs(session: Optional[str] = None):
     """Songs of a session (this run unless ?session=) with step counts per phase / kind."""
-    from app.ui import session_log, song_log
+    from app.ui.services import session_log, song_log
 
     try:
         return {"session": session or session_log.SESSION_ID, "songs": song_log.songs(session)}
@@ -1178,7 +1178,7 @@ def get_session_songs(session: Optional[str] = None):
 @app.get("/api/session/songs/{session}/{nn}")
 def get_session_song(session: str, nn: int, limit: int = 2000):
     """One song's meta + every AI step, in time order."""
-    from app.ui import song_log
+    from app.ui.services import song_log
 
     try:
         s = song_log.song(session, nn, limit)
@@ -1193,7 +1193,7 @@ def get_session_song(session: str, nn: int, limit: int = 2000):
 def get_session_song_png(session: str, nn: int, refresh: bool = False):
     """The song's rendered waveform with AI steps; rendered in the background on first ask (202)."""
     from fastapi.responses import JSONResponse
-    from app.ui import song_log
+    from app.ui.services import song_log
 
     try:
         d = song_log.song_dir(session, nn)
@@ -1258,7 +1258,7 @@ def _preplan_fresh(now: Optional[float]):
 def _run_preplan(req: PreplanRequest, sa: dict, sb: dict) -> dict:
     from app.music_brain import preplan
     from app.music_brain import techniques as tq
-    from app.ui import session_log
+    from app.ui.services import session_log
 
     ta, tb = analyze_track(_track_path(req.a_id)), analyze_track(_track_path(req.b_id))
     ka, kb = ta.key.camelot if ta.key else None, tb.key.camelot if tb.key else None
@@ -1340,7 +1340,7 @@ def post_merge_audition(req: MergeAuditionRequest):
     a_time, b_time = max(0.0, req.a_time), max(0.0, req.b_time)
 
     def run() -> dict:
-        from app.ui import session_log
+        from app.ui.services import session_log
 
         ta, tb = analyze_track(_track_path(req.a_id)), analyze_track(_track_path(req.b_id))
         t0 = time.time()
@@ -1995,7 +1995,7 @@ class AutopilotSuggestRequest(BaseModel):
     # the cumulative-fall rule (energy.next_ok) needs the set's recent peak.
     energy_history: list[float] = []
     # Look-ahead (songs for AFTER the booked next one): lowest LLM priority,
-    # waits behind any transition plan (app/ui/llm_gate.py).
+    # waits behind any transition plan (app/ui/services/llm_gate.py).
     lookahead: bool = False
     # Variety: how many songs in a row were the same subgenre, and which one.
     variety_run: int = 0
@@ -2138,7 +2138,7 @@ try:
     _load_labels()
 except Exception as _exc:  # noqa: BLE001 -- a bad label file must not stop the server
     print(f"WARNING [labels] not loaded: {type(_exc).__name__}: {_exc}", flush=True)
-_set_memory = None  # app.ui.set_memory.SetMemory, created on first suggest
+_set_memory = None  # app.ui.services.set_memory.SetMemory, created on first suggest
 
 
 def _clean_set_id(raw) -> str:
@@ -2148,7 +2148,7 @@ def _clean_set_id(raw) -> str:
 
 
 def _genre_key(title: str) -> str:
-    from app.ui.track_identity import clean_title
+    from app.ui.services.track_identity import clean_title
     return " ".join(clean_title(title).lower().split())
 
 
@@ -2156,7 +2156,7 @@ def _track_vibe(track_id: str) -> Dict[str, Optional[str]]:
     """track_id -> {"genre", "era"} labels the model already gave this title
     (suggestions / current_genre), same keying as the library fallback.
     Unknown -> None, which RecipeMatcher treats as no penalty."""
-    from app.ui.track_identity import clean_identity
+    from app.ui.services.track_identity import clean_identity
 
     path = _tracks.get(track_id)
     name = _track_names.get(track_id) or (path.stem if path else "")
@@ -2230,8 +2230,8 @@ def _autopilot_suggest_impl(req: AutopilotSuggestRequest):
     """Use local LLM (Ollama gemma3:4b by default) to suggest next tracks."""
     import traceback
     import numpy as np
-    from app.ui import engine
-    from app.ui.autopilot_service import SET_MODES, hit_share_note
+    from app.ui.services import engine
+    from app.ui.services.autopilot_service import SET_MODES, hit_share_note
 
     suggest_next_tracks = engine.current().suggest
 
@@ -2258,7 +2258,7 @@ def _autopilot_suggest_impl(req: AutopilotSuggestRequest):
         measured_energy = None           # best-effort: the prompt falls back to the relative number
     camelot = analysis.key.camelot if analysis.key else "unknown"
 
-    from app.ui.track_identity import clean_identity, credited_artists
+    from app.ui.services.track_identity import clean_identity, credited_artists
 
     display = _track_names.get(req.track_id, path.stem)
     # Primary artist + clean title only: featured artists and "(Official Video)"
@@ -2288,7 +2288,7 @@ def _autopilot_suggest_impl(req: AutopilotSuggestRequest):
 
     # Cross-set memory: remember this set's songs, offer the earlier sets' ones
     # to the prompt as "heard recently, prefer fresh" (not on look-ahead calls).
-    from app.ui.set_memory import MAX_SONGS, SetMemory
+    from app.ui.services.set_memory import MAX_SONGS, SetMemory
     global _set_memory
     if _set_memory is None:
         _set_memory = SetMemory(CACHE_DIR / "set_memory.json")
@@ -2390,10 +2390,10 @@ class MindPlanRequest(BaseModel):
 def autopilot_plan(req: MindPlanRequest):
     """One LLM plan per song pair (candidate, exit phrase, DJ-mind moves).
 
-    The model proposes; app.ui.mind_plan.validate_plan keeps only what the
+    The model proposes; app.ui.services.mind_plan.validate_plan keeps only what the
     DJ-mind caps allow. The browser re-checks each move against live state.
     """
-    from app.ui.mind_plan import build_facts, plan_pair
+    from app.ui.services.mind_plan import build_facts, plan_pair
 
     if not req.window_hi > req.window_lo:
         raise HTTPException(status_code=400, detail="window_hi must be > window_lo")
@@ -2420,7 +2420,7 @@ def autopilot_plan(req: MindPlanRequest):
 
 @app.get("/api/live/ear")
 def get_live_ear_status():
-    from app.ui import live_ear
+    from app.ui.services import live_ear
 
     return live_ear.status()
 
@@ -2429,10 +2429,10 @@ def get_live_ear_status():
 async def post_live_ear(metrics: str = Form(...), clip: Optional[UploadFile] = None):
     """One hold-loop decision: watchdog numbers (JSON form field) plus an
     optional few-second master-bus WAV. Always answers; the model only
-    proposes (see app.ui.live_ear)."""
+    proposes (see app.ui.services.live_ear)."""
     from starlette.concurrency import run_in_threadpool
 
-    from app.ui import live_ear
+    from app.ui.services import live_ear
 
     if len(metrics) > 4000:
         raise HTTPException(status_code=400, detail="metrics too large")
@@ -2549,7 +2549,7 @@ def get_track_audio(track_id: str):
     return FileResponse(path)
 
 
-from app.ui.atlas_api import router as _atlas_router  # noqa: E402 -- pair atlas + macros (/api/atlas, /api/macros)
+from app.ui.services.atlas_api import router as _atlas_router  # noqa: E402 -- pair atlas + macros (/api/atlas, /api/macros)
 
 app.include_router(_atlas_router)
 

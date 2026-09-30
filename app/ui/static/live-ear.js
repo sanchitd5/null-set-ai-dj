@@ -1,6 +1,6 @@
 // AI Music Brain - live ear: listens to the master bus while a HOLD LOOP runs.
 //
-// Two layers (see app/ui/live_ear.py):
+// Two layers (see app/ui/services/live_ear.py):
 //  1. DSP watchdog, every 250 ms while the hold loop plays: loop start vs the
 //     analysed downbeat, loop length vs the real 8-bar span, level jump at each
 //     loop seam (click), master peak / clipping, two decks owning the low end,
@@ -22,7 +22,7 @@
   const CLIP_S = 8;               // seconds sent per decision
   const TICK_MS = 250;
   const REQ_TIMEOUT_MS = 12000;
-  // Same thresholds as app/ui/live_ear.py flags().
+  // Same thresholds as app/ui/services/live_ear.py flags().
   const SEAM_SHIFT_MS = 20, GRID_ERR_MS = 35, SEAM_CLICK_RATIO = 4, FATIGUE_S = 60;
   const LOW_OPEN_DB = -10;        // a low EQ above this still carries sub-bass
 

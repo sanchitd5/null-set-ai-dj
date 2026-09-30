@@ -29,7 +29,7 @@ def test_next_song_step_rule():
 
 
 def test_prompt_states_the_measured_energy_and_the_range():
-    from app.ui import autopilot_service as svc
+    from app.ui.services import autopilot_service as svc
     line = svc.energy_line(0.6, 6)
     assert "MEASURED ENERGY: 6/10" in line and "MUST be 4-8" in line
     assert "MUST be 5-7" in svc.energy_line(0.6, 6, relaxed=True)
@@ -37,7 +37,7 @@ def test_prompt_states_the_measured_energy_and_the_range():
 
 
 def test_suggest_prompt_carries_it(monkeypatch):
-    from app.ui import autopilot_service as svc
+    from app.ui.services import autopilot_service as svc
     seen = []
     monkeypatch.setattr(svc, "chat_raw", lambda s, u, **k: seen.append(u) or '{"current_genre": "house", "suggestions": []}')
     svc.suggest_next_tracks("T", "A", 124.0, "8A", 200.0, 0.7, "", [], measured_energy=3)

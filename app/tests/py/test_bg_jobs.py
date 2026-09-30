@@ -1,8 +1,8 @@
-"""Background audio jobs (app/ui/bg_jobs.py) and their HTTP surface in server.py."""
+"""Background audio jobs (app/ui/services/bg_jobs.py) and their HTTP surface in server.py."""
 import threading
 import time
 
-from app.ui.bg_jobs import DONE, ERROR, EXPIRED, JobRunner
+from app.ui.services.bg_jobs import DONE, ERROR, EXPIRED, JobRunner
 
 
 def _wait(job, timeout=3.0):

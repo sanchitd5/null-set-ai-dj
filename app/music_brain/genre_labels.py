@@ -32,14 +32,14 @@ def path(cache_dir: Optional[Path] = None) -> Path:
 
 
 def title_key(title: str) -> str:
-    from app.ui.track_identity import clean_title
+    from app.ui.services.track_identity import clean_title
 
     return " ".join(clean_title(str(title or "")).lower().split())
 
 
 def name_key(name: str) -> str:
     """ "Artist - Title (Official Video)" -> the title key."""
-    from app.ui.track_identity import clean_identity
+    from app.ui.services.track_identity import clean_identity
 
     return title_key(clean_identity(str(name or ""))[1])
 

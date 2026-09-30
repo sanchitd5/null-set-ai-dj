@@ -1,5 +1,5 @@
 """Pre-render scheduler: order, one heavy job at a time, cancellation, cache hits. Stub io, no Demucs."""
-from app.ui.prerender import STEMS_WAIT_S, Prerender
+from app.ui.services.prerender import STEMS_WAIT_S, Prerender
 
 
 class FakeIO:
@@ -23,7 +23,7 @@ class FakeIO:
 def test_server_dequeue_and_endpoint(monkeypatch, tmp_path):
     import threading
 
-    from app.ui import prerender
+    from app.ui.services import prerender
     from app.ui import server as srv
 
     monkeypatch.setattr(srv, "_stem_queue", ["u1", "u2"])

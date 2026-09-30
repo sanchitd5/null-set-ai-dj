@@ -295,7 +295,7 @@ def sub_corner_hz(owner_low_hz90: Optional[float], fallback: float = float(SUB_B
 def note(move: str, sources: Dict[str, str], **extra) -> None:
     """Log which parameters of a move came from a measurement and which fell back (the sim counts them)."""
     try:
-        from app.ui import engine
+        from app.ui.services import engine
 
         engine.current().host.log_event("derived_params", move=move, sources=dict(sources), measured=sum(
             1 for s in sources.values() if s == MEASURED), fallback=sum(1 for s in sources.values() if s != MEASURED), **extra)

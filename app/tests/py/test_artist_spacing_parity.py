@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from app.ui import autopilot_service as svc
+from app.ui.services import autopilot_service as svc
 
 CASES = json.loads((Path(__file__).parents[1] / "js" / "artist_spacing_cases.json").read_text(encoding="utf-8"))
 

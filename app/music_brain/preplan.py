@@ -45,7 +45,7 @@ _unheard: Dict[str, tuple] = {}
 
 def bar_rms(path: str, bar_s: float, sr: int = SR) -> np.ndarray:
     """RMS per bar of one stem (song time = bar index * bar_s)."""
-    from app.ui import engine
+    from app.ui.services import engine
 
     y, _ = engine.load_audio(path, sr=sr, mono=True)
     n = int(bar_s * sr)

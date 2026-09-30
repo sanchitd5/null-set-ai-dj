@@ -18,7 +18,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
-from app.ui import engine
+from app.ui.services import engine
 
 MIN_SONG_SECS = 90
 MAX_SONG_SECS = 9 * 60

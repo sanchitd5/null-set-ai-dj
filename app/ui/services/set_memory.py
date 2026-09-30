@@ -72,7 +72,7 @@ class SetMemory:
         """Artists the listener keeps coming back to: >= min_songs different
         remembered songs credit them. Their songs must not be avoided just for
         having been heard (user: "biased against Fred again.. songs")."""
-        from app.ui.track_identity import credited_artists
+        from app.ui.services.track_identity import credited_artists
         counts: dict = {}
         shown: dict = {}
         with _lock:

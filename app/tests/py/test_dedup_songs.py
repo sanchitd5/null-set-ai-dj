@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from app.ui import dedup_songs as ds
+from app.ui.services import dedup_songs as ds
 
 
 # ------------------------------------------------------------------------------------ names
@@ -362,7 +362,7 @@ def test_find_existing_reuses_same_recording_but_not_a_remix_and_resolves_aliase
 
 def test_download_job_reuses_the_library_copy_instead_of_downloading(tmp_path):
     from app.tests.py.test_engine_injection import FakeAI, FakeHost
-    from app.ui import download_jobs, engine
+    from app.ui.services import download_jobs, engine
 
     def boom(*a, **k):
         raise AssertionError("must not download")
@@ -377,7 +377,7 @@ def test_download_job_reuses_the_library_copy_instead_of_downloading(tmp_path):
 
 
 def test_official_audio_is_preferred_over_lyric_uploads_on_the_first_search_pass():
-    from app.ui import download_service as dl
+    from app.ui.services import download_service as dl
 
     song = (["artist"], ["song"], "Song")
     strict, lenient = dl._search_match_filter(["artist", "song"], song, True), dl._search_match_filter(["artist", "song"], song)

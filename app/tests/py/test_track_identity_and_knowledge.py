@@ -1,7 +1,7 @@
 import pytest
 
 from app.music_brain.dj_knowledge import MAX_BRIEF_CHARS, playbook_for, selection_brief
-from app.ui.track_identity import clean_identity
+from app.ui.services.track_identity import clean_identity
 
 
 @pytest.mark.parametrize("display,expected", [
@@ -36,7 +36,7 @@ def test_selection_brief_grounded_and_capped():
 
 
 def test_credited_artists():
-    from app.ui.track_identity import credited_artists
+    from app.ui.services.track_identity import credited_artists
     assert credited_artists("LATIN MAFIA, Fred again.. - Te Estoy Correteando") == ["LATIN MAFIA", "Fred again.."]
     assert credited_artists("Disclosure - Latch (feat. Sam Smith)") == ["Disclosure", "Sam Smith"]
     assert credited_artists("Jamie xx - Gosh") == ["Jamie xx"]
@@ -44,7 +44,7 @@ def test_credited_artists():
 
 
 def test_steering_skips_profile_clash_filter():
-    from app.ui.autopilot_service import _filter_suggestions
+    from app.ui.services.autopilot_service import _filter_suggestions
     cur = {"energy": 6, "tempo_feel": "driving", "mood": "bittersweet"}
     bhangra = {"energy": 9, "tempo_feel": "driving", "mood": "euphoric"}
     data = {"current_profile": {"energy": 3, "tempo_feel": "laid-back", "mood": "chill"},
@@ -55,7 +55,7 @@ def test_steering_skips_profile_clash_filter():
 
 
 def test_repeat_filter_catches_remix_and_feat_variants():
-    from app.ui.autopilot_service import _filter_suggestions
+    from app.ui.services.autopilot_service import _filter_suggestions
     data = {"suggestions": [
         {"artist": "Badshah", "title": "Proper Patola (Remix) [feat. Diljit Dosanjh]"},
         {"artist": "Panjabi MC", "title": "Mundian To Bach Ke (Bhangra Remix)"},
@@ -67,7 +67,7 @@ def test_repeat_filter_catches_remix_and_feat_variants():
 
 
 def test_theme_lock_drops_off_theme_suggestions():
-    from app.ui.autopilot_service import _filter_suggestions
+    from app.ui.services.autopilot_service import _filter_suggestions
     data = {"steering": "stay", "occasion_fit": 9, "suggestions": [
         {"artist": "Divine", "title": "Bombay Slums", "occasion_fit": 4},
         {"artist": "Ritviz", "title": "Udd Gaye", "occasion_fit": 3},
@@ -84,7 +84,7 @@ def test_theme_lock_drops_off_theme_suggestions():
 
 
 def test_bullet_and_colon_separators_split_artist_and_title():
-    from app.ui.track_identity import clean_identity
+    from app.ui.services.track_identity import clean_identity
     a, ti = clean_identity("RÜFÜS DU SOL ●● Treat You Better (Official Single Edit Video)")
     assert (a.lower(), ti) == ("rüfüs du sol", "Treat You Better")
     assert clean_identity("SIDHU MOOSE WALA ： DOLLAR ｜ BYG BYRD")[0].lower() == "sidhu moose wala"
@@ -92,7 +92,7 @@ def test_bullet_and_colon_separators_split_artist_and_title():
 
 def test_other_uploads_and_early_remixes_of_a_played_song_are_dropped(monkeypatch):
     import json
-    import app.ui.autopilot_service as svc
+    import app.ui.services.autopilot_service as svc
     reply = {"current_genre": "melodic house", "suggestions": [
         {"artist": "RÜFÜS DU SOL", "title": "Treat You Better (Purple Disco Machine Remix)", "genre": "melodic house", "genre_hop": 0, "expected_bpm": 120},
         {"artist": "Lane 8", "title": "Brightest Lights", "genre": "melodic house", "genre_hop": 0, "expected_bpm": 120}]}
@@ -104,7 +104,7 @@ def test_other_uploads_and_early_remixes_of_a_played_song_are_dropped(monkeypatc
 
 def test_remix_of_a_song_played_long_ago_is_welcome(monkeypatch):
     import json
-    import app.ui.autopilot_service as svc
+    import app.ui.services.autopilot_service as svc
     reply = {"current_genre": "melodic house", "suggestions": [
         {"artist": "RÜFÜS DU SOL", "title": "Treat You Better (Purple Disco Machine Remix)", "genre": "melodic house", "genre_hop": 0, "expected_bpm": 120},
         {"artist": "RÜFÜS DU SOL", "title": "Treat You Better", "genre": "melodic house", "genre_hop": 0, "expected_bpm": 120}]}
@@ -115,7 +115,7 @@ def test_remix_of_a_song_played_long_ago_is_welcome(monkeypatch):
 
 
 def test_unplayed_remixes_pass():
-    import app.ui.autopilot_service as svc
+    import app.ui.services.autopilot_service as svc
     data = {"current_genre": "house", "suggestions": [
         {"artist": "Lane 8", "title": "Brightest Lights (Yotto Remix)", "genre": "house", "genre_hop": 0}]}
     assert [s["title"] for s in svc._filter_suggestions(data, [])] == ["Brightest Lights (Yotto Remix)"]

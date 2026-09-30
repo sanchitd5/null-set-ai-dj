@@ -74,7 +74,7 @@ Readiness model (replay / library worlds): a downloaded song's stems are install
 its registration on ONE serial worker (the median gap between consecutive real separations, 361 gaps in
 `data/cache/stems`), a key-locked tempo set is served `World.TEMPO_S` = 30 s after the first ask on one serial
 worker (the keylock.py docstring figure, UNVERIFIED), a song already separated this run is a cache hit. Server
-side `app/ui/prerender.py` is stepped by the requests themselves (no worker thread: `SimHost.threaded = False`).
+side `app/ui/services/prerender.py` is stepped by the requests themselves (no worker thread: `SimHost.threaded = False`).
 
 ## Baseline, the gates and the improvement loop
 
@@ -107,7 +107,7 @@ window/document/AudioContext/Date/timer/fetch: `autopilot`, `dj-mind`, `stem-mov
 * Sim host: `js/host-sim.js` (virtual clock, recording graph, fetch to the real API).
 * Contract: `app/tests/js/host_contract_check.js`.
 
-Brain (Python): `app/ui/engine.py` is `Engine(host, ai_backend, config)`, plain constructor
+Brain (Python): `app/ui/services/engine.py` is `Engine(host, ai_backend, config)`, plain constructor
 injection. `Host` (production) is the world: YouTube search / verify / views / download, stem queue,
 separation, vocals stem, hook drops, key-lock renders, audio reads, file hash, the library's energy
 distribution, the session and song logs, background job execution, ids, clock. `AIBackend`

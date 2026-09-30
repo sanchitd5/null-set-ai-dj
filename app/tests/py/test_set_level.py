@@ -33,7 +33,7 @@ def test_set_level_report_counts_variety_fx_breakdown_exits_and_overlap():
 
 
 def test_s16_hit_share_target_and_note():
-    from app.ui import autopilot_service as ap
+    from app.ui.services import autopilot_service as ap
 
     assert ap.hit_share_target("late night club") is None
     assert ap.hit_share_target("Wedding: all the HITS please") == ap.HIT_SHARE_HITS

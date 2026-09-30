@@ -46,7 +46,7 @@ def compute(match_kw=None, filter_kw=None) -> dict:
     """match_kw / filter_kw: extra kwargs (e.g. profile=None / punjabi_profile="off")."""
     from app.music_brain.knowledge_parser import KnowledgeParser
     from app.music_brain.recipe_matcher import RecipeMatcher
-    from app.ui import autopilot_service as svc
+    from app.ui.services import autopilot_service as svc
 
     m = RecipeMatcher(KnowledgeParser())
     match = []

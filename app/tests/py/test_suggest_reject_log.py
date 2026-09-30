@@ -5,8 +5,8 @@ could not say which filter ate the picks.
 """
 import json
 
-import app.ui.autopilot_service as svc
-import app.ui.session_log as sl
+import app.ui.services.autopilot_service as svc
+import app.ui.services.session_log as sl
 
 
 def _events():

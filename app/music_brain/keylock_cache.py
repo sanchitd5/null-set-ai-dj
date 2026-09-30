@@ -109,7 +109,7 @@ def _run(reason: str) -> None:
         for r in res["removed"]:
             log.info("cache_evict key=%s bytes=%d age_s=%d reason=%s", r["key"], r["bytes"], r["age_s"], reason)
             try:
-                from app.ui import session_log
+                from app.ui.services import session_log
 
                 session_log.log("cache_evict", key=r["key"], bytes=r["bytes"], age_s=r["age_s"], reason=reason)
             except Exception:

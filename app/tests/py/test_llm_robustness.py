@@ -3,14 +3,14 @@ import json
 
 import pytest
 
-import app.ui.autopilot_service as svc
-from app.ui import live_ear as ear
-from app.ui import mind_plan as mp
+import app.ui.services.autopilot_service as svc
+from app.ui.services import live_ear as ear
+from app.ui.services import mind_plan as mp
 
 
 @pytest.fixture
 def events(monkeypatch):
-    from app.ui import session_log
+    from app.ui.services import session_log
     got = []
     monkeypatch.setattr(session_log, "log", lambda kind, **f: got.append((kind, f)))
     return got
@@ -66,7 +66,7 @@ def test_cut_off_reply_doubles_max_tokens(monkeypatch, events):
 
 
 def test_chat_raw_logs_kind_and_quality(monkeypatch, events):
-    from app.ui import engine
+    from app.ui.services import engine
     monkeypatch.setattr(engine.current().ai, "chat", lambda *a, **k: '{"x": ', raising=False)
     svc.chat_raw("s", "u", kind="plan")
     kind, f = events[-1]
@@ -150,7 +150,7 @@ class _FakeAI:
 
 
 def _decide(monkeypatch, replies, events):
-    from app.ui import engine
+    from app.ui.services import engine
     ai = _FakeAI(replies)
     monkeypatch.setattr(engine.current(), "ai", ai)
     monkeypatch.setenv("OMNI_BASE_URL", "http://127.0.0.1:1/v1")

@@ -1,8 +1,8 @@
 """Fixer D (batch 2): cumulative energy fall, the prompt's energy window, the real
 Fred again.. trace (session 2026-09-29_005748), and cross-session repeats."""
 from app.music_brain import energy
-from app.ui import autopilot_service as svc
-from app.ui.set_memory import MAX_SONGS, PROMPT_LIMIT, SetMemory
+from app.ui.services import autopilot_service as svc
+from app.ui.services.set_memory import MAX_SONGS, PROMPT_LIMIT, SetMemory
 
 
 # --- (1) cumulative fall -------------------------------------------------------------
@@ -84,7 +84,7 @@ def test_trace_only_fred_offered_is_not_kept():
 def test_prompt_shows_40_but_the_filter_gets_every_remembered_song(tmp_path, monkeypatch):
     import itertools, time, types
     clock = itertools.count(time.time() - 1000, 1.0)
-    monkeypatch.setattr("app.ui.set_memory.time", types.SimpleNamespace(time=lambda: next(clock)))
+    monkeypatch.setattr("app.ui.services.set_memory.time", types.SimpleNamespace(time=lambda: next(clock)))
     mem = SetMemory(tmp_path / "m.json")
     for i in range(80):                                # song0 is the oldest
         mem.record([f"Artist{i} - Song{i}"], "old-set")

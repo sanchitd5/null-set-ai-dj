@@ -22,7 +22,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Optional
 
-from app.ui import engine
+from app.ui.services import engine
 
 PENDING, RUNNING, DONE, ERROR, EXPIRED = "pending", "running", "done", "error", "expired"
 

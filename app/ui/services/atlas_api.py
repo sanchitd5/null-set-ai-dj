@@ -99,7 +99,7 @@ def atlas_partners(a: str, move: Optional[str] = None, n: int = 10, combo: bool 
 def _earlier_set_keys(set_id: str) -> set:
     """Title keys of songs heard in earlier sets (set_memory.json), the list the suggest
     prompt avoids. Empty when there is no memory yet."""
-    from app.ui import set_memory as sm
+    from app.ui.services import set_memory as sm
 
     try:
         from app.ui import server
@@ -115,7 +115,7 @@ def atlas_backup(a: str, n: int = 40, set_id: str = ""):
     the served rows (one shard read) with b_level (energy 1-10), a_level, and earlier_set
     (the song was heard in an earlier set: tried after the fresh ones, like the suggest
     prompt's "prefer fresh"). The live gates still decide at booking time."""
-    from app.ui import set_memory as sm
+    from app.ui.services import set_memory as sm
 
     idx = _index()
     if idx is None:
@@ -177,7 +177,7 @@ def get_macro(name: str):
         raise HTTPException(status_code=404, detail=f"no macro {name}") from None
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
-    from app.ui import dedup_songs as ds
+    from app.ui.services import dedup_songs as ds
     aliases = ds.load_aliases(ATLAS_CACHE_DIR)
     m = mc.resolve_ids(m, lambda t: ds.resolve_alias(t, ATLAS_CACHE_DIR, aliases))
     return {"macro": m, "validation": mc.validate(m, _known, _has_stems)}

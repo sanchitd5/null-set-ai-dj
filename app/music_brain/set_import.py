@@ -43,7 +43,7 @@ _VERSION_MIX = re.compile(r"\b(extended|original|club|radio|dub|vocal|instrument
 
 
 def _why_skip(t: dict) -> Optional[str]:
-    from app.ui import download_service as dl
+    from app.ui.services import download_service as dl
 
     title = str(t.get("title") or "")
     path = t.get("path")
@@ -97,7 +97,7 @@ def plan_tracks(cache_dir: Path, set_id: str, tracks: List[dict], set_audio: Opt
     """plan() over tracklist rows [{title, start, path, likely_wrong_song?, heard_share?}]
     (a study's tracks, or a bare tracklist's found songs). No set_audio: IDs are skipped."""
     from app.music_brain import studied_combos as sc
-    from app.ui import dedup_songs as ds
+    from app.ui.services import dedup_songs as ds
 
     cache_dir = Path(cache_dir)
     names = sc.library_names(cache_dir)
@@ -195,7 +195,7 @@ def apply(rows: List[dict], app_running: Optional[bool] = None,
     import tempfile
 
     from app.music_brain.set_learner import clip_audio
-    from app.ui import dedup_songs as ds
+    from app.ui.services import dedup_songs as ds
 
     running = ds.app_is_running() if app_running is None else app_running
     if upload is None:

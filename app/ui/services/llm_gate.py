@@ -10,7 +10,7 @@ frees, hands it to the most urgent waiter: PLAN before EAR before SUGGEST
 before LOOKAHEAD, first-come first-served within a level. A call already
 running is never interrupted (the server cannot cancel a generation).
 
-The live ear (LIVE, app/ui/live_ear.py) shares the model with everything else
+The live ear (LIVE, app/ui/services/live_ear.py) shares the model with everything else
 under `start.sh --single-omni` and must answer inside one 8-bar phrase of a
 hold loop. Measured in the omni server log (2026-09-28, Qwen3-Omni 4-bit,
 continuous batching): a short audio call takes ~1.1 s on an idle server and
@@ -53,7 +53,7 @@ _HELD = (EAR,)  # SUGGEST no longer paused for the live ear: selection was missi
 
 def _skip(why: str) -> None:
     try:
-        from app.ui import session_log
+        from app.ui.services import session_log
 
         session_log.log("gate_skip", priority="lookahead", why=why)
     except Exception:

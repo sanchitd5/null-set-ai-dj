@@ -46,7 +46,7 @@ def _path(session: Optional[str] = None) -> Path:
 
 def log(kind: str, **fields) -> None:
     """One event into the installed engine's log sink (production: the session file below)."""
-    from app.ui import engine
+    from app.ui.services import engine
 
     engine.current().host.log_event(kind, **fields)
 

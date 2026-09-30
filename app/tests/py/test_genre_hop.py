@@ -1,5 +1,5 @@
 """Genre continuity: suggestions that jump genre are dropped unless the set is moving."""
-from app.ui.autopilot_service import _filter_suggestions
+from app.ui.services.autopilot_service import _filter_suggestions
 
 
 def _s(title, hop):
@@ -43,7 +43,7 @@ def test_family_jump_overrides_low_self_rating():
 
 def test_all_jumps_triggers_one_retry(monkeypatch):
     import json
-    import app.ui.autopilot_service as svc
+    import app.ui.services.autopilot_service as svc
     jump = {"current_genre": "Urdu pop", "steering": "move", "suggestions": [
         {"artist": "Fred again..", "title": "Jungle", "genre": "UK garage", "genre_hop": 1}]}
     step = {"current_genre": "Urdu pop", "suggestions": [
@@ -57,7 +57,7 @@ def test_all_jumps_triggers_one_retry(monkeypatch):
 
 def test_parroted_few_shot_is_retried(monkeypatch):
     import json
-    import app.ui.autopilot_service as svc
+    import app.ui.services.autopilot_service as svc
     copy = {"current_genre": "melodic house", "suggestions": [
         {"artist": "Artist One", "title": "Song One", "genre": "melodic house", "genre_hop": 0}]}
     real = {"current_genre": "dream pop", "suggestions": [
@@ -69,7 +69,7 @@ def test_parroted_few_shot_is_retried(monkeypatch):
 
 
 def test_indie_dance_is_a_jump_from_indie_pop():
-    from app.ui.autopilot_service import _family_jump
+    from app.ui.services.autopilot_service import _family_jump
     assert _family_jump("indie pop", "indie dance")
 
 
@@ -79,7 +79,7 @@ def _pick(title, bpm):
 
 def test_off_tempo_picks_are_dropped(monkeypatch):
     import json
-    import app.ui.autopilot_service as svc
+    import app.ui.services.autopilot_service as svc
     reply = {"current_genre": "dream pop", "suggestions": [_pick("Fast", 120), _pick("Slow", 94)]}
     monkeypatch.setattr(svc, "chat_raw", lambda *a, **k: json.dumps(reply))
     out = svc.suggest_next_tracks("Apocalypse", "Cigarettes After Sex", 96.0, "8A", 290.0, 0.3, "", [])
@@ -88,7 +88,7 @@ def test_off_tempo_picks_are_dropped(monkeypatch):
 
 def test_all_off_tempo_retries_once(monkeypatch):
     import json
-    import app.ui.autopilot_service as svc
+    import app.ui.services.autopilot_service as svc
     far = {"current_genre": "dream pop", "suggestions": [_pick("Cirrus", 117)]}
     near = {"current_genre": "dream pop", "suggestions": [_pick("Space Song", 95)]}
     replies, prompts = iter([json.dumps(far), json.dumps(near)]), []
@@ -99,14 +99,14 @@ def test_all_off_tempo_retries_once(monkeypatch):
 
 
 def test_double_time_counts_as_locked():
-    from app.ui.autopilot_service import _tempo_locks
+    from app.ui.services.autopilot_service import _tempo_locks
     assert _tempo_locks(96, 190) and _tempo_locks(174, 87) and _tempo_locks(96, None) is None
     assert _tempo_locks(96, 117) is False
 
 
 def test_invented_songs_dropped_and_retried(monkeypatch):
     import json
-    import app.ui.autopilot_service as svc
+    import app.ui.services.autopilot_service as svc
     fake = {"current_genre": "dream pop", "suggestions": [_pick("Morrison", 95)]}
     real = {"current_genre": "dream pop", "suggestions": [_pick("Space Song", 95), _pick("Invented", 95)]}
     replies, prompts = iter([json.dumps(fake), json.dumps(real)]), []
@@ -119,7 +119,7 @@ def test_invented_songs_dropped_and_retried(monkeypatch):
 
 def test_unknown_lookup_keeps_pick(monkeypatch):
     import json
-    import app.ui.autopilot_service as svc
+    import app.ui.services.autopilot_service as svc
     reply = {"current_genre": "dream pop", "suggestions": [_pick("Space Song", 95)]}
     monkeypatch.setattr(svc, "chat_raw", lambda *a, **k: json.dumps(reply))
     monkeypatch.setattr(svc, "_verify_song", lambda a, t: (_ for _ in ()).throw(OSError("offline")))
@@ -129,7 +129,7 @@ def test_unknown_lookup_keeps_pick(monkeypatch):
 
 def test_current_song_never_its_own_next(monkeypatch):
     import json
-    import app.ui.autopilot_service as svc
+    import app.ui.services.autopilot_service as svc
     reply = {"current_genre": "dream pop", "suggestions": [_pick("Apocalypse", 96), _pick("Space Song", 95)]}
     monkeypatch.setattr(svc, "chat_raw", lambda *a, **k: json.dumps(reply))
     out = svc.suggest_next_tracks("Apocalypse", "Cigarettes After Sex", 96.0, "8A", 290.0, 0.3, "", [])
@@ -138,7 +138,7 @@ def test_current_song_never_its_own_next(monkeypatch):
 
 def test_no_corrective_retry_past_budget(monkeypatch):
     import json
-    import app.ui.autopilot_service as svc
+    import app.ui.services.autopilot_service as svc
     far = {"current_genre": "dream pop", "suggestions": [_pick("Cirrus", 117)]}
     calls = []
     monkeypatch.setattr(svc, "chat_raw", lambda *a, **k: (calls.append(1), json.dumps(far))[1])
@@ -148,20 +148,20 @@ def test_no_corrective_retry_past_budget(monkeypatch):
 
 
 def test_dated_concert_upload_is_not_the_song():
-    from app.ui.download_service import _DATED_RE
+    from app.ui.services.download_service import _DATED_RE
     assert _DATED_RE.search('Skrillex & Four Tet - "Butterflies" - April 29, 2023 - Morrison, Colorado')
     assert _DATED_RE.search("Fred again.. live 23 July 2021")
     assert not _DATED_RE.search("Fred again.. - Delilah (pull me out of this)")
 
 
 def test_qwen3_think_block_is_stripped():
-    from app.ui.autopilot_service import _extract_json
+    from app.ui.services.autopilot_service import _extract_json
     raw = '<think>\nmaybe {"a": 1}?\n</think>\n\n{"suggestions": []}'
     assert _extract_json(raw) == {"suggestions": []}
 
 
 def test_sequel_is_not_the_song():
-    from app.ui.download_service import _sequel
+    from app.ui.services.download_service import _sequel
     assert _sequel("Victory Lap Five", "Victory Lap")
     assert _sequel("Fred again.. - Victory Lap Two (with Skepta)", "Victory Lap")
     assert _sequel("Song Pt. 2", "Song")
@@ -206,7 +206,7 @@ def test_era_jump_dropped_unless_moving():
 
 
 def test_relaxed_session_drops_upbeat_picks(monkeypatch):
-    import app.ui.autopilot_service as ap
+    import app.ui.services.autopilot_service as ap
     fake = ('{"current_profile":{"energy":4,"tempo_feel":"laid-back","mood":"chill"},"suggestions":['
             '{"artist":"A","title":"Banger","energy_delta":"up","track_profile":{"energy":8,"tempo_feel":"driving","mood":"euphoric"}},'
             '{"artist":"B","title":"Calm One","energy_delta":"maintain","track_profile":{"energy":4,"tempo_feel":"laid-back","mood":"chill"}}]}')
@@ -223,7 +223,7 @@ def test_relaxed_session_drops_upbeat_picks(monkeypatch):
 
 
 def test_relaxed_only_never_empty():
-    from app.ui.autopilot_service import _relaxed_only
+    from app.ui.services.autopilot_service import _relaxed_only
     picks = [{"title": "Loud", "energy_delta": "up", "track_profile": {"energy": 9}},
              {"title": "Less Loud", "energy_delta": "up", "track_profile": {"energy": 6}}]
     kept = _relaxed_only(picks, {"energy": 3})

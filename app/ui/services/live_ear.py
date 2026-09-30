@@ -259,7 +259,7 @@ def _ask_omni(c: dict, wav: bytes, m: dict) -> str:
 def decide(wav: Optional[bytes], m: dict) -> dict:
     """Omni decision when possible, rule decision otherwise. Never raises for
     model trouble: the reason lands in `fallback`."""
-    from app.ui.autopilot_service import _extract_json, failure_reason, note_retry
+    from app.ui.services.autopilot_service import _extract_json, failure_reason, note_retry
 
     c = config()
     if wav is None or not c["configured"]:
@@ -270,7 +270,7 @@ def decide(wav: Optional[bytes], m: dict) -> dict:
         out = rule_decision(m)
         out["fallback"] = "Qwen-Omni busy with the previous phrase"
         return out
-    from app.ui import engine, llm_gate, session_log
+    from app.ui.services import engine, llm_gate, session_log
 
     shared = shares_text_model(c)
     # One model for everything (start.sh --single-omni): take the gate's LIVE slot

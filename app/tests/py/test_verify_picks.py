@@ -1,4 +1,4 @@
-"""Real-song check of AI suggestions (app/ui/autopilot_service.py `_verify_picks`):
+"""Real-song check of AI suggestions (app/ui/services/autopilot_service.py `_verify_picks`):
 a few YouTube lookups at a time for the whole process, none while the bot-check
 breaker has YouTube paused, and each song asked about once. YouTube is never
 called here: `_verify_song` (the yt-dlp search) is replaced by a fake."""
@@ -7,7 +7,7 @@ import json
 import threading
 import time
 
-import app.ui.autopilot_service as svc
+import app.ui.services.autopilot_service as svc
 from app.music_brain import yt_guard
 
 

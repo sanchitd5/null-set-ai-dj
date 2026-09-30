@@ -2,7 +2,7 @@
 
 The virtual set runs the REAL server code (app.ui.server, autopilot_service, download
 routes, analysis, matcher ...) through a test client. The edges that touch the network or a
-GPU are the ports of `app.ui.engine.Engine` (host + AI backend): the World fills them
+GPU are the ports of `app.ui.services.engine.Engine` (host + AI backend): the World fills them
 (simhost.py builds SimHost / SimAI over this class) and installs the Engine. Nothing is
 monkeypatched. Every edge goes through one of three backends:
 
@@ -48,7 +48,7 @@ def reply_quality(kind: str, reply: str) -> str:
         return "empty"
     if kind not in ("suggest", "lookahead", "plan", "ear", "audition"):
         return "ok"
-    from app.ui.autopilot_service import _extract_json
+    from app.ui.services.autopilot_service import _extract_json
 
     try:
         d = _extract_json(text)
@@ -149,8 +149,9 @@ class World:
         """Build the Engine (SimHost + SimAI) and install it. Call once, after AIDJ_CACHE_DIR points
         at run_cache. Nothing in the brain is patched: it finds its edges through the engine."""
         from app.sim.simhost import SimAI, SimHost
-        from app.ui import autopilot_service as svc
-        from app.ui import engine, server
+        from app.ui.services import autopilot_service as svc
+        from app.ui import server
+        from app.ui.services import engine
 
         self._raws = self._library_raws()
         # retries are a rule, not a race against a wall clock
@@ -166,13 +167,13 @@ class World:
         server._stem_cache.clear()
         server._stem_queue.clear()
         server._stem_backlog.clear()
-        from app.ui import prerender
+        from app.ui.services import prerender
 
         prerender.reset()                       # a fresh pre-render scheduler for the fresh engine
         self._seed_shared_files()
 
     def uninstall(self) -> None:
-        from app.ui import engine
+        from app.ui.services import engine
 
         engine.use(None)
 
@@ -280,7 +281,7 @@ class World:
         and which call about that subject this is."""
         import hashlib
 
-        from app.ui.llm_gate import gate
+        from app.ui.services.llm_gate import gate
 
         prio = None
         try:
@@ -396,7 +397,7 @@ class World:
         takes when the model is busy."""
         import hashlib
 
-        from app.ui import live_ear
+        from app.ui.services import live_ear
 
         sig = hashlib.sha1((live_ear._user_text(metrics) + "|" + hashlib.sha1(wav).hexdigest()[:12]).encode("utf-8")).hexdigest()[:16]
         info = {"kind": "ear", "sig": sig, "stable": f"ear|{metrics.get('deck')}|{bool(metrics.get('precheck'))}", "cur": "", "ord": 0}

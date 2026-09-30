@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-import app.ui.autopilot_service as svc
+import app.ui.services.autopilot_service as svc
 
 
 def _capture(monkeypatch, reply):

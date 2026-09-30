@@ -1,4 +1,4 @@
-from app.ui.set_memory import SetMemory
+from app.ui.services.set_memory import SetMemory
 
 
 def test_memory_offers_only_earlier_sets(tmp_path):
@@ -30,7 +30,7 @@ def test_clean_set_id():
 
 
 def test_earlier_set_songs_dropped_when_fresh_exists(monkeypatch):
-    import app.ui.autopilot_service as ap
+    import app.ui.services.autopilot_service as ap
     fake = '{"suggestions":[{"artist":"Lane 8","title":"Little By Little"},{"artist":"Four Tet","title":"Baby"}]}'
     monkeypatch.setattr(ap, "chat_raw", lambda *a, **k: fake)
     out = ap.suggest_next_tracks("Marea", "Fred again..", 123, "4A", 240, 0.5, "", [],
@@ -44,7 +44,7 @@ def test_earlier_set_songs_dropped_when_fresh_exists(monkeypatch):
 
 
 def test_lead_to_uses_focused_prompt_and_skips_continuity_filters(monkeypatch):
-    import app.ui.autopilot_service as ap
+    import app.ui.services.autopilot_service as ap
     seen = {}
     def fake(system, user, **kw):
         seen["system"], seen["user"], seen["max_tokens"] = system, user, kw.get("max_tokens")
@@ -68,7 +68,7 @@ def test_favourite_artists_from_memory(tmp_path):
 
 
 def test_favourite_artist_songs_not_dropped_as_earlier_sets(monkeypatch):
-    import app.ui.autopilot_service as ap
+    import app.ui.services.autopilot_service as ap
     fake = ('{"suggestions":[{"artist":"Fred again..","title":"Delilah (pull me out of this)"},'
             '{"artist":"Four Tet","title":"Baby"},{"artist":"Lane 8","title":"Little By Little"}]}')
     monkeypatch.setattr(ap, "chat_raw", lambda *a, **k: fake)

@@ -1,4 +1,4 @@
-"""AI plan for a song pair (app/ui/mind_plan.py): facts, prompt, validation."""
+"""AI plan for a song pair (app/ui/services/mind_plan.py): facts, prompt, validation."""
 
 import json
 import re
@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from app.ui import mind_plan as mp
+from app.ui.services import mind_plan as mp
 
 BPM = 120.0
 BAR = 2.0  # 240 / 120
@@ -196,7 +196,7 @@ def test_grounding_is_compact_and_from_the_wiki():
 
 
 def test_constants_match_dj_mind_js():
-    js = (Path(mp.__file__).parent / "static" / "dj-mind.js").read_text(encoding="utf-8")
+    js = (Path(mp.__file__).parents[1] / "static" / "dj-mind.js").read_text(encoding="utf-8")
     for name in ("PHRASE_BARS", "MIN_SECTION_BARS", "MIN_BARS_ON_TRACK", "EXIT_GUARD_BARS",
                  "HOLD_BARS", "PRECLEAR_SLACK_BARS", "SUBDROP_MAX_ENERGY", "REMIX_MAX_PER_SONG",
                  "REMIX_GAP_PHRASES", "BEAT_LAYER_MIN_SCORE", "LAYER_MIN_KEY"):

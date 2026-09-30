@@ -158,7 +158,7 @@ dead ends in (c); re-rank (d).
   stems were "not loaded"; (2) `evaluateCandidate` waited only 20 s for the stems before asking for the tempo set, so with stems landing
   40-160 s after the load the tempo set was never asked for ("B has no key-locked tempo stems yet"); (3) the tempo sets were asked for
   A's tempo at that instant, and A was still easing home (a moving target).
-- Change: `app/ui/prerender.py` (ranked candidates, stems then tempo sets, one heavy job at a time, cancel on drop),
+- Change: `app/ui/services/prerender.py` (ranked candidates, stems then tempo sets, one heavy job at a time, cancel on drop),
   `autopilot.js` (`syncPrerender`, `orderByReadiness`, `awaitBReady`, `aTempoAtEntry`), `deck-controller.js` stem poll 10 s -> 3 s.
 - Panel: `lib-s1-long` replay (StubLLM), one run, sim world with modelled separation (26 s) and tempo render (30 s) latency.
 - Before (the merge-hold agent, same stub replays, instant server-side stems): every merge refused, 4 of 8 "B stems not loaded",

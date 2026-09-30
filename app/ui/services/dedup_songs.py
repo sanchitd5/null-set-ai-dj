@@ -3,11 +3,11 @@ several times because YouTube search returned different uploads (official audio,
 visualizer, re-upload).  Each upload has its own content hash, so each got its own analysis,
 Demucs stems, waveform and key-lock sets.
 
-    python3 -m app.ui.dedup_songs                       # dry run (default): report only, deletes nothing
-    python3 -m app.ui.dedup_songs --apply [--group ID]  # move duplicates to a quarantine dir (reversible)
+    python3 -m app.ui.services.dedup_songs                       # dry run (default): report only, deletes nothing
+    python3 -m app.ui.services.dedup_songs --apply [--group ID]  # move duplicates to a quarantine dir (reversible)
     ... --include-review                                # also drop REVIEW pairs: one kept copy per component
-    python3 -m app.ui.dedup_songs --restore TS          # put a quarantine run back
-    python3 -m app.ui.dedup_songs --purge TS --yes      # delete a quarantine run for good
+    python3 -m app.ui.services.dedup_songs --restore TS          # put a quarantine run back
+    python3 -m app.ui.services.dedup_songs --purge TS --yes      # delete a quarantine run for good
 
 Rules:
   * Same recording = SAME NAME (artist + title, upload noise stripped, identical remix/live/...
@@ -35,7 +35,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
-from app.ui import track_identity
+from app.ui.services import track_identity
 
 AUDIO_SUFFIXES = {".mp3", ".wav", ".flac", ".m4a", ".ogg", ".aiff", ".aif", ".opus", ".webm"}
 QUARANTINE = "_dedup_quarantine"

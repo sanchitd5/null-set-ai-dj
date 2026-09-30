@@ -85,7 +85,7 @@ def test_persistent_worker_separates_two_songs_pipelined(tmp_path):
 
 def test_wait_note_names_what_the_ai_is_doing(monkeypatch):
     """Owner read "(paused: LLM working)" as "the LLM is paused": the note says the STEMS wait."""
-    from app.ui import llm_gate
+    from app.ui.services import llm_gate
 
     g = llm_gate.PriorityGate()
     monkeypatch.setattr(llm_gate, "gate", g)

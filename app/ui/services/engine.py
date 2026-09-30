@@ -39,12 +39,12 @@ class AIBackend:
     """Production model backend: the local OpenAI-compatible text server and the Omni ear."""
 
     def chat(self, system, user, temperature, timeout, model, max_tokens) -> str:
-        from app.ui import autopilot_service as svc
+        from app.ui.services import autopilot_service as svc
 
         return svc._chat_call(system, user, temperature, timeout, model, max_tokens)
 
     def ear(self, cfg: dict, wav: bytes, metrics: dict) -> str:
-        from app.ui import live_ear
+        from app.ui.services import live_ear
 
         return live_ear._ask_omni(cfg, wav, metrics)
 
@@ -62,22 +62,22 @@ class Host:
 
     # ---- YouTube ----------------------------------------------------------------
     def search_songs(self, query, limit=8):
-        from app.ui import download_service
+        from app.ui.services import download_service
 
         return download_service.search_songs(query, limit)
 
     def verify_song(self, artist, title):
-        from app.ui import download_service
+        from app.ui.services import download_service
 
         return download_service.verify_song(artist, title)
 
     def song_views(self, name):
-        from app.ui import download_service
+        from app.ui.services import download_service
 
         return download_service.song_views(name)
 
     def download_to_dir(self, url, output_dir, progress=None):
-        from app.ui import download_service
+        from app.ui.services import download_service
 
         return download_service.download_to_dir(url, output_dir, progress=progress)
 
@@ -162,17 +162,17 @@ class Host:
 
     # ---- logs -------------------------------------------------------------------------
     def log_event(self, kind, **fields):
-        from app.ui import session_log
+        from app.ui.services import session_log
 
         session_log._write(kind, **fields)
 
     def song_step(self, kind, track_id, **fields):
-        from app.ui import song_log
+        from app.ui.services import song_log
 
         song_log.step(kind, track_id, **fields)
 
     def session_event(self, kind, fields):
-        from app.ui import song_log
+        from app.ui.services import song_log
 
         song_log.on_session_event(kind, fields)
 
@@ -200,7 +200,7 @@ class Engine:
         """Next-song suggestion (model call, repeat / artist / tempo filters, verification):
         `autopilot_service.suggest_next_tracks`, run against this engine's ports. The server's
         /api/autopilot/suggest and the virtual set both come through here."""
-        from app.ui import autopilot_service as svc
+        from app.ui.services import autopilot_service as svc
 
         with using(self):
             return svc.suggest_next_tracks(*args, **kw)

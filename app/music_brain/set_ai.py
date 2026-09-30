@@ -46,8 +46,8 @@ def _default_chat() -> Optional[Chat]:
             return None
         os.environ["OLLAMA_BASE_URL"], model = found
         os.environ.setdefault("AUTOPILOT_MODEL", model)
-    from app.ui import autopilot_service as ap
-    from app.ui import llm_gate
+    from app.ui.services import autopilot_service as ap
+    from app.ui.services import llm_gate
 
     return lambda system, user: ap.chat_raw(system, user, temperature=0.2, timeout=TIMEOUT_S,
                                             max_tokens=1500, priority=llm_gate.LOOKAHEAD, kind="set_ai")
@@ -85,7 +85,7 @@ def _ask(system: str, user: str, chat: Optional[Chat], cache_key: str, call: boo
     chat = chat or _default_chat()
     if chat is None:
         return None
-    from app.ui.autopilot_service import _extract_json
+    from app.ui.services.autopilot_service import _extract_json
 
     try:
         data = _extract_json(chat(system, user))

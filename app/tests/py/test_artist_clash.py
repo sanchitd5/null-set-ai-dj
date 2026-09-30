@@ -1,5 +1,5 @@
 """Artist scene clash: same broad genre tag, different scene, never suggested back to back."""
-from app.ui.autopilot_service import _artist_clash, _filter_suggestions
+from app.ui.services.autopilot_service import _artist_clash, _filter_suggestions
 
 
 def test_sidhu_moose_wala_and_karan_aujla_clash_either_direction():

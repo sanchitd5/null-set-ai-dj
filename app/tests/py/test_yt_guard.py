@@ -88,7 +88,7 @@ def test_background_jobs_wait_out_the_cooldown():
 
 
 def test_download_service_optional_lookups_go_quiet_while_cooling(monkeypatch):
-    from app.ui import download_service as ds
+    from app.ui.services import download_service as ds
     if ds._yt_dlp is None:
         pytest.skip("yt-dlp not installed")
     g._write({"strikes": 1, "until": time.time() + 600})
@@ -112,7 +112,7 @@ def test_bot_errors_are_reported_once_not_per_attempt(capsys):
 @pytest.mark.parametrize("with_progress", [False, True])
 def test_download_to_dir_runs_end_to_end(tmp_path, monkeypatch, with_progress):
     """The real download path (no network): both the request path and the job path."""
-    from app.ui import download_service as ds
+    from app.ui.services import download_service as ds
     if ds._yt_dlp is None:
         pytest.skip("yt-dlp not installed")
 

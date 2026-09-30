@@ -1,5 +1,5 @@
 // Node check for autopilotCore.awaitJob (app/ui/static/autopilot.js): polling a
-// background job (app/ui/bg_jobs.py) inside the caller's wait budget.
+// background job (app/ui/services/bg_jobs.py) inside the caller's wait budget.
 // Exits non-zero on the first failed assertion.
 const assert = require("assert");
 const { awaitJob } = require("../../ui/static/autopilot.js");

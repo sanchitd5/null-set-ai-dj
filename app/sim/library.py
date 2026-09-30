@@ -57,7 +57,7 @@ class MainLibrary:
         name then id: the order never depends on directory listing order."""
         if self._tracks is not None:
             return self._tracks
-        from app.ui.download_service import _is_live, _is_mix, _is_non_music
+        from app.ui.services.download_service import _is_live, _is_mix, _is_non_music
 
         try:
             names = json.loads((self.cache / "uploads" / "_names.json").read_text(encoding="utf-8"))

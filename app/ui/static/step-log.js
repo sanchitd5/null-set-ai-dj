@@ -1,7 +1,7 @@
 // Per-song AI step log, browser half.
 //
 // User: "you need to log each step that ai took for song, save waveform alongside,
-// for future analysis to improve our algorithm". The server (app/ui/song_log.py) files
+// for future analysis to improve our algorithm". The server (app/ui/services/song_log.py) files
 // every step under its song and draws the waveform; this module only collects:
 //   - song start / end: which deck is audible with which track (polled once a second)
 //   - existing signals: "ai-activity" (stem moves, dj-mind decisions, learned picks ...),

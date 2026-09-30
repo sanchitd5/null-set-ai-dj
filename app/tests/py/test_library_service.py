@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from app.ui.library_service import (
+from app.ui.services.library_service import (
     SUPPORTED_AUDIO_EXTENSIONS,
     configured_library_dirs,
     file_hash,

@@ -122,7 +122,7 @@ attached, so a studied pair becomes a [combo](#combo). Stored in `data/cache/pai
 a pair is rescored only when its inputs or the [rules hash](#rules-hash) change. Code:
 `app/music_brain/pair_atlas.py`, node half `app/music_brain/pair_atlas_rules.js`. CLI:
 `python -m app.music_brain.pair_atlas build | show | best | studied | import-set`. REST:
-`app/ui/atlas_api.py` (`/api/atlas/status`, `/api/atlas/partners`, `/api/atlas/pair`). Feeds
+`app/ui/services/atlas_api.py` (`/api/atlas/status`, `/api/atlas/partners`, `/api/atlas/pair`). Feeds
 [macros](#macro) and the autopilot's combo list.
 
 ### AUTO MIX / automix
@@ -137,7 +137,7 @@ The live decision loop that picks the next song, books the transition and plays 
 order: an armed [macro](#macro) step, [studied combos](#studied-combos), atlas combos, then the
 LLM. Every pick then runs the gates (`evaluateCandidate`, `decideRecipe`, `keySafeRecipe`,
 `energyStepOk`). Browser side: `app/ui/static/autopilot.js`. Server side (suggest, plan,
-genre filter): `app/ui/autopilot_service.py`. The same code runs in the [virtual set sim](#virtual-set-sim).
+genre filter): `app/ui/services/autopilot_service.py`. The same code runs in the [virtual set sim](#virtual-set-sim).
 
 ### baseline
 The committed score of the sim panel, `app/sim/baseline.json`. `suite --check` fails when a
@@ -200,7 +200,7 @@ and autopilot suggest.
 ### FOLLOW SET
 Play a song by an artist from a studied set and the autopilot follows that set's tracklist in
 order, downloading any song the library lacks. REST `GET /api/studied/sets`
-(`app/ui/atlas_api.py`); console side in `app/ui/static/autopilot.js`. A forced plan (macro
+(`app/ui/services/atlas_api.py`); console side in `app/ui/static/autopilot.js`. A forced plan (macro
 step, studied combo, FOLLOW SET) gets no LLM re-pick but still runs the gates.
 
 ### genre_near / genre scenes
@@ -262,7 +262,7 @@ CLI and `GET /api/recipes`: every parsed cookbook recipe with its 17-part fields
 
 ### live ear
 The local omni model listening to the master during a set (for example a loop that has gone on
-too long). `app/ui/live_ear.py`, console side `app/ui/static/live-ear.js`. Advisory.
+too long). `app/ui/services/live_ear.py`, console side `app/ui/static/live-ear.js`. Advisory.
 
 ### local wins
 When importing `knowledge/`, the local cache always wins: a local macro, atlas pair or studied
@@ -274,7 +274,7 @@ recipe, A's exit and B's entry, the merge-hold plan, the tempo decision and any 
 Stored in `data/cache/macros/<name>.json`. A stored decision that is no longer valid is logged
 and falls back. Sources: the current set, a past session, atlas-ordered picks or the CLI
 (`python -m app.music_brain.macros list | show | from-session | picks`). Code:
-`app/music_brain/macros.py`; REST `/api/macros` (`app/ui/atlas_api.py`).
+`app/music_brain/macros.py`; REST `/api/macros` (`app/ui/services/atlas_api.py`).
 
 ### macro kinds
 `studied`, `chain`, `combo`, `seed`, `yours` (`app/music_brain/macros.py:KINDS`). The MACRO
@@ -336,7 +336,7 @@ MediaRecorder captures of a live console mix, uploaded with `POST /api/recording
 
 ### REST surface
 `uvicorn app.ui.server:app`. Tracks, analysis, separation, recipes, match, preview, audio,
-samples, recordings (`app/ui/server.py`), atlas, macros and studied sets (`app/ui/atlas_api.py`).
+samples, recordings (`app/ui/server.py`), atlas, macros and studied sets (`app/ui/services/atlas_api.py`).
 All ids are content hashes.
 
 ### replay
@@ -389,7 +389,7 @@ running ones finish, so every folder ends all-WAV or all-FLAC.
 
 ### step log
 Per-song log of each step the autopilot took (song, recipe, why), shown in the browser and saved
-server side. `app/ui/static/step-log.js`, `app/ui/song_log.py`, `/api/session/steps`.
+server side. `app/ui/static/step-log.js`, `app/ui/services/song_log.py`, `/api/session/steps`.
 
 ### studied combos
 The transitions real DJs played in studied sets, taken from each studied set's tracklist and
@@ -408,7 +408,7 @@ by the mascot. `app/ui/static/dj-mind.js:peakTransition`, `app/ui/static/mascot.
 atlas scores them as the `supermove` move (`app/music_brain/pair_atlas.py:MOVE_ALIASES`).
 
 ### tempo rules
-- Pitch-locked blends: within about 6% (`app/ui/autopilot_service.py:TEMPO_LOCK_PCT`).
+- Pitch-locked blends: within about 6% (`app/ui/services/autopilot_service.py:TEMPO_LOCK_PCT`).
 - Key-locked stems: up to [8%](#8-keylock).
 - Console pitch fader range: `app/ui/static/tempo-rule.js:PITCH_RANGE_PCT`.
 - Tempo changes are gradual: at most `MAX_TEMPO_PCT_PER_BAR` per bar on an audible deck.
@@ -457,7 +457,7 @@ merge and combo fit for one pair. `app/music_brain/pair_atlas.py:works_score`.
 | KEY_SAFE_MIN | 0.6 | `app/ui/static/autopilot.js:KEY_SAFE_MIN` |
 | BYPASS_KEY_SCORE | 0.4 | `app/music_brain/recipe_matcher.py:BYPASS_KEY_SCORE` |
 | Key-lock stretch cap | 8% | `app/ui/static/tempo-rule.js:KEYLOCK_RANGE_PCT` |
-| Pitch-lock tempo gap | 6% | `app/ui/autopilot_service.py:TEMPO_LOCK_PCT` |
+| Pitch-lock tempo gap | 6% | `app/ui/services/autopilot_service.py:TEMPO_LOCK_PCT` |
 | Max tempo change per bar | 0.25% | `app/ui/static/tempo-rule.js:MAX_TEMPO_PCT_PER_BAR` |
 | Combo min works score | 65 | `app/ui/static/macro-mode.js:COMBO_MIN_WORKS` |
 | Macro step preference | 0.8 | `app/ui/static/macro-mode.js:MACRO_PREFERENCE` |

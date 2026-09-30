@@ -55,7 +55,7 @@ def _thin(times: list, values: list, keep: int) -> Dict[str, list]:
 def compute(audio_path: Path, stems: Optional[Dict[str, str]] = None,
             analysis: Optional[dict] = None) -> dict:
     """waveform.json content for one song (mix + every stem file that exists)."""
-    from app.ui import engine
+    from app.ui.services import engine
     a = analysis or {}
     y, _ = engine.load_audio(str(audio_path), sr=SR, mono=True)
     duration = len(y) / SR

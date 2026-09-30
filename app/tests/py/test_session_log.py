@@ -1,8 +1,8 @@
 """Per-session event log, the ear holding off look-aheads, the suggest token budget."""
 import pytest
 
-from app.ui import autopilot_service as svc
-from app.ui import llm_gate, session_log
+from app.ui.services import autopilot_service as svc
+from app.ui.services import llm_gate, session_log
 
 
 @pytest.fixture(autouse=True)

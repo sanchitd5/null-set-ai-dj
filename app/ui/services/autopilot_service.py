@@ -20,8 +20,8 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, wait
 
-from app.ui import engine, llm_gate
-from app.ui.set_memory import PROMPT_LIMIT
+from app.ui.services import engine, llm_gate
+from app.ui.services.set_memory import PROMPT_LIMIT
 
 # ── Camelot wheel compatibility rules ─────────────────────────────────────────
 # Listed explicitly so a small local model doesn't have to derive them.
@@ -689,7 +689,7 @@ def _filter_suggestions(
     the model's own guess of the current energy in the profile check.
     energy_lo: the lowest level the set's energy rule allows next (energy.allowed_window);
     a pick the model rates below it is a clash (a set that only ever falls drains)."""
-    from app.ui.download_service import _is_mix, _is_non_music
+    from app.ui.services.download_service import _is_mix, _is_non_music
 
     played = {h.lower() for h in history}
     # THEME LOCK (occasion): inside the occasion's world drop suggestions whose
@@ -701,7 +701,7 @@ def _filter_suggestions(
     off_theme = []
     # by the song, not the upload: "RÜFÜS DU SOL ●● Treat You Better (Official
     # Single Edit Video)" and "... (Purple Disco Machine Remix)" are the same song
-    from app.ui.track_identity import clean_identity
+    from app.ui.services.track_identity import clean_identity
     def _song(h):
         return {_bare_title(h.split(" - ", 1)[-1]), _bare_title(clean_identity(h)[1])}
     played_bare = set().union(*[_song(h) for h in history]) if history else set()
@@ -894,13 +894,13 @@ def chat_raw(
 ) -> str:
     """One JSON-mode chat call to the local model; returns the raw text.
 
-    Every call passes the priority gate (app/ui/llm_gate.py): one LLM call at
+    Every call passes the priority gate (app/ui/services/llm_gate.py): one LLM call at
     a time, PLAN before EAR before SUGGEST before LOOKAHEAD, and none starts
     mid-phrase while the live ear holds the shared model (bounded for SUGGEST;
     see the gate's docstring). A plan's `timeout` covers its wait in the queue
     plus the call itself.
     """
-    from app.ui import session_log
+    from app.ui.services import session_log
 
     wait = timeout if timeout is not None else GATE_WAIT_S
     waited, t0 = None, None
@@ -977,7 +977,7 @@ STRICT_RETRY = ("\n\nYour last reply was not usable. Reply with ONLY one compact
 
 def note_retry(kind: str, reason: str, attempt: int = 1) -> None:
     """Count a JSON retry with its reason in the session log (one event per retry)."""
-    from app.ui import session_log
+    from app.ui.services import session_log
 
     session_log.log("llm_retry", call=kind, reason=reason, attempt=attempt)
 
@@ -988,7 +988,7 @@ def note_rejects(picks, reason: str) -> None:
     Without it a HOLD LOOP after a run of ok suggest calls cannot say which
     filter ate the picks (session 2026-09-30_102327). Never raises."""
     try:
-        from app.ui import session_log
+        from app.ui.services import session_log
 
         for s in picks or []:
             if isinstance(s, dict):
@@ -1043,8 +1043,8 @@ def _artists_of(name_or_pick, known: frozenset = frozenset()) -> set:
     """Artist keys credited on a song. `known`: artist keys already seen in the recent
     songs; one that appears anywhere in the full name counts too, because credits run
     into the title without " - " ("Atlantic Records - CA7RIEL, Fred again..-Sexy Magic")."""
-    from app.ui.set_memory import artist_key
-    from app.ui.track_identity import credited_artists
+    from app.ui.services.set_memory import artist_key
+    from app.ui.services.track_identity import credited_artists
 
     if isinstance(name_or_pick, dict):
         artist, title = name_or_pick.get("artist", ""), name_or_pick.get("title", "")
@@ -1433,8 +1433,8 @@ def suggest_next_tracks(
     # Favourite artists are exempt (user: "biased against Fred again.. songs"):
     # a listener who plays an artist in every set wants more of them, and
     # dropping every remembered title of theirs left only other artists.
-    from app.ui.set_memory import artist_key
-    from app.ui.track_identity import credited_artists
+    from app.ui.services.set_memory import artist_key
+    from app.ui.services.track_identity import credited_artists
     fav = {artist_key(a) for a in (favourite_artists or [])}
     def _is_fav(x):
         names = [x.get("artist", "")] + credited_artists(f"{x.get('artist', '')} - {x.get('title', '')}")

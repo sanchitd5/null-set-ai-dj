@@ -89,7 +89,7 @@ class TrackAnalysis:
 
 def _file_hash(path: Path) -> str:
     """Content hash of an audio file, through the installed engine's host."""
-    from app.ui import engine
+    from app.ui.services import engine
 
     return engine.current().host.file_hash(path)
 
@@ -370,7 +370,7 @@ def vocal_presence_map(
     Flags windows where vocal RMS > threshold_dbfs as active, then merges
     consecutive active windows into (start, end) region tuples.
     """
-    from app.ui import engine
+    from app.ui.services import engine
 
     y, sr = engine.load_audio(str(vocals_stem_path), sr=SAMPLE_RATE, mono=True)
     hop_length = int(sr * hop_seconds)

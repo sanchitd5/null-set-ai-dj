@@ -1,10 +1,10 @@
-"""Per-song AI step log (app/ui/song_log.py) + waveform (app/ui/song_waveform.py)."""
+"""Per-song AI step log (app/ui/services/song_log.py) + waveform (app/ui/services/song_waveform.py)."""
 import json
 
 import numpy as np
 import pytest
 
-from app.ui import session_log, song_log, song_waveform
+from app.ui.services import session_log, song_log, song_waveform
 
 
 @pytest.fixture(autouse=True)

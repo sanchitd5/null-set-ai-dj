@@ -50,7 +50,7 @@ def world(tmp_path, monkeypatch):
 
     monkeypatch.setattr(si, "_post_upload", upload)
     monkeypatch.setattr(si, "_register_offline", upload)
-    monkeypatch.setattr("app.ui.dedup_songs.app_is_running", lambda: False, raising=False)
+    monkeypatch.setattr("app.ui.services.dedup_songs.app_is_running", lambda: False, raising=False)
 
     def build(cache_dir, seed_macros_to=None, log=print, **kw):
         known = [t for n, t in ids.items() if n != "Unanalysed - Song"]

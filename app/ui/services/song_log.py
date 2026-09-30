@@ -30,7 +30,7 @@ import time
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
-from app.ui import session_log
+from app.ui.services import session_log
 
 MAX_STEPS = 2000          # per song; later steps are counted, not written
 MAX_BATCH = 200           # steps per POST
@@ -346,7 +346,7 @@ def read_steps(song_dir: Path) -> List[dict]:
 
 def render_song(song_dir: Path) -> Path:
     """waveform.json + waveform.png for one song folder (synchronous; the worker calls this)."""
-    from app.ui import song_waveform as sw
+    from app.ui.services import song_waveform as sw
     song_dir = Path(song_dir)
     meta = json.loads((song_dir / "meta.json").read_text(encoding="utf-8"))
     tid = meta.get("track_id")

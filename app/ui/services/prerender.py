@@ -197,7 +197,7 @@ class ServerIO:
 
     @staticmethod
     def _host():
-        from app.ui import engine
+        from app.ui.services import engine
 
         return engine.current().host
 
@@ -268,7 +268,7 @@ _sched_lock = threading.Lock()
 def current() -> Prerender:
     """The process scheduler (a new one per installed engine: the sim starts each run clean)."""
     global _sched
-    from app.ui import engine
+    from app.ui.services import engine
 
     with _sched_lock:
         eng = engine.current()

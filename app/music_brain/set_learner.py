@@ -335,7 +335,7 @@ def pick_result(entries: Sequence[dict], artist: str, track: str) -> Optional[di
 
 # ------------------------------------------------------------------ matching
 def _load(path: str) -> np.ndarray:
-    from app.ui import engine
+    from app.ui.services import engine
 
     y, _ = engine.load_audio(path, sr=SR, mono=True)
     return y
