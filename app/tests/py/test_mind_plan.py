@@ -202,6 +202,16 @@ def test_loop_transition_step_one_caps_cycles():
     assert "2 cycles" in mp.grounding(["Loop Transition"])
 
 
+def test_vocal_layer_recipes_carry_drop_line_guard():
+    # DJ/05 Acapella Overlay / Live Mashup / Double Drop: the guard reaches the plan prompt
+    ao = " ".join(mp._recipe_lines("Acapella Overlay", 2))
+    lm = " ".join(mp._recipe_lines("Live Mashup", 2))
+    dd = mp._recipe_lines("Double Drop", 2)[0]
+    assert "no vocal for the whole" in ao and "before A's drop" in ao
+    assert "no vocal for the whole" in lm and "end before Deck 1's drop" in lm
+    assert "drop is instrumental" in dd and "Drop Swap" in dd
+
+
 def test_loop_hold_rule_is_capped_not_open_ended():
     # DJ/04 Loops & Beat Jumps: a hold lasts at most one 8-bar phrase; short outro -> Echo Out / breakdown
     line = next(ln for ln in mp.move_rules().splitlines() if ln.startswith("- loop_extend"))
