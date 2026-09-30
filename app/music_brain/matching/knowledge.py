@@ -225,8 +225,7 @@ def export(cache_dir: Optional[Path] = None, out: Optional[Path] = None,
     names_local, aliases = sc.library_names(cache), ds.load_aliases(cache)
     files: Dict[str, object] = {}
     ids: set = set()
-    for p in sorted(mc.macros_dir(cache).glob("*.json")):
-        raw = _read(p)
+    for raw in mc.stored(cache).values():               # the app DB (migrates an old macros/ once)
         if not isinstance(raw, dict) or raw.get("schema") != mc.SCHEMA:
             continue
         try:
@@ -351,10 +350,10 @@ def seed(cache_dir: Optional[Path] = None, src: Optional[Path] = None,
         rep["atlas"] = "no knowledge folder"
         return rep
     res = _Resolver(cache, _read(src / NAMES, {}) or {})
-    mdir = mc.macros_dir(cache)
+    local_macros = set(mc.stored(cache))
     for p in sorted((src / MACROS).glob("*.json")):
         m = _read(p)
-        if not isinstance(m, dict) or (mdir / p.name).exists():
+        if not isinstance(m, dict) or p.stem in local_macros:
             continue                                        # the local macro wins
         missing = [res.tracked.get(t, t) for t in m.get("tracks") or [] if res(t) is None]
         if missing:
@@ -366,7 +365,7 @@ def seed(cache_dir: Optional[Path] = None, src: Optional[Path] = None,
             rep["macros_skipped"].append({"macro": p.stem, "missing": [], "error": str(exc)[:120]})
             continue
         m2["title"], m2["knowledge"] = m.get("title") or m2["title"], True
-        if _write_bytes(mdir / p.name, (json.dumps(m2, indent=1) + "\n").encode("utf-8"), overwrite=False):
+        if mc.put_new(dict(m2, name=p.stem), cache):
             rep["macros"].append(p.stem)
     # learner observations: a set the local store knows is the local store's
     tracked = _read(src / LEARNED, {}) or {}

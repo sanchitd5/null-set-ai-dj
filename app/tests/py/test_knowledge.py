@@ -80,10 +80,11 @@ def test_export_segmented_round_trip_and_small_diffs(src):
     atlas = pa.load(src["cache"])
     atlas["built_at"] = 99.0
     pa.write_atlas(atlas, pa.atlas_path(src["cache"]))
-    for p in mc.macros_dir(src["cache"]).glob("*.json"):
-        m = json.loads(p.read_text())
-        m["created"] = 12345.0
-        p.write_text(json.dumps(m))
+    from app.music_brain import db
+    conn = mc._mdb(src["cache"])
+    with db.tx(conn):
+        for name, m in mc.stored(src["cache"]).items():
+            mc._put(conn, dict(m, created=12345.0), name)
     assert kn.export(src["cache"], out)["changed"] == []
     assert _all_bytes(out) == before
     # one pair changes: its A shard, plus meta.json (its built_at now moves with the content)
@@ -94,13 +95,41 @@ def test_export_segmented_round_trip_and_small_diffs(src):
 
 
 def test_rewriting_an_unchanged_seed_macro_keeps_created(src):
-    p = mc.macros_dir(src["cache"]) / "chain-1-anyma.json"
-    before, stamp = p.read_bytes(), p.stat().st_mtime_ns
+    before = mc.stored(src["cache"])["chain-1-anyma"]
+    conn = mc._mdb(src["cache"])
+    changes = conn.total_changes
     m = mc.write_seed({"name": "chain-1-anyma", "source": "atlas:chain",
                        "steps": [{"a": A, "b": B, "recipe": "Bass Swap"}, {"a": B, "b": C, "recipe": "Echo Out"}]},
                       src["cache"])
-    assert m["created"] == json.loads(before)["created"]
-    assert p.read_bytes() == before and p.stat().st_mtime_ns == stamp, "an unchanged macro is not rewritten"
+    assert m["created"] == before["created"]
+    assert mc.stored(src["cache"])["chain-1-anyma"] == before and conn.total_changes == changes, \
+        "an unchanged macro is not rewritten"
+
+
+def test_old_macros_folder_migrates_once(tmp_path):
+    cache = tmp_path / "c"
+    d = cache / "macros"
+    d.mkdir(parents=True)
+    raw = mc.normalize({"name": "fri", "steps": [{"a": A, "b": B, "recipe": "Bass Swap"}]})
+    (d / "fri.json").write_text(json.dumps(raw, indent=1))
+    (d / "broken.json").write_text("{nope")
+    assert [r["name"] for r in mc.list_macros(cache)] == ["fri"] and mc.load("fri", cache) == raw
+    assert not d.exists() and (cache / "macros.migrated" / "broken.json").is_file()
+    d.mkdir()                                           # old code writing the folder again: ignored
+    (d / "old.json").write_text(json.dumps(dict(raw, name="old")))
+    assert set(mc.stored(cache)) == {"fri"}
+
+
+def test_export_never_opens_the_user_db(src, monkeypatch):
+    """The knowledge export carries the APP DB only: the private user DB (set history, set
+    memory, vetoes) must never be read for it."""
+    from app.music_brain import db
+    real = db.connect
+    opened = []
+    monkeypatch.setattr(db, "connect", lambda p: opened.append(str(p)) or real(p))
+    kn.export(src["cache"], src["out"])
+    assert opened and not [p for p in opened if p.endswith(db.USER_DB)]
+    assert not (src["cache"] / db.USER_DB).exists()
 
 
 def test_seed_still_reads_the_old_single_gz(src, tmp_path):
