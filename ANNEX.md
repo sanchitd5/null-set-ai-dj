@@ -232,8 +232,14 @@ songs by name onto the local library. Code: `app/music_brain/knowledge.py`.
 
 ### learn mode / learn-set
 Study a recorded DJ set: `python -m app.music_brain.agent_bridge learn-set <url|file>
-[--tracklist list.txt]`. Stages: fetch, cut, separate, analyze, detect, lyrics, ai_review,
-merge. Output: [observations](#observations) in `learned_techniques.json`, then
+[--tracklist list.txt] [--split-minutes 60] [--keep-files]`. Stages: fetch, cut, separate,
+analyze, detect, lyrics, ai_review, merge, cleanup. A set longer than `--split-minutes` is learned
+in parts cut at tracklist boundaries (`set_learner.plan_parts`: neighbouring parts share one song,
+each handover belongs to one part), each part checkpointed in `sets/<set_id>/parts/` so a killed run
+resumes at the next part; the panel shows "part k/n". The cleanup (`app/music_brain/learn_cleanup.py`)
+registers every good song and ID cut in the library first, then deletes clips, clip stems, registered
+song files, yt-dlp leftovers and the set recording; unregistered songs stay, listed in the result's
+`cleanup.kept`. `--keep-files` skips it. A progress file whose pid is gone reads `stale`. Output: [observations](#observations) in `learned_techniques.json`, then
 [import-set](#build-set--import-set) and studied macros. Code:
 `app/music_brain/set_learner.py`. Progress shows in the console LEARNING panel
 (`app/ui/static/learn-progress.js`, `GET /api/learn/progress`) or `learn-status` on the CLI.

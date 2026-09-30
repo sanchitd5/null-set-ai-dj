@@ -25,6 +25,14 @@ Pipeline (the manual USB002 study, research/notes/set-study-gfF8jzBVWvM.md, as c
 5. Learn.     Observations merge into data/cache/learned_techniques.json;
               techniques.rank() loads them as conditional techniques with
               the tempo gap / key score ranges they were seen at.
+   Parts.     A set longer than split_minutes (SPLIT_MIN, 60) is studied in parts cut at
+              tracklist boundaries (plan_parts); each part is checkpointed under
+              SETS_DIR/<id>/parts/ and a killed run resumes at the next part. The
+              merged study has the unsplit shape.
+   Cleanup.   (learn_cleanup.py, after each part and at the end, unless keep_files)
+              good songs and ID cuts are registered in the library first, then clips,
+              clip stems, registered song files, yt-dlp leftovers and the set recording
+              are deleted. Songs the library does not hold are kept and listed.
 6. Macros.    (agent_bridge learn-set, unless --no-macros) the set's songs are
               registered as library tracks (set_import.learn_macros = import-set)
               and the pair atlas is rebuilt incrementally, writing the macros
@@ -1274,7 +1282,21 @@ def _final_cleanup(tidy, report: dict, set_path: Path, log: Callable[[str], None
     if not tidy.skipped and (why := tidy.busy()):
         tidy.skipped = why
     if not tidy.skipped:
-        tidy.register(report["tracks"], set_audio=Path(set_path))
+        moved = tidy.register(report["tracks"], set_audio=Path(set_path))
+        if moved:                                  # study.json names the library copy (import-set reads it next)
+            for t in report["tracks"]:
+                t["path"] = moved.get(t.get("path"), t.get("path"))
+            sp = Path(report["study_path"])
+            try:
+                doc = json.loads(sp.read_text(encoding="utf-8"))
+                doc["tracks"] = report["tracks"]
+                tmp = sp.with_suffix(f".{os.getpid()}.tmp")
+                tmp.write_text(json.dumps(doc, indent=2), encoding="utf-8")
+                tmp.replace(sp)
+            except (OSError, ValueError) as exc:   # a stale path only costs import-set that song: keep the files
+                log(f"cleanup: could not repoint study.json ({exc}): keeping every file")
+                tidy.skipped = f"study.json not repointed: {exc}"[:200]
+    if not tidy.skipped:
         # the song files, set dir leftovers and recording; song stems stay (library tracks keep theirs)
         songs = [str(p) for p in tidy.songs_dir.glob("*") if p.is_file()]
         clips = [str(p) for p in tidy.clips_dir.glob("*") if p.is_file()]    # e.g. left by a killed part

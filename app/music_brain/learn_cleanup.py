@@ -133,6 +133,7 @@ class Tidy:
         inside the stem cache, the recording only inside the sets dir after every ID cut."""
         if self.skipped:
             return
+        self._leftovers(self.songs_dir, "leftovers")      # while the finished .mp3 they belong to is still here
         for old in moved:
             p = Path(old)
             if _inside(p, self.songs_dir) and p.is_file() and self.library_copy(p):
@@ -144,7 +145,6 @@ class Tidy:
             d = Path(d)
             if _inside(d, self.stems_dir) and d.resolve() != self.stems_dir.resolve():
                 self._rm(d, "clip_stems")
-        self._leftovers(self.songs_dir, "leftovers")
         if set_path is None:
             return
         self._leftovers(self.sets_dir, "leftovers", prefix=self.set_id)
