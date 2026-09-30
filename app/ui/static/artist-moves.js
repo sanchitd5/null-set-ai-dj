@@ -15,15 +15,21 @@
 //   perc_bridge  S11 (third-deck percussion bridge): gated on a third deck. The console has two,
 //                so the planner refuses and nothing runs; kept so the gate is explicit and logged.
 //   S15 (tempo swerve at a break) is skipped by the spec itself (covered by the prior note).
+//   pad_lead     Lane 8 "pads first" (learned stem_intro store: other-first is the most seen order,
+//                5 of 5 Lane 8 intros lead with other or drums, bass never first; set study
+//                N_GfH09iP9c): B's own pads ("other" stem) from the 4 or 8 bars before its entry
+//                point rise in under A's last bars, high-passed at 150 Hz, so B's pads arrive first,
+//                its drums / bass land with the transition. Key >= 0.8 (two melodies overlap, G2).
 (function (root) {
   "use strict";
 
   const lm = root.learnedMovesCore || (typeof require === "function" ? require("./learned-moves.js") : null);
   const { envelope, snapBeat, median } = lm;
 
-  const KINDS = ["slip_loop", "cue_tease", "roll", "perc_bridge"];
-  const SPEC = { slip_loop: "S13", cue_tease: "S14", roll: "S12", perc_bridge: "S11" };
-  const LABEL = { slip_loop: "SLIP LOOP", cue_tease: "CUE TEASE", roll: "ROLL", perc_bridge: "PERC BRIDGE" };
+  const KINDS = ["slip_loop", "cue_tease", "roll", "perc_bridge", "pad_lead"];
+  const SPEC = { slip_loop: "S13", cue_tease: "S14", roll: "S12", perc_bridge: "S11", pad_lead: "Lane8" };
+  const LABEL = { slip_loop: "SLIP LOOP", cue_tease: "CUE TEASE", roll: "ROLL", perc_bridge: "PERC BRIDGE",
+    pad_lead: "PAD LEAD" };
   const MIN_LEAD_S = 0.6;             // a move is booked at least this far ahead (learned-moves.js)
   const SLIP_WINDOW_BEATS = [16, 8];  // window before the line; the loop is its first half (4 or 8 beats)
   const SLIP_CAP_BEATS = 16;          // hard cap on the slip window (KB 16-beat hold)
@@ -39,6 +45,15 @@
   const ROLL_WET = 0.25;              // low wet (UNVERIFIED by ear)
   const ROLL_SLICE_BEATS = 0.5;
   const MIN_RMS = 0.01;               // stem-moves.js floor
+  const PAD_BARS = [8, 4];            // pad lead window before B's entry (one phrase, else half)
+  const PAD_KEY_MIN = 0.8;            // G2: overlapped melodies need a +-1 hour / same key match
+  const PAD_REL = 0.6;                // B's pads under A's own pads (UNVERIFIED by ear)
+  const PAD_GAIN_FALLBACK = 0.4;      // B's pads when A's "other" stem is not measured (UNVERIFIED)
+  const PAD_RISE_SHARE = 0.5;         // the pads rise over the first half of the window
+  const PAD_EVERY = 3;                // autopilot: at most one pad lead every 3 transitions (conservative rate)
+  // the blends B's pads can lead into: B's full song enters over bars (never a cut, echo out or peak swap)
+  const PAD_RECIPES = /^(long blend|bass swap|drop swap|blend|stem bridge|learned:stem_intro)$/i;
+
 
   const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
   const no = (gate, reason) => ({ ok: false, gate, reason });
@@ -183,11 +198,66 @@
     return { ok: true, kind: "perc_bridge", fallbacks: [], why: "third-deck drum loop bridges the gap" };
   }
 
-  const PLANNERS = { slip_loop: planSlipLoop, cue_tease: planCueTease, roll: planRoll, perc_bridge: planPercBridge };
+  // mean of an envelope {t0, hop, v} over [t0, t1] (null when nothing is inside)
+  function envMean(env, t0, t1) {
+    if (!env || !Array.isArray(env.v) || !(env.hop > 0)) return null;
+    const i0 = Math.max(0, Math.floor((t0 - env.t0) / env.hop)), i1 = Math.min(env.v.length, Math.ceil((t1 - env.t0) / env.hop));
+    let s = 0, n = 0;
+    for (let i = i0; i < i1; i++) if (fin(env.v[i])) { s += env.v[i]; n++; }
+    return n ? s / n : null;
+  }
+
+  // ---- Lane 8 pad lead -------------------------------------------------------------------------
+  // c: {pos, exitT (A song s at B's entry), aBpm, aRate, bBpm, bEntry (B song s), bPlaying,
+  //     bOtherEnv ({t0, hop, v} of B's "other" stem before its entry), aOtherRms (A's "other"
+  //     stem median over its last bars, or null), keyScore, inTransition, mashupActive, relaxed, onDemand,
+  //     style (dj-mind plan style), recipe (the booked recipe), sinceLast (transitions since the last pad lead)}
+  function planPadLead(c) {
+    if (c.inTransition) return no("transition", "the transition is running");
+    if (!c.onDemand) {
+      if (c.relaxed) return no("relaxed", "relaxed session: no artist moves");
+      if (c.style === "instant" || c.style === "peak" || c.style === "layer") return no("style", `a ${c.style} transition: B does not enter over bars`);
+      if (!PAD_RECIPES.test(String(c.recipe || ""))) return no("recipe", `${c.recipe || "no recipe"} is not a blend B's pads can lead into`);
+      if (c.sinceLast != null && c.sinceLast < PAD_EVERY) return no("spacing", `last pad lead ${c.sinceLast} transition(s) ago (< ${PAD_EVERY})`);
+    }
+    if (c.mashupActive) return no("vocal_layer", "a vocal layer is running");
+    if (!fin(c.exitT) || !fin(c.bEntry)) return no("no_plan", "no planned entry for B");
+    if (c.bPlaying) return no("b_rolling", "B already plays: its entry point moves");
+    if (!fin(c.keyScore)) return no("unmeasured", "no Camelot score for the pair: two pads need a key match");
+    if (c.keyScore < PAD_KEY_MIN) return no("key", `Camelot ${c.keyScore.toFixed(2)} < ${PAD_KEY_MIN}: B's pads would clash with A's melody`);
+    const fallbacks = [];
+    const aBpm = c.aBpm > 0 ? c.aBpm : (fallbacks.push("aBpm=128"), 128);
+    const bBpm = c.bBpm > 0 ? c.bBpm : (fallbacks.push("bBpm=128"), 128);
+    const aRate = c.aRate > 0 ? c.aRate : 1, v = aBpm * aRate / bBpm;
+    if (Math.abs(v - 1) * 100 > TEMPO_CAP_PCT) return no("tempo", `B's pads need a ${((v - 1) * 100).toFixed(1)}% stretch (cap ${TEMPO_CAP_PCT}%)`);
+    const env = c.bOtherEnv;
+    if (!env || !Array.isArray(env.v) || env.v.length < 2) return no("no_stems", "B's other stem is not loaded");
+    const beatS = 60 / aBpm, bBeatS = 60 / bBpm;
+    let last = no("late", "less than half a phrase left before B enters");
+    for (const W of PAD_BARS) {
+      const start = c.exitT - W * 4 * beatS, from = c.bEntry - W * 4 * bBeatS;
+      if (from < 0) { last = no("no_room", `B's entry point leaves no ${W} bars before it`); continue; }
+      if (start < c.pos + MIN_LEAD_S * aRate) { last = no("late", `no ${W} bar window left before B enters`); continue; }
+      const bMean = envMean(env, from, c.bEntry);
+      if (!(bMean >= MIN_RMS)) { last = no("no_pads", `B's pads are silent in the ${W} bars before its entry`); continue; }
+      let gain;
+      if (c.aOtherRms > 0) gain = clamp(PAD_REL * c.aOtherRms / bMean, 0.1, 0.7);
+      else { gain = PAD_GAIN_FALLBACK; fallbacks.push(`gain=${PAD_GAIN_FALLBACK}`); }
+      return { ok: true, kind: "pad_lead", start, release: c.exitT, window_beats: W * 4, cap_beats: 32,
+        piece: { a_t: start, b_from: from, b_beats: W * 4 }, b_rate: v, gain, rise_share: PAD_RISE_SHARE, hp_hz: HP_HZ,
+        fallbacks, why: `B's pads alone under A's last ${W} bars (key ${c.keyScore.toFixed(2)}), drums and bass with the transition` };
+    }
+    return last;
+  }
+
+  const PLANNERS = { slip_loop: planSlipLoop, cue_tease: planCueTease, roll: planRoll, perc_bridge: planPercBridge,
+    pad_lead: planPadLead };
 
   const core = { KINDS, SPEC, LABEL, MIN_LEAD_S, SLIP_WINDOW_BEATS, SLIP_CAP_BEATS, SLIP_PER_SONG, SLIP_GAP_BARS,
     TEASE_BARS, TEASE_MAX_STABS, TEMPO_CAP_PCT, HP_HZ, ROLL_WET, PLANNERS,
-    vocalShare, meanEnergy, nearestBeat, shadowAt, planSlipLoop, planCueTease, planRoll, planPercBridge };
+    PAD_BARS, PAD_KEY_MIN, PAD_EVERY, PAD_RECIPES,
+    vocalShare, meanEnergy, nearestBeat, shadowAt, envMean, planSlipLoop, planCueTease, planRoll, planPercBridge,
+    planPadLead };
   root.artistMovesCore = core;
   if (typeof module !== "undefined" && module.exports) module.exports = core;
 
@@ -267,12 +337,27 @@
         grid_err_s: +p.grid_err_s.toFixed(4), hp_hz: p.hp_hz, params: { window_beats: p.window_beats, slice_beats: p.slice_beats, wet: p.wet }, fallbacks: p.fallbacks });
       return { busyS: 0, why: p.why };
     }
+    // Lane 8 pad lead: B's "other" stem layered into deck A (high-passed), half gain over the first
+    // rise_share of the window, full gain after; B's drums and bass come in with the transition.
+    function runPad(d, b, p, o) {
+      const st = b.stems, k = st.ratio || 1, lag = st.lag || 0, bBeatS = 60 / (b.bpm || 128), aBeatS = 60 / (d.bpm || 128);
+      const pc = p.piece, half = pc.b_beats * p.rise_share;
+      const lo = book(d, st.other, [{ a_t: pc.a_t, from: (pc.b_from + lag) * k, dur: half * bBeatS * k }], p.b_rate * k, p.gain * 0.5, o);
+      if (!lo) return null;
+      const hi = book(d, st.other, [{ a_t: pc.a_t + half * aBeatS, from: (pc.b_from + half * bBeatS + lag) * k,
+        dur: (pc.b_beats - half) * bBeatS * k }], p.b_rate * k, p.gain, o);
+      if (!hi) return null;
+      say(d, "pad_lead", p.why, { t0: audioAt(d, o, pc.a_t), t1: hi.until, beats: p.window_beats, cap_beats: p.cap_beats, hp_hz: p.hp_hz,
+        params: { window_beats: p.window_beats, gain: +p.gain.toFixed(3), b_rate: +p.b_rate.toFixed(4), rise_share: p.rise_share }, fallbacks: p.fallbacks });
+      return { busyS: 0, why: p.why };
+    }
 
     // ---- one attempt of one kind on deck d. o: {pos, bar, entryT, lineT, exitT, bEntry, quiet, holdActive,
     //      mashupActive, fxOk, inTransition, onDemand} -> {plan, res} (res null when refused or not armed)
     // per-song state on the deck (a new song = a new analysis object = fresh counters)
     const songOf = (d) => (d._artist && d._artist.ana === d.analysis ? d._artist
-      : (d._artist = { ana: d.analysis, slips: 0, lastSlipBar: null, teaseFor: null, rollFor: null, slipLine: null, bridged: false }));
+      : (d._artist = { ana: d.analysis, slips: 0, lastSlipBar: null, teaseFor: null, rollFor: null, slipLine: null, bridged: false,
+          padFor: null, slipBooked: null }));
     function attempt(kind, d, o) {
       const a = d.analysis || {}, b = host.decks && host.decks[other(d.id)], r = songOf(d);
       const base = { pos: o.pos, inTransition: !!o.inTransition, mashupActive: !!o.mashupActive, relaxed: relaxed(), onDemand: !!o.onDemand };
@@ -302,11 +387,23 @@
         p = planRoll(Object.assign(base, { exitT: o.exitT, bpm: d.bpm, rate: rateOf(d), beats: a.beat_times,
           aDrumBars: env ? env.v : null, fxOk: !!o.fxOk }));
         if (p.ok) { logPlan(kind, p); res = runRoll(d, p, o); }
+      } else if (kind === "pad_lead") {
+        const bBeatS = 60 / ((b && b.bpm) || 128), from = fin(o.bEntry) ? o.bEntry - 8 * 4 * bBeatS : null;
+        const aEnv = fin(o.exitT) ? stemEnv(d, "other", o.exitT - 8 * o.bar, o.exitT, o.bar / 4) : null;
+        const cs = host.mod.djMind && host.mod.djMind.core && host.mod.djMind.core.camelotScore;
+        const ka = a.key && a.key.camelot, kb = b && b.analysis && b.analysis.key && b.analysis.key.camelot;
+        p = planPadLead(Object.assign(base, { exitT: o.exitT, aBpm: d.bpm, aRate: rateOf(d), bBpm: b && b.bpm, bEntry: o.bEntry,
+          style: o.style, recipe: o.recipe, sinceLast: padEntries - padLast,
+          bPlaying: !!(b && b.playing), keyScore: cs && ka && kb ? cs(ka, kb) : null,
+          bOtherEnv: b && from != null ? stemEnv(b, "other", Math.max(0, from), o.bEntry, bBeatS / 4) : null,
+          aOtherRms: aEnv && aEnv.v.length ? median(aEnv.v) : null }));
+        if (p.ok) { logPlan(kind, p); res = runPad(d, b, p, o); if (res) padLast = padEntries; }
       }
       if (p && p.ok && !res) p = no("deck", "the deck refused the booking (nothing armed)");
       return { plan: p, res, r };
     }
     const PHRASE_S = (o) => 8 * o.bar;
+    let padEntries = 0, padLast = -1e9;              // planned entries seen / the one the last pad lead played on
 
     // Called by dj-mind on its ticks between phrase lines (never during a transition / hold / layer).
     // -> {busyS, why} when a slip loop was booked (the deck position is spoken for), else null.
@@ -317,6 +414,13 @@
         r.bridged = true;
         const x = attempt("perc_bridge", d, o);
         if (!x.plan.ok) refuse(d, "perc_bridge", "song", x.plan);
+      }
+      // Lane 8 pad lead: planned once per entry, when the entry is at most 9 bars ahead (8-bar window next)
+      if (on("pad_lead") && o.exitT != null && r.padFor !== o.exitT && o.exitT > o.pos && (o.exitT - o.pos) / o.bar <= 9) {
+        r.padFor = o.exitT;
+        padEntries++;
+        const x = attempt("pad_lead", d, o);
+        if (!x.plan.ok) refuse(d, "pad_lead", o.exitT.toFixed(1), x.plan);
       }
       // S14 / S12: A's last bars before B's planned entry
       if (o.exitT != null && o.exitT > o.pos && (o.exitT - o.pos) / o.bar <= TEASE_BARS) {
@@ -333,11 +437,13 @@
         return null;
       }
       // S13: planned once per phrase, when the line is at most 4.5 bars ahead (the 16-beat window is next)
-      if (!on("slip_loop") || r.slipLine === o.lineT || o.lineT - o.pos > 4.5 * o.bar) return null;
-      r.slipLine = o.lineT;
-      const x = attempt("slip_loop", d, o);
-      if (!x.plan.ok) { refuse(d, "slip_loop", o.lineT.toFixed(1), x.plan); return null; }
-      return x.res;
+      if (on("slip_loop") && r.slipLine !== o.lineT && o.lineT - o.pos <= 4.5 * o.bar) {
+        r.slipLine = o.lineT;
+        const x = attempt("slip_loop", d, o);
+        if (!x.plan.ok) refuse(d, "slip_loop", o.lineT.toFixed(1), x.plan);
+        else { r.slipBooked = o.lineT; return x.res; }
+      }
+      return null;
     }
 
     // ---- AI ACTIONS: run one move now on the audible deck (choice gates skipped, safety gates kept) ----
@@ -365,12 +471,13 @@
       const mind = host.mod.djMind;
       const bar = 240 / (d.bpm || 128), pos = d._currentPosition(), a = d.analysis || {};
       const lines = a.phrase_boundaries_8bar || [];
-      const lead = kind === "slip_loop" ? 4 * bar + MIN_LEAD_S * rateOf(d) : bar + MIN_LEAD_S * rateOf(d);
+      const leadBars = { slip_loop: 4, pad_lead: 4 }[kind] || 1;
+      const lead = leadBars * bar + MIN_LEAD_S * rateOf(d);
       let lineT = lines.find((t) => t - pos >= lead);
       if (lineT == null) { lineT = pos; while (lineT - pos < lead) lineT += 8 * bar; }
       const planned = mind && mind.fireAt ? mind.fireAt(null) : null;
       const b = host.decks && host.decks[other(d.id)];
-      const exitT = kind === "slip_loop" ? planned : fin(planned) && planned > pos + lead && planned - pos <= TEASE_BARS * bar ? planned : lineT;
+      const exitT = kind === "slip_loop" ? planned : fin(planned) && planned > pos + lead && planned - pos <= (kind === "pad_lead" ? 9 : TEASE_BARS) * bar ? planned : lineT;
       const inTransition = ctx.inTransition != null ? ctx.inTransition : !!(mind && typeof mind.busy === "function" && mind.busy());
       const x = attempt(kind, d, { pos, bar, entryT: d._mindEntry || 0, lineT, exitT, onDemand: true, inTransition,
         bEntry: b ? (b.playing ? null : b.startOffset || 0) : null, fxOk: true,
@@ -388,7 +495,8 @@
     }
 
     // on-demand wiring: the AI ACTIONS register API when present, and `ai-action` events on djEvents
-    const ACTION_IDS = { "artist-slip": "slip_loop", "artist-tease": "cue_tease", "artist-roll": "roll", "artist-perc": "perc_bridge" };
+    const ACTION_IDS = { "artist-slip": "slip_loop", "artist-tease": "cue_tease", "artist-roll": "roll", "artist-perc": "perc_bridge",
+      "artist-pad": "pad_lead" };
     let registered = false;
     const register = () => {
       const reg = host.mod.aiActions;

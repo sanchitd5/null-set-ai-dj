@@ -53,6 +53,7 @@ CATALOG = {
     "artist_cue_tease": ("in-song", "artist move S14: 1-2 beat high-passed stabs of B's drum hit before B enters"),
     "artist_roll": ("in-song", "artist move S12: 1/2-beat roll of A's drums at low wet into B's entry"),
     "artist_perc_bridge": ("in-song", "artist move S11: third-deck percussion bridge (refused: two decks)"),
+    "artist_pad_lead": ("in-song", "artist move (Lane 8 pads first): B's other stem alone under A's last 8 or 4 bars before B enters"),
     "artist_filter_loop": ("transition", "artist S1: A's last vocal-free bars looped under a filter sweep + echo, B's vocal over it (mashup slot)"),
     "artist_drums_host": ("transition", "artist S9: A drums only under B's vocal, key gate waived when A's drums are energetic (mashup slot)"),
     "artist_vocal_swap": ("in-song", "artist S7: one sung line of A muted, B's line of the same length in the hole"),
@@ -274,7 +275,7 @@ def set_level_report(js: dict, run: dict, by_name: dict, fame: Optional[dict] = 
     }
 
 
-ARTIST_MOVES = ("slip_loop", "cue_tease", "roll", "perc_bridge")
+ARTIST_MOVES = ("slip_loop", "cue_tease", "roll", "perc_bridge", "pad_lead")
 
 
 def artist_moves_report(js: dict, F: dict) -> dict:

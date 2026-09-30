@@ -1295,6 +1295,7 @@
     const [, lineT] = phraseBounds(d.analysis && d.analysis.downbeat_times, phrase, bar);
     const res = am.tick(d, { pos, bar, entryT: d._mindEntry || 0, lineT, quiet: phraseQuiet,
       exitT: plan ? plan.fireAt : null, bEntry: plan && Number.isFinite(plan.bEntry) ? plan.bEntry : null,
+      style: plan ? plan.style : null, recipe: plan ? plan.recipe : null,
       holdActive: !!holdLoop, mashupActive: !!(host.mod.mashup && host.mod.mashup.active), fxOk: fxAllowed("roll") });
     if (!res) return false;
     busyUntil = nowS() + res.busyS;
