@@ -768,6 +768,78 @@ var autopilotCore = (function () {
     }
     return best.t;
   }
+  // ---- LATE ENTRY (owner spec, from "Neverland -> Nocturnal": B came in on its first downbeat) ------
+  // Every incoming song enters on a STRONG downbeat: an 8-bar phrase line with a beat under it,
+  // never inside a quiet / silent / drumless stretch, unless the recipe plays B's intro on purpose
+  // (./DJ/05 [[Breakdown Transition]], [[Reverb Transition]]: B's melodic intro or breakdown).
+  // Candidates run across the WHOLE song; the live pick is uniform among the energy-fit ones.
+  // Python twin: app/music_brain/render/entry_lines.py (fixture app/tests/fixtures/entry_line_cases.json).
+  const ENTRY_QUIET_FRAC = 0.5;      // phrase energy under half the song's median phrase = quiet (GUESS)
+  const ENTRY_DRUMS_MIN = 0.35;      // drum stem over the first 2 bars under 35 % of its song mean = no beat (GUESS)
+  const ENTRY_OVERLAP_BARS = 16;     // B must not sing inside this many bars after its entry (as before)
+  const INTRO_RECIPES = ["Breakdown Transition", "Reverb Transition"];
+  const introRecipe = (recipe) => INTRO_RECIPES.includes(String(recipe || ""));
+  function meanOver(times, curve, t0, t1) {
+    let s = 0, n = 0;
+    for (let i = 0; i < (times || []).length; i++) if (times[i] >= t0 && times[i] < t1 && Number.isFinite(curve[i])) { s += curve[i]; n++; }
+    return n ? s / n : null;
+  }
+  // The song's biggest drop line (earliest on a tie). drops: [{t, energy}] (dj-mind dropLines shape).
+  function mainDropOf(drops) {
+    let best = null;
+    for (const d of drops || []) if (d && Number.isFinite(d.t) && (!best || (d.energy || 0) > (best.energy || 0) + 1e-9)) best = d;
+    return best;
+  }
+  // o: {lines (B 8-bar phrase lines), include (the console's own line), energyTimes, energyCurve, vocals,
+  // drops [{t, energy}], bar, end (audible end), roomS, overlapBars, band ("relaxed"|"middle"|"high"|null),
+  // introOk, drums (t -> fraction of song mean | null)} -> {lines: [t], rejected: [{t, why}], mainDrop}
+  // band null = band-free (the atlas stores these; the live pick applies the main-drop rule).
+  function entryLines(o) {
+    const bar = o.bar > 0 ? o.bar : 240 / 128, L = 8 * bar, ov = (o.overlapBars || ENTRY_OVERLAP_BARS) * bar;
+    const tt = o.energyTimes || [], cv = o.energyCurve || [];
+    const pts = [o.include].concat(o.lines || []).filter(Number.isFinite)
+      .filter((t, i, a) => a.findIndex((x) => Math.abs(x - t) < 1e-3) === i).sort((a, b) => a - b);
+    const es = (o.lines || []).map((p) => meanOver(tt, cv, p, p + L)).filter((e) => e != null).sort((a, b) => a - b);
+    const med = es.length ? es[Math.floor((es.length - 1) / 2)] : null;
+    const main = mainDropOf(o.drops);
+    const end = Number.isFinite(o.end) ? o.end : Infinity, room = o.roomS || 0;
+    const out = [], rejected = [];
+    for (const t of pts) {
+      let why = null;
+      if (end - t < room) why = "no room for its play window";
+      else if ((o.vocals || []).some((r) => r && r[0] < t + ov && r[1] > t)) why = "B sings in the overlap";
+      else if (!o.introOk) {
+        const e = meanOver(tt, cv, t, t + L), dr = o.drums ? o.drums(t) : null;
+        if (med != null && e != null && e < ENTRY_QUIET_FRAC * med) why = "quiet (not a strong downbeat)";
+        else if (Number.isFinite(dr) && dr < ENTRY_DRUMS_MIN) why = "no drums (not a strong downbeat)";
+      }
+      if (!why && main && (o.band === "relaxed" || o.band === "middle") && t >= main.t - 1e-3) why = "main drop already passed";
+      if (why) rejected.push({ t, why }); else out.push(t);
+    }
+    return { lines: out, rejected, mainDrop: main ? main.t : null };
+  }
+  // Seeded RNG (mulberry32) and a string hash (FNV-1a) so a session / sim seed replays its picks.
+  function hashSeed(s) {
+    let h = 0x811c9dc5;
+    for (const ch of String(s)) { h ^= ch.charCodeAt(0); h = Math.imul(h, 0x01000193) >>> 0; }
+    return h >>> 0;
+  }
+  function seededRng(seed) {
+    let a = seed >>> 0;
+    return () => { a = (a + 0x6D2B79F5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+  }
+  // Uniform pick among the GOOD lines: window level within ENERGY_MATCH_TOL of the set level (an
+  // unmeasured line counts as good). None good -> the nearest (pickEntryByEnergy). cands: [{t, level}]
+  function pickEntryLine(cands, setLevel, rng) {
+    const c = (cands || []).filter((x) => x && Number.isFinite(x.t));
+    if (!c.length) return null;
+    const good = Number.isFinite(setLevel)
+      ? c.filter((x) => !Number.isFinite(x.level) || Math.abs(x.level - setLevel) <= ENERGY_MATCH_TOL) : c;
+    if (!good.length) return { t: pickEntryByEnergy(c, setLevel), good: 0, of: c.length, why: "no line near the set level: nearest" };
+    const r = typeof rng === "function" ? rng() : 0;
+    const i = Math.min(good.length - 1, Math.floor(Math.max(0, r) * good.length));
+    return { t: good[i].t, good: good.length, of: c.length, why: `random ${i + 1} of ${good.length} good lines` };
+  }
   // Would the plan LLM call change what plays? With stems on both decks and a beat lock,
   // decideRecipe forces the recipe, the blend plan owns the exit, LAYER is rule-gated,
   // and the stem remix/breakdown ticks own moves on a stem deck. PEAK moves (fakeout,
@@ -837,6 +909,11 @@ var autopilotCore = (function () {
   // 199 s of 208): pull the start back so there is room to play.
   function entryClamp(t, endS) {
     return endS > END_ROOM_S && t > endS - END_ROOM_S ? endS - END_ROOM_S : t;
+  }
+  // Room a late entry must leave: B's whole play window (same length as ever) plus the next
+  // transition, never inside entryClamp's last END_ROOM_S. w: a WINDOWS row.
+  function entryRoomS(w) {
+    return Math.max(END_ROOM_S, w ? w.min + w.xf + 2 : 0);
   }
   // (exitPick below, then exitTiming, exitHighPush)
   // The planned exit inside the window: a blend / layer point wins, else the
@@ -959,7 +1036,8 @@ var autopilotCore = (function () {
     tempoLockableAt, recipeKind, decideRecipe, planSkipReason, WINDOWS, playWindowFor, exitBounds, exitPick, exitTiming, exitHighPush, audibleEnd, entryClamp, SILENT_FLOOR,
     breakdownSpans, exitOutOfBreakdown, exitBreakdownPush, energyAtTarget, FINISH_MAX_S, forcedExit, forcedRecipe, forcedLine, forcedBooking,
     storedMove, vetRefusal, vetStep, badPairOf, pairKey, mashupGate, mashupBars,
-    setEnergy, arcAt, windowLevel, energyRecipeChoice, pickEntryByEnergy, ARC_TARGET, SET_RECENT, SET_ARC_W, SET_RELAXED_MAX, SET_HIGH_MIN, ENERGY_MATCH_TOL };
+    setEnergy, arcAt, windowLevel, energyRecipeChoice, pickEntryByEnergy, ARC_TARGET, SET_RECENT, SET_ARC_W, SET_RELAXED_MAX, SET_HIGH_MIN, ENERGY_MATCH_TOL,
+    entryLines, entryRoomS, mainDropOf, pickEntryLine, seededRng, hashSeed, introRecipe, INTRO_RECIPES, ENTRY_QUIET_FRAC, ENTRY_DRUMS_MIN, ENTRY_OVERLAP_BARS };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   return api;
 })();
@@ -1394,7 +1472,7 @@ function createAutopilotEngine({ host, ai }) {
   const meanLvl = (a, b) => (a != null && b != null ? (a + b) / 2 : a != null ? a : b);
   // SET ENERGY facts for decideRecipe (energy-recipe-choice): the set level, the mashup's class from
   // its stem plan, each option's window level, and B's energy-picked entry for a blend.
-  function liveSetEnergy(od, sd, aId, bId, aT, bT, blend) {
+  function liveSetEnergy(od, sd, aId, bId, aT, bT, blend, opts) {
     const se = autopilotCore.setEnergy({ setPos: Math.min(history.length / 10, 1), recent: playedEnergies() });
     if (!se.band || !od || !sd) return null;
     const sm = host.mod.stemMoves, mf = od.stemsReady && sd.stemsReady ? mashupFits(od, sd) : null;
@@ -1411,17 +1489,31 @@ function createAutopilotEngine({ host, ai }) {
       }
       mashupLevel = meanLvl(deckWindowLevel(od, aId, aT, mf.M + 8), deckWindowLevel(sd, bId, mf.entry, mf.M + 8));
     }
-    // B's entry: the blend's own entry plus B's 8-bar phrase lines in its first 45 %, never where
-    // B sings inside the 16-bar overlap (the vocal rule stays the blend plan's own)
+    // B's entry (late entry, owner spec): the console's own line plus every 8-bar phrase line across
+    // the WHOLE song that is a strong downbeat, has room for B's play window, has B silent in the
+    // 16-bar overlap, and (relaxed / middle set) still has B's main drop ahead (autopilotCore.entryLines)
     const bBar = 240 / (sd.bpm || 128), aL = deckWindowLevel(od, aId, aT, 16);
-    const an = sd.analysis || {}, dur = sd.buffer ? sd.buffer.duration : 0;
-    const sings = (t) => (an.vocal_active_regions || []).some((r) => r && r[0] < t + 16 * bBar && r[1] > t);
-    const pts = [bT].concat((an.phrase_boundaries_8bar || []).filter((t) => t !== bT && t < dur * 0.45 && !sings(t)));
-    const cands = pts.filter(Number.isFinite).map((t) => ({ t, level: meanLvl(aL, deckWindowLevel(sd, bId, t, 16)) }));
-    const blendLevel = cands.length ? cands[0].level : aL;
+    const an = sd.analysis || {}, dur = sd.buffer ? autopilotCore.audibleEnd(an, sd.buffer.duration) : 0;
+    const dm = host.mod.djMind && host.mod.djMind.core;
+    const drops = dm && dm.dropLines ? dm.dropLines(an.phrase_boundaries_8bar, an.energy_times, an.energy_curve, bBar) : [];
+    const songBars = dur > 0 ? Math.floor(dur / bBar) : 0;
+    const drumsMean = sd.stemsReady ? (stemMeans(sd, 0, songBars) || {}).drums : null;
+    const drums = drumsMean > 0 ? (t) => { const m = stemMeans(sd, t, 2); return m ? m.drums / drumsMean : null; } : null;
+    const el = autopilotCore.entryLines({
+      lines: an.phrase_boundaries_8bar, include: bT, energyTimes: an.energy_times, energyCurve: an.energy_curve,
+      vocals: an.vocal_active_regions, drops, bar: bBar, end: dur, roomS: (opts && opts.roomS) || 0,
+      band: se.band, introOk: autopilotCore.introRecipe(opts && opts.recipe), drums });
+    const cands = el.lines.map((t) => ({ t, level: meanLvl(aL, deckWindowLevel(sd, bId, t, 16)) }));
+    const own = cands.find((c) => Math.abs(c.t - bT) < 1e-3);
+    const blendLevel = own ? own.level : cands.length ? cands[0].level : aL;
     return { band: se.band, setLevel: se.level, why: se.why, mashupKind,
-      levels: { mashup: mashupLevel, bass: blendLevel, blend: blendLevel }, entryCands: cands };
+      levels: { mashup: mashupLevel, bass: blendLevel, blend: blendLevel }, entryCands: cands,
+      entryRejected: el.rejected, mainDrop: el.mainDrop };
   }
+  // The late-entry pick's seed: one per session from host.random (seeded in the sim, so a sim
+  // replays it), hashed with the pair so each transition's pick is reproducible on its own.
+  const ENTRY_SEED = Math.floor(host.random.next() * 4294967296) >>> 0;
+  const entryRng = (aId, bId) => autopilotCore.seededRng(autopilotCore.hashSeed(`${ENTRY_SEED}|${aId}|${bId}`));
   // The gate that stopped the hold plan (or every merge): one console line the sim parses
   // ("merge gate: <gate>: <why>[; classic merge]") and one step for the live step log.
   let lastMergeGate = null;   // the last gate logged, for the on-demand refusal (mergeNow)
@@ -3611,7 +3703,8 @@ function createAutopilotEngine({ host, ai }) {
     let setEn = null;
     // forced covers every stored step: macro, studied combo, FOLLOW SET and liked (macro-mode source "liked")
     if (!forced) {
-      try { setEn = liveSetEnergy(odS, sdS, currentId, nextId, candidate.a_time, blend ? blend.entry : bTime, blend); } catch (e) { setEn = null; }
+      try { setEn = liveSetEnergy(odS, sdS, currentId, nextId, candidate.a_time, blend ? blend.entry : bTime, blend, {
+        recipe, roomS: autopilotCore.entryRoomS(autopilotCore.playWindowFor({ steering, mode: setMode(), score: candidate.score || 50, energy: currentEnergy })) }); } catch (e) { setEn = null; }
     }
     if (setEn) decIn.energy = setEn;
     const dec = autopilotCore.decideRecipe(decIn, host.mod.tempoRule);
@@ -3640,15 +3733,21 @@ function createAutopilotEngine({ host, ai }) {
     // B enters on the blend's line even when a key rewrite then drops the blend itself
     if (blend && !dec.dropLayer) { bTime = blend.entry; blend.clean = dec.blendClean; }
     blend = dec.blend;
-    // B's entry for a blend follows the set level (5c): phrase lines where B does not sing in the
-    // overlap only; ties keep the console's line
-    if (dec.energyPick && /bass swap|long blend/i.test(dec.recipe) && !layer && setEn.entryCands.length > 1) {
-      const t = autopilotCore.pickEntryByEnergy(setEn.entryCands, setEn.setLevel);
-      if (t != null && t !== bTime) {
-        console.info("transition energy entry:", `B enters at ${fmtTime(t)} (window near set level ${setEn.setLevel})`);
-        bTime = t;
-        if (blend) blend = Object.assign({}, blend, { entry: t });
+    // LATE ENTRY (owner spec): every live-picked incoming song enters on a strong downbeat anywhere
+    // in the song, picked uniformly (seeded) among the lines near the set level. Mashup keeps its
+    // scene entry; stored / forced / LAYER moves play as stored; PEAK / ear plans below still win.
+    if (setEn && !layer && dec.recipe !== "Mashup → Transition" && setEn.entryCands) {
+      const p = setEn.entryCands.length
+        ? autopilotCore.pickEntryLine(setEn.entryCands, setEn.setLevel, entryRng(currentId, nextId)) : null;
+      const why = p ? `${p.why} (of ${p.of} strong lines, set level ${setEn.setLevel})`
+        : `no strong line passes (${(setEn.entryRejected || []).length} rejected), console's line kept`;
+      if (p && Math.abs(p.t - bTime) > 1e-3) {
+        bTime = p.t;
+        if (blend) blend = Object.assign({}, blend, { entry: p.t });
       }
+      console.info("transition energy entry:", `B enters at ${fmtTime(bTime)}: ${why}`);
+      host.log.step("entry_line", { deck: activeDeck, decision: fmtTime(bTime), why,
+        result: { t: bTime, lines: setEn.entryCands.map((c) => c.t), main_drop: setEn.mainDrop, seed: ENTRY_SEED } });
     }
     recipe = dec.recipe; vocalShort = dec.vocalShort; vocalCut = dec.vocalCut; vocalRule = dec.vocalRule;
     if (dec.keyRewrite) console.info("transition recipe:", `${dec.keyRewrite.from} -> ${dec.keyRewrite.to} (keys clash, camelot ${keyScoreS})`);
