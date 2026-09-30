@@ -1,6 +1,6 @@
 import pytest
 
-from app.music_brain.dj_knowledge import MAX_BRIEF_CHARS, playbook_for, selection_brief
+from app.music_brain.matching.dj_knowledge import MAX_BRIEF_CHARS, playbook_for, selection_brief
 from app.ui.services.track_identity import clean_identity
 
 

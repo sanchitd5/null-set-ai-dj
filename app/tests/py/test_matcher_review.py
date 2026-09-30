@@ -6,8 +6,8 @@ from pathlib import Path
 import pytest
 
 from app.music_brain.analysis.analyzer import KeyEstimate, StructureSection, TrackAnalysis
-from app.music_brain.knowledge_parser import KnowledgeParser
-from app.music_brain.recipe_matcher import (
+from app.music_brain.matching.knowledge_parser import KnowledgeParser
+from app.music_brain.matching.recipe_matcher import (
     OVERLAP_BARS,
     VOCAL_CLASH_CUTOFF,
     RecipeMatcher,
@@ -150,6 +150,6 @@ def test_runway_keeps_the_overlap_inside_track_a(matcher):
     # 128 BPM: slow overlap = 32 bars = 60 s; an exit at 225 s would run past 240 s.
     a, b = _sectioned(), _track(bpm=129.0)
     for c in matcher.match(a, b, top_n=100):
-        from app.music_brain.recipe_matcher import overlap_style
+        from app.music_brain.matching.recipe_matcher import overlap_style
         bars = OVERLAP_BARS[overlap_style(c.recipe.name)]
         assert c.a_time + bars * 4 * 60.0 / a.bpm <= a.duration + 1e-6

@@ -18,8 +18,8 @@ from pathlib import Path
 from typing import Optional
 
 from app.music_brain.analysis.analyzer import analyze as _analyze
-from app.music_brain.knowledge_parser import KnowledgeParser
-from app.music_brain.recipe_matcher import RecipeMatcher
+from app.music_brain.matching.knowledge_parser import KnowledgeParser
+from app.music_brain.matching.recipe_matcher import RecipeMatcher
 from app.music_brain.audio.stem_service import separate as _separate
 from app.music_brain.transition_renderer import render_preview
 
@@ -337,7 +337,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         elif args.command == "hook-drop":
             payload = hook_drops(args.audio, args.title, top_n=args.top_n, render=args.render, ai=not args.no_ai)
         elif args.command == "source":
-            from app.music_brain import sources as src
+            from app.music_brain.matching import sources as src
 
             log = lambda m: print(m, file=sys.stderr, flush=True)
             if args.source_cmd == "add":

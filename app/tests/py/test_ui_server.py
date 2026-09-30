@@ -6,7 +6,7 @@ match -> preview.
 import pytest
 
 from app.music_brain.config import ROOT_DIR
-from app.music_brain.knowledge_parser import KnowledgeParser
+from app.music_brain.matching.knowledge_parser import KnowledgeParser
 from app.tests.py.testclient_compat import TestClient
 from app.ui.server import app
 

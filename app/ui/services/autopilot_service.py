@@ -599,7 +599,7 @@ def _profile_clash(cur: dict, sug: dict) -> str | None:
 def _key_clash_reason(current_key: str | None, expected_key) -> str | None:
     """A reason when expected_key is clearly outside ALLOWED KEYS (3+ hours on the
     wheel). Unknown / unparseable keys are kept: the check is soft."""
-    from app.music_brain.recipe_matcher import is_key_clash
+    from app.music_brain.matching.recipe_matcher import is_key_clash
 
     if not current_key or not expected_key:
         return None
@@ -1248,7 +1248,7 @@ def suggest_next_tracks(
     )
 
     try:
-        from app.music_brain.dj_knowledge import selection_brief
+        from app.music_brain.matching.dj_knowledge import selection_brief
         brief = selection_brief(genre or "")
     except Exception:  # grounding is best-effort
         brief = ""

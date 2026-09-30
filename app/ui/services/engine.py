@@ -141,12 +141,12 @@ class Host:
         return librosa.load(path, **kw)
 
     def stem_map(self, audio, sr, phrases):
-        from app.music_brain import techniques
+        from app.music_brain.matching import techniques
 
         return techniques.stem_map(audio, sr, phrases)
 
     def vocal_style(self, y, sr):
-        from app.music_brain import techniques
+        from app.music_brain.matching import techniques
 
         return techniques.vocal_style(y, sr)
 

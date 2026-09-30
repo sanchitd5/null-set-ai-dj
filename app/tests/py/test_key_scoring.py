@@ -4,8 +4,8 @@ low-confidence softening (review item 2)."""
 import pytest
 
 from app.music_brain.analysis.analyzer import KeyEstimate, StructureSection, TrackAnalysis
-from app.music_brain.knowledge_parser import KnowledgeParser
-from app.music_brain.recipe_matcher import (
+from app.music_brain.matching.knowledge_parser import KnowledgeParser
+from app.music_brain.matching.recipe_matcher import (
     BYPASS_KEY_SCORE,
     RecipeMatcher,
     camelot_distance_score,

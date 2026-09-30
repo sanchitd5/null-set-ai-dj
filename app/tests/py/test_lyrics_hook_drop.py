@@ -4,7 +4,7 @@ import pytest
 
 from app.music_brain.analysis import hook_drop, lyrics
 from app.music_brain import set_learner as sl
-from app.music_brain import techniques as tq
+from app.music_brain.matching import techniques as tq
 
 LRC = """[00:10.00] verse one
 [00:14.00] take me higher

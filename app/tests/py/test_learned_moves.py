@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from app.music_brain import set_learner as sl
-from app.music_brain import techniques as tq
+from app.music_brain.matching import techniques as tq
 
 NODE = shutil.which("node")
 CHECK = Path(__file__).parents[1].joinpath("js", "learned_moves_check.js")

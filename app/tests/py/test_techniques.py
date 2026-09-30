@@ -1,6 +1,6 @@
 import numpy as np
 
-from app.music_brain import techniques as tq
+from app.music_brain.matching import techniques as tq
 
 
 def _smap(rows, phrase=15.6):

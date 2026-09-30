@@ -558,7 +558,7 @@ def transitions(rows: List[dict], songs: List[SongData], set_id: str, hop_s: flo
     """Per real handover A -> B (handover_pairs): the order the stems changed owner,
     classified. A pair counts only when A is heard leaving and B arriving; one
     observation per kind per incoming slot."""
-    from app.music_brain.techniques import camelot_score
+    from app.music_brain.matching.techniques import camelot_score
 
     grid = _owner_grid(rows)
     times = sorted(grid)

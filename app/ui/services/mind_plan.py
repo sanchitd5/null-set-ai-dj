@@ -97,7 +97,7 @@ def _one_line(text: str, n: int) -> str:
 
 @lru_cache(maxsize=1)
 def _knowledge():
-    from app.music_brain.knowledge_parser import KnowledgeParser
+    from app.music_brain.matching.knowledge_parser import KnowledgeParser
     return KnowledgeParser()
 
 
@@ -115,7 +115,7 @@ def _recipe_lines(name: str, n_steps: int = 3) -> tuple:
 def move_rules() -> str:
     """Compact remix-move rules pulled from the DJ/04 + DJ/05 notes."""
     try:
-        from app.music_brain.dj_knowledge import _note, _section
+        from app.music_brain.matching.dj_knowledge import _note, _section
     except Exception:
         return ""
     out = []
@@ -307,7 +307,7 @@ def layer_possible(a: dict, b: dict, ctx: dict) -> bool:
     """May the LLM propose a LAYER transition? Key score >= 0.8, tempo-locked
     (half/double time counts) and no layer among the recent moves (restraint).
     The browser re-checks vocals, groove and the every-few-songs cap."""
-    from app.music_brain.recipe_matcher import camelot_distance_score
+    from app.music_brain.matching.recipe_matcher import camelot_distance_score
 
     ka = (a.get("key") or {}).get("camelot") or ""
     kb = (b.get("key") or {}).get("camelot") or ""

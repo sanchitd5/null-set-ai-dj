@@ -36,7 +36,7 @@ from app.music_brain.blend import (
     min_exit_floor,
     tempo_lock,
 )
-from app.music_brain.recipe_matcher import camelot_distance_score
+from app.music_brain.matching.recipe_matcher import camelot_distance_score
 
 LAYER_MIN_KEY = 0.8            # same bar as the vocal mashup: below this the chords fight
 LAYER_HOLD_BARS = (16, 32, 48, 64)

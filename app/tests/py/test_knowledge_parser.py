@@ -10,7 +10,7 @@ import re
 import pytest
 
 from app.music_brain.config import TRANSITION_COOKBOOK_DIR
-from app.music_brain.knowledge_parser import (
+from app.music_brain.matching.knowledge_parser import (
     SECTION_HEADINGS,
     KnowledgeParser,
     TransitionRecipe,

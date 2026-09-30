@@ -8,7 +8,7 @@ a tagged set's sightings must change nothing.
 """
 import copy
 
-from app.music_brain import techniques as tq
+from app.music_brain.matching import techniques as tq
 
 TAGGED = "aLWCv6MGyho"          # scene_profile.SET_SCENES: punjabi
 

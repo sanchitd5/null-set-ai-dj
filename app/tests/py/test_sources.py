@@ -4,7 +4,7 @@ import json
 import pytest
 
 from app.music_brain import set_learner as sl
-from app.music_brain import sources
+from app.music_brain.matching import sources
 
 
 def _source(root, sid, song, info="{}"):

@@ -7,7 +7,7 @@ import pytest
 from app.music_brain.analysis import hook_drop, lyrics
 from app.music_brain import set_ai
 from app.music_brain import set_learner as sl
-from app.music_brain import techniques as tq
+from app.music_brain.matching import techniques as tq
 
 LRC = "[00:10.00] verse one\n[00:14.00] take me higher\n[00:22.00] take me higher\n[00:28.00] don't let me go\n[00:31.00] outro"
 
@@ -59,7 +59,7 @@ def test_ai_rules_reach_rank(tmp_path):
 
 
 def test_sample_source_reaches_the_model(tmp_path, monkeypatch):
-    from app.music_brain import sources
+    from app.music_brain.matching import sources
     monkeypatch.setattr(lyrics, "LYRICS_DIR", tmp_path / "ly")
     monkeypatch.setattr(sources, "SOURCES_DIR", tmp_path / "src")
     d = tmp_path / "src" / "aqu4ezLQEUA"

@@ -585,8 +585,8 @@ def recipe_probe(run: dict, by_name: dict) -> dict:
     """Every cookbook recipe, scored by the real matcher on every played pair: which are viable
     (score > 0), which the matcher ranks first, and whether its a_time / b_time sit on the 8-bar grid."""
     from app.music_brain.analysis.analyzer import _from_dict
-    from app.music_brain.knowledge_parser import KnowledgeParser
-    from app.music_brain.recipe_matcher import RecipeMatcher, nearest_phrase_boundary
+    from app.music_brain.matching.knowledge_parser import KnowledgeParser
+    from app.music_brain.matching.recipe_matcher import RecipeMatcher, nearest_phrase_boundary
 
     km = RecipeMatcher(KnowledgeParser())
     names = sorted(r.name for r in km.knowledge.get_all()) if hasattr(km, "knowledge") else []

@@ -13,7 +13,7 @@ import pytest
 
 from app.music_brain.agent_bridge import analyze, list_recipes, main, match, preview
 from app.music_brain.config import ROOT_DIR
-from app.music_brain.knowledge_parser import KnowledgeParser
+from app.music_brain.matching.knowledge_parser import KnowledgeParser
 
 SAMPLE_A = ROOT_DIR / "data" / "songs" / "input.mp3"
 SAMPLE_B = ROOT_DIR / "data" / "songs" / "input2.mp3"

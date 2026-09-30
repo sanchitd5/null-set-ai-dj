@@ -315,8 +315,8 @@ def for_file(title: str, vocal: Optional[np.ndarray], sr: int, duration: Optiona
 
 
 def sample_of(title: str, cache_dir: Optional[Path] = None) -> Optional[dict]:
-    """The recording this song's vocal was sampled from (app.music_brain.sources), or None."""
-    from app.music_brain.sources import source_of
+    """The recording this song's vocal was sampled from (app.music_brain.matching.sources), or None."""
+    from app.music_brain.matching.sources import source_of
 
     return source_of(title)
 

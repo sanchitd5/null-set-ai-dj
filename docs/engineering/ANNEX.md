@@ -96,7 +96,7 @@ DJ theory lives in the Obsidian vault, not here. Entries point at notes by name,
 The biggest tempo stretch allowed for key-locked (pitch-invariant) stems. Past about 8% the
 stretch smears, so bigger gaps route through Echo Out or a Stem Bridge. Lives at
 `app/ui/static/tempo-rule.js:KEYLOCK_RANGE_PCT` and its Python twin
-`app/music_brain/techniques.py:MAX_KEYLOCK_STRETCH`. Key-locked renders come from
+`app/music_brain/matching/techniques.py:MAX_KEYLOCK_STRETCH`. Key-locked renders come from
 `app/music_brain/audio/keylock.py` (Rubber Band), cached under `data/cache/keylock/` as 24-bit FLAC
 (about 0.46x the float WAV, residual -143 dB). See [tempo rules](#tempo-rules).
 
@@ -153,13 +153,13 @@ both at its end unless `--no-macros` is passed. **UNVERIFIED:** no subcommand li
 
 ### BYPASS_KEY_SCORE
 The score (0.4) a key-agnostic recipe gets from the matcher when the pair's keys clash: a
-penalty, never neutral. `app/music_brain/recipe_matcher.py:BYPASS_KEY_SCORE`. See [key gate](#key-gate).
+penalty, never neutral. `app/music_brain/matching/recipe_matcher.py:BYPASS_KEY_SCORE`. See [key gate](#key-gate).
 
 ### Camelot
 The 24-slot key wheel (1A to 12B) used for harmonic mixing. The live table is
 `app/ui/static/dj-mind.js:camelotScore` (per `CLAUDE.md`: diagonal 0.75, minus two hours 0.6,
 two hours with the letter flipped 0.3, three or more hours 0), mirrored in Python as
-`app/music_brain/techniques.py:camelot_score`. Analysis reports each song's key in Camelot
+`app/music_brain/matching/techniques.py:camelot_score`. Analysis reports each song's key in Camelot
 form. Theory: [[Harmonic Mixing & Camelot System]].
 
 ### combo
@@ -222,7 +222,7 @@ parity-tested twin `app/music_brain/pair_atlas.py:KEY_SAFE_MIN`.
 
 ### keySafeRecipe
 Rewrites a tonal recipe to Echo Out when the key score is below KEY_SAFE_MIN.
-`app/ui/static/autopilot.js:keySafeRecipe`; Python side `app/music_brain/techniques.py:learned_pick`.
+`app/ui/static/autopilot.js:keySafeRecipe`; Python side `app/music_brain/matching/techniques.py:learned_pick`.
 
 ### knowledge/ folder
 `app/music_brain/knowledge/`, tracked in git: macros, the learner's observations and a
@@ -249,7 +249,7 @@ song files, yt-dlp leftovers and the set recording; unregistered songs stay, lis
 In-song moves copied from studied sets: vocal loops, vocal re-cuts, chops on the 1/8 grid, loop
 extends. The console runs one kind per phrase, and each kind has its own gates (store present,
 not disabled, seen in a studied set, user toggles). `app/ui/static/learned-moves.js`, reading
-`app/music_brain/techniques.py:learned_moves`. HUD checkboxes in `app/ui/static/index.html`.
+`app/music_brain/matching/techniques.py:learned_moves`. HUD checkboxes in `app/ui/static/index.html`.
 
 ### learned_techniques.json
 The learner's store: per technique kind, its observations, count, the tempo gap and key ranges
@@ -311,7 +311,7 @@ DnB counts at its full feel (`app/music_brain/analysis/energy.py`).
 
 ### pair atlas vs matcher
 The [atlas](#atlas-pair_atlas) is an offline table over the whole library, scored with the
-console's own JS rules. The matcher (`app/music_brain/recipe_matcher.py:RecipeMatcher`) scores
+console's own JS rules. The matcher (`app/music_brain/matching/recipe_matcher.py:RecipeMatcher`) scores
 one pair on request (`agent_bridge match`, `POST /api/match`) against the cookbook recipes and
 returns explained candidates. Manual points go through `RecipeMatcher.resolve_candidate`.
 
@@ -328,7 +328,7 @@ Theory: [[Phrasing & Structure]].
 
 ### recipes
 The 28 cookbook transitions (the 17-part notes in `DJ/05 - Transition Cookbook/`), parsed into
-executable recipes by `app/music_brain/knowledge_parser.py:TransitionRecipe`.
+executable recipes by `app/music_brain/matching/knowledge_parser.py:TransitionRecipe`.
 
 ### recordings
 MediaRecorder captures of a live console mix, uploaded with `POST /api/recordings` and stored in
@@ -455,7 +455,7 @@ merge and combo fit for one pair. `app/music_brain/pair_atlas.py:works_score`.
 | Name | Value | Source |
 |---|---|---|
 | KEY_SAFE_MIN | 0.6 | `app/ui/static/autopilot.js:KEY_SAFE_MIN` |
-| BYPASS_KEY_SCORE | 0.4 | `app/music_brain/recipe_matcher.py:BYPASS_KEY_SCORE` |
+| BYPASS_KEY_SCORE | 0.4 | `app/music_brain/matching/recipe_matcher.py:BYPASS_KEY_SCORE` |
 | Key-lock stretch cap | 8% | `app/ui/static/tempo-rule.js:KEYLOCK_RANGE_PCT` |
 | Pitch-lock tempo gap | 6% | `app/ui/services/autopilot_service.py:TEMPO_LOCK_PCT` |
 | Max tempo change per bar | 0.25% | `app/ui/static/tempo-rule.js:MAX_TEMPO_PCT_PER_BAR` |

@@ -29,7 +29,7 @@ from app.music_brain.audio.dsp_rack import (
     tempo_synced_delay,
     three_band_eq,
 )
-from app.music_brain.recipe_matcher import TransitionCandidate
+from app.music_brain.matching.recipe_matcher import TransitionCandidate
 
 DEFAULT_PREVIEW_SECONDS = 20.0
 

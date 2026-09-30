@@ -3,7 +3,7 @@ from pathlib import Path
 import numpy as np
 
 from app.music_brain import set_learner as sl
-from app.music_brain import techniques as tq
+from app.music_brain.matching import techniques as tq
 
 SR = sl.SR
 

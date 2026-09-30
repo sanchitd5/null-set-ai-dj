@@ -34,8 +34,8 @@ def _key_of(a: dict) -> str:
 def build_run(js: dict, world, meta: dict) -> dict:
     """js: the harness output; world: the sim world (its events, steps, pool entries)."""
     from app.music_brain.analysis import energy as en
-    from app.music_brain import techniques as tq
-    from app.music_brain.recipe_matcher import camelot_distance_score
+    from app.music_brain.matching import techniques as tq
+    from app.music_brain.matching.recipe_matcher import camelot_distance_score
 
     ev = [e for e in js["session_events"] if e["kind"] == "track" and e.get("data")]
     starts = [e for e in ev if e["data"].get("event") == "transition_start"]

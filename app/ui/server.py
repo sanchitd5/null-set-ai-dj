@@ -35,8 +35,8 @@ from app.music_brain.config import (
     SAMPLES_CACHE_DIR,
     SET_LOGS_CACHE_DIR,
 )
-from app.music_brain.knowledge_parser import KnowledgeParser
-from app.music_brain.recipe_matcher import RecipeMatcher
+from app.music_brain.matching.knowledge_parser import KnowledgeParser
+from app.music_brain.matching.recipe_matcher import RecipeMatcher
 from app.music_brain.transition_renderer import render_full_mix, render_preview
 from app.music_brain.set_log import export_set_log_markdown, validate_set_log
 from app.ui.services import engine as _engine
@@ -776,7 +776,7 @@ def get_vocal_entry(track_id: str):
     opening hook), whether it's rap, and how long it keeps going (bars)."""
     import librosa
 
-    from app.music_brain import techniques as tq
+    from app.music_brain.matching import techniques as tq
 
     _track_path(track_id)
     if track_id in _vocal_entry_cache:
@@ -850,7 +850,7 @@ def get_library_lockable(bpm: float, key: str = "", exclude: str = "", limit: in
     whose already-measured level sits within energy.MAX_STEP go first: in
     102327 every candidate died on "energy drop 8 -> 5". Nothing is measured
     here; unmeasured songs rank in between."""
-    from app.music_brain import techniques as tq
+    from app.music_brain.matching import techniques as tq
     from app.music_brain.analysis.genre import MAX_ERA_GAP, era_gap, genre_near
     from app.ui.services.download_service import _is_live, _is_mix
     from app.ui.services.track_identity import clean_identity
@@ -978,7 +978,7 @@ def _pair_features(a_id: str, b_id: str, keylock: bool = False):
     import librosa
     import numpy as np
 
-    from app.music_brain import techniques as tq
+    from app.music_brain.matching import techniques as tq
 
     ta, tb = analyze_track(_track_path(a_id)), analyze_track(_track_path(b_id))
     sa, sb = _cached_stems4(a_id), _cached_stems4(b_id)
@@ -1258,7 +1258,7 @@ def _preplan_fresh(now: Optional[float]):
 
 def _run_preplan(req: PreplanRequest, sa: dict, sb: dict) -> dict:
     from app.music_brain import preplan
-    from app.music_brain import techniques as tq
+    from app.music_brain.matching import techniques as tq
     from app.ui.services import session_log
 
     ta, tb = analyze_track(_track_path(req.a_id)), analyze_track(_track_path(req.b_id))
@@ -1379,7 +1379,7 @@ def get_learned_pick(a: str, b: str, keylock: bool = False, profile: str = ""):
     ("full" | "handover"; anything else = none, today's pick). Under "full" the pick
     also reads the Punjabi-tagged sets (techniques.learned_pick)."""
     from app.music_brain.analysis import scene_profile as sp
-    from app.music_brain import techniques as tq
+    from app.music_brain.matching import techniques as tq
 
     lvl = profile if profile in (sp.LEVEL_FULL, sp.LEVEL_HANDOVER) else None
     f = _pair_features_cached(a, b, keylock)
@@ -1396,7 +1396,7 @@ def get_learned_pick(a: str, b: str, keylock: bool = False, profile: str = ""):
 def get_learned_moves():
     """The in-song learned moves (vocal loop / re-cut / chops, loop extend): per kind whether the
     console may play it (sighted, not disabled), the user's rules and the sightings' parameters."""
-    from app.music_brain import techniques as tq
+    from app.music_brain.matching import techniques as tq
 
     return {"moves": tq.learned_moves()}
 
@@ -1422,8 +1422,8 @@ def get_learn_progress_one(set_id: str):
 
 @app.get("/api/techniques")
 def get_techniques(a: str, b: str, keylock: bool = False):
-    """Which learned techniques fit A -> B, each with its reasons (app.music_brain.techniques)."""
-    from app.music_brain import techniques as tq
+    """Which learned techniques fit A -> B, each with its reasons (app.music_brain.matching.techniques)."""
+    from app.music_brain.matching import techniques as tq
 
     f = _pair_features(a, b, keylock)
     return {"features": {"tempo_gap": round(f.tempo_gap, 4), "key_score": f.key, "b_style": _voiced_cache.get((b, "style")), "b_rap_at": f.b_rap_at,
@@ -1447,7 +1447,7 @@ def post_riff_plan(req: RiffRequest):
 
     from app.music_brain.audio import keylock
     from app.music_brain.audio import stem_service
-    from app.music_brain import techniques as tq
+    from app.music_brain.matching import techniques as tq
     from app.music_brain.analysis import waveform_params as wp
 
     if not keylock.available():

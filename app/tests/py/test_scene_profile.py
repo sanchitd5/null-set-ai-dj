@@ -10,8 +10,8 @@ import pytest
 
 from app.music_brain.analysis import genre
 from app.music_brain.analysis import scene_profile as sp
-from app.music_brain.knowledge_parser import KnowledgeParser
-from app.music_brain.recipe_matcher import BYPASS_KEY_SCORE, RecipeMatcher
+from app.music_brain.matching.knowledge_parser import KnowledgeParser
+from app.music_brain.matching.recipe_matcher import BYPASS_KEY_SCORE, RecipeMatcher
 from app.tests.py import profile_off_vectors as vectors
 
 HERE = Path(__file__).parents[1]  # app/tests

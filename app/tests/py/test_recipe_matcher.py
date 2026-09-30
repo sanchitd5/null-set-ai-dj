@@ -3,8 +3,8 @@
 import pytest
 
 from app.music_brain.analysis.analyzer import KeyEstimate, StructureSection, TrackAnalysis
-from app.music_brain.knowledge_parser import KnowledgeParser
-from app.music_brain.recipe_matcher import (
+from app.music_brain.matching.knowledge_parser import KnowledgeParser
+from app.music_brain.matching.recipe_matcher import (
     RecipeMatcher,
     bpm_compatibility,
     camelot_distance_score,
@@ -194,7 +194,7 @@ def test_no_cuts_drops_only_the_cut_recipes(matcher: RecipeMatcher, bpm_b, key_b
 
 
 def test_is_cut_recipe():
-    from app.music_brain.recipe_matcher import is_cut_recipe
+    from app.music_brain.matching.recipe_matcher import is_cut_recipe
     assert is_cut_recipe("Hard Cut") and is_cut_recipe("Quick Cut") and is_cut_recipe("slam cut")
     assert not any(is_cut_recipe(n) for n in ("Bass Swap", "Echo Out", "Stems Transition", "Double Drop", "", None))
 
@@ -303,7 +303,7 @@ def test_resolve_candidate_manual_times_without_recipe_uses_top_recipe(matcher: 
 # --- Overlap style (set study gfF8jzBVWvM, item 3) -----------------------
 
 def test_overlap_style_per_recipe():
-    from app.music_brain.recipe_matcher import PRE_CLEAR_BARS, overlap_style
+    from app.music_brain.matching.recipe_matcher import PRE_CLEAR_BARS, overlap_style
 
     assert overlap_style("Drop Swap") == "instant"
     assert overlap_style("Breakdown Transition") == "slow"
@@ -312,7 +312,7 @@ def test_overlap_style_per_recipe():
 
 
 def test_overlap_style_names_exist_in_cookbook():
-    from app.music_brain.recipe_matcher import _INSTANT_RECIPES, _SLOW_RECIPES
+    from app.music_brain.matching.recipe_matcher import _INSTANT_RECIPES, _SLOW_RECIPES
 
     names = {r.name for r in KnowledgeParser().get_all()}
     assert (_INSTANT_RECIPES | _SLOW_RECIPES) <= names
