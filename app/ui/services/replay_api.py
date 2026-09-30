@@ -80,7 +80,8 @@ def post_replay(body: ReplayBody):
                    "replay": rp.build(body.session, body.step, body.to, REPLAY_CACHE_DIR)}
             tr = history.timeline(body.session, REPLAY_CACHE_DIR)["transitions"][body.step - 1]
             out["state"] = history.state_at(body.session, tr["t"], REPLAY_CACHE_DIR)
-            out["load"] = rp.load_for(out["replay"], out["state"])
+            out["load"] = rp.load_for(out["replay"], out["state"], rp.PRE_ROLL_S)
+            out["restarted_transition"] = True
         else:
             out = rp.travel(body.session, body.at, body.step, REPLAY_CACHE_DIR)
         if body.save and out.get("replay"):
