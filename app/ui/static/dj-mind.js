@@ -704,17 +704,27 @@
   }
 
   // The loop start a deck on the master can use without jumping back: `start`, or the
-  // first loop line (start + k loops) at or ahead of the playhead.
-  function nextLoopStart(start, pos, len, onAir) {
+  // first loop line (start + k loops) at or ahead of the playhead. Never a loop that runs past the
+  // track's end (`dur`): the last whole loop that fits instead, i.e. the wrap back to it on its line.
+  // Session 2026-09-30_225021: the HOLD LOOP engaged on its jump-out line (322.8 s), was pushed a loop
+  // ahead to 322.8-338.3 s of a 329.6 s song, the deck clamped it to the tail and the owner heard the
+  // track play on instead of 8 bars.
+  function nextLoopStart(start, pos, len, onAir, dur) {
     if (!onAir || !(len > 0) || start >= pos - 0.08) return start;
-    return start + Math.ceil((pos - 0.08 - start) / len) * len;
+    const s = start + Math.ceil((pos - 0.08 - start) / len) * len;
+    if (!(Number.isFinite(dur) && s + len > dur + 0.01)) return s;
+    return start + Math.max(0, Math.floor((dur + 0.01 - len - start) / len)) * len;
+  }
+  // The playhead wrapped back to the loop's start (one more pass of a running loop).
+  function loopWrapped(prev, pos, start, len) {
+    return Number.isFinite(prev) && Number.isFinite(pos) && len > 0 && pos < prev - len / 2 && Math.abs(pos - start) < len / 2;
   }
   // How long the client waits for the LLM plan. Measured plans take 4-13 s, so a
   // 3 s floor threw 13 of 19 away after the model time was already spent.
   const PLAN_MIN_WAIT_MS = 12000, PLAN_MAX_WAIT_MS = 65000;   // server LLM timeout is 60 s
   const planWaitMs = (deadlineS) => Math.max(PLAN_MIN_WAIT_MS,
     Math.min(PLAN_MAX_WAIT_MS, (Number.isFinite(deadlineS) ? deadlineS : Infinity) * 1000));
-  const core = { planWaitMs, PLAN_MIN_WAIT_MS, nextLoopStart, decide, mergeSections, sectionAt, phraseAt, vocalShare, subdropBars, energyNote,
+  const core = { planWaitMs, PLAN_MIN_WAIT_MS, nextLoopStart, loopWrapped, decide, mergeSections, sectionAt, phraseAt, vocalShare, subdropBars, energyNote,
                  hookKey, motifHook, MOTIF_MAX_PLAYS, MOTIF_GAP_SONGS,
                  phraseBounds, phraseLabel, isPreDrop, remixBlock, aiVeto, needsHoldLoop, holdLoopAnchor, holdLoopSpan, holdLoopCandidates, pickHoldLoop,
                  PRECLEAR_DB, LOW_KILL, REMIX_MOVES,
@@ -821,7 +831,7 @@
   // when playback gets there. Returns the loop start used.
   function loopAt(d, id, start, beats) {
     const len = beats * 60 / (d.bpm || 128);
-    const s = nextLoopStart(start, d._currentPosition(), len, !!(d.playing && d._onAir && d._onAir()));
+    const s = nextLoopStart(start, d._currentPosition(), len, !!(d.playing && d._onAir && d._onAir()), d.buffer ? d.buffer.duration : NaN);
     const ana = d.analysis;
     const engage = () => {
       if (deckId !== id || d.analysis !== ana || !d.playing) return;   // song changed meanwhile
@@ -1096,7 +1106,7 @@
     }
     const go = () => {
       if (deckId !== id || plan) { holdLoop = null; return; }
-      loopAt(d, id, span.start, span.bars * 4);
+      holdLoop.start = loopAt(d, id, span.start, span.bars * 4);   // the start actually used
       holdLoop.looping = true;
       holdLoop.since = nowS();
       if (host.mod.learnedMoves) host.mod.learnedMoves.noteFiller(d, span);   // logged as the learned loop_extend when that kind is on
@@ -1363,6 +1373,13 @@
       layerRun = null;
     }
     holdLoopTick(d, pos);
+    if (holdLoop && holdLoop.looping) {            // one move event per pass (owner: each loop extend logged)
+      if (loopWrapped(holdLoop.lastPos, pos, holdLoop.start, holdLoop.bars * barSecsOf(d))) {
+        holdLoop.passes = (holdLoop.passes || 1) + 1;
+        say({ action: "holdloop", rule: "safety", why: `LOOP EXTEND: ${holdLoop.bars} bars again (pass ${holdLoop.passes}), waiting for next song` }, pos);
+      }
+      holdLoop.lastPos = pos;
+    }
     if (holdLoop || nowS() < busyUntil) return;   // a loop is running: no new phrase moves
     const bar = barSecsOf(d);
     // checked every tick, not once per phrase: the cut sits on a lyric line, not a phrase line
