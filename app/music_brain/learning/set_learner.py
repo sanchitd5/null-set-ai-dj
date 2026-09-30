@@ -921,7 +921,12 @@ def review_learned(set_id: Optional[str] = None, backend: Optional[str] = None, 
             out["sets"].append({"set_id": sid, "observations": len(obs), "calls": len(reqs),
                                 "prompt_chars": sum(len(set_ai.REVIEW_SYSTEM) + len(r) for r in reqs)})
             continue
-        res = set_ai.review(obs, log=log, backend=b)
+        try:
+            res = set_ai.review(obs, log=log, backend=b)
+        except Exception as exc:  # noqa: BLE001 -- one set's failure (CLI error, limit) must not stop the others
+            out["sets"].append({"set_id": sid, "observations": len(obs), "merged": False,
+                                "error": f"{type(exc).__name__}: {exc}"[:300]})
+            continue
         row = {"set_id": sid, "observations": len(obs), "kept": len(res["kept"]),
                "rejected": len(res["rejected"]), "ai": res["ai"]}
         if res["ai"] != "reviewed":            # nothing answered: the store stays as it is

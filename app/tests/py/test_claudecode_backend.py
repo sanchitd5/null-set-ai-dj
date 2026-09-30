@@ -256,3 +256,62 @@ def test_label_dry_run_no_calls(tmp_path, monkeypatch):
     out = gl.label_library(backend="claudecode", dry_run=True, cache_dir=tmp_path)
     assert out["to_label"] == 45 and out["calls"] == 2 and out["prompt_chars"] > 0
     assert not gl.path(tmp_path).exists()
+
+
+# ------------------------------------------------------------------ content filter
+def _sung_obs(n=3):
+    return [sl.Observation("vocal_chop", "setA", float(10 * i), "A", "", detail={"words": ["la la", "oh oh"]})
+            for i in range(n)]
+
+
+def test_content_filter_block_retries_without_lyrics(monkeypatch):
+    monkeypatch.setattr(cc, "find_cli", lambda: "claude")
+    sent = []
+
+    def make_chat(schema, **kw):
+        def chat(system, user):
+            sent.append(user)
+            if '"words": [' in user:
+                raise cc.ClaudeCodeError("`claude -p` failed: API Error: Output blocked by content filtering policy")
+            return json.dumps(_review_answer(user))
+        return chat
+    monkeypatch.setattr(cc, "make_chat", make_chat)
+    res = set_ai.review(_sung_obs(), backend="claudecode")
+    assert len(sent) == 2 and '"words": [' in sent[0] and '"words": [' not in sent[1]
+    assert res["ai"] == "reviewed" and len(res["kept"]) == 2 and len(res["rejected"]) == 1
+
+
+def test_content_filter_still_blocked_leaves_batch_unreviewed(monkeypatch):
+    monkeypatch.setattr(cc, "find_cli", lambda: "claude")
+
+    def make_chat(schema, **kw):
+        def chat(system, user):
+            raise cc.ClaudeCodeError("API Error: Output blocked by content filtering policy")
+        return chat
+    monkeypatch.setattr(cc, "make_chat", make_chat)
+    res = set_ai.review(_sung_obs(), backend="claudecode")
+    # nothing answered: every measurement stands, nothing rejected
+    assert len(res["kept"]) == 3 and not res["rejected"]
+
+
+def test_review_prompt_never_asks_to_quote_lyrics():
+    assert "never quote" in set_ai.REVIEW_SYSTEM
+
+
+def test_learned_review_one_set_failing_does_not_stop_the_others(monkeypatch, tmp_path):
+    p = tmp_path / "learned.json"
+    sl.merge(_obs(), p, set_ids=("setA",))
+    sl.merge([sl.Observation("hard_cut", "setB", 5.0, "C", "D")], p, set_ids=("setB",))
+    monkeypatch.setattr(cc, "find_cli", lambda: "claude")
+
+    def make_chat(schema, **kw):
+        def chat(system, user):
+            if '"a": "A"' in user:
+                raise cc.ClaudeCodeError("`claude` is not logged in")
+            return json.dumps(_review_answer(user))
+        return chat
+    monkeypatch.setattr(cc, "make_chat", make_chat)
+    out = sl.review_learned(None, backend="claudecode", path=p, sidecar_dir=tmp_path / "side")
+    rows = {r["set_id"]: r for r in out["sets"]}
+    assert "not logged in" in rows["setA"]["error"] and rows["setA"]["merged"] is False
+    assert rows["setB"]["merged"] is True

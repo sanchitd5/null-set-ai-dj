@@ -165,14 +165,15 @@ claimed, a jump between two copies of the same chorus, stem levels that
 contradict the move, a duplicate of another item.
 For kept items write the rule a DJ could reuse, ONE concrete sentence built
 from this item's evidence: name the stems and their order, the bars or seconds,
-the words, and what the two records were doing. Not a definition of the move
+which vocal line (by its position, e.g. "the second hook line"; never quote the
+lyrics), and what the two records were doing. Not a definition of the move
 ("fade in stems one by one" says nothing). Answer JSON:
 {"items": [{"id": <int>, "keep": true|false, "rule": "<sentence or empty>", "why": "<short>"}]}"""
 
 
-def _brief(i: int, o) -> dict:
+def _brief(i: int, o, lyrics: bool = True) -> dict:
     d = o.detail
-    words = d.get("words")
+    words = d.get("words") if lyrics else None
     if isinstance(words, list):
         words = [w for w in words if w][:6]
     src = d.get("source_lines") or d.get("fragments") or ([d["src_span"]] if d.get("src_span") else None)
@@ -200,10 +201,15 @@ def backend_chat(schema: dict, backend: Optional[str] = None):
     return cc.make_chat(schema), f"claudecode:{cc.model()}", CLAUDECODE_REVIEW_BATCH
 
 
-def review_requests(observations: list, batch: int = REVIEW_BATCH) -> List[str]:
-    """The user prompts review() would send, one per model call (for --dry-run)."""
-    return [json.dumps({"items": [_brief(i, observations[i]) for i in range(s, min(s + batch, len(observations)))]},
+def review_requests(observations: list, batch: int = REVIEW_BATCH, lyrics: bool = True) -> List[str]:
+    """The user prompts review() would send, one per model call (for --dry-run).
+    lyrics=False drops the sung words (the retry after a content-filter block)."""
+    return [json.dumps({"items": [_brief(i, observations[i], lyrics) for i in range(s, min(s + batch, len(observations)))]},
                        ensure_ascii=False) for s in range(0, len(observations), batch)]
+
+
+def _content_blocked(exc: Exception) -> bool:
+    return "content filtering" in str(exc).lower()
 
 
 def review(observations: list, chat: Optional[Chat] = None, log: Callable[[str], None] = lambda m: None,
@@ -219,9 +225,27 @@ def review(observations: list, chat: Optional[Chat] = None, log: Callable[[str],
         chat, tag, n = backend_chat(REVIEW_SCHEMA, backend)
         batch = n or REVIEW_BATCH
     who = "Claude Code" if tag else "local model"
+    from app.music_brain.llm.claudecode import ClaudeCodeError
+
     verdict: Dict[int, dict] = {}
-    for s, user in zip(range(0, len(observations), batch), review_requests(observations, batch)):
-        data = _ask(REVIEW_SYSTEM, user, chat, "review", tag=tag)
+    plain = review_requests(observations, batch, lyrics=False)
+    for k, (s, user) in enumerate(zip(range(0, len(observations), batch), review_requests(observations, batch))):
+        try:
+            data = _ask(REVIEW_SYSTEM, user, chat, "review", tag=tag)
+        except ClaudeCodeError as exc:
+            # Claude's output filter can block a batch that carries sung lines (it may quote them
+            # back): retry once without the words; still blocked -> the batch stays unreviewed and
+            # its measurements stand, the other batches go on
+            if not _content_blocked(exc):
+                raise
+            log(f"batch {k + 1} blocked by content filtering: retrying without lyric lines")
+            try:
+                data = _ask(REVIEW_SYSTEM, plain[k], chat, "review", tag=tag)
+            except ClaudeCodeError as exc2:
+                if not _content_blocked(exc2):
+                    raise
+                log(f"batch {k + 1} still blocked: left unreviewed (measurements stand)")
+                continue
         if data is None:
             if not verdict:
                 return {"kept": list(observations), "rejected": [], "ai": f"skipped (no {who} answering)"}
