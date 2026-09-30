@@ -968,6 +968,13 @@ var autopilotCore = (function () {
   function entryRoomS(w) {
     return Math.max(END_ROOM_S, w ? w.min + w.xf + 2 : 0);
   }
+  // When an on-demand move (PLAY STEP, MERGE -> HOLD) runs executeTransition: lookaheadMs before its
+  // line t0 (audio s), never at the press, so nothing of the move (the Echo Out's deck echo, a dip, a
+  // stem blend) sounds on A before the transition window. A line already due: now.
+  function fireDelayMs(t0, now, lookaheadMs) {
+    if (!Number.isFinite(t0) || !Number.isFinite(now)) return 0;
+    return Math.max(0, (t0 - now) * 1000 - (lookaheadMs || 0));
+  }
   // (exitPick below, then exitTiming, exitHighPush)
   // The planned exit inside the window: a blend / layer point wins, else the
   // matcher's point clamped into the window, never before the song's first drop.
@@ -1090,7 +1097,7 @@ var autopilotCore = (function () {
     breakdownSpans, exitOutOfBreakdown, exitBreakdownPush, energyAtTarget, FINISH_MAX_S, forcedExit, forcedRecipe, forcedLine, forcedBooking,
     storedMove, vetRefusal, vetStep, badPairOf, pairKey, mashupGate, mashupBars,
     setEnergy, arcAt, windowLevel, energyRecipeChoice, pickEntryByEnergy, ARC_TARGET, SET_RECENT, SET_ARC_W, SET_RELAXED_MAX, SET_HIGH_MIN, ENERGY_MATCH_TOL,
-    entryLines, entryRoomS, mainDropOf, pickEntryLine, seededRng, hashSeed, introRecipe, INTRO_RECIPES, ENTRY_QUIET_FRAC, ENTRY_DRUMS_MIN, ENTRY_OVERLAP_BARS,
+    entryLines, entryRoomS, fireDelayMs, mainDropOf, pickEntryLine, seededRng, hashSeed, introRecipe, INTRO_RECIPES, ENTRY_QUIET_FRAC, ENTRY_DRUMS_MIN, ENTRY_OVERLAP_BARS,
     lowBandBars, lowLevelAt, ENTRY_LOW_MIN, ENTRY_HANDOVER_BARS, LOW_BAND_HZ };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   return api;
@@ -4706,13 +4713,21 @@ function createAutopilotEngine({ host, ai }) {
       const g = lastMergeGate;
       return { ok: false, why: g ? `${g.gate}: ${g.why}` : "merge: no plan for this pair" };
     }
-    const totalMs = executeTransition("Stem Merge", o.out, o.inn, 16, o.t0);
-    const ran = executedMove || "Stem Merge";
-    later(Math.max(0, (o.t0 - audioCtx.currentTime) * 1000) + totalMs + 300, () => { if (!active) od.stopNow(); });
     const hp = mp.phases;
-    return { ok: true, ran, why: ran === "Stem Merge"
-      ? `${mp.pick ? mp.pick.label + " · " : ""}${mp.M} bars${hp ? `, hold ${hp.hold.bars} bars` : ", fixed length"}`
-      : `merge refused at fire time, ran ${ran}` };
+    const res = { ok: true, ran: "Stem Merge", why: `${mp.pick ? mp.pick.label + " · " : ""}${mp.M} bars${hp ? `, hold ${hp.hold.bars} bars` : ", fixed length"}` };
+    fireOnLine(o.t0, () => {
+      const totalMs = executeTransition("Stem Merge", o.out, o.inn, 16, o.t0);
+      res.ran = executedMove || "Stem Merge";
+      if (res.ran !== "Stem Merge") res.why = `merge refused at fire time, ran ${res.ran}`;
+      later(Math.max(0, (o.t0 - audioCtx.currentTime) * 1000) + totalMs + 300, () => { if (!active) od.stopNow(); });
+    });
+    return res;
+  }
+  // An on-demand move (mergeNow / performNow) runs executeTransition XF_LOOKAHEAD_MS before its line
+  // t0, like a set booking (scheduleTransition), never at the press: the move's immediate actions (the
+  // Echo Out's deck echo, stem blends, dips) would otherwise sound on A from the press to the line.
+  function fireOnLine(t0, fn) {
+    later(autopilotCore.fireDelayMs(t0, audioCtx.currentTime, XF_LOOKAHEAD_MS), fn);
   }
   // PLAY STEP with the set not running (macro-mode.js): the stored move now, same gates as a
   // booking. o: {out, inn, aId, bId, forced, aT (the stored exit, already on a line), t0}
@@ -4739,10 +4754,14 @@ function createAutopilotEngine({ host, ai }) {
     // preview only (stem-preview --set-energy): the set-energy choice refused the mashup; stored steps never carry it
     energyNoMashup = !!f.energy_no_mashup && fb.recipe !== "Mashup → Transition";
     if (fb.recipe !== "Stem Merge") idk.play(autopilotCore.entryClamp(fb.bT || 0, autopilotCore.audibleEnd(idk.analysis, idk.buffer.duration)), false, o.t0);
-    const totalMs = executeTransition(fb.recipe, o.out, o.inn, 16, o.t0);
-    later(Math.max(0, (o.t0 - audioCtx.currentTime) * 1000) + totalMs + 300, () => { if (!active) od.stopNow(); });
-    const ran = executedMove || fb.recipe;
-    return { ok: true, ran, refused: fb.refused, line: ran === fb.recipe ? fb.line : `${fb.line} [ran ${ran} at fire time]` };
+    const res = { ok: true, ran: fb.recipe, refused: fb.refused, line: fb.line };
+    fireOnLine(o.t0, () => {
+      const totalMs = executeTransition(fb.recipe, o.out, o.inn, 16, o.t0);
+      later(Math.max(0, (o.t0 - audioCtx.currentTime) * 1000) + totalMs + 300, () => { if (!active) od.stopNow(); });
+      res.ran = executedMove || fb.recipe;
+      if (res.ran !== fb.recipe) { res.line = `${fb.line} [ran ${res.ran} at fire time]`; console.info(res.line); }
+    });
+    return res;
   }
   return { core: autopilotCore, mergeNow, performNow };
 }
