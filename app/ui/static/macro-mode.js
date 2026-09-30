@@ -16,7 +16,7 @@
 //           macro deterministically. The user plays it step by step from the MACRO panel.
 // Every choice still goes through the autopilot's own gates (evaluateCandidate,
 // decideRecipe, planHold ...): a stored plan is a default, never a bypass.
-// Pure core (node-testable: app/tests/macro_mode_check.js) + a runtime mounted on the Host port.
+// Pure core (node-testable: app/tests/js/macro_mode_check.js) + a runtime mounted on the Host port.
 (function (root) {
   "use strict";
 

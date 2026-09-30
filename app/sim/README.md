@@ -105,7 +105,7 @@ window/document/AudioContext/Date/timer/fetch: `autopilot`, `dj-mind`, `stem-mov
 
 * Live console host: `host-browser.js` (`createWindowHost(window, ...)`).
 * Sim host: `js/host-sim.js` (virtual clock, recording graph, fetch to the real API).
-* Contract: `app/tests/host_contract_check.js`.
+* Contract: `app/tests/js/host_contract_check.js`.
 
 Brain (Python): `app/ui/engine.py` is `Engine(host, ai_backend, config)`, plain constructor
 injection. `Host` (production) is the world: YouTube search / verify / views / download, stem queue,
@@ -141,7 +141,7 @@ learners (`set_learner`, `sources`, `agent_bridge`) call `stem_service` directly
 Seeded `Math.random`, virtual `Date`/`performance`/timers/rAF, serialised fetch with modelled
 latency, inline job executors, counter job ids, the virtual clock as `Host.now`, wall-clock
 `elapsed` fields dropped from the event log, verify-pool misses sorted. Same fixture twice gives
-byte-identical outputs: every file under the run dir (`app/tests/test_sim_replay.py`, marked slow).
+byte-identical outputs: every file under the run dir (`app/tests/py/test_sim_replay.py`, marked slow).
 
 Replay is keyed by subject, not prompt text (`World._replayed`): a suggestion by the song playing,
 a plan by its tempo / key pair, an ear call by its loop. A reworded prompt gets the reply recorded

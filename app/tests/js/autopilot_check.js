@@ -1,0 +1,265 @@
+// Node check for the pure autopilot core (app/ui/static/autopilot.js).
+// Run by test_autopilot_core.py; exits non-zero on the first failed assertion.
+const assert = require("assert");
+const { stemBlendBars, stemBlendFader, phraseWaitS, introBars, vocalRecipe, homePlan, maskedGlideBars, maskedDropAt,
+  LADDER_STEP_PCT } = require("../../ui/static/autopilot.js");
+
+const bar128 = 240 / 128;   // 1.875 s
+const bar90 = 240 / 90;     // 2.667 s
+
+// mashup kinds: >= 30 s, 16-bar multiples (swap at L/2 on an 8-bar line)
+for (const kind of ["blend", "filter", "loop"]) {
+  const b = stemBlendBars(kind, bar128, 20, 1);
+  assert.strictEqual(b, 16, kind);
+  assert.ok(b * bar128 >= 30);
+  assert.strictEqual((b / 2) % 8, 0);
+}
+assert.strictEqual(stemBlendBars("blend", bar128, 100, 1), 32);          // room -> 32
+assert.strictEqual(stemBlendBars("blend", 30 / 17, 100, 1), 32);         // 30 s = 17 bars -> up to 32
+assert.ok(stemBlendBars("blend", bar90, 20, 1) * bar90 >= 30);
+// capped by A's remaining room, never past it
+assert.strictEqual(stemBlendBars("blend", bar128, 12, 1), 8);
+assert.strictEqual(stemBlendBars("blend", 30 / 17, 30, 1), 16);          // want 32, room 29 -> 16
+// scale applied once (old code applied it twice: 16 * 0.5 bars of half bars)
+assert.strictEqual(stemBlendBars("blend", bar128, 100, 0.5), 16);
+assert.strictEqual(stemBlendBars("blend", bar128, 20, 0.5), 8);
+// bass / double stay short
+assert.strictEqual(stemBlendBars("bass", bar128, 100, 1), 16);
+assert.strictEqual(stemBlendBars("double", bar128, 100, 1), 8);
+assert.strictEqual(stemBlendBars("double", bar128, 100, 0.5), 4);
+
+// fader: parks at the centre in 1 bar (B's one intro stem does the
+// introducing), crosses only after the intro phrase, over the last 8 bars
+let f = stemBlendFader("blend", 32, 1);
+assert.deepStrictEqual(f, [{ bar: 0, from: -1, to: 0, bars: 1 }, { bar: 24, from: 0, to: 1, bars: 8 }]);
+f = stemBlendFader("blend", 16, -1);
+assert.deepStrictEqual(f, [{ bar: 0, from: 1, to: 0, bars: 1 }, { bar: 8, from: 0, to: -1, bars: 8 }]);
+f = stemBlendFader("bass", 16, 1);
+assert.strictEqual(f[1].bar + f[1].bars, 16);
+f = stemBlendFader("double", 8, 1);
+assert.deepStrictEqual(f, [{ bar: 0, from: -1, to: 0, bars: 1 }, { bar: 6, from: 0, to: 1, bars: 2 }]);
+// every move is continuous with the previous one (no jumps); the crossing
+// never starts before the intro phrase (8 bars, 4 when short)
+for (const [k, n] of [["blend", 32], ["blend", 16], ["bass", 16], ["blend", 8], ["bass", 8], ["filter", 4]]) {
+  const m = stemBlendFader(k, n, 1);
+  for (let i = 1; i < m.length; i++) assert.strictEqual(m[i].from, m[i - 1].to);
+  assert.ok(m[m.length - 1].bar + m[m.length - 1].bars <= n);
+  assert.ok(m[1].bar >= introBars(n), `${k} ${n}: crosses at ${m[1].bar}`);
+  assert.strictEqual(m[0].to, 0);
+}
+assert.strictEqual(introBars(32), 8); assert.strictEqual(introBars(16), 8); assert.strictEqual(introBars(8), 4);
+
+// vocal-driven recipe: stems on either side never cut (Open Eye Signal -> Delilah)
+assert.strictEqual(vocalRecipe({ vIn: 3, oneSong: false, aStems: false, bStems: true }).recipe, "Bass Swap");
+assert.strictEqual(vocalRecipe({ vIn: 3, oneSong: false, aStems: true, bStems: false }).recipe, "Bass Swap");
+assert.strictEqual(vocalRecipe({ vIn: 3, oneSong: false, aStems: false, bStems: false }).recipe, "Bass Swap");   // never a hard cut
+assert.strictEqual(vocalRecipe({ vIn: 3, oneSong: false, aStems: false, bStems: false }).short, true);
+assert.strictEqual(vocalRecipe({ vIn: 6, oneSong: false, aStems: false, bStems: true }).short, false, "B's voice is held: no shortening");
+assert.strictEqual(vocalRecipe({ vIn: 6, oneSong: false, aStems: false, bStems: false }).short, true);
+assert.strictEqual(vocalRecipe({ vIn: 3, oneSong: true, aStems: true, bStems: true }), null);
+assert.strictEqual(vocalRecipe({ vIn: 20, oneSong: false, aStems: false, bStems: false }), null);
+assert.strictEqual(vocalRecipe({ vIn: null, oneSong: false, aStems: false, bStems: false }), null);
+
+// tempo home: always ends at native, the path by gap
+const ph16 = 16;
+assert.strictEqual(homePlan({ gapPct: 0.01, tempoStems: false, songLeftS: 200, phraseS: ph16 }).path, "none");
+assert.strictEqual(homePlan({ gapPct: -6, tempoStems: false, songLeftS: 200, phraseS: ph16 }).path, "glide");
+assert.strictEqual(homePlan({ gapPct: 2.5, tempoStems: true, songLeftS: 200, phraseS: ph16 }).path, "drop");
+let hp = homePlan({ gapPct: -12, tempoStems: true, songLeftS: 300, phraseS: ph16 });
+assert.strictEqual(hp.path, "ladder");
+assert.strictEqual(hp.steps[hp.steps.length - 1], 0, "ends native");
+let prev = -12;
+for (const s of hp.steps) { assert.ok(Math.abs(s - prev) <= LADDER_STEP_PCT + 1e-9, `step ${prev} -> ${s}`); prev = s; }
+hp = homePlan({ gapPct: 20, tempoStems: true, songLeftS: 60, phraseS: ph16 });
+assert.strictEqual(hp.path, "masked", "no time for 7 renders");
+assert.deepStrictEqual(hp.steps, [0]);
+// the old 4 % dead end is gone: every gap has a path home
+for (const g of [4.5, 8, 15, 25, -25]) {
+  for (const left of [30, 400]) assert.notStrictEqual(homePlan({ gapPct: g, tempoStems: true, songLeftS: left, phraseS: ph16 }).path, "none");
+}
+assert.strictEqual(maskedGlideBars(3), 32); assert.strictEqual(maskedGlideBars(25), 64);
+// masked drop: first phrase line inside B's breakdown, else where its vocal is out
+const secs = [{ label: "verse", start: 0, end: 64 }, { label: "breakdown", start: 64, end: 96 }];
+let md = maskedDropAt(10, 0, 16, 200, secs, [[0, 60]]);
+assert.deepStrictEqual(md, { at: 64, why: "B's breakdown" });
+md = maskedDropAt(10, 0, 16, 200, [], [[0, 40]]);
+assert.deepStrictEqual(md, { at: 48, why: "B's vocal is out" });
+assert.strictEqual(maskedDropAt(10, 0, 16, 60, [], [[0, 100]]), null);
+
+// phrase wait: next 8-bar line of the entry grid
+const ph = 8 * bar128;
+assert.strictEqual(phraseWaitS(10, 10, ph), 0);
+assert.strictEqual(phraseWaitS(10 + ph, 10, ph), 0);
+assert.ok(Math.abs(phraseWaitS(11, 10, ph) - (ph - 1)) < 1e-9);
+assert.strictEqual(phraseWaitS(8, 10, ph), 2);
+
+console.log("autopilot core ok");
+
+// learned moves (/api/learned/pick) only switch to a recipe the console already allows
+{
+  const { learnedRecipe } = require("../../ui/static/autopilot.js");
+  const pick = (recipe, kind = "stem_intro") => ({ recipe, kind, seen: 5, source: "gfF8jzBVWvM 1:01" });
+  const base = { blend: { clean: true }, oneSong: true, stemsBoth: true, vocalRule: false, mashupFits: false, recipe: "Bass Swap" };
+  assert.strictEqual(learnedRecipe(pick("Long Blend"), base).recipe, "Long Blend");
+  assert.match(learnedRecipe(pick("Long Blend"), base).why, /learned stem intro \(seen 5x/);
+  assert.strictEqual(learnedRecipe(pick("Long Blend"), { ...base, vocalRule: true }), null);            // a vocal rule stands
+  assert.strictEqual(learnedRecipe(pick("Long Blend"), { ...base, blend: { clean: false } }), null);     // B sings early
+  assert.strictEqual(learnedRecipe(pick("Mashup → Transition", "acapella_over"), base), null);           // mashup doesn't fit
+  assert.strictEqual(learnedRecipe(pick("Bass Swap", "bass_swap"), { ...base, recipe: "Long Blend" }).recipe, "Bass Swap");
+  for (const k of ["layer", "peak", "riff"]) assert.strictEqual(learnedRecipe(pick("Bass Swap", "bass_swap"), { ...base, recipe: "Long Blend", [k]: {} }), null);
+  assert.strictEqual(learnedRecipe(pick("Bass Swap", "bass_swap"), { ...base, recipe: "Mashup → Transition" }), null);  // mashup outranks
+  assert.strictEqual(learnedRecipe(null, base), null);
+  // clashing keys (camelot < 0.6, KEY_SAFE_MIN): no learned tonal blend; unknown key unchanged
+  assert.strictEqual(learnedRecipe(pick("Long Blend"), { ...base, keyScore: 0 }), null);
+  assert.strictEqual(learnedRecipe(pick("Bass Swap", "bass_swap"), { ...base, recipe: "Long Blend", keyScore: 0.3 }), null);
+  assert.strictEqual(learnedRecipe(pick("Long Blend"), { ...base, keyScore: 0.9 }).recipe, "Long Blend");
+  assert.strictEqual(learnedRecipe(pick("Long Blend"), { ...base, keyScore: null }).recipe, "Long Blend");
+  const { keySafeRecipe } = require("../../ui/static/autopilot.js");
+  assert.strictEqual(keySafeRecipe("Long Blend", 0), "Echo Out");
+  assert.strictEqual(keySafeRecipe("Bass Swap", 0.6), "Bass Swap");      // -2 hours (0.6) and a diagonal (0.75) are KB-legal moves
+  assert.strictEqual(keySafeRecipe("Bass Swap", 0.75), "Bass Swap");
+  assert.strictEqual(keySafeRecipe("Bass Swap", 0.3), "Echo Out");      // 2 hours with the letter flipped
+  assert.strictEqual(keySafeRecipe("Long Blend", 0.8), "Long Blend");
+  assert.strictEqual(keySafeRecipe("Long Blend", null), "Long Blend");
+  assert.strictEqual(keySafeRecipe("Stem Bridge", 0), "Stem Bridge");
+  console.log("learned recipe ok");
+}
+
+// never transition while A is at, or building into, its energy high
+{
+  const { highSpans, exitPastHigh } = require("../../ui/static/autopilot.js");
+  const bar = 2, times = [], curve = [];
+  for (let t = 0; t < 240; t++) { times.push(t); curve.push(t >= 150 && t < 190 ? 0.9 : 0.3); }
+  const sp = highSpans(times, curve, bar);
+  assert.strictEqual(sp.length, 1);
+  assert.strictEqual(sp[0][0], 150 - 16 * bar);                                 // the 16-bar build is protected
+  assert.ok(sp[0][1] >= 190);
+  const phrase = 16;                                                             // 8 bars
+  const r = exitPastHigh(110, 16 * bar, sp, phrase, 230);                        // 110..142 runs into the build
+  assert.ok(r.clear && r.moved > 0 && r.t >= sp[0][1]);
+  assert.deepStrictEqual(exitPastHigh(60, 16 * bar, sp, phrase, 230), { t: 60, clear: true, moved: 0 });   // clear already
+  assert.strictEqual(exitPastHigh(110, 16 * bar, sp, phrase, 150).clear, false); // no room past it: not moved
+  const loud = times.map(() => 0.9);
+  assert.deepStrictEqual(highSpans(times, loud, bar), []);                       // loud all through: no "high" to protect
+  console.log("energy high timing ok");
+}
+
+// next song: measured energy stays within reach of the one playing
+{
+  const { energyStepOk } = require("../../ui/static/autopilot.js");
+  assert.ok(energyStepOk(6, 8).ok && !energyStepOk(3, 8).ok);
+  assert.match(energyStepOk(3, 8).why, /jump 3 -> 8 \(max 2/);
+  assert.ok(!energyStepOk(6, 8, { relaxed: true }).ok && energyStepOk(6, 7, { relaxed: true }).ok);
+  assert.ok(!energyStepOk(7, 5, { setPos: 0.1 }).ok && energyStepOk(7, 6, { setPos: 0.1 }).ok);   // building
+  assert.ok(!energyStepOk(5, 7, { setPos: 0.9 }).ok);                                              // cooling
+  assert.ok(energyStepOk(3, 6, { force: true }).ok && !energyStepOk(3, 7, { force: true }).ok);   // fallback: +1 only
+  assert.ok(!energyStepOk(7, 4, { force: true }).ok && energyStepOk(7, 5, { force: true }).ok);   // force never widens a fall (9>7>4>2 slide)
+  { const { hybridWindowKey } = require("../../ui/static/autopilot.js");
+    assert.equal(hybridWindowKey(2), "medium"); assert.equal(hybridWindowKey(4), "long");
+    assert.equal(hybridWindowKey(8), "quick"); assert.equal(hybridWindowKey(null), "medium"); }
+  assert.ok(energyStepOk(3, 8, { rawDelta: 0.05 }).ok);                     // levels apart, measurements the same
+  assert.ok(!energyStepOk(3, 8, { rawDelta: 0.3 }).ok);
+  assert.ok(!energyStepOk(7, 5, { songs: 2 }).ok && energyStepOk(7, 5, { songs: 12 }).ok);   // warm-up builds, then open
+  assert.ok(energyStepOk(5, 7, { songs: 40 }).ok);                          // no automatic "cooling" all night
+  console.log("energy step ok");
+}
+
+// no hard cuts (user: "hard cuts are a big no"): recipeKind never yields "cut",
+// so executeTransition keeps no cut branch, and the autopilot's /api/match asks
+// the matcher to leave cut recipes out.
+{
+  const src = require("fs").readFileSync(require("path").join(__dirname, "../../ui/static/autopilot.js"), "utf8");
+  assert.ok(!/return\s+"cut"/.test(src), "recipeKind must not return a cut kind");
+  assert.ok(!/case\s+"cut"/.test(src) && !/kind\s*[!=]==\s*"cut"/.test(src), "dead cut branch in autopilot.js");
+  assert.ok(/no_cuts:\s*true/.test(src), "matchTracks must send no_cuts");
+  console.log("no hard cuts ok");
+}
+
+{ // atlas backup B: tier order, energy-ranked, skipped with reasons, re-ranked when stale
+  const { rankAtlasBackups, backupStale, backupNeedsStems } = require("../../ui/static/autopilot.js");
+  const row = (b, o = {}) => Object.assign({ b, b_name: `Artist ${b} - Song ${b}`, b_bpm: 95, b_duration: 200, works: 50 }, o);
+  const rows = [
+    row("p1", { works: 90 }),                                // plain partner, unmeasured
+    row("p2", { works: 60, b_level: 7 }),                    // plain partner, energy fits 8 -> 7
+    row("c1", { works: 40, combo: "merge" }),                // atlas combo
+    row("s1", { works: 20, studied: { count: 2 } }),         // studied combo
+    row("low", { works: 99, b_level: 3 }),                   // 102327: energy drop 8 -> 3
+    row("old", { works: 95, earlier_set: true }),            // heard in an earlier set
+    row("done", { works: 99 }),                              // played this set
+    row("bad", { works: 99, played_bad: 2, played_good: 0 }),
+    row("sp", { works: 99 }),                                // artist spacing
+    row("A"),                                                // A itself
+  ];
+  const r = rankAtlasBackups(rows, { aId: "A", played: ["done"], recent: [], energyA: 8, songs: 8,
+    spacing: (n) => (n.startsWith("Artist sp") ? "artist played 2 songs ago" : null) });
+  assert.deepStrictEqual(r.list.map((c) => c.track_id), ["s1", "c1", "p2", "p1", "old"]);
+  assert.deepStrictEqual(r.list.map((c) => c.tier).slice(0, 3), ["studied combo", "atlas combo", "atlas partner"]);
+  const why = Object.fromEntries(r.skipped.map((s) => [s.b, s.why]));
+  assert.ok(/drop 8 -> 3/.test(why.low), why.low);
+  assert.strictEqual(why.done, "already played this set");
+  assert.ok(/bad played/.test(why.bad) && /spacing|artist/.test(why.sp));
+  // a pair rejected earlier for this A is skipped with that reason
+  const r2 = rankAtlasBackups([row("p1")], { aId: "A", rejected: (b) => (b === "p1" ? { why: "vibe: genre jump" } : null) });
+  assert.deepStrictEqual([r2.list.length, r2.skipped[0].why], [0, "vibe: genre jump"]);
+  // no atlas: nothing, no throw
+  assert.deepStrictEqual(rankAtlasBackups(undefined, {}), { list: [], skipped: [] });
+  // stale: new A, a song played since, A's energy measured
+  const b = { for: "A", played: 3, energyA: 8 };
+  assert.ok(!backupStale(b, { aId: "A", played: [1, 2, 3], energyA: 8 }));
+  assert.ok(backupStale(b, { aId: "B", played: [1, 2, 3], energyA: 8 }));
+  assert.ok(backupStale(b, { aId: "A", played: [1, 2, 3, 4], energyA: 8 }));
+  assert.ok(backupStale(b, { aId: "A", played: [1, 2, 3], energyA: 6 }));
+  assert.ok(backupStale(null, { aId: "A" }));
+  assert.ok(backupNeedsStems({ recipe: "Stem Merge" }) && !backupNeedsStems({ recipe: "Bass Swap" }) && !backupNeedsStems(null));
+  console.log("atlas backup ok");
+}
+
+{ // deadline rule: near the exit, or after a failed search, the library / ready pool goes before the model
+  const { searchPlan, DEADLINE_LEAD_S } = require("../../ui/static/autopilot.js");
+  assert.strictEqual(DEADLINE_LEAD_S, 45);
+  const early = searchPlan({ pos: 100, exitLo: 200 });
+  assert.ok(!early.deadline && !early.fallbackFirst && early.retryMs === 20000);
+  assert.ok(searchPlan({ pos: 155, exitLo: 200 }).deadline);                 // 45 s before the exit window
+  assert.ok(searchPlan({ pos: 199.3, exitLo: 150 }).fallbackFirst);          // 102327: already past the window
+  assert.ok(searchPlan({ pos: 20, exitLo: 200, failedSearches: 1 }).fallbackFirst);
+  assert.ok(searchPlan({ pos: 20, exitLo: 200, emptyStreak: 2 }).fallbackFirst);
+  assert.ok(!searchPlan({ pos: NaN, exitLo: 200 }).deadline);                // unknown position: no deadline
+  // failed searches back off (the 17 back-to-back suggest calls): 20, 40, 80, 120 s cap
+  assert.deepStrictEqual([1, 2, 3, 4, 8].map((n) => searchPlan({ failedSearches: n }).retryMs), [20000, 40000, 80000, 120000, 120000]);
+  console.log("deadline fallback ok");
+}
+
+{ // empty song searches back off, then fall back to the library; rejected pairs are remembered
+  const { emptyRetryMs, useLibraryFallback, rememberPairReject, pairRejected } = require("../../ui/static/autopilot.js");
+  assert.deepStrictEqual([0, 1, 2, 3, 4, 9].map(emptyRetryMs), [20000, 20000, 40000, 80000, 120000, 120000]);
+  assert.ok(!useLibraryFallback(0) && !useLibraryFallback(1) && useLibraryFallback(2) && useLibraryFallback(7));
+  const m = new Map();
+  assert.strictEqual(pairRejected(m, "a", "b", false), null);
+  rememberPairReject(m, "a", "b", "energy 9 -> 3", false);
+  assert.strictEqual(pairRejected(m, "a", "b", false).why, "energy 9 -> 3");
+  assert.strictEqual(pairRejected(m, "a", "b", true), null);       // strict-round reject: the forced round may pass it
+  assert.strictEqual(pairRejected(m, "b", "a", false), null);      // other order / other A: asked again
+  rememberPairReject(m, "a", "c", "vibe", true);
+  assert.ok(pairRejected(m, "a", "c", true) && pairRejected(m, "a", "c", false));
+  console.log("empty backoff + pair rejects ok");
+}
+
+// silent tail: plan against the audible end, never start in the last minute
+{
+  const autopilotCore = require("../../ui/static/autopilot.js");
+  const { audibleEnd, entryClamp } = autopilotCore;
+  const times = Array.from({ length: 268 }, (_, i) => i);
+  const loud = times.map(() => 0.5);
+  const tail = loud.concat(new Array(10).fill(0));
+  const tailTimes = Array.from({ length: 278 }, (_, i) => i);
+  assert.strictEqual(audibleEnd({ energy_times: tailTimes, energy_curve: tail }, 278), 268);   // BICEP
+  assert.strictEqual(audibleEnd({ energy_times: times, energy_curve: loud }, 268.4), 268.4);   // no tail
+  assert.strictEqual(audibleEnd(null, 200), 200);
+  assert.strictEqual(audibleEnd({ energy_times: [], energy_curve: [] }, 200), 200);
+  assert.strictEqual(audibleEnd({ energy_times: [0, 1], energy_curve: [0, 0] }, 200), 200);    // all quiet: no evidence
+  assert.strictEqual(entryClamp(199.06, 208), 148);                                            // Sabrina
+  assert.strictEqual(entryClamp(30, 208), 30);
+  assert.strictEqual(entryClamp(30, 40), 30);                                                  // short file untouched
+  const b = autopilotCore.exitBounds({ w: { min: 60, max: 300, xf: 24 }, entryPos: 0, trackDur: audibleEnd({ energy_times: tailTimes, energy_curve: tail }, 278) });
+  assert.ok(b.trackEnd <= 268 - 24 - 2 + 1e-9);
+}

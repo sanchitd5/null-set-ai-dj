@@ -22,7 +22,7 @@
 // (core.autoStep, the old stage-sizing rules, stays pure and tested but unused.)
 //
 // Layout: a pure `core` (music state, scene choice, trigger mapping, director,
-// adaptive quality; node-checked by app/tests/anyma_show_check.js) and a thin
+// adaptive quality; node-checked by app/tests/js/anyma_show_check.js) and a thin
 // glue that only runs while SHOW is on and the page is visible. NULL-BOT
 // (z 880) stays above the stage (z 870). Nothing here touches the audio graph:
 // stem levels are read from the decks' decoded stem buffers.

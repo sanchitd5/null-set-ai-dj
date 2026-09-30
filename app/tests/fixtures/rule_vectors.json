@@ -1,5 +1,5 @@
 {
- "_about": "Golden vectors for the rules that exist in both Python and the console JS. Written once from the intended behaviour and reviewed; do not regenerate to make a failing side pass. Checked by app/tests/test_rule_vectors.py (Python) and app/tests/rule_vectors_check.js (node).",
+ "_about": "Golden vectors for the rules that exist in both Python and the console JS. Written once from the intended behaviour and reviewed; do not regenerate to make a failing side pass. Checked by app/tests/py/test_rule_vectors.py (Python) and app/tests/js/rule_vectors_check.js (node).",
  "energy_step": {"py": "app.music_brain.energy.next_ok", "js": "autopilot.js energyStepOk", "cases": [
   {"cur":1,"nxt":1,"o":{},"expect":{"ok":true,"step":0,"why":"energy 1 -> 1"}},
   {"cur":1,"nxt":1,"o":{"relaxed":true},"expect":{"ok":true,"step":0,"why":"energy 1 -> 1"}},

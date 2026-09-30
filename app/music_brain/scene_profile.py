@@ -5,7 +5,7 @@ Evidence: research/notes/punjabi-original-sets.md ("Scene profile draft" in sect
 said otherwise; a listening test has not confirmed any of them.
 
 Owner of the values. app/ui/static/scene-profile.js is a copy for the console,
-parity-tested (app/tests/test_scene_profile.py runs it in node and compares).
+parity-tested (app/tests/py/test_scene_profile.py runs it in node and compares).
 
 Mode (the console's PUNJABI setting, sent as `punjabi_profile`):
   off   today's behaviour, byte for byte

@@ -6,7 +6,7 @@
 //
 // Requires: window.decks, window.loadIntoDeck, setStatus (app.js + deck-controller.js).
 
-// Pure transition maths, no DOM / audio (node-checked: app/tests/autopilot_check.js).
+// Pure transition maths, no DOM / audio (node-checked: app/tests/js/autopilot_check.js).
 var autopilotCore = (function () {
   const MASHUP_KINDS = new Set(["blend", "filter", "loop"]);
   // Stem blend length in real bars. barS = seconds per bar at A's live tempo,

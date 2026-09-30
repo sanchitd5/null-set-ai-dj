@@ -32,7 +32,7 @@ python3 -m app.sim.suite --update-baseline                                      
    `worst` (five worst transitions with reasons). Reports go to `app/sim/out/<dir>/` (`report.json`,
    `audible.json`, `events.jsonl`, `console.jsonl`, `songs/*/steps.jsonl`).
 3. **fix** one rule per commit; respect CLAUDE.md section 4. Put logic in pure `core` functions so a
-   node check can pin it (`app/tests/*_check.js`).
+   node check can pin it (`app/tests/js/*_check.js`).
 4. **compare** before and after with `compare`. Keep the change only if the mean score improves and no
    HARD metric worsens (`suite --check`: tempo over cap, key-clash blends, repeat songs, stalls,
    feature coverage). Revert otherwise and log why.

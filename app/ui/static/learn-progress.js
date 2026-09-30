@@ -1,6 +1,6 @@
 // AI Music Brain - LEARNING panel: progress of the set studies (agent_bridge learn-set) running on this machine.
 //
-// core   pure and node-testable (app/tests/learn_progress_check.js): which studies to show, how to format them,
+// core   pure and node-testable (app/tests/js/learn_progress_check.js): which studies to show, how to format them,
 //        when to poll next, and the poller itself over injected clock / fetch / visibility.
 // glue   thin: mounts through the Host port (host.api.fetch, host.clock, host.ui) and only touches
 //        textContent / style.width of a few nodes, so the poll never costs audio or main-thread time
