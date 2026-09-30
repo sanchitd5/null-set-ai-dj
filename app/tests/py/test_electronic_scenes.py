@@ -11,7 +11,7 @@ LIBRARY = {
     "melodic techno": {"melodic"}, "punjabi": {"south_asian"}, "hip hop": {"hiphop"}, "techno": {"techno"},
     "reggaeton": {"latin"}, "dubstep": {"bass"}, "r&b": {"rnb"}, "downtempo": {"chill"}, "indie": set(),
     "electronica": {"chill"}, "ambient": {"chill"}, "afro house": {"afro", "house"}, "afropop": {"afro", "pop"},
-    "trance": {"melodic"}, "bollywood": {"south_asian"}, "edm": {"edm"}, "electro": {"edm"}, "dance": {"edm"},
+    "trance": {"trance"}, "bollywood": {"south_asian"}, "edm": {"edm"}, "electro": {"edm"}, "dance": {"edm"},
     "synth": set(), "latin": {"latin"}, "uk garage": {"house"}, "indie folk": {"country"}, "afrobeat": {"afro"},
     "rock": {"rock"}, "disco": {"jazz"}, "bhangra": {"south_asian"}, "progressive house": {"melodic"},
     "indie pop": {"pop"}, "deep house": {"house"}, "bass house": {"house", "bass"}, "synth pop": {"pop"},
@@ -58,25 +58,50 @@ def test_liked_pairs_stay_in_cluster_or_neighbours():
 def test_neighbour_moves_allowed_and_non_neighbours_refused():
     for a, b in (("melodic house", "house"), ("melodic techno", "techno"), ("trance", "melodic techno"),
                  ("tech house", "techno"), ("house", "edm"), ("dubstep", "drum and bass"), ("edm", "dubstep"),
-                 ("breaks", "uk garage"), ("electronic", "downtempo"), ("electronic", "trance")):
+                 ("breaks", "uk garage"), ("electronic", "downtempo"), ("electronic", "trance"),
+                 # owner decisions 2026-09-30: chill <-> melodic, bass <-> house / melodic, trance's neighbours
+                 ("melodic techno", "ambient"), ("electronica", "melodic house"), ("dubstep", "house"),
+                 ("dubstep", "melodic techno"), ("trance", "techno"), ("trance", "house"), ("trance", "dubstep")):
         assert not family_jump(a, b) and not family_jump(b, a), (a, b)
-    for a, b in (("melodic techno", "ambient"), ("house", "downtempo"), ("techno", "dubstep"),
-                 ("trance", "drum and bass"), ("electronica", "melodic house")):
+    for a, b in (("house", "downtempo"), ("techno", "dubstep"), ("trance", "drum and bass"),
+                 ("trance", "ambient"), ("trance", "electronica"), ("techno", "downtempo")):
         assert family_jump(a, b) and family_jump(b, a), (a, b)
-    assert set(ELECTRONIC_CLUSTERS) == {"house", "melodic", "techno", "bass", "dnb", "chill", "edm", "breaks"}
+    assert set(ELECTRONIC_CLUSTERS) == {"house", "melodic", "trance", "techno", "bass", "dnb", "chill", "edm",
+                                        "breaks"}
+
+
+def test_trance_keeps_every_melodic_move_but_chill():
+    # trance was in melodic; splitting it off may only remove the chill bridge
+    for b in ("house", "techno", "dubstep", "drum and bass", "edm", "breaks", "progressive house", "electronic"):
+        assert family_jump("trance", b) == family_jump("melodic techno", b), b
+    assert family_jump("trance", "downtempo") and not family_jump("melodic techno", "downtempo")
+
+
+def test_owner_named_pairs_allowed():
+    for a, b in (("melodic house", "electronica"),      # Ben Böhmer <-> Four Tet - Parallel 4
+                 ("electronica", "melodic house"),
+                 ("electronica", "melodic techno"),     # Four Tet -> Adam Sellouk - Nocturnal
+                 ("downtempo", "melodic house"),        # Portishead - Glory Box -> BLANCAh - Travessia
+                 ("dubstep", "house"),                  # Skrillex -> Sian & Burko, Daft Punk
+                 ("dubstep", "melodic techno")):        # Skrillex -> Anyma, AL006
+        assert not family_jump(a, b), (a, b)
 
 
 def test_scene_keys_share_a_token_exactly_for_neighbours():
     share = lambda a, b: bool(set(scene_keys(a)) & set(scene_keys(b)))
     assert share("melodic techno", "house") and share("electronic", "ambient") and share("trance", "melodic house")
+    assert share("melodic techno", "downtempo") and share("dubstep", "house")
     assert not share("trance", "downtempo") and not share("techno", "dubstep")
     assert scene_keys("hip hop") == ["hiphop"] and scene_keys("r&b") == ["rnb"]   # hip-hop anchor unchanged
     assert not share("hip hop", "r&b") and scene_keys(None) == []
     # pinned for app/tests/js/electronic_scenes_check.js
-    assert scene_keys("trance") == ["electronic|melodic", "house|melodic", "melodic", "melodic|techno"]
-    assert scene_keys("downtempo") == ["chill", "chill|electronic"]
-    assert scene_keys("house") == ["breaks|house", "edm|house", "electronic|house", "house", "house|melodic",
-                                   "house|techno"]
+    assert scene_keys("melodic techno") == ["bass|melodic", "chill|melodic", "electronic|melodic", "house|melodic",
+                                            "melodic", "melodic|techno", "melodic|trance"]
+    assert scene_keys("trance") == ["bass|trance", "electronic|trance", "house|trance", "melodic|trance",
+                                    "techno|trance", "trance"]
+    assert scene_keys("downtempo") == ["chill", "chill|electronic", "chill|melodic"]
+    assert scene_keys("house") == ["bass|house", "breaks|house", "edm|house", "electronic|house", "house",
+                                   "house|melodic", "house|techno", "house|trance"]
 
 
 def test_punjabi_and_hiphop_unchanged():
@@ -90,9 +115,9 @@ def test_vet_refuses_trance_to_downtempo():
                    b_genre="downtempo", stored=True)
     assert r and r["gate"] == "scene"
     assert bv.vet_one("A - x", "B - y", a_genre="trance", b_genre="melodic techno", stored=True) is None
-    # scene anchor: a fallback left melodic techno for downtempo; the next song goes back
+    # scene anchor: a fallback left trance for downtempo; the next song goes back
     r = bv.vet_one("Bonobo - Me And You", "Four Tet - Parallel 4", a_genre="downtempo", b_genre="electronica",
-                   anchor_genre="melodic techno")
+                   anchor_genre="trance")
     assert r and r["gate"] == "scene_anchor"
     res = bv.vet("A - x", [{"name": "Bonobo - Me And You", "genre": "downtempo"}], a_genre="trance")
     assert res[0]["scene_clash"] and res[0]["scene_rel"] == "cross"

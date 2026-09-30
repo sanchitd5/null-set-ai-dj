@@ -42,9 +42,12 @@ ELECTRONIC_CLUSTERS = {
     # four-to-the-floor house and its garage / disco / afro / latin offshoots
     "house": ("house", "deep house", "tech house", "bass house", "synth house", "disco house",
               "afro house", "latin house", "funky house", "uk garage", "garage", "speed garage"),
-    # the melodic / progressive floor: melodic techno + house, progressive, organic, trance
+    # the melodic / progressive floor: melodic techno + house, progressive, organic
     "melodic": ("melodic", "melodic techno", "melodic house", "progressive house", "progressive",
-                "organic house", "trance", "psytrance", "uplifting trance"),
+                "organic house"),
+    # trance, split from melodic (owner, 2026-09-30) so the chill <-> melodic bridge does not
+    # let trance hand over to downtempo; it keeps every other melodic neighbour
+    "trance": ("trance", "psytrance", "uplifting trance"),
     # warehouse techno: straight, hard, minimal, industrial
     "techno": ("techno", "hard techno", "minimal techno", "industrial techno", "acid techno"),
     # bass music: dubstep, riddim, future bass, melodic dubstep
@@ -60,11 +63,18 @@ ELECTRONIC_CLUSTERS = {
     "breaks": ("breakbeat", "breaks", "big beat"),
 }
 
-# Cluster pairs DJs really mix across. chill has no neighbour: into or out of it is a deliberate
-# energy-down bridge (a steer or an Echo Out the owner asks for), not a move a fallback may make.
+# Cluster pairs DJs really mix across (owner decisions, 2026-09-30). chill's only neighbour is
+# melodic (organic / melodic house <-> electronica, downtempo); trance <-> chill stays a jump.
 ELECTRONIC_NEIGHBOURS = tuple(frozenset(p) for p in (
     ("house", "melodic"),    # melodic house / progressive sit on the house floor
     ("melodic", "techno"),   # melodic techno <-> techno
+    ("chill", "melodic"),    # organic / melodic house <-> electronica, downtempo
+    ("bass", "melodic"),     # melodic dubstep / future bass <-> melodic house, techno
+    ("bass", "house"),       # dubstep <-> house, bass house bridges them
+    ("trance", "melodic"),   # trance keeps melodic's neighbours, chill aside
+    ("trance", "techno"),
+    ("trance", "house"),
+    ("trance", "bass"),
     ("house", "techno"),     # tech house bridges them
     ("house", "edm"),        # electro / big room house
     ("edm", "bass"),         # festival sets drop dubstep / future bass
