@@ -102,7 +102,7 @@ npm run test:e2e
 2. **Render-Loop Behavior**: Passed. RequestAnimationFrame transport loop operates without layout thrashing; zero console errors.
 3. **Live Transition Maker**: Passed. Candidate scoring renders, ghost markers appear on hover, live transitions arm with ±8% tempo bounds, cancel aborts smoothly without audio cutouts, and DJ manual fader interaction triggers clean takeover.
 4. **Recording & Set-Log**: Passed. MediaRecorder session completes, audio file downloads, and valid `djset-v1` JSON stream with `recording-start` initial event downloads.
-5. **Responsive Layout**: Passed. Both 1440px desktop and 390px mobile viewports render without horizontal overflow or clipped controls. Explainer screenshots captured to `assets/`.
+5. **Responsive Layout**: Passed. Both 1440px desktop and 390px mobile viewports render without horizontal overflow or clipped controls. Explainer screenshots captured to `docs/images/`.
 
 ## New focused backend checks
 

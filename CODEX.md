@@ -18,7 +18,7 @@ This repository is pre-configured to ensure identical execution and ground-truth
 | **Google Antigravity** (`agy`) | [`AGENTS.md`](AGENTS.md) | Loaded natively as workspace rule (`<RULE[...AGENTS.md]>`). |
 | **Claude Code** (`claude`) | [`CLAUDE.md`](CLAUDE.md) | Loaded automatically at startup by Claude Code CLI. |
 
-All assistants share identical ground-truth specifications in `./DJ/`, `IDEAS.md`, `PERFORMANCE_AUDIT.md`, and `FEATURES.md`.
+All assistants share identical ground-truth specifications in `./DJ/`, `docs/product/IDEAS.md`, `docs/engineering/PERFORMANCE_AUDIT.md`, and `docs/product/FEATURES.md`.
 
 ---
 
@@ -33,9 +33,11 @@ null-set-ai-dj/
 │   └── tests/                  # Automated pytest test suite (112+ tests)
 ├── downloader/                 # High-quality 320kbps YouTube to MP3 audio downloader (downloader.py)
 ├── DJ/                         # The Interconnected DJ Knowledge Base & Musical Wiki (78+ Notes)
-├── IDEAS.md                    # Master architectural blueprints (AI Transition Maker, DDJ-FLX4, Set Logs)
-├── PERFORMANCE_AUDIT.md        # Real-time efficiency, zero-lag & 60 FPS performance audit
-├── FEATURES.md                 # Reality check: implemented vs stubbed vs planned features
+├── docs/
+│   ├── product/                # IDEAS.md (blueprints), FEATURES.md (built vs stubbed), PRODUCT.md
+│   ├── engineering/            # PERFORMANCE_AUDIT.md (60 FPS / zero-lag audit), ANNEX.md (glossary)
+│   ├── archive/                # Stale handoffs and one-off prompts/audits
+│   └── images/                 # Screenshots
 ├── data/                       # Runtime artifacts: songs/, output/, cache/ (gitignored)
 └── .obsidian/                  # Native Obsidian vault configuration
 ```
@@ -45,7 +47,7 @@ null-set-ai-dj/
 ## 3. The Knowledge Base & Docs as the DJ Wiki for Codex
 
 ### A. Ground Every Feature in DJ Theory
-The `./DJ/` knowledge base and project documentation (`IDEAS.md`, `PERFORMANCE_AUDIT.md`, `FEATURES.md`) serve as the **authoritative musical and architectural wiki** for all AI models.
+The `./DJ/` knowledge base and project documentation (`docs/product/IDEAS.md`, `docs/engineering/PERFORMANCE_AUDIT.md`, `docs/product/FEATURES.md`) serve as the **authoritative musical and architectural wiki** for all AI models.
 * **Never build DJ features in an acoustic vacuum:** When implementing or refactoring features (such as EQ cuts, crossfader curves, phrase snapping, stem isolation, track recommendations, or emergency panic buttons), Codex must understand **DJing as a discipline** by referencing the corresponding notes in `./DJ/`.
 * The code implements the DSP and UI; the knowledge base defines **why** it must behave that way to sound like a world-class DJ rather than a naive linear crossfade.
 
@@ -55,9 +57,9 @@ Codex and Copilot agents must manage context windows strictly:
 2. **Step 1 — Index Lookup:** Use the navigation matrix in Section 4 below to pinpoint the single relevant note (e.g. `Bass Swap.md` or `Track Selection Framework.md`).
 3. **Step 2 — Targeted Reading:** View precise line ranges or search for exact technical parameters (such as crossover frequencies or Camelot rules).
 4. **Step 3 — Engineering Alignment:**
-   * Consult `FEATURES.md` first to confirm what is currently built vs. stubbed.
-   * Consult `IDEAS.md` for planned UX interactions and hardware mappings before architecting new features.
-   * Consult `PERFORMANCE_AUDIT.md` before touching real-time audio code or animation loops to avoid introducing main-thread jank, GC pauses, or layout thrashing.
+   * Consult `docs/product/FEATURES.md` first to confirm what is currently built vs. stubbed.
+   * Consult `docs/product/IDEAS.md` for planned UX interactions and hardware mappings before architecting new features.
+   * Consult `docs/engineering/PERFORMANCE_AUDIT.md` before touching real-time audio code or animation loops to avoid introducing main-thread jank, GC pauses, or layout thrashing.
 
 ---
 
@@ -113,7 +115,7 @@ Live-console rules the sim enforces (details in `CLAUDE.md` section 4 and `app/s
 1. **Preserve Audio Alignment Precision:** Ensure millisecond/sample-accurate transient placement when splicing audio arrays in DSP modules.
 2. **Handle DSP Artifacts:** Always apply gentle crossfade smoothing ($5\text{--}15\text{ ms}$) on cut transitions to eliminate digital audio zero-crossing clicks.
 3. **Graceful Fallbacks:** If external APIs are absent or rate-limited, fall back cleanly to local Librosa acoustic heuristics.
-4. **Follow Performance Constraints:** Consult `PERFORMANCE_AUDIT.md` before altering `deck-controller.js` or `app/ui/static/` animation frames to ensure 60 FPS locked UI and $<10\text{ms}$ audio latency.
+4. **Follow Performance Constraints:** Consult `docs/engineering/PERFORMANCE_AUDIT.md` before altering `deck-controller.js` or `app/ui/static/` animation frames to ensure 60 FPS locked UI and $<10\text{ms}$ audio latency.
 
 ---
 

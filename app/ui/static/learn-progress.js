@@ -4,7 +4,7 @@
 //        when to poll next, and the poller itself over injected clock / fetch / visibility.
 // glue   thin: mounts through the Host port (host.api.fetch, host.clock, host.ui) and only touches
 //        textContent / style.width of a few nodes, so the poll never costs audio or main-thread time
-//        (PERFORMANCE_AUDIT.md). It is skipped by the sim (sim/js/env.js), like host-browser.js.
+//        (docs/engineering/PERFORMANCE_AUDIT.md). It is skipped by the sim (sim/js/env.js), like host-browser.js.
 //
 // Server side: GET /api/learn/progress -> {studies: [{id, title, state, stage, counts, tracks_done, tracks_total,
 // current, elapsed_s, eta_s, techniques_found, warnings, error, updated_at, finished_at, ...}]} (learn_progress.py).

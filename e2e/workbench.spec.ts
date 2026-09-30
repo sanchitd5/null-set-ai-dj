@@ -365,22 +365,22 @@ test.describe('AI Music Brain — Workbench & Live Transition Foundation', () =>
     // Save UI explainer screenshots directly to assets directory if desktop
     if (testInfo.project.name === 'chromium-desktop') {
       // Full overview screenshot
-      await page.screenshot({ path: 'assets/ui-workbench-overview.png', fullPage: true });
+      await page.screenshot({ path: 'docs/images/ui-workbench-overview.png', fullPage: true });
 
       // Waveform section explainer screenshot
       const waveStage = page.locator('.wave-stage');
-      await waveStage.screenshot({ path: 'assets/ui-waveform-stage.png' });
+      await waveStage.screenshot({ path: 'docs/images/ui-waveform-stage.png' });
 
       // AI Transition Brain explainer screenshot
       const aiPanel = page.locator('#ai-panel');
-      await aiPanel.screenshot({ path: 'assets/ui-ai-transition-brain.png' });
+      await aiPanel.screenshot({ path: 'docs/images/ui-ai-transition-brain.png' });
 
       // Decks and Mixer section explainer screenshot
       const workspace = page.locator('.workspace');
-      await workspace.screenshot({ path: 'assets/ui-decks-and-mixer.png' });
+      await workspace.screenshot({ path: 'docs/images/ui-decks-and-mixer.png' });
     } else {
       // Mobile responsive console screenshot
-      await page.screenshot({ path: 'assets/ui-mobile-view.png', fullPage: true });
+      await page.screenshot({ path: 'docs/images/ui-mobile-view.png', fullPage: true });
     }
 
     // Check no horizontal page overflow
