@@ -1,6 +1,7 @@
 myenv
 .venv*/
 .env
+aidj.env
 .cache
 __pycache__
 *.pyc
