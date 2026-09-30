@@ -152,6 +152,12 @@ Then paste a seed URL and press **▶ START SET**, or play any song and press **
 
 Logs: `/tmp/ai-dj-server.log` (app), `/tmp/ai-dj-omni-server.log` (model).
 
+**Maintenance.** After adding songs, after learning a set, or weekly, stop the app and run
+`./maintain.sh` (`--dry-run` first to see what it would do). One command separates missing
+stems, converts leftover WAVs to FLAC, labels unlabelled songs, AI-reviews never-reviewed sets,
+updates the atlas and re-exports `knowledge/`, then prints before / after counts. Details and a
+launchd schedule: [ANNEX, maintain.sh](docs/engineering/ANNEX.md#maintainsh).
+
 ### Requirements
 
 - Python 3 with `requirements.txt` (librosa, numpy, scipy, demucs, torch, fastapi, uvicorn, yt-dlp, ...)
