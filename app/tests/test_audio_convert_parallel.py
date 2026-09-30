@@ -53,7 +53,8 @@ def test_jobs4_matches_jobs1(tmp_path):
     a, b = _cache(tmp_path / "a"), _cache(tmp_path / "b")
     r1 = audio_convert.run(a, apply=True, log=_quiet, jobs=1)
     r4 = audio_convert.run(b, apply=True, log=_quiet, jobs=4)
-    assert r1["jobs"] == 1 and r4["jobs"] == 4
+    # --jobs 4 is capped at cpus - 1 (a 4-core CI runner gets 3), so expect what effective_jobs allows
+    assert r1["jobs"] == 1 and r4["jobs"] == audio_convert.effective_jobs(4)
     assert not r1["failed"] and not r4["failed"]
     for k in ("dirs", "files", "converted", "bytes_before", "bytes_after"):
         assert r1[k] == r4[k], k
