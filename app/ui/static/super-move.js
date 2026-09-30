@@ -122,7 +122,7 @@
       }
       const b = buildAt(an[o.curId], o.pos);
       if (b.build) return { fire: false, wait: true, variant: v.name, start: k, until: lineAfter(an[o.curId], b.until), roll, why: `wait: ${b.why}` };
-      return { fire: true, wait: false, variant: v.name, start: k, roll, why: `${v.name} from song ${k + 1}: ${o.manual ? "pressed" : `set ${o.setLevel}, roll ${roll.toFixed(2)}`}` };
+      return { fire: true, wait: false, variant: v.name, start: k, roll, why: `${v.name} from song ${k + 1}: ${o.manual ? "pressed" : `set ${o.setLevel}${roll == null ? "" : `, roll ${roll.toFixed(2)}`}`}` };
     }
     return { fire: false, wait: false, why };
   }
@@ -168,7 +168,7 @@
 
   const core = { NAME, HIGH_MIN, P_FIRE, MIN_LEAD_S, PRELOAD_S, READY_S, BUILD_SLOPE, HP_HZ, FRONT_CLASS,
     firstHalf, chance, buildAt, buildOverlap, firstWindows, lineAfter, decide, schedule, frontAt, layerPlay, slopeOver };
-  if (typeof module !== "undefined" && module.exports) module.exports = core;
+  if (typeof module !== "undefined" && module.exports) module.exports = Object.assign({ create }, core);   // create: node checks only
 
   // ---- runtime ------------------------------------------------------------------------------------------------------
   function create({ host }) {
@@ -493,6 +493,7 @@
       get armed() { return variants.length > 0 || !!run || !!pendingManual; },
       get running() { return !!run && run.state === "playing"; },
       get state() { return run ? run.state : "idle"; },
+      get schedule() { return run ? run.sch || null : null; },
       get variants() { return variants; } };
   }
   if (root.Engine) root.Engine.mount("superMove", create);
