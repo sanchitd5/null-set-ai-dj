@@ -77,6 +77,13 @@ def test_scene_as_the_picks_score_it():
     assert bv.vet_one("A - x", "B - y", a_genre="house", b_genre="house", a_era="2000s", b_era="2020s", stored=True) is None
 
 
+def test_vet_rows_carry_the_scene_clash_for_the_mashup_gate():
+    rows = bv.vet(HACKNEY, [{"track_id": "s", "name": SANTI, "genre": "indie pop"}, {"track_id": "n", "name": "X - y", "genre": None}],
+                  a_genre="uk garage", vetoes=[])
+    assert [r["scene_clash"] for r in rows] == [True, False]
+    assert all(r["ok"] for r in rows)
+
+
 def test_server_endpoints_store_and_every_path_reads(tmp_path):
     from app.tests.py.testclient_compat import TestClient
     from app.ui import server
@@ -94,3 +101,45 @@ def test_server_endpoints_store_and_every_path_reads(tmp_path):
     assert res["results"][0]["gate"] == "veto"
     res = c.post("/api/autopilot/vet", json={"a_name": BODYROCK, "cands": [{"name": WORK, "stored": True}]}).json()
     assert res["results"][0]["gate"] == "veto", "the seeded pair"
+
+
+# ---- the mashup's scene gate (render/mashup.py scene_gate, narrow) -----------------------------------------
+
+from app.music_brain.analysis.analyzer import KeyEstimate, StructureSection, TrackAnalysis  # noqa: E402
+from app.music_brain.render import mashup  # noqa: E402
+
+
+def _track(path, bpm, camelot, duration=240.0):
+    bar = 240.0 / bpm
+    phrases = [i * 8 * bar for i in range(int(duration // (8 * bar)) + 1)]
+    return TrackAnalysis(
+        path=path, duration=duration, bpm=bpm, phrase_boundaries_8bar=phrases,
+        key=KeyEstimate(camelot=camelot, key_name="", is_major=camelot.endswith("B"), confidence=0.8),
+        sections=[StructureSection("intro", 0, 20, 0.3), StructureSection("verse", 20, 220, 0.6),
+                  StructureSection("outro", 220, duration, 0.3)],
+    )
+
+
+@pytest.fixture
+def regions(monkeypatch):
+    table = {}
+    monkeypatch.setattr(mashup, "vocal_presence_map", lambda p: table[str(p)])
+    return table
+
+
+def test_mashup_scene_gate_is_narrow(regions):
+    """Session events #401 / #228: Santigold (indie pop) over Sammy Virji - Hackney Pigeon (uk garage), and a
+    melodic house vocal over the Punjabi "Sadi Gali". Only a CLEAR mismatch refuses; unknown passes."""
+    assert mashup.scene_gate("uk garage", "indie pop")
+    assert mashup.scene_gate("punjabi", "melodic house")
+    assert mashup.scene_gate("melodic techno", "melodic house") is None
+    assert mashup.scene_gate("punjabi", "bhangra") is None
+    assert mashup.scene_gate("punjabi", "bollywood") is None, "the Punjabi profile's neighbour"
+    assert mashup.scene_gate(None, "indie pop") is None and mashup.scene_gate("uk garage", "") is None
+    assert mashup.scene_gate("electronic", "weird unlisted label") is None
+    host, guest = _track("h", 120, "8A"), _track("g", 120, "9A")
+    regions["host.wav"], regions["guest.wav"] = [], [(80.0, 100.0)]
+    no = mashup.plan_mashup(host, guest, lambda: "host.wav", lambda: "guest.wav", bars=8, genres=("uk garage", "indie pop"))
+    assert no["ok"] is False and no["gate"] == "scene"
+    assert mashup.plan_mashup(host, guest, lambda: "host.wav", lambda: "guest.wav", bars=8, genres=(None, None))["ok"]
+    assert mashup.plan_mashup(host, guest, lambda: "host.wav", lambda: "guest.wav", bars=8)["ok"], "no genres: not gated"

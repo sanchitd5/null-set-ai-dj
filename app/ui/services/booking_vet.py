@@ -65,6 +65,9 @@ def vet(a_name: str, cands: List[dict], **kw) -> List[dict]:
     for c in cands or []:
         r = vet_one(a_name, c.get("name") or "", b_genre=c.get("genre"), b_era=c.get("era"),
                     **dict(kw, stored=bool(c.get("stored", kw.get("stored", False)))))
+        # scene_clash: a CLEAR mismatch (both labels known, no shared family): the console's mashup
+        # transition refuses only that (render/mashup.py scene_gate, the same narrow rule)
+        clash = bool(family_jump(kw.get("a_genre"), c.get("genre")))
         out.append({"track_id": c.get("track_id"), "name": c.get("name"), "ok": r is None,
-                    "gate": r["gate"] if r else None, "why": r["why"] if r else None})
+                    "gate": r["gate"] if r else None, "why": r["why"] if r else None, "scene_clash": clash})
     return out

@@ -462,9 +462,11 @@ var autopilotCore = (function () {
     return { kind, decision: v.gate === "veto" ? "owner veto" : "refused", why: `${src} refused (${v.gate}): ${v.why}`,
              keep: !(v.gate === "repeat" || v.gate === "earlier_set") };
   }
-  // Mashup → Transition (B's vocal over A's instrumental), narrow: refused when B's vocal would sing over A's
-  // drop window / the sung line into it (busy: drop-line.js dropLineBusy). o: {busy} -> {gate, why} | null
+  // Mashup → Transition (B's vocal over A's instrumental), narrow: refused on a CLEAR scene mismatch (clash:
+  // both genres known, no shared family, render/mashup.py scene_gate; unknown passes) or when B's vocal would
+  // sing over A's drop window / the sung line into it (busy: drop-line.js dropLineBusy). o: {clash, busy}
   function mashupGate(o) {
+    if (o && o.clash === true) return { gate: "scene", why: "B's vocal over A's beat crosses genre families" };
     if (o && o.busy) return { gate: o.busy.gate, why: o.busy.reason };
     return null;
   }
@@ -781,7 +783,7 @@ var autopilotCore = (function () {
     emptyRetryMs, useLibraryFallback, searchPlan, DEADLINE_LEAD_S, rankAtlasBackups, backupStale, backupNeedsStems, rememberPairReject, pairRejected, awaitJob, keySafeRecipe, KEY_SAFE_MIN, energyStepOk, hybridWindowKey, highSpans, quantileLinear, median, exitPastHigh, learnedRecipe, vocalRecipe, stemBlendBars, stemBlendFader, phraseWaitS, introBars, FADER_PARK_BARS, homePlan, maskedGlideBars, maskedDropAt, HOME_DROP_PCT, LADDER_STEP_PCT,
     tempoLockableAt, recipeKind, decideRecipe, planSkipReason, WINDOWS, playWindowFor, exitBounds, exitPick, exitTiming, exitHighPush, audibleEnd, entryClamp, SILENT_FLOOR,
     breakdownSpans, exitOutOfBreakdown, exitBreakdownPush, energyAtTarget, FINISH_MAX_S, forcedExit, forcedRecipe, forcedLine, forcedBooking,
-    storedMove, vetRefusal, vetStep, badPairOf, mashupGate, mashupBars };
+    storedMove, vetRefusal, vetStep, badPairOf, pairKey, mashupGate, mashupBars };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   return api;
 })();
@@ -831,6 +833,7 @@ function createAutopilotEngine({ host, ai }) {
   let activeDeck = "a";       // which deck is currently playing
   let currentTrackId = null;
   let bookedPair = null, mixingPair = null;   // OWNER VETO "bad pair": the booked / the sounding A -> B
+  const pairClash = new Map();                // "A>B" -> true on a CLEAR genre-family mismatch (booking vet scene_clash)
   let occasion = "";
   let history = [];           // display names of played tracks (last 5 kept)
   let mashupTag = "";         // status suffix while a vocal layer is booked
@@ -1155,12 +1158,13 @@ function createAutopilotEngine({ host, ai }) {
     const aLeft = od.buffer ? (od.buffer.duration - od._currentPosition()) / od._playbackRate() : 0;
     let M = ve.vocal32 >= 0.7 && aLeft >= 44 * barS ? 32 : aLeft >= 26 * barS && ve.vocal16 >= 0.5 ? 16 : 0;
     const sm = host.mod.stemMoves, pA = Number.isFinite(t0) && od._positionAt ? od._positionAt(t0) : null;
-    {   // the drop window: the plain M-bar mashup from pA
+    {   // scene: every variant is B's vocal over A; the drop window: the plain M-bar mashup from pA
+      const bId = bookedPair && bookedPair.bId, clash = bId ? pairClash.get(autopilotCore.pairKey(currentTrackId, bId)) : null;
       // B's phrase from its vocal entry rides A bar for bar: refused only where it sings over A's drop window
       const busyAt = (m) => deckDropBusy(od, pA, pA + m * (240 / od.bpm), vocalSings(idk, pA, ve.entry, od.bpm / idk.bpm));
       const mb = M && Number.isFinite(pA) ? autopilotCore.mashupBars(M, ve, busyAt) : { M, busy: null };
       M = mb.M;
-      const mg = autopilotCore.mashupGate({ busy: mb.busy });
+      const mg = autopilotCore.mashupGate({ clash, busy: mb.busy });
       if (mg) {
         const tag = `mashup gate: ${mg.gate}: ${mg.why}`;
         if (tag !== lastVariantTag) { lastVariantTag = tag; console.info(tag); host.log.step("merge_gate", { deck: od.id, decision: "refused", why: `mashup ${mg.gate}: ${mg.why}`, result: { gate: mg.gate } }); }
@@ -2391,6 +2395,8 @@ function createAutopilotEngine({ host, ai }) {
       });
       if (!res.ok) { console.warn("vet: HTTP", res.status); return null; }
       const j = await res.json();
+      const r0 = j && Array.isArray(j.results) ? j.results[0] : null;
+      if (r0 && cand.track_id) pairClash.set(autopilotCore.pairKey(currentId, cand.track_id), r0.scene_clash === true);   // mashupFits' scene gate
       return autopilotCore.vetRefusal(j);
     } catch (e) { console.warn("vet:", e && e.message); return null; }
   }

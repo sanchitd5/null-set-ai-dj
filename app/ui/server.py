@@ -1726,6 +1726,7 @@ def post_mashup_plan(req: MashupRequest):
             guest_vocals_path=lambda: _vocals_stem(req.guest_id),
             bars=req.bars,
             host_mutable=req.host_mutable,
+            genres=(_track_vibe(req.host_id)["genre"], _track_vibe(req.guest_id)["genre"]),   # scene gate
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"mashup plan error: {exc}") from exc
@@ -1798,7 +1799,8 @@ def _layer_third(req: LayerRequest, a, b, layer: dict) -> Optional[dict]:
             continue
         try:
             plan = plan_mashup(b, guest, host_vocals_path=lambda: _vocals_stem(req.b_id),
-                               guest_vocals_path=lambda gid=gid: _vocals_stem(gid), bars=bars)
+                               guest_vocals_path=lambda gid=gid: _vocals_stem(gid), bars=bars,
+                               genres=(_track_vibe(req.b_id)["genre"], _track_vibe(gid)["genre"]))   # scene gate
         except Exception as exc:
             print(f"[layer] third layer {gid} skipped: {exc}", flush=True)
             continue
