@@ -48,7 +48,8 @@ ELECTRONIC_CLUSTERS = {
     # warehouse techno: straight, hard, minimal, industrial
     "techno": ("techno", "hard techno", "minimal techno", "industrial techno", "acid techno"),
     # bass music: dubstep, riddim, future bass, melodic dubstep
-    "bass": ("dubstep", "melodic dubstep", "bass music", "future bass", "riddim", "brostep"),
+    # (bass house sits in house AND bass: the bridge between the two floors)
+    "bass": ("dubstep", "melodic dubstep", "bass music", "bass house", "future bass", "riddim", "brostep"),
     # 170+ BPM: drum and bass, jungle, liquid
     "dnb": ("drum and bass", "drum & bass", "dnb", "jungle", "liquid", "neurofunk"),
     # the low-energy listening end: downtempo, ambient, chillout, trip hop, idm, electronica
@@ -72,16 +73,19 @@ ELECTRONIC_NEIGHBOURS = tuple(frozenset(p) for p in (
     ("breaks", "dnb"),       # breakbeat roots of jungle
 )) + tuple(frozenset({"electronic", c}) for c in ELECTRONIC_CLUSTERS)
 
-_CLUSTER_TERMS = sorted(((t, c) for c, ts in ELECTRONIC_CLUSTERS.items() for t in ts),
-                        key=lambda tc: -len(tc[0]))
+_TERM_CLUSTERS: dict = {}
+for _c, _ts in ELECTRONIC_CLUSTERS.items():
+    for _t in _ts:
+        _TERM_CLUSTERS.setdefault(_t, set()).add(_c)
+_CLUSTER_TERMS = sorted(_TERM_CLUSTERS, key=len, reverse=True)
 
 
 def _electronic_clusters(g: str) -> set:
     s = " " + " ".join(re.sub(r"[-_/,()]", " ", g).split()) + " "
     found = set()
-    for term, cluster in _CLUSTER_TERMS:
+    for term in _CLUSTER_TERMS:
         if f" {term} " in s:
-            found.add(cluster)
+            found |= _TERM_CLUSTERS[term]
             s = s.replace(f" {term} ", "  ")
     return found or {"electronic"}
 
