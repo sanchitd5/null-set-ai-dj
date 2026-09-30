@@ -41,7 +41,18 @@
     if (T - last < MIN_GAP_BARS * bar - 0.05) return false;
     return ledger.filter((x) => x.song === song).length < MAX_PER_SONG;
   }
-  const core = { planHits, allowed, PAD, MIN_GAP_BARS, MAX_PER_SONG };
+  // OWNER RULE "dhol drop only for punjabi songs, shouldn't experiment": a pad holding a dhol / bhangra
+  // sample (its loaded name) fires only when scene-profile.js dholOk passes: the playing song Punjabi, and on
+  // a transition cue the incoming one too. -> null (fire) | the refusal
+  const DHOL_SAMPLE = /\b(dhol|dholak|dhole|bhangra|chaal)\b/i;
+  function dholBlock(sampleName, kind, genreA, genreB, sp) {
+    if (!sampleName || !DHOL_SAMPLE.test(String(sampleName).replace(/[_-]+/g, " "))) return null;
+    const S = sp || root.sceneProfileCore || (typeof require === "function" ? require("./scene-profile.js") : null);
+    if (!S) return "dhol sample: no scene profile to check the song";
+    const v = S.dholOk(genreA, kind === "transition" ? (genreB || "") : undefined);
+    return v.ok ? null : v.why;
+  }
+  const core = { planHits, allowed, PAD, MIN_GAP_BARS, MAX_PER_SONG, dholBlock, DHOL_SAMPLE };
   if (typeof module !== "undefined" && module.exports) module.exports = core;
   if (typeof root.document === "undefined" || typeof audioCtx === "undefined" || typeof triggerPad !== "function") return;
 
@@ -83,8 +94,12 @@
     if ((!force && !enabled()) || T - audioCtx.currentTime < bar * 0.6) return false;
     if (booked.some((b) => Math.abs(b - T) < bar)) return false;           // one move per line
     if (!force && !allowed(ledger, T, bar, songOf(d))) return false;
+    const ap = root.autopilotState;
     for (const h of planHits(kind, T, bar)) {
       if (h.at < audioCtx.currentTime + 0.02) continue;
+      const slot = typeof padSamples !== "undefined" ? padSamples[PAD[h.pad]] : null;
+      const dhol = dholBlock(slot && slot.name, kind, ap && ap.genre, ap && ap.nextGenre);
+      if (dhol) { console.info(`auto sampler: ${h.pad} pad skipped (${slot.name}): ${dhol}`); continue; }
       const g = audioCtx.createGain();
       g.gain.value = h.gain;
       g.connect(bus);

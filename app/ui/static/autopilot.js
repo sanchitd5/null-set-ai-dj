@@ -3920,6 +3920,7 @@ function createAutopilotEngine({ host, ai }) {
     get activeDeck() { return activeDeck; },
     get trackId() { return currentTrackId; },
     get genre() { return currentGenre; },
+    get nextGenre() { return scheduledNext ? profileNext : null; },   // the booked incoming song's genre (dhol gate)
     get entryPos() { return entryPos; },
     get energy() { return currentEnergy; },
     get fireAt() { return scheduledNext ? scheduledFireAt : null; },
