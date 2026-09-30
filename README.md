@@ -250,7 +250,7 @@ back from the tracked JSON. The append-only logs stay files (`sessions/*/events.
 First start after the switch migrates each old store once (well under a second each; the atlas
 about 10 s for 306k pairs) and renames the source with a `.migrated` suffix:
 `pair_atlas.migrated/` (or `pair_atlas.json.migrated`), `macros.migrated/`,
-`learned_techniques.json.migrated`, `genre_labels.json.migrated`, `set_memory.json.migrated`.
+`learned_techniques.json.migrated`, `genre_labels.json.migrated`, `set_memory.json.migrated`, `vetoes.json.migrated`, `liked.json.migrated`. Session folders are never pruned.
 To roll back: stop the app, delete `app.db*` / `user.db*`, and rename the `.migrated` copies back.
 
 ---
