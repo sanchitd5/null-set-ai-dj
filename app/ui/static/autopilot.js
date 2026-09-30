@@ -774,9 +774,51 @@ var autopilotCore = (function () {
   // (./DJ/05 [[Breakdown Transition]], [[Reverb Transition]]: B's melodic intro or breakdown).
   // Candidates run across the WHOLE song; the live pick is uniform among the energy-fit ones.
   // Python twin: app/music_brain/render/entry_lines.py (fixture app/tests/fixtures/entry_line_cases.json).
-  const ENTRY_QUIET_FRAC = 0.5;      // phrase energy under half the song's median phrase = quiet (GUESS)
-  const ENTRY_DRUMS_MIN = 0.35;      // drum stem over the first 2 bars under 35 % of its song mean = no beat (GUESS)
+  // "Strong downbeat" levels (entry_lines.py has the measurement notes): each is the 2 bars after the
+  // line, RMS over the song's median bar. Drum stem first, the mix's low band without stems, the
+  // analysis energy curve only when no audio is decoded.
+  const ENTRY_DRUMS_MIN = 0.5;
+  const ENTRY_LOW_MIN = 0.6;
+  const ENTRY_QUIET_FRAC = 0.5;
+  const ENTRY_HANDOVER_BARS = 8;     // the beat may arrive on the next phrase line, as A leaves
+  const LOW_BAND_HZ = 150, LOW_SR = 11025;
   const ENTRY_OVERLAP_BARS = 16;     // B must not sing inside this many bars after its entry (as before)
+  // Mix low band per bar on B's phrase grid (Python twin low_band_bars): mono, decimated to ~LOW_SR,
+  // two one-pole low-passes at LOW_BAND_HZ, RMS per bar. channels: [Float32Array]
+  function lowBandBars(channels, sr, anchor, bar) {
+    const ch = (channels || []).filter((c) => c && c.length);
+    if (!ch.length || !(bar > 0) || !(sr > 0)) return [];
+    const n = Math.min(...ch.map((c) => c.length)), step = Math.max(1, Math.round(sr / LOW_SR)), fs = sr / step;
+    const k = 1 - Math.exp(-2 * Math.PI * LOW_BAND_HZ / fs), m = Math.floor((n - 1) / step) + 1;
+    const y = new Float64Array(m);
+    let s1 = 0, s2 = 0;
+    for (let j = 0; j < m; j++) {
+      let x = 0;
+      for (const c of ch) x += c[j * step];
+      x /= ch.length;
+      s1 += k * (x - s1); s2 += k * (s1 - s2);
+      y[j] = s2;
+    }
+    const out = [];
+    for (let t = ((anchor % bar) + bar) % bar; ; t += bar) {
+      const i0 = Math.floor(t * fs), i1 = Math.floor((t + bar) * fs);
+      if (i1 > m) break;
+      let q = 0;
+      for (let i = i0; i < i1; i++) q += y[i] * y[i];
+      out.push(i1 > i0 ? Math.sqrt(q / (i1 - i0)) : 0);
+    }
+    return out;
+  }
+  // The n bars after t over the song's median bar (Python twin low_level_at). null: unmeasured.
+  function lowLevelAt(bars, anchor, bar, t, n = 2) {
+    if (!bars || !bars.length || !(bar > 0)) return null;
+    const srt = bars.slice().sort((a, b) => a - b), med = srt[Math.floor((srt.length - 1) / 2)];
+    const i = Math.round((t - (((anchor % bar) + bar) % bar)) / bar);
+    const seg = [];
+    for (let j = i; j < i + n; j++) if (j >= 0 && j < bars.length) seg.push(bars[j]);
+    if (!seg.length || !(med > 0)) return null;
+    return Math.sqrt(seg.reduce((a, x) => a + x * x, 0) / seg.length) / med;
+  }
   const INTRO_RECIPES = ["Breakdown Transition", "Reverb Transition"];
   const introRecipe = (recipe) => INTRO_RECIPES.includes(String(recipe || ""));
   function meanOver(times, curve, t0, t1) {
@@ -792,8 +834,12 @@ var autopilotCore = (function () {
   }
   // o: {lines (B 8-bar phrase lines), include (the console's own line), energyTimes, energyCurve, vocals,
   // drops [{t, energy}], bar, end (audible end), roomS, overlapBars, band ("relaxed"|"middle"|"high"|null),
-  // introOk, drums (t -> fraction of song mean | null)} -> {lines: [t], rejected: [{t, why}], mainDrop}
+  // introOk, drums / low (t -> level over the song's median bar: drum stem / mix low band, null
+  // unmeasured)} -> {lines: [t], rejected: [{t, why}], mainDrop}
   // band null = band-free (the atlas stores these; the live pick applies the main-drop rule).
+  // Strong downbeat: the beat is there at the line, or at the handover ENTRY_HANDOVER_BARS later (B
+  // comes in on the last bars of its intro under A's tail and its kick lands as A leaves: Nocturnal
+  // 18.79 -> 33.81, Neverland 7.64 -> 22.64, both liked).
   function entryLines(o) {
     const bar = o.bar > 0 ? o.bar : 240 / 128, L = 8 * bar, ov = (o.overlapBars || ENTRY_OVERLAP_BARS) * bar;
     const tt = o.energyTimes || [], cv = o.energyCurve || [];
@@ -803,15 +849,22 @@ var autopilotCore = (function () {
     const med = es.length ? es[Math.floor((es.length - 1) / 2)] : null;
     const main = mainDropOf(o.drops);
     const end = Number.isFinite(o.end) ? o.end : Infinity, room = o.roomS || 0;
+    const strong = (x) => {
+      const dr = o.drums ? o.drums(x) : null;
+      if (Number.isFinite(dr)) return dr >= ENTRY_DRUMS_MIN;
+      const lo = o.low ? o.low(x) : null;
+      if (Number.isFinite(lo)) return lo >= ENTRY_LOW_MIN;
+      const e = meanOver(tt, cv, x, x + L);
+      return med == null || e == null ? null : e >= ENTRY_QUIET_FRAC * med;
+    };
     const out = [], rejected = [];
     for (const t of pts) {
       let why = null;
       if (end - t < room) why = "no room for its play window";
       else if ((o.vocals || []).some((r) => r && r[0] < t + ov && r[1] > t)) why = "B sings in the overlap";
       else if (!o.introOk) {
-        const e = meanOver(tt, cv, t, t + L), dr = o.drums ? o.drums(t) : null;
-        if (med != null && e != null && e < ENTRY_QUIET_FRAC * med) why = "quiet (not a strong downbeat)";
-        else if (Number.isFinite(dr) && dr < ENTRY_DRUMS_MIN) why = "no drums (not a strong downbeat)";
+        const at = strong(t), hand = t + ENTRY_HANDOVER_BARS * bar < end ? strong(t + ENTRY_HANDOVER_BARS * bar) : null;
+        if (at === false && hand !== true) why = "no beat at the line or the handover (not a strong downbeat)";
       }
       if (!why && main && (o.band === "relaxed" || o.band === "middle") && t >= main.t - 1e-3) why = "main drop already passed";
       if (why) rejected.push({ t, why }); else out.push(t);
@@ -1037,7 +1090,8 @@ var autopilotCore = (function () {
     breakdownSpans, exitOutOfBreakdown, exitBreakdownPush, energyAtTarget, FINISH_MAX_S, forcedExit, forcedRecipe, forcedLine, forcedBooking,
     storedMove, vetRefusal, vetStep, badPairOf, pairKey, mashupGate, mashupBars,
     setEnergy, arcAt, windowLevel, energyRecipeChoice, pickEntryByEnergy, ARC_TARGET, SET_RECENT, SET_ARC_W, SET_RELAXED_MAX, SET_HIGH_MIN, ENERGY_MATCH_TOL,
-    entryLines, entryRoomS, mainDropOf, pickEntryLine, seededRng, hashSeed, introRecipe, INTRO_RECIPES, ENTRY_QUIET_FRAC, ENTRY_DRUMS_MIN, ENTRY_OVERLAP_BARS };
+    entryLines, entryRoomS, mainDropOf, pickEntryLine, seededRng, hashSeed, introRecipe, INTRO_RECIPES, ENTRY_QUIET_FRAC, ENTRY_DRUMS_MIN, ENTRY_OVERLAP_BARS,
+    lowBandBars, lowLevelAt, ENTRY_LOW_MIN, ENTRY_HANDOVER_BARS, LOW_BAND_HZ };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   return api;
 })();
@@ -1470,6 +1524,32 @@ function createAutopilotEngine({ host, ai }) {
     return autopilotCore.windowLevel(measuredById[id], stemSum(stemMeans(d, t, bars)), stemSum(stemMeans(d, 0, songBars)));
   }
   const meanLvl = (a, b) => (a != null && b != null ? (a + b) / 2 : a != null ? a : b);
+  // B's per-bar beat levels on its phrase grid for the strong-downbeat test: the drum stem when the
+  // stems are decoded, the mix's low band otherwise (no stems needed). Cached per decoded buffer.
+  const entryLevelCache = new WeakMap();
+  function entryLevels(d, bar) {
+    const an = (d && d.analysis) || {}, ph = an.phrase_boundaries_8bar || [];
+    const anchor = ph.length && Number.isFinite(ph[0]) ? ph[0] : 0, out = { anchor, drums: null, low: null };
+    if (!d || !(bar > 0)) return out;
+    const sm = host.mod.stemMoves;
+    if (d.stemsReady && sm && sm.stemEnergyBars && d.buffer) {
+      const a0 = ((anchor % bar) + bar) % bar, n = Math.floor((d.buffer.duration - a0) / bar);
+      const e = n > 0 ? sm.stemEnergyBars(d, a0, bar, n) : null;
+      if (e && e.drums) out.drums = e.drums;
+    }
+    const b = d.buffer;
+    if (b && b.getChannelData) {
+      let c = entryLevelCache.get(b);
+      if (!c || c.bar !== bar || c.anchor !== anchor) {
+        const chs = [];
+        for (let i = 0; i < Math.min(2, b.numberOfChannels || 1); i++) chs.push(b.getChannelData(i));
+        c = { bar, anchor, low: autopilotCore.lowBandBars(chs, b.sampleRate, anchor, bar) };
+        entryLevelCache.set(b, c);
+      }
+      if (c.low.length) out.low = c.low;
+    }
+    return out;
+  }
   // SET ENERGY facts for decideRecipe (energy-recipe-choice): the set level, the mashup's class from
   // its stem plan, each option's window level, and B's energy-picked entry for a blend.
   function liveSetEnergy(od, sd, aId, bId, aT, bT, blend, opts) {
@@ -1496,13 +1576,13 @@ function createAutopilotEngine({ host, ai }) {
     const an = sd.analysis || {}, dur = sd.buffer ? autopilotCore.audibleEnd(an, sd.buffer.duration) : 0;
     const dm = host.mod.djMind && host.mod.djMind.core;
     const drops = dm && dm.dropLines ? dm.dropLines(an.phrase_boundaries_8bar, an.energy_times, an.energy_curve, bBar) : [];
-    const songBars = dur > 0 ? Math.floor(dur / bBar) : 0;
-    const drumsMean = sd.stemsReady ? (stemMeans(sd, 0, songBars) || {}).drums : null;
-    const drums = drumsMean > 0 ? (t) => { const m = stemMeans(sd, t, 2); return m ? m.drums / drumsMean : null; } : null;
+    const lv = entryLevels(sd, bBar);
+    const drums = lv.drums ? (t) => autopilotCore.lowLevelAt(lv.drums, lv.anchor, bBar, t) : null;
+    const low = lv.low ? (t) => autopilotCore.lowLevelAt(lv.low, lv.anchor, bBar, t) : null;
     const el = autopilotCore.entryLines({
       lines: an.phrase_boundaries_8bar, include: bT, energyTimes: an.energy_times, energyCurve: an.energy_curve,
       vocals: an.vocal_active_regions, drops, bar: bBar, end: dur, roomS: (opts && opts.roomS) || 0,
-      band: se.band, introOk: autopilotCore.introRecipe(opts && opts.recipe), drums });
+      band: se.band, introOk: autopilotCore.introRecipe(opts && opts.recipe), drums, low });
     const cands = el.lines.map((t) => ({ t, level: meanLvl(aL, deckWindowLevel(sd, bId, t, 16)) }));
     const own = cands.find((c) => Math.abs(c.t - bT) < 1e-3);
     const blendLevel = own ? own.level : cands.length ? cands[0].level : aL;

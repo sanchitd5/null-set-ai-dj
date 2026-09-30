@@ -14,8 +14,16 @@ from __future__ import annotations
 import math
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
-ENTRY_QUIET_FRAC = 0.5    # phrase energy under half the song's median phrase = quiet (GUESS)
-ENTRY_DRUMS_MIN = 0.35    # drum stem over the first 2 bars under 35 % of its song mean = no beat (GUESS)
+# "Strong downbeat" levels, measured (read only, 2026-09-30) on 22 library songs: 10 with quiet
+# intros and 10 that start on the beat (picked from their energy curves) plus Nocturnal and
+# Neverland, every 8-bar line (442). Each level is the 2 bars after the line, RMS over the song's
+# median bar. Nocturnal's whole intro (bars 0-14) sits at 0.46 drums / 0.49 low, its beat at 1.4.
+ENTRY_DRUMS_MIN = 0.5     # drum stem: first-line hits 19/20; Nocturnal 3.8 out, 18.79 in
+ENTRY_LOW_MIN = 0.6       # mix low band (no stems): 93 % per-line agreement with the drum stem, first lines 20/20
+ENTRY_QUIET_FRAC = 0.5    # no audio at all: phrase energy / the song's median phrase (last resort, unmeasured)
+ENTRY_HANDOVER_BARS = 8   # B owns the room this many bars after it enters (the 8-bar Echo Out / Bass Swap)
+LOW_BAND_HZ = 150.0
+LOW_SR = 11025
 ENTRY_OVERLAP_BARS = 16   # B must not sing inside this many bars after its entry (as before)
 ENERGY_MATCH_TOL = 3      # autopilot.js ENERGY_MATCH_TOL: window level within 3 of the set level
 INTRO_RECIPES = ("Breakdown Transition", "Reverb Transition")
@@ -40,6 +48,45 @@ def _mean_over(times: Sequence, curve: Sequence, t0: float, t1: float) -> Option
     return s / n if n else None
 
 
+def low_band_bars(channels: Sequence, sr: int, anchor: float, bar: float) -> List[float]:
+    """autopilot.js lowBandBars: mono mix decimated to ~LOW_SR, two one-pole low-passes at
+    LOW_BAND_HZ, RMS per bar on B's phrase grid (from `anchor`). No stems needed."""
+    import numpy as np
+    from scipy.signal import lfilter
+
+    chs = [np.asarray(c, dtype=np.float64) for c in channels if c is not None and len(c)]
+    if not chs or not (bar > 0) or not (sr > 0):
+        return []
+    n = min(len(c) for c in chs)
+    step = max(1, int(round(sr / LOW_SR)))
+    y = sum(c[:n:step] for c in chs) / len(chs)
+    fs = sr / step
+    k = 1.0 - math.exp(-2 * math.pi * LOW_BAND_HZ / fs)
+    y = lfilter([k], [1.0, k - 1.0], lfilter([k], [1.0, k - 1.0], y))
+    out, t = [], anchor % bar
+    while True:
+        i0, i1 = int(math.floor(t * fs)), int(math.floor((t + bar) * fs))
+        if i1 > len(y):
+            break
+        seg = y[i0:i1]
+        out.append(float(np.sqrt(np.mean(seg * seg))) if len(seg) else 0.0)
+        t += bar
+    return out
+
+
+def low_level_at(bars: Sequence[float], anchor: float, bar: float, t: float, n: int = 2) -> Optional[float]:
+    """autopilot.js lowLevelAt: the n bars after t (RMS) over the song's median bar, None unmeasured."""
+    if not bars or not (bar > 0):
+        return None
+    srt = sorted(bars)
+    med = srt[(len(srt) - 1) // 2]
+    i = int(round((t - anchor % bar) / bar))
+    seg = [bars[j] for j in range(i, i + n) if 0 <= j < len(bars)]
+    if not seg or not (med > 0):
+        return None
+    return math.sqrt(sum(x * x for x in seg) / len(seg)) / med
+
+
 def main_drop_of(drops: Optional[Sequence[dict]]) -> Optional[dict]:
     """The song's biggest drop line (earliest on a tie). drops: [{t, energy}]."""
     best = None
@@ -55,9 +102,13 @@ def entry_lines(lines: Sequence[float], include: Optional[float] = None,
                 bar: Optional[float] = None, end: Optional[float] = None, room_s: float = 0.0,
                 overlap_bars: Optional[float] = None, band: Optional[str] = None,
                 intro_ok: bool = False,
-                drums: Optional[Callable[[float], Optional[float]]] = None) -> Dict[str, Any]:
+                drums: Optional[Callable[[float], Optional[float]]] = None,
+                low: Optional[Callable[[float], Optional[float]]] = None) -> Dict[str, Any]:
     """-> {lines: [t], rejected: [{t, why}], main_drop: t | None}. band None = band-free (the atlas
-    stores these; the live pick applies the main-drop rule)."""
+    stores these; the live pick applies the main-drop rule). drums / low: t -> level over the song's
+    median bar (drum stem / mix low band), None unmeasured. A line is a strong downbeat when the
+    beat is there at the line or at the handover ENTRY_HANDOVER_BARS later (B comes in on the last
+    bars of its intro under A's tail and its kick lands as A leaves: Nocturnal 18.79 -> 33.81)."""
     bar = bar if _fin(bar) and bar > 0 else 240.0 / 128
     L = 8 * bar
     ov = (overlap_bars or ENTRY_OVERLAP_BARS) * bar
@@ -69,6 +120,17 @@ def entry_lines(lines: Sequence[float], include: Optional[float] = None,
     main = main_drop_of(drops)
     stop = end if _fin(end) else math.inf
     room = room_s or 0.0
+
+    def strong(x: float) -> Optional[bool]:
+        dr = drums(x) if drums else None
+        if _fin(dr):
+            return dr >= ENTRY_DRUMS_MIN
+        lo = low(x) if low else None
+        if _fin(lo):
+            return lo >= ENTRY_LOW_MIN
+        e = _mean_over(energy_times, energy_curve, x, x + L)
+        return None if med is None or e is None else e >= ENTRY_QUIET_FRAC * med
+
     out: List[float] = []
     rejected: List[dict] = []
     for t in pts:
@@ -78,12 +140,10 @@ def entry_lines(lines: Sequence[float], include: Optional[float] = None,
         elif any(r[0] < t + ov and r[1] > t for r in vocals or [] if r):
             why = "B sings in the overlap"
         elif not intro_ok:
-            e = _mean_over(energy_times, energy_curve, t, t + L)
-            dr = drums(t) if drums else None
-            if med is not None and e is not None and e < ENTRY_QUIET_FRAC * med:
-                why = "quiet (not a strong downbeat)"
-            elif _fin(dr) and dr < ENTRY_DRUMS_MIN:
-                why = "no drums (not a strong downbeat)"
+            at = strong(t)
+            hand = strong(t + L) if t + L < stop else None
+            if at is False and hand is not True:
+                why = "no beat at the line or the handover (not a strong downbeat)"
         if not why and main and band in ("relaxed", "middle") and t >= main["t"] - _EPS:
             why = "main drop already passed"
         if why:
