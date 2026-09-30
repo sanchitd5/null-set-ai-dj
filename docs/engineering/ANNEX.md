@@ -316,8 +316,10 @@ tracklist song, registers it, builds the atlas and writes `studied-set-<set_id>`
 One command that keeps the library, stems and atlas current: `./maintain.sh [--steps
 stems,flac,labels,review,atlas,export] [--dry-run] [--jobs N] [--max-minutes M] [--no-network]`
 (wrapper for `python3 -m app.music_brain.maintain`, code `app/music_brain/maintain.py`). Steps run
-in that order, each through its own existing function: `stem_service.separate` for every track
-without stems (files over 15 min are skipped as albums, failures counted), `audio_convert.run`
+in that order, each through its own existing function. stems: first the [ft cleanup](#one-stem-set-per-song)
+for songs that already have a complete htdemucs_ft set (dry-run lists the folders and GB), then
+`stem_service.separate` (htdemucs_ft) for every track with no stems or only fast htdemucs stems
+(files over 15 min are skipped as albums, failures counted), `audio_convert.run`
 for leftover WAVs, `genre_labels.label_library` missing-only, `set_learner.review_learned` for
 sets none of whose observations has an `ai_rule`, incremental `pair_atlas.build` (full rescore
 when the rules hash moved), and `knowledge.export_safe` with its privacy check. The labels and
@@ -352,6 +354,15 @@ stays clean, then hand over on a downbeat. Hold length comes from measured stem 
 gaps, never a fixed constant. `app/ui/static/stem-moves.js:holdPlan` and `mergeTransitionPlan`;
 Python scoring `app/music_brain/render/merge.py`. It is what a merge combo plays. Theory:
 [[Stems Transition]].
+
+### one stem set per song
+Owner rule: once a song has a complete htdemucs_ft 4-stem set (manifest ok, all 4 files on
+disk), its other stem folders (`<hash>_htdemucs`, `<hash>_htdemucs_vocals`, any non-ft model) are
+removed: renamed out to `cache/stems_trash/` (atomic) and deleted. It happens right after an ft set
+is written (`stem_service.separate`, `StemWorker.finish`) and in the maintain.sh stems step; never
+when the ft set is incomplete. The 2-stem vocal readers (`server._vocals_stem_impl`,
+`_cached_vocal_regions`, `_vocals_cached`) use the ft vocals stem first, so a pruned 2-stem folder
+never forces a new separation. Code: `app/music_brain/audio/stem_service.py:prune_non_ft`.
 
 ### observations
 One detected technique sighting from a studied set (set, DJ, position, songs, overlap, tempo gap,

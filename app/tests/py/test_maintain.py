@@ -6,7 +6,8 @@ import json
 import pytest
 
 from app.music_brain import maintain as mt
-from app.music_brain.atlas import pair_atlas as pa
+from app.music_brain.audio import stem_service as ss
+from app.music_brain.audio.audio_io import write_manifest
 
 
 def _cache(tmp_path, tracks):
@@ -46,7 +47,8 @@ def test_dry_run_writes_nothing_and_counts(tmp_path):
     assert _tree(cache) == before
     assert rep["dry_run"] and "saved" not in rep
     st = rep["results"]["stems"]
-    assert st["to_separate"] == 1 and st["skipped_long"] == ["Artist - Album"] and st["separated"] == 0
+    assert st["missing"] == 1 and st["upgrade"] == 0 and st["skipped_long"] == ["Artist - Album"]
+    assert st["separated"] == 0 and st["cleanup"]["folders"] == []
     assert rep["before"]["tracks"] == 2 and rep["before"]["tracks_without_stems"] == 2
     assert rep["results"]["atlas"]["rules_changed"] is True          # no atlas yet
     assert rep["results"]["labels"]["dry_run"] is True
@@ -54,27 +56,40 @@ def test_dry_run_writes_nothing_and_counts(tmp_path):
     assert set(rep) >= {"steps", "app_running", "backend", "before", "after", "results", "seconds"}
 
 
-def test_stems_skip_long_count_failures_and_rerun_is_idempotent(tmp_path, monkeypatch):
-    cache = _cache(tmp_path, {"a1": ("A - One", 200.0), "b2": ("B - Two", 180.0), "c3": ("C - Set", 5400.0)})
-    done, calls = set(), []
+def _stem_set(stems_dir, h, variant):
+    d = stems_dir / f"{h}_{variant}"
+    d.mkdir(parents=True)
+    paths = {n: str(d / f"{n}.flac") for n in ss.FOUR_STEM_NAMES}
+    for p in paths.values():
+        open(p, "wb").write(b"x" * 100)
+    write_manifest(d, paths)
+    return d
 
-    def sep(path):
-        calls.append(path)
-        if path.endswith("b2.mp3"):
+
+def test_stems_new_and_upgrade_skip_long_count_failures_rerun_idempotent(tmp_path, monkeypatch):
+    cache = _cache(tmp_path, {"a1": ("A - One", 200.0), "b2": ("B - Two", 180.0),
+                              "c3": ("C - Set", 5400.0), "d4": ("D - Fast", 190.0)})
+    fast = _stem_set(cache / "stems", "d4", "htdemucs")                # fast stems only -> upgrade
+    calls = []
+
+    def sep(path):                                                      # what stem_service.separate does
+        tid = path.rsplit("/", 1)[1].split(".")[0]
+        calls.append(tid)
+        if tid == "b2":
             raise RuntimeError("demucs died")
-        done.add(path.rsplit("/", 1)[1].split(".")[0])
+        _stem_set(cache / "stems", tid, "htdemucs_ft")
+        ss.prune_non_ft(tid, cache / "stems")
 
-    real_stems = pa.Library.stems
     monkeypatch.setattr(mt, "separate_one", sep)
-    monkeypatch.setattr(pa.Library, "stems", lambda self, d: {"vocals": "v"} if d in done else real_stems(self, d))
     rep = mt.run(["stems"], cache=cache, save=False)
     r = rep["results"]["stems"]
-    assert r["separated"] == 1 and [f["name"] for f in r["failed"]] == ["B - Two"]
-    assert r["skipped_long"] == ["C - Set"] and not any(c.endswith("c3.mp3") for c in calls)
+    assert (r["missing"], r["upgrade"], r["separated"]) == (2, 1, 2)
+    assert [f["name"] for f in r["failed"]] == ["B - Two"] and r["skipped_long"] == ["C - Set"]
+    assert sorted(calls) == ["a1", "b2", "d4"] and not fast.exists()
     assert rep["after"]["tracks_without_stems"] == 2
     calls.clear()
     r2 = mt.run(["stems"], cache=cache, save=False)["results"]["stems"]
-    assert r2["to_separate"] == 1 and len(calls) == 1                 # only the failed one again
+    assert (r2["missing"], r2["upgrade"]) == (1, 0) and calls == ["b2"]  # only the failed one again
 
 
 def test_running_app_refuses_stems_and_flac_but_not_locked_steps(tmp_path, monkeypatch):

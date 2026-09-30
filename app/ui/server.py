@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import mimetypes
+import os
 import re
 import shutil
 import threading
@@ -503,7 +504,8 @@ def _cached_vocal_regions(track_id: str) -> Optional[list]:
     if track_id in _vocal_regions:
         return _vocal_regions[track_id]
     audio_hash = stem_service.file_hash(_track_path(track_id))
-    for model, two in ((MASHUP_DEMUCS_MODEL, "vocals"), (DEMUCS_MODEL, "vocals"), (DEMUCS_MODEL, None)):
+    # ft 4-stem first: once it exists the fast 2-stem copy is pruned (stem_service.prune_non_ft)
+    for model, two in ((DEMUCS_MODEL, None), (MASHUP_DEMUCS_MODEL, "vocals"), (DEMUCS_MODEL, "vocals")):
         stems = stem_service._load_from_cache(stem_service._cache_dir_for(audio_hash, model, two))
         if not stems or not stems.get("vocals"):
             continue
@@ -538,8 +540,10 @@ _stem_cache: Dict[str, Dict[str, str]] = {}
 def _cached_stems4(track_id: str) -> Optional[Dict[str, str]]:
     from app.music_brain.audio import stem_service
 
-    if track_id in _stem_cache:
-        return _stem_cache[track_id]
+    hit = _stem_cache.get(track_id)
+    if hit and all(os.path.exists(p) for p in hit.values()):
+        return hit
+    _stem_cache.pop(track_id, None)       # its folder was pruned for an ft set: resolve again
     stems = stem_service.cached_four_stems(_track_path(track_id))
     if stems:
         _stem_cache[track_id] = stems
@@ -1631,8 +1635,14 @@ def _vocals_stem(track_id: str) -> str:
 
 
 def _vocals_stem_impl(track_id: str) -> str:
+    """The ft 4-stem vocals when the song has a complete htdemucs_ft set (non-ft folders are
+    pruned once it does), else a fast 2-stem run."""
+    from app.music_brain.audio.stem_service import ft_vocals
     from app.music_brain.render.mashup import MASHUP_DEMUCS_MODEL
 
+    ft = ft_vocals(_track_path(track_id))
+    if ft:
+        return ft
     result = separate_stems(_track_path(track_id), two_stems="vocals", model=MASHUP_DEMUCS_MODEL)
     path = result.stems.get("vocals")
     if not path:
@@ -1743,9 +1753,12 @@ def _vocals_cached(track_id: str) -> bool:
     from app.music_brain.render.mashup import MASHUP_DEMUCS_MODEL
     from app.music_brain.audio.stem_service import _cache_dir_for, _load_from_cache, file_hash
 
+    from app.music_brain.audio.stem_service import complete_ft
+
     try:
-        path = _track_path(track_id)
-        return _load_from_cache(_cache_dir_for(file_hash(Path(path)), MASHUP_DEMUCS_MODEL, "vocals")) is not None
+        h = file_hash(Path(_track_path(track_id)))
+        return (complete_ft(h) is not None
+                or _load_from_cache(_cache_dir_for(h, MASHUP_DEMUCS_MODEL, "vocals")) is not None)
     except Exception:
         return False
 

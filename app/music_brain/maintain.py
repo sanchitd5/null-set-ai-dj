@@ -13,6 +13,12 @@ Running app policy: stems and flac REFUSE while the app answers on 127.0.0.1:$PO
 server may be streaming. labels, review, atlas and export run anyway: each takes its
 existing lock (genre_labels merge_save lock, learned store lock, atlas lock).
 
+stems: (a) removes the non-ft folders (<hash>_htdemucs, <hash>_htdemucs_vocals, ...) of every song
+that already has a complete htdemucs_ft 4-stem set, (b) separates with htdemucs_ft every song with
+no stems or only fast htdemucs stems (files over 15 min skipped), each of which then prunes its
+own non-ft folders (stem_service.prune_non_ft). Cleanup only runs with the app down (above), so
+no folder a live deck is reading can vanish mid-play.
+
 Resumable: every step is idempotent (stems cached by content hash, flac skips converted
 folders, atlas is incremental, labels are missing-only, review only picks sets no model has
 reviewed yet), so re-running after a crash picks up where it stopped. Never downloads, never
@@ -78,7 +84,16 @@ def counts(cache: Path) -> dict:
     from app.music_brain.learning import set_learner as sl
 
     tracks = pa.Library(cache).tracks()
+    from app.music_brain.audio import stem_service as ss
+
     out = {"tracks": len(tracks), "tracks_without_stems": sum(1 for t in tracks if not t["stems"])}
+    ft, fast, voc = ss.DEMUCS_MODEL, ss.FAST_MODEL, f"{ss.FAST_MODEL}_vocals"
+    st = {"ft_only": 0, "fast_only": 0, "both": 0, "fast_vocals_on_4stem": 0}
+    for vs in stem_hashes(Path(cache) / "stems").values():
+        kind = "both" if ft in vs and fast in vs else "ft_only" if ft in vs else "fast_only" if fast in vs else "other"
+        st[kind] = st.get(kind, 0) + 1
+        st["fast_vocals_on_4stem"] += voc in vs and (ft in vs or fast in vs)
+    out["stem_sets"] = st
     root = pa._root(cache, None)
     meta = pa._meta(root) or {}
     c = {"pairs": 0, "merge": 0, "mashup": 0, "riff": 0, "double_drop": 0, "combos": 0, "merge_blocked_by_stems": 0}
@@ -132,25 +147,73 @@ def separate_one(path: str) -> None:
     stem_service.separate(path)
 
 
-def step_stems(ctx: dict) -> dict:
-    from app.music_brain.atlas import pair_atlas as pa
+def stem_hashes(stems_dir: Path) -> Dict[str, List[str]]:
+    """{audio hash: [variant, ...]} from the stem folder names <sha256>_<model>[_<two_stems>]."""
+    out: Dict[str, List[str]] = {}
+    if Path(stems_dir).is_dir():
+        for d in sorted(Path(stems_dir).iterdir()):
+            h, sep, variant = d.name.partition("_")
+            if d.is_dir() and sep and len(h) == 64:
+                out.setdefault(h, []).append(variant)
+    return out
 
-    todo, long_ = [], []
+
+def cleanup_non_ft(stems_dir: Path, dry_run: bool, out_of_time=lambda: False) -> dict:
+    """(a) every song that already has a complete htdemucs_ft set loses its non-ft folders."""
+    from app.music_brain.audio import stem_service as ss
+
+    out = {"songs": 0, "folders": [], "bytes": 0, "errors": []}
+    for h, variants in stem_hashes(stems_dir).items():
+        if all(v.startswith(ss.DEMUCS_MODEL) for v in variants):
+            continue
+        if out_of_time():
+            out["note"] = "time budget reached"
+            break
+        r = ss.prune_non_ft(h, stems_dir, dry_run=dry_run)
+        if r.get("removed"):
+            out["songs"] += 1
+            out["folders"].extend(r["removed"])
+            out["bytes"] += r["bytes"]
+        out["errors"].extend(r.get("errors") or [])
+    trash = Path(stems_dir).parent / "stems_trash"        # leftovers of a crash mid-delete
+    if not dry_run and trash.is_dir():
+        import shutil
+        for d in trash.iterdir():
+            shutil.rmtree(d, ignore_errors=True)
+    out["gb"] = round(out["bytes"] / 1e9, 2)
+    return out
+
+
+def step_stems(ctx: dict) -> dict:
+    """(a) drop non-ft stem folders of songs that have a complete ft set; (b) separate with
+    htdemucs_ft every song with no stems or only fast (htdemucs) stems, which then prunes its
+    non-ft folders itself (stem_service.separate -> prune_non_ft)."""
+    from app.music_brain.atlas import pair_atlas as pa
+    from app.music_brain.audio import stem_service as ss
+
+    stems_dir = Path(ctx["cache"]) / "stems"
+    out = {"cleanup": cleanup_non_ft(stems_dir, ctx["dry_run"], ctx["out_of_time"])}
+    missing, upgrade, long_ = [], [], []
     for t in pa.Library(ctx["cache"]).tracks():
-        if t["stems"]:
+        if ss.complete_ft(t["digest"], stems_dir):
             continue
         d = _duration(t["analysis"])
-        (long_ if d is not None and d > MAX_TRACK_S else todo).append(t)
-    out = {"to_separate": len(todo), "skipped_long": [t["name"] for t in long_],
-           "separated": 0, "failed": [], "not_started": 0}
+        if d is not None and d > MAX_TRACK_S:
+            long_.append(t)
+        else:
+            (upgrade if t["stems"] else missing).append(t)
+    fast_bytes = sum(ss.dir_bytes(p) for t in upgrade for p in ss.non_ft_dirs(t["digest"], stems_dir))
+    out |= {"missing": len(missing), "upgrade": len(upgrade), "upgrade_replaces_gb": round(fast_bytes / 1e9, 2),
+            "skipped_long": [t["name"] for t in long_], "separated": 0, "failed": [], "not_started": 0}
     if ctx["dry_run"]:
         return out
+    todo = missing + upgrade
     for i, t in enumerate(todo):
         if ctx["out_of_time"]():
             out["not_started"] = len(todo) - i
             out["note"] = "time budget reached"
             break
-        _log(f"stems {i + 1}/{len(todo)}: {t['name']}")
+        _log(f"stems {i + 1}/{len(todo)} ({'upgrade' if t['stems'] else 'new'}): {t['name']}")
         try:
             separate_one(t["path"])
             out["separated"] += 1
@@ -312,6 +375,8 @@ def main(argv=None) -> int:
     ap.add_argument("--no-network", action="store_true", help="skip the claudecode backend for labels / review")
     ap.add_argument("--cache-dir", type=Path, default=None, help="default: data/cache (config.CACHE_DIR)")
     a = ap.parse_args(argv)
+    if a.cache_dir and "app.music_brain.config" not in sys.modules:
+        os.environ["AIDJ_CACHE_DIR"] = str(a.cache_dir)   # so separation writes the same cache it reads
     try:
         from dotenv import load_dotenv
         load_dotenv()

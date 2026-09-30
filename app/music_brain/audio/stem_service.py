@@ -7,12 +7,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 from app.music_brain.audio import audio_io
 from app.music_brain.audio.audio_io import MANIFEST_VERSION, read_manifest, write_manifest  # noqa: F401 (re-export)
@@ -153,6 +155,8 @@ def separate(
     shutil.rmtree(demucs_out_dir, ignore_errors=True)
 
     write_manifest(cache_dir, stems)
+    if model == DEMUCS_MODEL and not two_stems:
+        _auto_prune(audio_hash, cache_dir.parent)
 
     return StemResult(
         audio_hash=audio_hash, model=model, two_stems=two_stems,
@@ -209,6 +213,9 @@ class StemWorker:
         stems = result["stems"]
         cache_dir = Path(next(iter(stems.values()))).parent
         write_manifest(cache_dir, stems)
+        ft = f"_{DEMUCS_MODEL}"
+        if cache_dir.name.endswith(ft):
+            _auto_prune(cache_dir.name[: -len(ft)], cache_dir.parent)
         return stems
 
 
@@ -220,6 +227,74 @@ def cached_four_stems(audio_path: Path) -> Optional[Dict[str, str]]:
         if st and all(st.get(n) for n in FOUR_STEM_NAMES):
             return st
     return None
+
+
+# ---- one stem set per song: htdemucs_ft wins ---------------------------------------
+# Owner rule: once a song has a complete htdemucs_ft 4-stem set, its other stem folders
+# (<hash>_htdemucs 4-stem, <hash>_htdemucs_vocals 2-stem, any non-ft model) are dead weight:
+# every reader prefers ft (cached_four_stems, ft_vocals). They are removed right after an ft
+# set is written, and by the maintenance "stems" step for songs that already have one.
+
+def complete_ft(audio_hash: str, stems_dir: Optional[Path] = None) -> Optional[Dict[str, str]]:
+    """The song's htdemucs_ft 4-stem set when complete (manifest ok, all 4 files on disk), else None."""
+    st = _load_from_cache(Path(stems_dir or STEMS_CACHE_DIR) / f"{audio_hash}_{DEMUCS_MODEL}")
+    return st if st and all(st.get(n) for n in FOUR_STEM_NAMES) else None
+
+
+def ft_vocals(audio_path: str | Path) -> Optional[str]:
+    """Vocals of a complete htdemucs_ft 4-stem set (never separates); None when there is none."""
+    st = complete_ft(file_hash(Path(audio_path)))
+    return st["vocals"] if st else None
+
+
+def non_ft_dirs(audio_hash: str, stems_dir: Optional[Path] = None) -> List[Path]:
+    """Every stem folder of this song made by a model other than htdemucs_ft."""
+    root = Path(stems_dir or STEMS_CACHE_DIR)
+    if not root.is_dir():
+        return []
+    n = len(audio_hash) + 1
+    return sorted(d for d in root.glob(f"{audio_hash}_*")
+                  if d.is_dir() and not d.name[n:].startswith(DEMUCS_MODEL))
+
+
+def dir_bytes(d: Path) -> int:
+    return sum(f.stat().st_size for f in Path(d).rglob("*") if f.is_file())
+
+
+def prune_non_ft(audio_hash: str, stems_dir: Optional[Path] = None, dry_run: bool = False) -> dict:
+    """Remove the song's non-ft stem folders, ONLY when its ft set is complete. Each folder is
+    renamed out of stems/ first (atomic: a reader sees the whole folder or none), then deleted.
+    -> {"removed": [folder names], "bytes": n, "errors": [...]} or {"skipped": why}."""
+    root = Path(stems_dir or STEMS_CACHE_DIR)
+    if complete_ft(audio_hash, root) is None:
+        return {"removed": [], "bytes": 0, "errors": [], "skipped": "no complete htdemucs_ft set"}
+    out = {"removed": [], "bytes": 0, "errors": []}
+    trash = root.parent / "stems_trash"
+    for d in non_ft_dirs(audio_hash, root):
+        size = dir_bytes(d)
+        if not dry_run:
+            try:
+                trash.mkdir(parents=True, exist_ok=True)
+                t = trash / f"{d.name}.{os.getpid()}.{time.time_ns()}"
+                os.replace(d, t)
+            except OSError as exc:
+                out["errors"].append(f"{d.name}: {exc}"[:200])
+                continue
+            shutil.rmtree(t, ignore_errors=True)
+        out["removed"].append(d.name)
+        out["bytes"] += size
+    return out
+
+
+def _auto_prune(audio_hash: str, stems_dir: Path) -> None:
+    """After an ft set was written: drop the non-ft copies. Never fails the separation."""
+    try:
+        r = prune_non_ft(audio_hash, stems_dir)
+        if r["removed"]:
+            print(f"[stems] {audio_hash[:12]}: htdemucs_ft set complete, removed {', '.join(r['removed'])}",
+                  file=sys.stderr, flush=True)
+    except Exception as exc:  # noqa: BLE001 -- cleanup is best effort, the ft set stands
+        print(f"[stems] {audio_hash[:12]}: non-ft cleanup failed: {exc}", file=sys.stderr, flush=True)
 
 
 def _detect_device() -> str:
