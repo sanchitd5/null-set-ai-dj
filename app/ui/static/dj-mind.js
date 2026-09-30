@@ -1296,6 +1296,7 @@
     const res = am.tick(d, { pos, bar, entryT: d._mindEntry || 0, lineT, quiet: phraseQuiet,
       exitT: plan ? plan.fireAt : null, bEntry: plan && Number.isFinite(plan.bEntry) ? plan.bEntry : null,
       style: plan ? plan.style : null, recipe: plan ? plan.recipe : null,
+      scene: plan ? plan.scene : null, genreA: plan ? plan.genreA : null, genreB: plan ? plan.genreB : null,
       holdActive: !!holdLoop, mashupActive: !!(host.mod.mashup && host.mod.mashup.active), fxOk: fxAllowed("roll") });
     if (!res) return false;
     busyUntil = nowS() + res.busyS;
@@ -1465,6 +1466,8 @@
     renderPlan(null);
     render({ action: "ride", rule: "", why: "idle" });
   }
+  // the booked plan's facts for artist-moves.js run-now (recipe, style, Punjabi scene level, genres)
+  function planInfo() { return plan ? { recipe: plan.recipe, style: plan.style, scene: plan.scene, genreA: plan.genreA, genreB: plan.genreB } : null; }
   function setPlan(p) {
     plan = p; preCleared = false; instantShown = false; holdsUsed = 0;
     const d = deck();
@@ -1554,7 +1557,7 @@
                      trackIdx = 0; subdropTrackIdx = -9; lastMoveAt = -Infinity;
                      transitions = 0; lastFillTransition = -9; lastLayerTransition = -9; layerRun = null; }
 
-  return { follow, stop, reset, setPlan, fireAt, onTransition, fxAllowed,
+  return { follow, stop, reset, setPlan, planInfo, fireAt, onTransition, fxAllowed,
                     noteEnergy, nextEnergyNote, requestPlan, planPeak, setProfileEnergy,
                     planLayer, layering, get layerActive() { return !!layerRun; }, core,
                     holdLoopInfo, holdLoopAct, overlayState, learnedNow,

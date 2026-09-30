@@ -51,7 +51,7 @@ assert.ok(p.ok && p.fallbacks.some((f) => /^gain=/.test(f)));
 
 // ---- chant_gate
 const beats = Array.from({ length: 400 }, (_, i) => i * beatS);
-const chantBase = () => ({ pos: 50, lineT: 64, bpm: BPM, rate: 1, beats, vocals: [[55, 70]], energyNow: 0.3, energyNext: 0.6,
+const chantBase = () => ({ pos: 50, lineT: 64, bpm: BPM, rate: 1, beats, vocals: [[55, 70]], drops: [], energyNow: 0.3, energyNext: 0.6,
   count: 0, quiet: true, vocalLive: true, vocalBusy: false, inTransition: false, holdActive: false, mashupActive: false, relaxed: false, onDemand: false });
 p = am.planChantGate(chantBase());
 assert.ok(p.ok, JSON.stringify(p));
@@ -76,6 +76,12 @@ refuseC({ energyNext: 0.2 }, "no_build");            // a gate is a build move
 refuseC({ vocals: null }, "unmeasured");
 refuseC({ vocals: [[10, 20]] }, "no_vocal");         // nothing sung, nothing to gate
 refuseC({ pos: 63.5 }, "late");
+// owner rule "never vocal mix a drop line"
+refuseC({ drops: null }, "unmeasured");
+refuseC({ drops: [[58, 66]] }, "drop_line");                  // the window sits inside a drop
+refuseC({ drops: [[64, 80]] }, "drop_line");                  // A's line 55-70 runs on into the drop at 64
+assert.ok(am.planChantGate(Object.assign(chantBase(), { drops: [[64, 80]], vocals: [[55, 63.9]] })).ok, "a line that ends before the drop may be gated");
+assert.strictEqual(am.planChantGate(Object.assign(chantBase(), { drops: [[58, 66]], onDemand: true })).gate, "drop_line", "on demand too");
 // on demand skips the choice gates (cap, build, quiet) but keeps safety ones
 assert.ok(am.planChantGate(Object.assign(chantBase(), { onDemand: true, count: 5, quiet: false, energyNext: 0.1 })).ok);
 assert.strictEqual(am.planChantGate(Object.assign(chantBase(), { onDemand: true, vocalBusy: true })).gate, "busy");
@@ -85,7 +91,8 @@ assert.ok(p.ok && p.window_beats === 4, JSON.stringify(p));
 
 // ---- dhol_drop
 const dholBase = () => ({ pos: 50, exitT: 64, bEntry: 20, aBpm: BPM, aRate: 1, bBpm: BPM, bPlaying: false, bDrumEnv: env(0.1),
-  aDrumRms: 0.1, recipe: "Quick Cut", style: "standard", sinceLast: 5, inTransition: false, mashupActive: false, relaxed: false, onDemand: false });
+  aDrumRms: 0.1, recipe: "Quick Cut", style: "standard", sinceLast: 5, inTransition: false, mashupActive: false, relaxed: false, onDemand: false,
+  sceneLevel: "full", aPunjabi: true, bPunjabi: true });
 p = am.planDholDrop(dholBase());
 assert.ok(p.ok, JSON.stringify(p));
 assert.strictEqual(p.window_beats, 8, "2-bar bed when there is room");
@@ -105,25 +112,36 @@ refuseD({ bDrumEnv: null }, "no_stems");
 refuseD({ bDrumEnv: env(0.001) }, "no_drums");
 refuseD({ bEntry: 1 }, "no_room");
 refuseD({ pos: 63.8 }, "late");
+// owner rule: Punjabi songs only, never an experiment (handover, off, unknown genre, "on" over non-Punjabi songs, on demand)
+refuseD({ sceneLevel: "handover", bPunjabi: false }, "scene");
+refuseD({ sceneLevel: "handover" }, "scene");
+refuseD({ sceneLevel: null }, "scene");
+refuseD({ aPunjabi: false }, "scene");                          // PUNJABI "on" gives level full, the songs still decide
+refuseD({ bPunjabi: false }, "scene");
+refuseD({ aPunjabi: undefined, bPunjabi: undefined }, "scene"); // unknown genre = not Punjabi
+refuseD({ aPunjabi: false, onDemand: true }, "scene");
 assert.ok(am.planDholDrop(Object.assign(dholBase(), { recipe: "Long Blend", style: "instant" })).ok, "an instant swap is a cut");
 assert.ok(am.planDholDrop(Object.assign(dholBase(), { recipe: "Long Blend", onDemand: true })).ok, "on demand skips the recipe gate");
 p = am.planDholDrop(Object.assign(dholBase(), { pos: 59.8 }));
 assert.ok(p.ok && p.window_beats === 4, "1-bar fallback");
 
 // ---- chop_duck (S18)
-p = am.planChopDuck({ kind: "vocal_chop", drumsRms: 0.2, chopRms: 0.2 });
+p = am.planChopDuck({ kind: "vocal_chop", drumsRms: 0.2, chopRms: 0.2, drops: [] });
 assert.ok(p.ok && p.duck_db === -10, JSON.stringify(p));          // chops level with the drums: the deepest duck
-p = am.planChopDuck({ kind: "vocal_chop", drumsRms: 0.1, chopRms: 0.2 });
+p = am.planChopDuck({ kind: "vocal_chop", drumsRms: 0.1, chopRms: 0.2, drops: [] });
 assert.ok(p.ok && p.duck_db === -6, JSON.stringify(p));           // chops 6 dB over: the lightest duck
 assert.ok(Math.abs(p.gain - Math.pow(10, -6 / 20)) < 1e-9);
-p = am.planChopDuck({ kind: "vocal_chop", drumsRms: 0.1, chopRms: 0.13 });
+p = am.planChopDuck({ kind: "vocal_chop", drumsRms: 0.1, chopRms: 0.13, drops: [] });
 assert.ok(p.ok && p.duck_db <= -6 && p.duck_db >= -10);
 const refuseK = (c, gate) => { const r = am.planChopDuck(c); assert.strictEqual(r.ok, false); assert.strictEqual(r.gate, gate, JSON.stringify(r)); };
-refuseK({ kind: "vocal_loop", drumsRms: 0.2, chopRms: 0.2 }, "not_chop");
-refuseK({ kind: "vocal_chop", drumsRms: 0.2, chopRms: 0.2, relaxed: true }, "relaxed");
-refuseK({ kind: "vocal_chop", drumsRms: null, chopRms: 0.2 }, "unmeasured");
-refuseK({ kind: "vocal_chop", drumsRms: 0.001, chopRms: 0.2 }, "no_drums");
-refuseK({ kind: "vocal_chop", drumsRms: 0.02, chopRms: 0.2 }, "no_need");   // 20 dB over the drums already
+refuseK({ kind: "vocal_loop", drumsRms: 0.2, chopRms: 0.2, drops: [] }, "not_chop");
+refuseK({ kind: "vocal_chop", drumsRms: 0.2, chopRms: 0.2, relaxed: true, drops: [] }, "relaxed");
+refuseK({ kind: "vocal_chop", drumsRms: null, chopRms: 0.2, drops: [] }, "unmeasured");
+refuseK({ kind: "vocal_chop", drumsRms: 0.001, chopRms: 0.2, drops: [] }, "no_drums");
+refuseK({ kind: "vocal_chop", drumsRms: 0.02, chopRms: 0.2, drops: [] }, "no_need");   // 20 dB over the drums already
+refuseK({ kind: "vocal_chop", drumsRms: 0.2, chopRms: 0.2, start: 60, end: 64, drops: [[62, 78]] }, "drop_line");
+refuseK({ kind: "vocal_chop", drumsRms: 0.2, chopRms: 0.2, start: 60, end: 64 }, "unmeasured");
+assert.ok(am.planChopDuck({ kind: "vocal_chop", drumsRms: 0.2, chopRms: 0.2, start: 60, end: 64, drops: [[64, 78]] }).ok, "ends on the drop line");
 
 // ---- wiring: every new move has a button (ACTION_IDS) and a toggle in index.html
 const html = fs.readFileSync(path.join(STATIC, "index.html"), "utf8");
@@ -143,7 +161,7 @@ function fakeHost(decks, over = {}) {
     audio: { get currentTime() { return t.now; } },
     clock: { now: () => t.now * 1000, perfNow: () => t.now * 1000, setTimeout: (fn, ms) => { t.q.push({ at: t.now + ms / 1000, fn }); return t.q.length; }, clearTimeout() {} },
     decks, session: { relaxed: false },
-    mod: Object.assign({ djMind: { core: { camelotScore: () => 0.9 } },
+    mod: Object.assign({ djMind: { core: { camelotScore: () => 0.9 } }, sceneProfile: require(path.join(STATIC, "scene-profile.js")),
       fxBudget: { spend: (k, c, ctx) => { spent.push(k); return { ok: true, why: "ok" }; } } }, over.mod || {}),
     bus: { emit: (type, detail) => events.push({ type, detail }) },
     log: { step: (kind, o) => steps.push({ kind, o }) },
@@ -253,7 +271,7 @@ const o = (pos, over = {}) => Object.assign({ pos, bar: 2, entryT: 0, lineT: 64,
   const a = fakeDeck("a"), b = fakeDeck("b", { playing: false });
   const H = fakeHost({ a, b });
   const api = mount(H);
-  const oc = (pos) => o(pos, { lineT: 999, exitT: 64, bEntry: 20, recipe: "Quick Cut" });
+  const oc = (pos) => o(pos, { lineT: 999, exitT: 64, bEntry: 20, recipe: "Quick Cut", scene: "full", genreA: "Punjabi Pop", genreB: "Bhangra" });
   api.tick(a, oc(50));                                 // 7 bars out: the tease waits for the drop-in
   assert.strictEqual(H.events.filter((e) => e.detail && e.detail.move === "cue_tease").length, 0);
   api.tick(a, oc(58.5));
@@ -262,8 +280,20 @@ const o = (pos, over = {}) => Object.assign({ pos, bar: 2, entryT: 0, lineT: 64,
   api.tick(a, oc(60)); api.tick(a, oc(62));
   assert.strictEqual(H.events.filter((e) => e.detail && (e.detail.move === "cue_tease" || e.detail.move === "roll")).length, 0, "no stacking on the cut");
   // a blend entry: the drop-in refuses by recipe, the tease is free again
-  api.tick(a, o(105, { lineT: 999, exitT: 110, bEntry: 20, recipe: "Long Blend" }));
+  api.tick(a, o(105, { lineT: 999, exitT: 110, bEntry: 20, recipe: "Long Blend", scene: "full", genreA: "Punjabi Pop", genreB: "Bhangra" }));
   assert.ok(H.steps.some((s) => s.o.decision === "dhol_drop" && /^recipe/.test(s.o.why)));
+  // a cut into a pop song under the handover level: refused by scene, nothing layered
+  const a5 = fakeDeck("a"), b5 = fakeDeck("b", { playing: false });
+  const H5 = fakeHost({ a: a5, b: b5 });
+  mount(H5).tick(a5, o(58.5, { lineT: 999, exitT: 64, bEntry: 20, recipe: "Quick Cut", scene: "handover", genreA: "Punjabi Pop", genreB: "Pop" }));
+  assert.ok(!H5.events.some((e) => e.detail && e.detail.move === "dhol_drop"), "no drop-in outside two Punjabi songs");
+  assert.ok(H5.steps.some((s) => s.o.decision === "dhol_drop" && /^scene/.test(s.o.why)));
+  // the chop duck stays off a drop: the runtime reads the section map
+  const a6 = fakeDeck("a"); a6.analysis.sections = [{ label: "drop", start: 62, end: 78 }];
+  const H6 = fakeHost({ a: a6, b: fakeDeck("b", { playing: false }) });
+  const r6 = mount(H6).chopDuck(a6, { kind: "vocal_chop", start: 60, end: 64, beats: 8, slices: [{ from: 50, dur: 0.2 }] }, 1, 5);
+  assert.strictEqual(r6, null);
+  assert.ok(H6.steps.some((s) => s.o.decision === "chop_duck" && /^drop_line/.test(s.o.why)));
 }
 {
   // chop duck runtime: the learned chop hook ducks A's drums from the window start, logs an artist_move
