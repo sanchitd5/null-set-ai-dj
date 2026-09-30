@@ -55,7 +55,7 @@ def test_suite_check_fails_on_a_lost_feature():
 def test_baseline_refuses_a_panel_not_recorded_with_the_real_model(tmp_path, monkeypatch):
     doc = {"aggregate": {"score": 1.0, "metrics": {}, "features": {"triggered": []}},
            "runs": {"a": {"score": 1.0, "metrics": {}, "fixture_source": "library"}}}
-    monkeypatch.setattr(suite, "run_panel", lambda panel, out, jobs=4: doc)
+    monkeypatch.setattr(suite, "run_panel", lambda panel, out, jobs=4, punjabi=None: doc)
     monkeypatch.setattr(suite, "BASELINE", tmp_path / "baseline.json")
     monkeypatch.setattr(suite, "markdown", lambda s, b: "")
     (tmp_path / "out").mkdir()
