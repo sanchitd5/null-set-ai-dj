@@ -253,11 +253,42 @@ def test_capture_renders_to_window_length(captures, tmp_path):
     assert np.sqrt(np.mean(res["audio"][:, -one_s:] ** 2)) > 1e-3  # B audible after it
 
 
+def _static_digest() -> str:
+    h = hashlib.sha256()
+    for p in sorted((REPO / "app/ui/static").rglob("*")):
+        if p.is_file():
+            h.update(p.name.encode() + p.read_bytes())
+    return h.hexdigest()
+
+
+@needs_tools
+def test_preview_overrides_touch_only_the_captures_copy(tmp_path):
+    """allow_stem_path / xf are applied to the capture's throwaway copy of the console, listed in
+    sim_overrides, and never written to app/ui/static. xf=8 halves the booked bar counts."""
+    from app.sim.stem_capture import capture
+    cache, a, b = _fixture_cache(tmp_path)
+    before = _static_digest()
+    base = capture(a, b, "Bass Swap", a_time=32 * BEAT * 5, b_time=0.0, pre=2.0, post=1.0, src_cache=cache)
+    half = capture(a, b, "Bass Swap", a_time=32 * BEAT * 5, b_time=0.0, pre=2.0, post=1.0, src_cache=cache,
+                   allow_stem_path=True, xf=8)
+    assert _static_digest() == before
+    assert base["sim_overrides"] == []
+    assert {o["override"] for o in half["sim_overrides"]} == {"allowStemPath", "xf"}
+    L0, L1 = base["t_end"] - base["t0"], half["t_end"] - half["t0"]
+    assert abs(L1 - L0 / 2) < 0.1, (L0, L1)
+    with pytest.raises(ValueError):
+        capture(a, b, "Bass Swap", a_time=75.0, b_time=0.0, src_cache=cache, xf=0)
+
+
 def test_bridge_parser_has_stem_preview():
     from app.music_brain.agent_bridge import _build_parser
     a = _build_parser().parse_args(["stem-preview", "a.mp3", "b.mp3", "--recipe", "Bass Swap", "--a-time", "195",
                                     "--b-time", "3.3", "--out", "x.wav"])
     assert (a.command, a.recipe, a.a_time, a.b_time, a.pre, a.post) == ("stem-preview", "Bass Swap", 195.0, 3.3, 30.0, 30.0)
+    assert a.allow_stem_path is False and a.xf is None
+    a = _build_parser().parse_args(["stem-preview", "a", "b", "--recipe", "Long Blend", "--a-time", "1", "--b-time", "0",
+                                    "--out", "x.wav", "--allow-stem-path", "--xf", "8"])
+    assert a.allow_stem_path is True and a.xf == 8.0
 
 
 def test_capture_refuses_a_song_without_cached_stems(tmp_path):

@@ -1,11 +1,13 @@
 // Stem capture: plays ONE transition of a pair in the headless console (the console's own
-// scripts, unmodified, on the virtual clock with the recording Web Audio API of webaudio.js)
+// scripts, unmodified unless a preview-only override below is asked for, on the virtual clock
+// with the recording Web Audio API of webaudio.js)
 // and writes out everything the audio graph was told to do: every node, every AudioParam's
 // automation timeline, every connect / disconnect with its time, every buffer source's song
 // position over time. app/music_brain/render/graph_render.py renders that on the real audio.
 //
 //   node app/sim/js/stem-capture.js cfg.json
-//   cfg = { port, a: {id, name}, b: {id, name}, recipe, aTime, bTime, pre, post, lead, out }
+//   cfg = { port, a: {id, name}, b: {id, name}, recipe, aTime, bTime, pre, post, lead, out,
+//           allowStemPath?, xf? }
 //
 // The page talks to the real API (app/sim/stem_capture.py runs it on a throwaway cache), but
 // only to the per-track read endpoints of A and B: everything else (suggest, search, lyrics,
@@ -19,6 +21,35 @@ const crypto = require("crypto");
 const { createEnv } = require("./env");
 
 const STATIC = process.env.SIM_STATIC_DIR || path.resolve(__dirname, "..", "..", "ui", "static");
+
+// PREVIEW-ONLY overrides, applied to a throwaway copy of the console's scripts that only this
+// capture loads (app/ui/static on disk and the live console are never touched). Each one is an
+// exact text swap that must match once, so a console change makes it fail loudly, not silently.
+//   allowStemPath: the stem blend's loudness floor (stem-moves.js LEVEL_FLOOR_DB) is not applied
+//   xf: PLAY STEP's crossfade budget (autopilot.js performNow books 16 s; < 16 halves every bar
+//       count in executeTransition, as the running set's quick / vocal-short windows do)
+const OVERRIDES = {
+  allowStemPath: (on) => on && [["stem-moves.js", "const LEVEL_FLOOR_DB = 8;", "const LEVEL_FLOOR_DB = 1e9;   // stem-capture allowStemPath"]],
+  xf: (v) => v != null && [["autopilot.js", "executeTransition(fb.recipe, o.out, o.inn, 16, o.t0)", `executeTransition(fb.recipe, o.out, o.inn, ${+v}, o.t0)`]],
+};
+
+function staticWith(cfg) {
+  const swaps = [];
+  for (const [k, f] of Object.entries(OVERRIDES)) { const s = f(cfg[k]); if (s) swaps.push(...s.map((x) => [k, ...x])); }
+  if (!swaps.length) return { dir: STATIC, applied: [] };
+  if (cfg.xf != null && !(Number.isFinite(+cfg.xf) && +cfg.xf > 0)) throw new Error(`xf must be a number > 0 (got ${cfg.xf})`);
+  const dir = fs.mkdtempSync(path.join(require("os").tmpdir(), "stem-capture-static-"));
+  fs.cpSync(STATIC, dir, { recursive: true });
+  const applied = [];
+  for (const [k, file, from, to] of swaps) {
+    const p = path.join(dir, file), src = fs.readFileSync(p, "utf8");
+    const n = src.split(from).length - 1;
+    if (n !== 1) throw new Error(`override ${k}: expected "${from}" once in ${file}, found ${n}`);
+    fs.writeFileSync(p, src.replace(from, to));
+    applied.push({ override: k, value: cfg[k], file, from, to });
+  }
+  return { dir, applied };
+}
 const PAINT = ["stem-wave.js", "visuals.js", "anyma-show.js", "anyma-ui.js", "marquee.js"];
 const POS_HZ = 1000;                     // song position samples per second of each buffer source
 const GEN_MAX_S = 10;                    // generated buffers up to this long are written out sample by sample
@@ -114,7 +145,9 @@ let ENV = null;
 async function main() {
   const cfg = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
   const ids = new Set([cfg.a.id, cfg.b.id]);
-  const env = await createEnv({ staticDir: STATIC, port: cfg.port, seed: cfg.seed || 1, skip: PAINT });
+  const st = staticWith(cfg);
+  if (st.dir !== STATIC) process.on("exit", () => { try { fs.rmSync(st.dir, { recursive: true, force: true }); } catch (e) { /* tmp */ } });
+  const env = await createEnv({ staticDir: st.dir, port: cfg.port, seed: cfg.seed || 1, skip: PAINT });
   ENV = env;
   const g = env.window;
 
@@ -195,6 +228,7 @@ async function main() {
     sample_rate_ctx: ctx.sampleRate, window: [+w0.toFixed(6), +w1.toFixed(6)], t0: +t0.toFixed(6),
     t_end: tEnd === null ? null : +tEnd.toFixed(6), end_marked: end, pos_hz: POS_HZ,
     a: Object.assign({}, cfg.a, { a_time: cfg.aTime }), b: Object.assign({}, cfg.b, { b_time: cfg.bTime }),
+    sim_overrides: st.applied,
     recipe_asked: cfg.recipe, ran: r.ran, refused: r.refused || null, line: r.line || null,
     destination: ctx.destination._id,
     nodes: ctx._nodes.map((n) => serNode(n, w0, w1)),

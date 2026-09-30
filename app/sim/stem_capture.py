@@ -133,11 +133,20 @@ def _worker(cfg_path: Path) -> int:
 
 
 def capture(a_path, b_path, recipe: str, a_time: float, b_time: float, pre: float = 30.0,
-            post: float = 30.0, src_cache: Optional[Path] = None, timeout_s: float = 900.0) -> dict:
+            post: float = 30.0, src_cache: Optional[Path] = None, timeout_s: float = 900.0,
+            allow_stem_path: bool = False, xf: Optional[float] = None) -> dict:
     """Capture the console playing A -> B with `recipe` forced at A's exit `a_time` and B's
-    entry `b_time` (the macro PLAY STEP path: autopilot performNow + forcedBooking gates)."""
+    entry `b_time` (the macro PLAY STEP path: autopilot performNow + forcedBooking gates).
+
+    Preview-only overrides, applied to a throwaway copy of the console scripts the capture
+    loads (never app/ui/static, never the live console), listed in the result's `sim_overrides`:
+    allow_stem_path lifts the stem blend's loudness floor; xf sets PLAY STEP's crossfade budget
+    (default 16 = the booking as it is; below 16 every bar count is halved, like a running set's
+    quick / vocal-short window)."""
     if not recipe:
         raise ValueError("recipe is required")
+    if xf is not None and not (float(xf) > 0):
+        raise ValueError("xf must be a number > 0")
     for v, n in ((a_time, "a_time"), (b_time, "b_time"), (pre, "pre"), (post, "post")):
         if v is None or not (float(v) >= 0):
             raise ValueError(f"{n} must be a number >= 0")
@@ -155,7 +164,8 @@ def capture(a_path, b_path, recipe: str, a_time: float, b_time: float, pre: floa
         out = d / "capture.json"
         cfg = {"a": {"id": ida, "name": songs[ida]["name"]}, "b": {"id": idb, "name": songs[idb]["name"]},
                "recipe": recipe, "aTime": float(a_time), "bTime": float(b_time), "pre": float(pre),
-               "post": float(post), "out": str(out), "timeout_s": timeout_s}
+               "post": float(post), "out": str(out), "timeout_s": timeout_s,
+               "allowStemPath": bool(allow_stem_path), "xf": None if xf is None else float(xf)}
         cfg_path = d / "cfg.json"
         cfg_path.write_text(json.dumps(cfg))
         env = dict(os.environ, AIDJ_CACHE_DIR=str(cache), PYTHONPATH=str(REPO_ROOT))
