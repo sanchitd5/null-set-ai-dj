@@ -351,16 +351,18 @@ def test_capture_serves_what_the_live_server_reads_from_its_cache(captures):
 def test_full_capture_spans_a_from_zero_to_bs_end(tmp_path):
     from app.sim.stem_capture import capture
     cache, a, b = _fixture_cache(tmp_path)
-    a_time = 32 * BEAT * 2                                              # 30 s
+    # 45 s: past the default 30 s pre-roll, so A starting at a_time - pre (not 0:00) would fail
+    a_time = 32 * BEAT * 3
     cap = capture(a, b, "Bass Swap", a_time=a_time, b_time=0.0, src_cache=cache, full=True)
     w0, w1 = cap["window"]
     assert abs((cap["t0"] - w0) - a_time) < 0.01                        # A from its 0:00
     b_at_end = cap["t_end"] - cap["t0"]                                 # B entered at 0, rate 1
     assert abs((w1 - cap["t_end"]) - (DUR - b_at_end)) < 0.1            # B to its own end
     nd = {n["id"]: n for n in cap["nodes"]}
-    a_src = [n for n in nd.values() if n["kind"] == "source" and (n.get("file") or "").endswith(":mix")
-             and n.get("positions") and n["positions"]["pos"] and n["positions"]["pos"][0] is not None]
-    assert min(n["positions"]["pos"][0] for n in a_src) < 0.05          # A's mix read from ~0 s
+    mixes = [n for n in nd.values() if n["kind"] == "source" and (n.get("file") or "").endswith(":mix")]
+    a_mix = min(mixes, key=lambda n: n["start"])                        # A's mix is the first source to start
+    assert abs(a_mix["start"] - w0) < 0.05                              # it sounds from the window's first sample
+    assert a_mix["offset"] < 0.05                                       # and from A's own 0:00, not a_time - pre
 
 
 def test_bridge_parser_has_stem_preview():

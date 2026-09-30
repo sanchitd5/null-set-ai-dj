@@ -225,7 +225,8 @@ async function main() {
 
   // A plays from `lead` s before the window, the move is booked like PLAY STEP pressed then
   const lead = cfg.full ? 0 : cfg.lead != null ? cfg.lead : 8;
-  decks.a.play(Math.max(0, cfg.aTime - cfg.pre - lead));
+  // full: A from its own 0:00, so the whole-song window has A sounding from the first sample
+  decks.a.play(cfg.full ? 0 : Math.max(0, cfg.aTime - cfg.pre - lead));
   await env.clock.run(env.clock.now + 2);
   if (!decks.a.stemsReady) throw new Error("deck A plays but its stems are not live");
   const aPos = decks.a._currentPosition(), rate = decks.a._playbackRate ? decks.a._playbackRate() : 1;
