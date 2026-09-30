@@ -9,8 +9,8 @@ first phrase line.
 A drop is the phrase line where the groove slams back in after a build or breakdown ([[Double
 Drop]], [[Drop Swap]]). With Demucs stems that is the drums+bass stem level: it must reach the
 song's full-groove level on this line, having been clearly lower on the phrases before it. Without
-stems the mix energy curve stands in. The main drop is the loudest drop; between drops that are
-about as loud, the one with the deepest, longest dip before it (the breakdown the song builds its
+stems the mix energy curve stands in. The main drop is, among the drops within MAIN_TIE of the
+loudest one, the one with the deepest, longest dip before it (the breakdown the song builds its
 biggest moment on).
 
 Pure numpy apart from `stem_phrase_db` (reads FLAC stems); `refine` turns a v5 record into v6.
@@ -40,7 +40,9 @@ MIX_SLAM = 0.1           # over the phrase right before it
 MIX_SPAN = 0.85          # the drop runs on while phrases keep this share of the drop phrase
 
 DIP_PHRASES = 4          # how far back the dip before a drop is looked for
-MAIN_TIE = 0.05          # drops this close (share of the loudest phrase) count as equally loud
+# drops within this share of the loudest drop compete on the dip before them. A one-phrase drop out of
+# a quiet intro reads louder than a long main drop after the breakdown (Enai - Horus: 0.61 vs 0.50).
+MAIN_TIE = 0.2
 LOW_SHARE = 0.5          # breakdown: below this share of the loudest phrase
 BUILD_RISE = 0.02      # a build phrase is louder than the one before it by this share of the loudest phrase
 EDGE_LOW = 0.6           # intro / outro: the leading / trailing phrases below this share
@@ -166,7 +168,7 @@ def detect_drops(edges, energy: List[Optional[float]], groove: Optional[List[flo
 
 
 def main_drop(drops: List[dict]) -> Optional[dict]:
-    """Loudest drop; among ones about as loud, the deepest dip before it; then the earlier one."""
+    """Among drops within MAIN_TIE of the loudest: the deepest dip before it; then the earlier one."""
     if not drops:
         return None
     top = max(d["energy"] for d in drops)
