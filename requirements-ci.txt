@@ -1,0 +1,25 @@
+# CI test dependencies: the versions the suite runs on locally (Python 3.14).
+# requirements.txt pins older wheels (numpy 1.26, scipy 1.10, librosa 0.9) that do not
+# install on 3.14. torch and demucs are left out: they are imported lazily and only the
+# slow tests (-m slow, deselected in CI) need them.
+librosa==1.0.0
+numpy==2.5.3
+scipy==1.18.1
+numba==0.67.0
+soundfile==0.14.0
+audioread==3.1.0
+resampy==0.4.3
+joblib==1.6.0
+pydub==0.25.1
+matplotlib==3.11.2
+PyYAML==6.0.3
+pytest==9.1.1
+fastapi==0.103.2
+starlette==0.27.0
+pydantic==2.13.5
+httpx==0.28.1
+uvicorn==0.23.2
+python-multipart==0.0.32
+python-dotenv==1.2.3
+openai==2.54.0
+yt-dlp==2026.8.19
