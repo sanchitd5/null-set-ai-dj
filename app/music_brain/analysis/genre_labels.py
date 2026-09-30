@@ -87,6 +87,45 @@ def save(genres: Dict[str, str], eras: Dict[str, str], p: Optional[Path] = None)
         return False
 
 
+class _lock:
+    """Exclusive flock on <labels>.lock across load -> save (no-op where fcntl is missing)."""
+
+    def __init__(self, p: Path):
+        self.path = Path(p).with_suffix(".lock")
+
+    def __enter__(self):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.fh = open(self.path, "a")
+        try:
+            import fcntl
+            fcntl.flock(self.fh, fcntl.LOCK_EX)
+        except ImportError:
+            pass
+        return self
+
+    def __exit__(self, *exc):
+        self.fh.close()
+
+
+def merge_save(genres: Dict[str, str], eras: Dict[str, str], p: Optional[Path] = None) -> bool:
+    """save() that never drops labels another process wrote: under the lock, labels on disk
+    that `genres` / `eras` lack are added in place (oldest first, so the caller's own stay
+    the newest), then everything is saved. The live server and the `label` command both
+    write this file; a plain save() from the server's startup copy wiped a whole labelling run.
+    False on an I/O error: never raises."""
+    p = Path(p or path())
+    with _lock(p):
+        dg, de = load(p)
+        for mine, disk in ((genres, dg), (eras, de)):
+            extra = {k: v for k, v in disk.items() if k not in mine}
+            if extra:
+                keep = dict(mine)
+                mine.clear()
+                mine.update(extra)
+                mine.update(keep)
+        return save(genres, eras, p)
+
+
 def backfill(genres: Dict[str, str], eras: Dict[str, str], tracked: dict, names: Dict[str, str]) -> int:
     """Labels from the knowledge export ({track id: {genre, era}} + its names.json) for songs
     that have none yet, matched by name, so the local label always wins. No model call.
@@ -217,7 +256,7 @@ def label_library(missing_only: bool = True, overwrite: bool = False, backend: O
                 store[k] = v
         log(f"labels: {min((i + 1) * batch, len(todo))}/{len(todo)}")
     if added or changed:
-        out["saved"] = save(genres, eras, p)
+        out["saved"] = merge_save(genres, eras, p)
     return out | {"answered": answered, "added": added, "overwritten": changed}
 
 

@@ -77,3 +77,16 @@ def test_export_includes_labels_per_name(tmp_path):
     labels = json.loads((out / kn.LABELS).read_text())
     assert labels == {"a" * 16: {"era": "2020s", "genre": "punjabi pop"}}
     assert not kn.privacy_hits(labels)
+
+
+def test_merge_save_keeps_labels_another_process_wrote(tmp_path):
+    """The live server saving its startup copy must not wipe a labelling run's labels."""
+    from app.music_brain.analysis import genre_labels as gl
+    p = tmp_path / "genre_labels.json"
+    gl.save({"song a": "house", "song b": "techno"}, {"song a": "2000s"}, p)   # the label run
+    server_g, server_e = {"song c": "pop"}, {"song c": "2010s"}                 # server memory
+    assert gl.merge_save(server_g, server_e, p)
+    g, e = gl.load(p)
+    assert g == {"song a": "house", "song b": "techno", "song c": "pop"}
+    assert e == {"song a": "2000s", "song c": "2010s"}
+    assert list(server_g)[-1] == "song c"          # the caller's own label stays the newest

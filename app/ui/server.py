@@ -2114,7 +2114,7 @@ def _save_labels() -> None:
         return
     from app.music_brain.analysis import genre_labels as gl
 
-    if gl.save(_suggested_genres, _suggested_eras, LABELS_PATH):
+    if gl.merge_save(_suggested_genres, _suggested_eras, LABELS_PATH):
         _labels_dirty = False
 
 
