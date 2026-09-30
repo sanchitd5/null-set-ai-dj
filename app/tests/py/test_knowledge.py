@@ -120,6 +120,66 @@ def test_old_macros_folder_migrates_once(tmp_path):
     assert set(mc.stored(cache)) == {"fri"}
 
 
+# sha256[:16] of each file the JSON-era code (main at b81c005, stores as JSON files) exported from
+# the cache _json_era_cache builds; meta.json with its rules hash normalised (pair_atlas.py is a
+# rule file, so the hash moves with any edit to it).
+JSON_ERA_EXPORT = {
+    "atlas/meta.json": "614bf8f0fb67d664",
+    "atlas/pairs/aaaaaaaaaaaaaaaa.json.gz": "199f19308bf92d60",
+    "atlas/pairs/bbbbbbbbbbbbbbbb.json.gz": "67e3296d89799a5f",
+    "genre_labels.json": "014eb9c7742e5ea0",
+    "learned_techniques.json": "3d2265e1e21392a6",
+    "macros/chain-1-anyma.json": "8048dd7b7e59b23f",
+    "macros/studied-s1-1.json": "facc071692e7ce02",
+    "names.json": "ecd4d4119aa5396a",
+}
+
+
+def _json_era_cache(root):
+    from app.music_brain.analysis import genre_labels as gl
+    cache = _cache(root)
+    tracks = {t: {"name": n, "artist": n.split(" - ")[0], "bpm": 124.0, "key": "8A", "duration": 200.0,
+                  "level": 3, "stems": True, "sig": "x", "bars": [0.1] * 50, "vox": [[1.0, 2.0]]}
+              for t, n in NAMES.items()}
+    pairs = {f"{A}>{B}": _pair(A, B, 88, combo="studied", studied={"recipe": "Bass Swap", "count": 2},
+                               played={"good": 2, "bad": 0, "sessions": ["x"]}),
+             f"{B}>{C}": _pair(B, C, 70), f"{A}>{C}": _pair(A, C, 10)}
+    (cache / "pair_atlas.json").write_text(json.dumps({"schema": pa.SCHEMA, "rules": pa.rules_hash(), "built_at": 1.5,
+                                                       "cache_dir": "", "tracks": tracks, "pairs": pairs, "stats": {}}))
+    (cache / "macros").mkdir()
+    for m in ({"name": "studied-s1-1", "source": "atlas:studied", "title": "Anyma @ Atomium #1", "created": 5.0,
+               "steps": [{"a": A, "b": B, "recipe": "Bass Swap", "a_time": 120.0, "b_time": 8.0}]},
+              {"name": "chain-1-anyma", "source": "atlas:chain", "created": 6.0,
+               "steps": [{"a": A, "b": B, "recipe": "Bass Swap"}, {"a": B, "b": C, "recipe": "Echo Out"}]}):
+        (cache / "macros" / f"{m['name']}.json").write_text(json.dumps(mc.normalize(m), indent=1))
+    (cache / "learned_techniques.json").write_text(json.dumps({"bass_swap": {
+        "kind": "bass_swap", "what": "x", "stems": True, "live": True, "count": 1,
+        "observations": [{"kind": "bass_swap", "set_id": "S1", "at": 10.0, "track_a": NAMES[A], "track_b": NAMES[B],
+                          "tempo_gap": 0.01, "key_score": 0.9, "detail": {"ai_rule": "r"}}]}}, indent=2))
+    (cache / "genre_labels.json").write_text(json.dumps({"version": 1, "labels": {
+        gl.name_key(NAMES[A]): {"genre": "house", "era": "2020s"}}}))
+    return cache
+
+
+def test_export_from_the_db_is_byte_identical_to_the_json_era(tmp_path):
+    import hashlib
+    import re
+    cache = _json_era_cache(tmp_path / "home")
+    out = tmp_path / "k"
+    kn.export(cache, out)                                  # migrates every JSON store into app.db first
+    got = {}
+    for p in sorted(out.rglob("*")):
+        if p.is_file():
+            b = p.read_bytes()
+            if p.name == "meta.json":
+                b = re.sub(rb'"rules": "[0-9a-f]+"', b'"rules": "RULES"', b)
+            got[str(p.relative_to(out))] = hashlib.sha256(b).hexdigest()[:16]
+    assert got == JSON_ERA_EXPORT
+    assert {p.name for p in cache.iterdir() if p.name.endswith(".migrated")} == {
+        "pair_atlas.json.migrated", "macros.migrated", "learned_techniques.json.migrated",
+        "genre_labels.json.migrated"}
+
+
 def test_export_never_opens_the_user_db(src, monkeypatch):
     """The knowledge export carries the APP DB only: the private user DB (set history, set
     memory, vetoes) must never be read for it."""
