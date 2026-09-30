@@ -158,6 +158,34 @@ def test_clip_audio_cuts_with_ffmpeg(tmp_path):
     assert sl.clip_audio(src, 2.0, 5.0, tmp_path / "clips").read_bytes() == out.read_bytes()
 
 
+def test_clip_audio_writes_sample_exact_16bit_flac(tmp_path):
+    import shutil
+    import soundfile as sf
+    if not shutil.which("ffmpeg"):
+        return
+    src = tmp_path / "set.wav"
+    data = (np.random.default_rng(1).normal(0, 0.1, (44100 * 10, 2)) * 32767).astype(np.int16)
+    sf.write(src, data, 44100, subtype="PCM_16")
+    out = sl.clip_audio(src, 2.0, 5.0, tmp_path / "clips")
+    assert out.suffix == ".flac" and not list((tmp_path / "clips").glob("*.tmp*"))
+    info = sf.info(str(out))
+    assert (info.format, info.subtype, info.samplerate, info.channels) == ("FLAC", "PCM_16", 44100, 2)
+    y, _ = sf.read(out, dtype="int16")
+    assert len(y) == 3 * 44100                          # exact frame count: the locate step's timing
+    assert np.array_equal(y, data[2 * 44100:5 * 44100])  # lossless, sample 0 = source sample at t0
+
+
+def test_clip_audio_resumes_on_an_old_wav_cut(tmp_path):
+    import soundfile as sf
+    src = tmp_path / "set.wav"
+    sf.write(src, np.zeros((44100, 2)), 44100)
+    old = tmp_path / "clips" / f"{2.0:09.2f}-{5.0:09.2f}.wav"
+    old.parent.mkdir()
+    old.write_bytes(b"older run's cut")                  # newer than the set: no ffmpeg run needed
+    assert sl.clip_audio(src, 2.0, 5.0, tmp_path / "clips") == old
+    assert not old.with_suffix(".flac").exists()
+
+
 def test_layered_entries_share_a_slot():
     songs = [sl.SongData(t, 0.0, 120, None, {}) for t in ("A", "B", "C")] + [sl.SongData("D", 600.0, 120, None, {})]
     assert sl._candidates(300.0, songs) == [0, 1, 2]

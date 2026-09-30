@@ -1043,20 +1043,24 @@ def plan_clips(starts: Sequence[float], duration: float, pad: float = CLIP_PAD_S
 
 
 def clip_audio(src: Path, t0: float, t1: float, out_dir: Path) -> Path:
-    """ffmpeg cut to 44.1 kHz stereo WAV (deterministic bytes -> Demucs cache hits on re-runs)."""
+    """ffmpeg cut to 44.1 kHz stereo 16-bit FLAC (lossless, so the same samples the old WAV cut
+    held; deterministic bytes -> Demucs cache hits on re-runs). An older run's `.wav` cut of the
+    same span is still reused, so a resumed study does not re-cut or re-separate it."""
     import subprocess
 
     if not (0.0 <= t0 < t1):
         raise ValueError(f"bad clip span {t0}..{t1} s (needs 0 <= start < end)")
     out_dir.mkdir(parents=True, exist_ok=True)
-    out = out_dir / f"{t0:09.2f}-{t1:09.2f}.wav"
+    out = out_dir / f"{t0:09.2f}-{t1:09.2f}.flac"
     # named by span only: a local mix re-exported to the same path must not reuse old cuts
-    if out.exists() and out.stat().st_size > 0 and out.stat().st_mtime >= Path(src).stat().st_mtime:
-        return out
-    tmp = out.with_suffix(".tmp.wav")
+    src_mtime = Path(src).stat().st_mtime
+    for have in (out, out.with_suffix(".wav")):
+        if have.exists() and have.stat().st_size > 0 and have.stat().st_mtime >= src_mtime:
+            return have
+    tmp = out.with_suffix(".tmp.flac")
     subprocess.run(["ffmpeg", "-nostdin", "-loglevel", "error", "-y", "-ss", f"{t0:.3f}", "-t", f"{t1 - t0:.3f}",
-                    "-i", str(src), "-map_metadata", "-1", "-fflags", "+bitexact", "-ac", "2", "-ar", "44100",
-                    "-c:a", "pcm_s16le", str(tmp)], check=True)
+                    "-i", str(src), "-map_metadata", "-1", "-fflags", "+bitexact", "-flags", "+bitexact",
+                    "-ac", "2", "-ar", "44100", "-c:a", "flac", "-sample_fmt", "s16", str(tmp)], check=True)
     tmp.replace(out)
     return out
 
