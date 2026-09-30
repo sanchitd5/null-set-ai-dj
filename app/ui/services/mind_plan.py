@@ -89,6 +89,8 @@ _REMIX_RECIPES = (("echo_freeze", "Echo Out", 3), ("filter_build", "Filter Trans
 
 
 def _one_line(text: str, n: int) -> str:
+    from app.music_brain.matching.dj_knowledge import strip_examples
+    text = strip_examples(text)   # no example song / artist from the wiki reaches the prompt
     text = re.sub(r"\\text\{([^}]*)\}", r"\1", text).replace("-DJ Usage:-", "DJ usage:")
     text = " ".join(ln.lstrip("- ").strip() for ln in text.splitlines())
     text = " ".join(text.split())
@@ -149,7 +151,7 @@ def grounding(recipe_names: list[str]) -> str:
 
 
 _SYSTEM = """You are the planning brain of a live DJ that re-edits songs as they play,
-like Fred again.. does: loops, beat jumps, rolls, filter builds and echo throws
+the way live-edit DJs do: loops, beat jumps, rolls, filter builds and echo throws
 that build tension and release it on the drop. Never play a song as is, but be
 restrained: a few well-placed moves beat many (crowds hate too many effects).
 Use ONLY the facts given. Every time you write must be copied from the lists.

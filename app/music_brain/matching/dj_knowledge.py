@@ -49,7 +49,83 @@ def _clean(text: str) -> str:
     text = re.sub(r"^> ?(\[![A-Z]+\] ?)?", "", text, flags=re.M)      # callouts
     text = re.sub(r"[ \t]+", " ", text)
     lines = [ln.strip() for ln in text.splitlines()]
-    return "\n".join(ln for ln in lines if ln and not ln.startswith(("```", "|", "---", "flowchart", "graph ")))
+    text = "\n".join(ln for ln in lines if ln and not ln.startswith(("```", "|", "---", "flowchart", "graph ")))
+    return strip_examples(text)
+
+
+# ------------------------------------------------------- no track examples
+# Example songs / artists in the wiki teach the model to name them (the prompt
+# kept pulling picks toward the note's examples), so prompt text never carries
+# them. The notes keep them for human readers; this strips them on the way in.
+_NAME_STOP = {"dj", "artist", "unknown artist", "track", "series", "various artists", "track a",
+              "track b", "deck", "mode", "mission", "beat", "bar", "step", "phase", "example"}
+# `Artist - "Title"` (quoted title, dash / en dash / em dash, optional *italics*).
+_CREDIT_RE = re.compile(
+    r"([A-Z][\w.&'$]*(?: (?:&|x|feat\.?|ft\.?|[A-Z][\w.&'$]*))*)"
+    r"\s+[-–—]\s+\*?\"([^\"\n]{2,60})\"")
+
+
+def _is_name(n: str) -> bool:
+    words = n.split()
+    return (len(n) >= 4 and n.lower() not in _NAME_STOP
+            and words[0].lower() not in _NAME_STOP and not any(w.isdigit() for w in words))
+
+
+@lru_cache(maxsize=1)
+def example_names() -> tuple[str, ...]:
+    """Artist and song names the DJ/ wiki uses as examples: every `Artist - "Title"`
+    credit in the notes plus the case-study artists (DJ/13 file names). Longest
+    first so "Sub Focus & Dimension" goes before "Sub Focus"."""
+    names: set[str] = set()
+    for p in DJ_DIR.rglob("*.md"):
+        if p.name.endswith("Case Study.md"):
+            artist = p.stem[: -len(" Case Study")].strip()
+            names.add(artist)
+            last = artist.split()[-1]
+            if len(artist.split()) > 1 and len(last) >= 5 and last.isalpha():
+                names.add(artist.split()[-1])          # "Garrix"
+        try:
+            md = p.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for m in _CREDIT_RE.finditer(md):
+            artist, title = m.group(1).strip(), m.group(2).strip()
+            parts = [artist] + re.split(r"\s+(?:&|x|feat\.?|ft\.?)\s+", artist)
+            names.update(a.strip() for a in parts if _is_name(a.strip()))
+            if _is_name(title) and any(_is_name(a) for a in parts):
+                names.add(title)
+    return tuple(sorted(names, key=len, reverse=True))
+
+
+@lru_cache(maxsize=1)
+def _names_re() -> Optional[re.Pattern]:
+    names = example_names()
+    if not names:
+        return None
+    return re.compile(r"(?<![\w])(?:" + "|".join(re.escape(n) for n in names) + r")(?:'s)?(?![\w])")
+
+
+def strip_examples(text: str) -> str:
+    """Drop example songs / artists from wiki text, keep the rule around them.
+    A parenthetical that names one (or quotes an example) goes whole; a name in
+    running text is removed ("of a <Artist> track" -> "of a track")."""
+    if not text:
+        return text
+    names = _names_re()
+    has_name = (lambda s: bool(names.search(s))) if names else (lambda s: False)
+
+    def paren(m: re.Match) -> str:
+        body = m.group(1)
+        if has_name(body) or '"' in body or re.match(r"\s*see\b.*case study", body, re.I):
+            return ""
+        return m.group(0)
+
+    text = re.sub(r"\s*\(([^()\n]*)\)", paren, text)
+    if names:
+        text = names.sub("", text)
+    text = re.sub(r"[ \t]{2,}", " ", text)
+    text = re.sub(r" +([,.;:!?])", r"\1", text)
+    return re.sub(r"([!?])\.", r"\1", text)
 
 
 def _section(md: str, heading_contains: str) -> str:
