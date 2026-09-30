@@ -340,8 +340,8 @@ def seed(cache_dir: Optional[Path] = None, src: Optional[Path] = None,
     the current rules hash)."""
     from app.music_brain.atlas import macros as mc
     from app.music_brain.atlas import pair_atlas as pa
-    from app.music_brain import set_learner as sl
-    from app.music_brain.set_import import _atlas_lock
+    from app.music_brain.learning import set_learner as sl
+    from app.music_brain.learning.set_import import _atlas_lock
 
     cache, src = _cache(cache_dir), Path(src or KNOWLEDGE_DIR)
     rep = {"macros": [], "macros_skipped": [], "observations": 0, "pairs": 0, "atlas": None}

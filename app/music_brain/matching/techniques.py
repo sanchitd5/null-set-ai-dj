@@ -341,11 +341,11 @@ def scene_store(store: Dict[str, dict], scene: Optional[str] = None) -> Dict[str
 
 
 def learned_techniques(store: Optional[Dict[str, dict]] = None, scene: Optional[str] = None) -> List[Technique]:
-    """Techniques observed in studied sets (app.music_brain.set_learner), each
+    """Techniques observed in studied sets (app.music_brain.learning.set_learner), each
     fitting pairs inside the tempo gap / key score range it was seen at.
     scene: whose scene-tagged sightings count too (scene_store); None = global only."""
     if store is None:
-        from app.music_brain.set_learner import load_learned
+        from app.music_brain.learning.set_learner import load_learned
         store = load_learned()
     store = scene_store(store, scene)
     out = []
@@ -432,7 +432,7 @@ def learned_pick(ranked: List[dict], store: Optional[Dict[str, dict]] = None,
     (tempo_gap, octave-folded) gets the profile's fallback_recipe instead of the blend."""
     from app.music_brain.analysis import scene_profile as sp
     if store is None:
-        from app.music_brain.set_learner import load_learned
+        from app.music_brain.learning.set_learner import load_learned
         store = load_learned()
     store = scene_store(store, sp.learned_scene(level))
     best = None
@@ -522,7 +522,7 @@ def learned_moves(store: Optional[Dict[str, dict]] = None) -> Dict[str, dict]:
     """{kind: {kind, enabled, seen, stems, rules, params}} for the in-song learned moves.
     enabled = sighted at least once and not disabled by the user; rules = the user's words."""
     if store is None:
-        from app.music_brain.set_learner import load_learned
+        from app.music_brain.learning.set_learner import load_learned
         store = load_learned()
     out = {}
     for kind in MOVE_KINDS:

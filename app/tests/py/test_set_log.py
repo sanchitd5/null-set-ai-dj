@@ -1,6 +1,6 @@
 import pytest
 
-from app.music_brain.set_log import SCHEMA, export_set_log_markdown, validate_set_log
+from app.music_brain.learning.set_log import SCHEMA, export_set_log_markdown, validate_set_log
 
 
 def sample():

@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from app.music_brain import learn_cleanup, set_learner as sl
-from app.music_brain.set_import import content_id
+from app.music_brain.learning import learn_cleanup, set_learner as sl
+from app.music_brain.learning.set_import import content_id
 from app.tests.py.test_set_learner import _stub_study
 
 
@@ -261,7 +261,7 @@ def test_users_own_recording_is_never_deleted(tmp_path, monkeypatch):
 
 
 def test_concurrent_learn_of_the_set_skips_cleanup(tmp_path, monkeypatch):
-    from app.music_brain import learn_progress as lp
+    from app.music_brain.learning import learn_progress as lp
     t = _tidy(tmp_path)
     p = lp.Progress("x", heartbeat_s=0)
     p.set_id("S1")

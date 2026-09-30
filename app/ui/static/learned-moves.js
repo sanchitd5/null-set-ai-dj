@@ -1,5 +1,5 @@
 // AI Music Brain - LEARNED MOVES: the four techniques the set learner found in studied DJ sets that are
-// played INSIDE a song, not as a transition (app/music_brain/set_learner.py, techniques.py learned_moves):
+// played INSIDE a song, not as a transition (app/music_brain/learning/set_learner.py, techniques.py learned_moves):
 //
 //   vocal_loop        one vocal line repeated back to back (chant / stutter): a vocal-stem slice of whole
 //                     beats (1/2, 1 or 2 bars) on the beat grid, N plays, released on the phrase line.

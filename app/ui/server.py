@@ -38,7 +38,7 @@ from app.music_brain.config import (
 from app.music_brain.matching.knowledge_parser import KnowledgeParser
 from app.music_brain.matching.recipe_matcher import RecipeMatcher
 from app.music_brain.transition_renderer import render_full_mix, render_preview
-from app.music_brain.set_log import export_set_log_markdown, validate_set_log
+from app.music_brain.learning.set_log import export_set_log_markdown, validate_set_log
 from app.ui.services import engine as _engine
 from app.ui.services.bg_jobs import DONE as _JOB_DONE, ERROR as _JOB_ERROR, EXPIRED as _JOB_EXPIRED, JobRunner
 from app.ui.services.library_service import scan_library
@@ -1041,8 +1041,8 @@ def _hook_drops(track_id: str, top_n: int = 3, ai_call: bool = False) -> list:
     (ai_call=False: only already-cached picks, never waits on the model).
     [] on any miss; never separates."""
     from app.music_brain.analysis import hook_drop, lyrics
-    from app.music_brain import set_ai
-    from app.music_brain.set_learner import load_learned
+    from app.music_brain.learning import set_ai
+    from app.music_brain.learning.set_learner import load_learned
 
     path = _track_path(track_id)
     name = _track_names.get(track_id) or _name_from_tags(track_id, path) or path.stem
@@ -1405,14 +1405,14 @@ def get_learned_moves():
 def get_learn_progress():
     """Set studies (agent_bridge learn-set), newest first: each with state running|done|error|stale,
     elapsed_s and, while running, a rough eta_s. Read-only; nothing here starts a study."""
-    from app.music_brain import learn_progress as lp
+    from app.music_brain.learning import learn_progress as lp
 
     return {"studies": lp.read_all()}
 
 
 @app.get("/api/learn/progress/{set_id}")
 def get_learn_progress_one(set_id: str):
-    from app.music_brain import learn_progress as lp
+    from app.music_brain.learning import learn_progress as lp
 
     d = lp.read_one(set_id)
     if d is None:

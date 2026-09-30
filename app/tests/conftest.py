@@ -41,7 +41,7 @@ def _no_tracked_knowledge(tmp_path_factory, monkeypatch):
 @pytest.fixture(autouse=True)
 def _private_learn_progress(tmp_path_factory, monkeypatch):
     """Tests never write into the real data/cache/learn_progress (the console panel reads it)."""
-    from app.music_brain import learn_progress
+    from app.music_brain.learning import learn_progress
     monkeypatch.setattr(learn_progress, "PROGRESS_DIR", tmp_path_factory.mktemp("learn_progress"))
 
 
@@ -50,8 +50,8 @@ def _private_library(tmp_path_factory, monkeypatch):
     """A learn's cleanup never registers into, or deletes from, the real library: it gets a
     temporary CACHE_DIR whose uploads/ is filled by content hash, like POST /api/tracks."""
     import shutil
-    from app.music_brain import learn_cleanup, set_learner
-    from app.music_brain.set_import import content_id
+    from app.music_brain.learning import learn_cleanup, set_learner
+    from app.music_brain.learning.set_import import content_id
     cache = tmp_path_factory.mktemp("cache")
     monkeypatch.setattr(set_learner, "CACHE_DIR", cache)
 

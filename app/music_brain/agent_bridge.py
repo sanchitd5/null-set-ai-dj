@@ -140,18 +140,18 @@ def learn_set(source: str, tracklist: Optional[str] = None, download: bool = Tru
     (the `cleanup` field: freed_bytes, deleted, kept[{file, reason}])."""
     log = lambda m: print(m, file=sys.stderr, flush=True)  # noqa: E731
     if macros_only:
-        from app.music_brain.set_import import learn_tracklist_macro
+        from app.music_brain.learning.set_import import learn_tracklist_macro
 
         report = learn_tracklist_macro(source, tracklist=tracklist, download=download, log=log)
     else:
-        from app.music_brain.set_learner import learn_set as _learn
+        from app.music_brain.learning.set_learner import learn_set as _learn
 
-        from app.music_brain.set_learner import SPLIT_MIN
+        from app.music_brain.learning.set_learner import SPLIT_MIN
 
         report = _learn(source, tracklist=tracklist, download=download, jobs=jobs, ai=ai, log=log,
                         split_minutes=SPLIT_MIN if split_minutes is None else split_minutes, keep_files=keep_files)
         if macros:
-            from app.music_brain.set_import import learn_macros
+            from app.music_brain.learning.set_import import learn_macros
 
             report["macros"] = learn_macros(report["set_id"], log=log)
     from app.music_brain.matching import knowledge
@@ -168,9 +168,9 @@ def hook_drops(path: str, title: str, top_n: int = 3, render: bool = False, ai: 
     import librosa
 
     from app.music_brain.analysis import hook_drop as hd, lyrics as ly
-    from app.music_brain import set_ai
+    from app.music_brain.learning import set_ai
     from app.music_brain.config import ROOT_DIR
-    from app.music_brain.set_learner import load_learned
+    from app.music_brain.learning.set_learner import load_learned
     from app.music_brain.audio.stem_service import separate as _sep
 
     a = _analyze(path)
@@ -191,7 +191,7 @@ def hook_drops(path: str, title: str, top_n: int = 3, render: bool = False, ai: 
 
 def learned() -> dict:
     """Techniques learned so far, with their observations."""
-    from app.music_brain.set_learner import load_learned
+    from app.music_brain.learning.set_learner import load_learned
 
     return {"learned": load_learned()}
 
@@ -347,7 +347,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             else:
                 target = args.target
                 if target.startswith("http"):
-                    from app.music_brain.set_learner import fetch_set
+                    from app.music_brain.learning.set_learner import fetch_set
 
                     target = str(fetch_set(target)[0])
                 payload = src.learn_transform(src.video_id(args.source), target, label=args.label,
@@ -355,7 +355,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         elif args.command == "learned":
             payload = learned()
         elif args.command == "learn-status":
-            from app.music_brain import learn_progress as lp
+            from app.music_brain.learning import learn_progress as lp
 
             docs = lp.read_all()
             print("\n".join(lp.summary(d) for d in docs) or "no set study recorded yet")
@@ -373,7 +373,7 @@ def main(argv: Optional[list[str]] = None) -> int:
                 lines = ly.fetch(args.title)
             payload = {"title": args.title, "manual": bool(args.none or args.lrc or args.lrclib), "sample": ly.sample_of(args.title), "lines": lines}
         elif args.command == "learn-feedback":
-            from app.music_brain.set_learner import add_user_rule
+            from app.music_brain.learning.set_learner import add_user_rule
 
             payload = {"technique": add_user_rule(args.kind, args.rule, disable=args.disable)}
         elif args.command == "session-report":

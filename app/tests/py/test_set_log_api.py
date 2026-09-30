@@ -1,4 +1,4 @@
-from app.music_brain.set_log import SCHEMA
+from app.music_brain.learning.set_log import SCHEMA
 from app.tests.py.testclient_compat import TestClient
 from app.ui import server
 

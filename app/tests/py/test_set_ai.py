@@ -5,8 +5,8 @@ import numpy as np
 import pytest
 
 from app.music_brain.analysis import hook_drop, lyrics
-from app.music_brain import set_ai
-from app.music_brain import set_learner as sl
+from app.music_brain.learning import set_ai
+from app.music_brain.learning import set_learner as sl
 from app.music_brain.matching import techniques as tq
 
 LRC = "[00:10.00] verse one\n[00:14.00] take me higher\n[00:22.00] take me higher\n[00:28.00] don't let me go\n[00:31.00] outro"

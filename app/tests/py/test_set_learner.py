@@ -2,7 +2,7 @@
 from pathlib import Path
 import numpy as np
 
-from app.music_brain import set_learner as sl
+from app.music_brain.learning import set_learner as sl
 from app.music_brain.matching import techniques as tq
 
 SR = sl.SR
@@ -249,7 +249,7 @@ def test_lyrics_or_review_failing_late_keeps_the_study(tmp_path, monkeypatch):
     if not shutil.which("ffmpeg"):
         return
     from app.music_brain.analysis import lyrics
-    from app.music_brain import set_ai
+    from app.music_brain.learning import set_ai
     _stub_study(tmp_path, monkeypatch)
     words = {"A - One": [{"t": 0.0, "end": 4.0, "text": "one"}]}
 

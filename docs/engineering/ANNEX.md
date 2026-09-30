@@ -110,7 +110,7 @@ Lives in `app/music_brain/agent_bridge.py` (`add_parser` calls). Run as
 ### AI review
 A stage of [learn-set](#learn-mode--learn-set) where the local model checks each detected move
 and keeps or rejects it. Rejected observations never count as a technique. Shows in the
-LEARNING panel as the "AI review" stage (`app/music_brain/learn_progress.py:STAGES`,
+LEARNING panel as the "AI review" stage (`app/music_brain/learning/learn_progress.py:STAGES`,
 `app/ui/static/learn-progress.js`). Skip it with `learn-set --no-ai`.
 
 ### atlas (pair_atlas)
@@ -147,7 +147,7 @@ is from the stub-LLM era until it is re-recorded. Refresh with `app.sim.suite --
 ### build-set / import-set
 `pair_atlas import-set <set_id>` registers a studied set's songs as library tracks the same way
 an upload does (id is `sha256(bytes)[:16]`), so nothing is separated or analysed twice
-(`app/music_brain/set_import.py`). `pair_atlas build` then rescores the atlas. `learn-set` runs
+(`app/music_brain/learning/set_import.py`). `pair_atlas build` then rescores the atlas. `learn-set` runs
 both at its end unless `--no-macros` is passed. **UNVERIFIED:** no subcommand literally named
 `build-set` was found; the words refer to this import-then-build step.
 
@@ -237,12 +237,12 @@ Study a recorded DJ set: `python -m app.music_brain.agent_bridge learn-set <url|
 analyze, detect, lyrics, ai_review, merge, cleanup. A set longer than `--split-minutes` is learned
 in parts cut at tracklist boundaries (`set_learner.plan_parts`: neighbouring parts share one song,
 each handover belongs to one part), each part checkpointed in `sets/<set_id>/parts/` so a killed run
-resumes at the next part; the panel shows "part k/n". The cleanup (`app/music_brain/learn_cleanup.py`)
+resumes at the next part; the panel shows "part k/n". The cleanup (`app/music_brain/learning/learn_cleanup.py`)
 registers every good song and ID cut in the library first, then deletes clips, clip stems, registered
 song files, yt-dlp leftovers and the set recording; unregistered songs stay, listed in the result's
 `cleanup.kept`. `--keep-files` skips it. A progress file whose pid is gone reads `stale`. Output: [observations](#observations) in `learned_techniques.json`, then
 [import-set](#build-set--import-set) and studied macros. Code:
-`app/music_brain/set_learner.py`. Progress shows in the console LEARNING panel
+`app/music_brain/learning/set_learner.py`. Progress shows in the console LEARNING panel
 (`app/ui/static/learn-progress.js`, `GET /api/learn/progress`) or `learn-status` on the CLI.
 
 ### learned moves
@@ -254,7 +254,7 @@ not disabled, seen in a studied set, user toggles). `app/ui/static/learned-moves
 ### learned_techniques.json
 The learner's store: per technique kind, its observations, count, the tempo gap and key ranges
 it was seen at, and [user rules](#user-rules). Path `data/cache/learned_techniques.json`
-(`app/music_brain/set_learner.py:LEARNED_PATH`); a copy is exported to `knowledge/`.
+(`app/music_brain/learning/set_learner.py:LEARNED_PATH`); a copy is exported to `knowledge/`.
 
 ### list-recipes
 CLI and `GET /api/recipes`: every parsed cookbook recipe with its 17-part fields plus
@@ -363,7 +363,7 @@ local library changes.
 
 ### set_learner
 The learning pipeline behind [learn-set](#learn-mode--learn-set), plus the user-rule store.
-`app/music_brain/set_learner.py`.
+`app/music_brain/learning/set_learner.py`.
 
 ### slim atlas
 A compact copy of the atlas (the best partners per song and per move) for git.
@@ -432,7 +432,7 @@ Its macros are `studied-set-<set_id>` (whole set) and `studied-<set_id>-<n>` (pe
 ### user rules
 The owner's refinement of a learned technique after hearing it live (for example "rap about 9 dB
 under the riff"), or `--disable` to keep it out of ranking. Kept across re-learning.
-`app/music_brain/set_learner.py:add_user_rule`.
+`app/music_brain/learning/set_learner.py:add_user_rule`.
 
 ### vibe
 Measured "vibe" features the name cannot tell the LLM: loudness, brightness, percussive density,

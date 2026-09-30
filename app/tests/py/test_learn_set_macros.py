@@ -4,7 +4,8 @@ import json
 
 import pytest
 
-from app.music_brain import agent_bridge as ab, set_import as si, set_learner
+from app.music_brain import agent_bridge as ab
+from app.music_brain.learning import set_import as si, set_learner
 
 SID = "S1"
 REPORT = {"set_id": SID, "set_path": "/x", "observations": [], "learned": {}}

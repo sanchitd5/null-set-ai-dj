@@ -216,7 +216,7 @@ def learn_transform(source_id: str, target: str, label: Optional[str] = None, st
     start/end cut a long set to the part that uses the source (ffmpeg, then Demucs)."""
     import librosa
 
-    from app.music_brain import set_learner as sl
+    from app.music_brain.learning import set_learner as sl
     from app.music_brain.audio.stem_service import separate
 
     d = _dir(source_id)

@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from app.music_brain.analysis import scene_profile as sp
-from app.music_brain import set_learner as sl
+from app.music_brain.learning import set_learner as sl
 from app.music_brain.matching import techniques as tq
 from app.tests.py import learned_off_vectors as vectors
 

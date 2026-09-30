@@ -3278,7 +3278,7 @@ function createAutopilotEngine({ host, ai }) {
       });
     }
 
-    // Learned from studied sets (app/music_brain/set_learner.py): the move that DJ
+    // Learned from studied sets (app/music_brain/learning/set_learner.py): the move that DJ
     // made most on pairs like this one, when the console already allows it here.
     let learned = null;
     if (!forced && !layer && !peakT && learnedOn()) {

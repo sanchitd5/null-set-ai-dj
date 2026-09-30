@@ -6,7 +6,7 @@ import sys
 
 import pytest
 
-from app.music_brain import learn_progress as lp
+from app.music_brain.learning import learn_progress as lp
 from app.tests.py.testclient_compat import TestClient
 
 
@@ -179,7 +179,7 @@ def test_learn_set_writes_progress_end_to_end(tmp_path, monkeypatch):
 
     if not shutil.which("ffmpeg"):
         pytest.skip("ffmpeg")
-    from app.music_brain import set_learner as sl
+    from app.music_brain.learning import set_learner as sl
     from app.tests.py.test_set_learner import _stub_study
 
     _stub_study(tmp_path, monkeypatch)
@@ -196,7 +196,7 @@ def test_learn_set_writes_progress_end_to_end(tmp_path, monkeypatch):
 
 
 def test_a_failed_study_leaves_an_error_file(tmp_path):
-    from app.music_brain import set_learner as sl
+    from app.music_brain.learning import set_learner as sl
 
     with pytest.raises(FileNotFoundError):
         sl.learn_set(str(tmp_path / "missing.mp3"))

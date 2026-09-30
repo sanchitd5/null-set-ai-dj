@@ -5,7 +5,8 @@ import json
 
 import pytest
 
-from app.music_brain import agent_bridge as ab, set_import as si, set_learner
+from app.music_brain import agent_bridge as ab
+from app.music_brain.learning import set_import as si, set_learner
 from app.music_brain.atlas import macros as mc
 
 SID = "abcdefghijk"

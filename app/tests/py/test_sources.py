@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from app.music_brain import set_learner as sl
+from app.music_brain.learning import set_learner as sl
 from app.music_brain.matching import sources
 
 

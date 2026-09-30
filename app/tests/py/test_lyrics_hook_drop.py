@@ -3,7 +3,7 @@ import numpy as np
 import pytest
 
 from app.music_brain.analysis import hook_drop, lyrics
-from app.music_brain import set_learner as sl
+from app.music_brain.learning import set_learner as sl
 from app.music_brain.matching import techniques as tq
 
 LRC = """[00:10.00] verse one
@@ -186,7 +186,7 @@ def test_other_versions_are_not_this_song():
 
 
 def test_lyrics_need_an_artist_or_a_proven_file(tmp_path, monkeypatch):
-    from app.music_brain import set_learner as sl
+    from app.music_brain.learning import set_learner as sl
     monkeypatch.setattr(lyrics, "LYRICS_DIR", tmp_path)
     assert sl.lyric_query("Delilah", "/x/Grayson_Little_-_Delilah.mp3", 0.2) is None
     assert sl.lyric_query("Delilah", "/x/Fred_again.._-_Delilah_pull_me_out_of_this.mp3", 0.8) == \
