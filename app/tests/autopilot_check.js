@@ -175,6 +175,21 @@ console.log("autopilot core ok");
   console.log("no hard cuts ok");
 }
 
+{ // deadline rule: near the exit, or after a failed search, the library / ready pool goes before the model
+  const { searchPlan, DEADLINE_LEAD_S } = require("../ui/static/autopilot.js");
+  assert.strictEqual(DEADLINE_LEAD_S, 45);
+  const early = searchPlan({ pos: 100, exitLo: 200 });
+  assert.ok(!early.deadline && !early.fallbackFirst && early.retryMs === 20000);
+  assert.ok(searchPlan({ pos: 155, exitLo: 200 }).deadline);                 // 45 s before the exit window
+  assert.ok(searchPlan({ pos: 199.3, exitLo: 150 }).fallbackFirst);          // 102327: already past the window
+  assert.ok(searchPlan({ pos: 20, exitLo: 200, failedSearches: 1 }).fallbackFirst);
+  assert.ok(searchPlan({ pos: 20, exitLo: 200, emptyStreak: 2 }).fallbackFirst);
+  assert.ok(!searchPlan({ pos: NaN, exitLo: 200 }).deadline);                // unknown position: no deadline
+  // failed searches back off (the 17 back-to-back suggest calls): 20, 40, 80, 120 s cap
+  assert.deepStrictEqual([1, 2, 3, 4, 8].map((n) => searchPlan({ failedSearches: n }).retryMs), [20000, 40000, 80000, 120000, 120000]);
+  console.log("deadline fallback ok");
+}
+
 { // empty song searches back off, then fall back to the library; rejected pairs are remembered
   const { emptyRetryMs, useLibraryFallback, rememberPairReject, pairRejected } = require("../ui/static/autopilot.js");
   assert.deepStrictEqual([0, 1, 2, 3, 4, 9].map(emptyRetryMs), [20000, 20000, 40000, 80000, 120000, 120000]);

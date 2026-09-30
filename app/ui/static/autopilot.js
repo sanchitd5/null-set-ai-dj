@@ -385,6 +385,22 @@ var autopilotCore = (function () {
   const EMPTY_LIBRARY_AFTER = 2;
   const emptyRetryMs = (streak) => Math.min(120000, 20000 * 2 ** Math.max(0, Math.min(streak, 10) - 1));
   const useLibraryFallback = (streak) => streak >= EMPTY_LIBRARY_AFTER;
+  // Deadline rule (HOLD LOOP in Punjabi set 2026-09-30_102327: 17 ok suggest calls, every pick dropped,
+  // the set looped at the exit). Once the playing song is DEADLINE_LEAD_S from the start of its exit
+  // window, or a whole search for this song already failed, the next search tries the ready pool and a
+  // library song that tempo-locks BEFORE asking the model again: a ready fallback beats waiting. 45 s =
+  // one model answer (12-17 s) + analysis / stems of a library song + a phrase of margin (GUESS).
+  // Failed searches back off like empty answers (20, 40, 80, 120 s), so a model whose picks all get
+  // dropped is not asked back-to-back every 15 s.
+  const DEADLINE_LEAD_S = 45;
+  function searchPlan({ pos, exitLo, failedSearches = 0, emptyStreak = 0 } = {}) {
+    const deadline = Number.isFinite(pos) && Number.isFinite(exitLo) && pos >= exitLo - DEADLINE_LEAD_S;
+    return {
+      deadline,
+      fallbackFirst: deadline || failedSearches >= 1 || useLibraryFallback(emptyStreak),
+      retryMs: emptyRetryMs(Math.max(emptyStreak, failedSearches)),
+    };
+  }
 
   // (A, B) pairs that already failed a pairwise gate (vibe / energy / plan-fit) are not matched again
   // while A still plays. A reject made under the relaxed last-round limits holds in every round; one
@@ -666,7 +682,7 @@ var autopilotCore = (function () {
     return out;
   }
   const api = { prerenderTargets, readinessNeeds, aTempoAtEntry, deferBudgetS, deferDecision, orderByReadiness, DEFER_MAX_S, DEFER_MIN_LEAD_S, PREFER_READY_JUMP,
-    emptyRetryMs, useLibraryFallback, rememberPairReject, pairRejected, awaitJob, keySafeRecipe, KEY_SAFE_MIN, energyStepOk, hybridWindowKey, highSpans, quantileLinear, median, exitPastHigh, learnedRecipe, vocalRecipe, stemBlendBars, stemBlendFader, phraseWaitS, introBars, FADER_PARK_BARS, homePlan, maskedGlideBars, maskedDropAt, HOME_DROP_PCT, LADDER_STEP_PCT,
+    emptyRetryMs, useLibraryFallback, searchPlan, DEADLINE_LEAD_S, rememberPairReject, pairRejected, awaitJob, keySafeRecipe, KEY_SAFE_MIN, energyStepOk, hybridWindowKey, highSpans, quantileLinear, median, exitPastHigh, learnedRecipe, vocalRecipe, stemBlendBars, stemBlendFader, phraseWaitS, introBars, FADER_PARK_BARS, homePlan, maskedGlideBars, maskedDropAt, HOME_DROP_PCT, LADDER_STEP_PCT,
     tempoLockableAt, recipeKind, decideRecipe, planSkipReason, WINDOWS, playWindowFor, exitBounds, exitPick, exitTiming, exitHighPush, audibleEnd, entryClamp, SILENT_FLOOR,
     breakdownSpans, exitOutOfBreakdown, exitBreakdownPush, energyAtTarget, FINISH_MAX_S, forcedExit, forcedRecipe, forcedLine, forcedBooking };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
@@ -1773,6 +1789,7 @@ function createAutopilotEngine({ host, ai }) {
   // out before the next one exists.
   const ready = [];     // { track_id, name, duration, suggestion }
   const pairRejects = new Map();   // "A>B" -> {why, forced}: pairs that failed a pairwise gate (see autopilotCore.pairRejected)
+  let failedSearches = 0, failedFor = null; // whole searches (all rounds) that booked nothing for this song
   let emptyStreak = 0;             // consecutive song searches that returned no pick (backoff + library fallback)
   const MAX_READY = 4;
 
@@ -2836,6 +2853,15 @@ function createAutopilotEngine({ host, ai }) {
     // suggestions when every candidate fails; rejected titles are fed back as
     // "avoid" so the model proposes different songs.
     const MAX_ROUNDS = 3;
+    const plan = autopilotCore.searchPlan({
+      pos: deckPosition(activeDeck), exitLo: exitWindow(50).lo,
+      failedSearches: failedFor === currentId ? failedSearches : 0, emptyStreak });
+    if (plan.fallbackFirst) {
+      host.log.step("deadline_fallback", { phase: "selection", decision: plan.deadline ? "deadline" : "search failed before",
+        why: `library / ready pool before asking the model again (${autopilotCore.DEADLINE_LEAD_S} s lead)` });
+      if (await tryLibraryLockable(currentId, gen)) return;
+      if (!active || gen !== prepGen) return;
+    }
     const rejected = [];
     for (let round = 1; round <= MAX_ROUNDS; round++) {
       // A running BRIDGE PATH holds the budget back; the last round always may jump.
@@ -2914,7 +2940,9 @@ function createAutopilotEngine({ host, ai }) {
     // Never end the set over this: the playing song keeps going (HOLD LOOP near
     // its end) and the search retries. Stopping here turned a 10 s server
     // restart into a dead set.
-    const retryMs = autopilotCore.emptyRetryMs(emptyStreak);
+    if (failedFor !== currentId) { failedFor = currentId; failedSearches = 0; }
+    failedSearches++;
+    const retryMs = autopilotCore.searchPlan({ failedSearches, emptyStreak }).retryMs;
     apStatus(`No next song yet after ${MAX_ROUNDS} tries — retrying in ${Math.round(retryMs / 1000)} s (music keeps playing)`);
     setTimeout(() => { if (active && gen === prepGen) prepareTransition(currentId); }, retryMs);
   }
