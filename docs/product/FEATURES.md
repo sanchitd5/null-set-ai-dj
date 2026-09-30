@@ -58,6 +58,7 @@ Status legend:
 | Suggest-reject log | Working | `autopilot_service.py` `note_rejects` | Every dropped pick logged with its reason as a session event |
 | Stem moves (stem intro, voice strip, synth hold) | Working | `stem-moves.js` `pickIntro`, `engine.js` stem slices | Silent-stem moves refused, they fall back |
 | Artist and FX moves (S1 to S22 family) | Working | `artist-moves.js`, `fx-moves.js`, `fx-rack.js`, `fx-budget.js` `canSpend` | Budget per transition and per song |
+| Artist moves: pad lead, chant gate, dhol drop-in, chop duck | Working (unverified by ear) | `artist-moves.js` `planPadLead` / `planChantGate` / `planDholDrop` / `planChopDuck`; buttons PAD LEAD, CHANT GATE, DHOL DROP-IN, CHOP DUCK | Pad lead: B's pads first before a tonal blend (key >= 0.8, 8% cap, every 3rd transition at most). Chant gate: vocal gated on 16ths into a build, once per song, FX budget. Dhol drop-in: B's drums under A before a cut, only between two Punjabi songs at scene level full (owner rule). Chop duck: drums -6 to -10 dB under learned chops. Chant gate and chop duck never touch a drop line (owner rule). Levels are named constants, not judged by a listener |
 | AI ACTIONS buttons and toggle drawer | Working | `ai-actions.js`, `toggle-drawer.js` | Grouped, searchable, favourites persisted per browser |
 | AUTO MIX (mix into the other deck now) | Working | `ai-actions.js` | Not a crate automix queue |
 | Mashup / layer / riff-over-rap / remix mode | Working | `mashup-layer.js`, `riff-over-rap.js`, `remix-mode.js`, `POST /api/mashup/plan`, `POST /api/layer/plan` | |

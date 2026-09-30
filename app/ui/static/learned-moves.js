@@ -559,6 +559,9 @@
         if (!d.stemMix({}, at - 0.01, 0.01)) return void console.info(`learned move ${plan.kind} skipped: stem mode refused`);
         const res = d.stemSlices(plan.stem, plan.slices, at);
         if (!res) { d.stemMix(null, at, 0.02); return void console.info(`learned move ${plan.kind} skipped: slices refused`); }
+        // S18 leave room (artist-moves.js chopDuck): A's drums ducked under the chops, back with the full mix
+        const am = host.mod.artistMoves;
+        if (plan.kind === "vocal_chop" && am && typeof am.chopDuck === "function") am.chopDuck(d, plan, at, until);
         timers[d.id].push(setTimeout(() => { if (d.playing) d.stemMix(null, until + 0.03, 0.02); }, Math.max(0, (until - audioCtx.currentTime) * 1000 - 200)));
       }, Math.max(0, lead * 1000 - 250)));
       return { ok: true, at, until };

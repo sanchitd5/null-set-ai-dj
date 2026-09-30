@@ -3275,6 +3275,8 @@ function createAutopilotEngine({ host, ai }) {
         peakKind: peakT ? peakT.kind : null, peakWhy: peakT ? peakT.why : null, brake: !!(peakT && peakT.brake),
         preClearBars: Number.isFinite(candidate.pre_clear_bars) ? candidate.pre_clear_bars : 8,
         bEntry: layer ? null : bTime,             // B's cue point (artist-moves.js cue tease reads B's first hits there)
+        recipe,                                   // artist-moves.js pad lead plays only ahead of a tonal blend
+        scene: profLvl, genreA: currentGenre, genreB: profileNext,   // artist-moves.js dhol drop-in: Punjabi songs only
       });
     }
 

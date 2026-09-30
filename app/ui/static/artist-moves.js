@@ -15,15 +15,40 @@
 //   perc_bridge  S11 (third-deck percussion bridge): gated on a third deck. The console has two,
 //                so the planner refuses and nothing runs; kept so the gate is explicit and logged.
 //   S15 (tempo swerve at a break) is skipped by the spec itself (covered by the prior note).
+//   pad_lead     Lane 8 "pads first" (learned stem_intro store: other-first is the most seen order,
+//                5 of 5 Lane 8 intros lead with other or drums, bass never first; set study
+//                N_GfH09iP9c): B's own pads ("other" stem) from the 4 or 8 bars before its entry
+//                point rise in under A's last bars, high-passed at 150 Hz, so B's pads arrive first,
+//                its drums / bass land with the transition. Key >= 0.8 (two melodies overlap, G2).
+//   chant_gate   S20 (Argy / Anyma melodic techno gated vocal, SECONDARY + GUESS artist link; the
+//                learned vocal_loop "chant" sightings): A's own vocal stem gated on straight 16ths
+//                over the last 1 or 2 bars of a build, opened fully again on the phrase line.
+//                One per song, costs one "vocal" unit of the S21 FX budget.
+//   dhol_drop    desi drum-bed drop-in (research/notes/punjabi-original-sets.md: "a drums-only bed
+//                is how DJs and dholis hand over", SOURCED vendor pages; Quick Cut on the hook /
+//                dhol entry is the scene's dominant move, GUESS from set lengths): B's drum stem
+//                from the 1 or 2 bars before its entry point layered under A's last bars,
+//                high-passed at 150 Hz, then the cut lands on the downbeat and B's drums run on.
+//                OWNER RULE: Punjabi songs only, never an experiment: both songs' genres must be
+//                Punjabi scene terms AND the scene profile level "full" (handover / off / unknown
+//                genre refuse, on demand too).
+// OWNER RULE "never vocal mix a drop line": chant_gate and chop_duck refuse any window that overlaps a
+// drop of the song, or that cuts into a vocal line running on into a drop (drop spans from the section
+// map's "drop" labels and dj-mind dropLines).
+//   chop_duck    S18 "leave room" (Fred again.., SECONDARY: gearnews, kicks and claps sparse to leave
+//                space for the sample): while a learned vocal_chop plays, A's drum stem is ducked
+//                6 to 10 dB (deeper when the chops are quieter than the drums), back on the window
+//                end. A modifier of learned-moves.js runSlices, not a move of its own on the timeline.
 (function (root) {
   "use strict";
 
   const lm = root.learnedMovesCore || (typeof require === "function" ? require("./learned-moves.js") : null);
   const { envelope, snapBeat, median } = lm;
 
-  const KINDS = ["slip_loop", "cue_tease", "roll", "perc_bridge"];
-  const SPEC = { slip_loop: "S13", cue_tease: "S14", roll: "S12", perc_bridge: "S11" };
-  const LABEL = { slip_loop: "SLIP LOOP", cue_tease: "CUE TEASE", roll: "ROLL", perc_bridge: "PERC BRIDGE" };
+  const KINDS = ["slip_loop", "cue_tease", "roll", "perc_bridge", "pad_lead", "chant_gate", "dhol_drop", "chop_duck"];
+  const SPEC = { slip_loop: "S13", cue_tease: "S14", roll: "S12", perc_bridge: "S11", pad_lead: "Lane8", chant_gate: "S20", dhol_drop: "Desi", chop_duck: "S18" };
+  const LABEL = { slip_loop: "SLIP LOOP", cue_tease: "CUE TEASE", roll: "ROLL", perc_bridge: "PERC BRIDGE",
+    pad_lead: "PAD LEAD", chant_gate: "CHANT GATE", dhol_drop: "DHOL DROP-IN", chop_duck: "CHOP DUCK" };
   const MIN_LEAD_S = 0.6;             // a move is booked at least this far ahead (learned-moves.js)
   const SLIP_WINDOW_BEATS = [16, 8];  // window before the line; the loop is its first half (4 or 8 beats)
   const SLIP_CAP_BEATS = 16;          // hard cap on the slip window (KB 16-beat hold)
@@ -39,6 +64,26 @@
   const ROLL_WET = 0.25;              // low wet (UNVERIFIED by ear)
   const ROLL_SLICE_BEATS = 0.5;
   const MIN_RMS = 0.01;               // stem-moves.js floor
+  const PAD_BARS = [8, 4];            // pad lead window before B's entry (one phrase, else half)
+  const PAD_KEY_MIN = 0.8;            // G2: overlapped melodies need a +-1 hour / same key match
+  const PAD_REL = 0.6;                // B's pads under A's own pads (UNVERIFIED by ear)
+  const PAD_GAIN_FALLBACK = 0.4;      // B's pads when A's "other" stem is not measured (UNVERIFIED)
+  const PAD_RISE_SHARE = 0.5;         // the pads rise over the first half of the window
+  const PAD_EVERY = 3;                // autopilot: at most one pad lead every 3 transitions (conservative rate)
+  // the blends B's pads can lead into: B's full song enters over bars (never a cut, echo out or peak swap)
+  const PAD_RECIPES = /^(long blend|bass swap|drop swap|blend|stem bridge|learned:stem_intro)$/i;
+  const CHANT_BARS = [2, 1];          // gated window before the line
+  const CHANT_PER_SONG = 1;
+  const CHANT_MIN_VOCAL = 0.5;        // A must sing at least half the window (else nothing to gate)
+  const CHANT_STEP_BEATS = 0.25;      // straight 16ths
+  const CHANT_FLOOR = 0.1;            // closed gate level, about -20 dB (UNVERIFIED by ear)
+  const DHOL_BARS = [2, 1];           // drum bed before the cut
+  const DHOL_EVERY = 2;               // autopilot: at most one drop-in every 2 cut transitions
+  const DHOL_REL = 0.5;               // B's drums about 6 dB under A's (UNVERIFIED by ear)
+  const DHOL_GAIN_FALLBACK = 0.3;
+  const DUCK_DB = [-10, -6];          // S18: drums -6 to -10 dB under the chops
+  const DUCK_HEADROOM_DB = 12;        // the chops end up at least this much over the ducked drums, within DUCK_DB
+  const CUT_RECIPES = /\bcut\b/i;    // Quick Cut, Hard Cut, the profile cut
 
   const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
   const no = (gate, reason) => ({ ok: false, gate, reason });
@@ -183,11 +228,180 @@
     return { ok: true, kind: "perc_bridge", fallbacks: [], why: "third-deck drum loop bridges the gap" };
   }
 
-  const PLANNERS = { slip_loop: planSlipLoop, cue_tease: planCueTease, roll: planRoll, perc_bridge: planPercBridge };
+  // mean of an envelope {t0, hop, v} over [t0, t1] (null when nothing is inside)
+  function envMean(env, t0, t1) {
+    if (!env || !Array.isArray(env.v) || !(env.hop > 0)) return null;
+    const i0 = Math.max(0, Math.floor((t0 - env.t0) / env.hop)), i1 = Math.min(env.v.length, Math.ceil((t1 - env.t0) / env.hop));
+    let s = 0, n = 0;
+    for (let i = i0; i < i1; i++) if (fin(env.v[i])) { s += env.v[i]; n++; }
+    return n ? s / n : null;
+  }
+
+  // drop spans [[t0, t1]] overlapping [t0, t1) -> the first one, else null
+  function dropHit(drops, t0, t1) {
+    for (const x of drops || []) if (Array.isArray(x) && Math.min(t1, x[1]) - Math.max(t0, x[0]) > 1e-6) return x;
+    return null;
+  }
+  // a vocal region that starts before `at` and runs past it into a drop starting there: the drop's vocal line
+  function dropVocalLine(drops, vocals, t0, at) {
+    const d = (drops || []).find((x) => Array.isArray(x) && Math.abs(x[0] - at) < 1e-3);
+    if (!d) return null;
+    return (vocals || []).find((r) => r[1] > at + 1e-3 && r[0] < at && r[1] > t0) || null;
+  }
+
+  // ---- Lane 8 pad lead -------------------------------------------------------------------------
+  // c: {pos, exitT (A song s at B's entry), aBpm, aRate, bBpm, bEntry (B song s), bPlaying,
+  //     bOtherEnv ({t0, hop, v} of B's "other" stem before its entry), aOtherRms (A's "other"
+  //     stem median over its last bars, or null), keyScore, inTransition, mashupActive, relaxed, onDemand,
+  //     style (dj-mind plan style), recipe (the booked recipe), sinceLast (transitions since the last pad lead)}
+  function planPadLead(c) {
+    if (c.inTransition) return no("transition", "the transition is running");
+    if (!c.onDemand) {
+      if (c.relaxed) return no("relaxed", "relaxed session: no artist moves");
+      if (c.style === "instant" || c.style === "peak" || c.style === "layer") return no("style", `a ${c.style} transition: B does not enter over bars`);
+      if (!PAD_RECIPES.test(String(c.recipe || ""))) return no("recipe", `${c.recipe || "no recipe"} is not a blend B's pads can lead into`);
+      if (c.sinceLast != null && c.sinceLast < PAD_EVERY) return no("spacing", `last pad lead ${c.sinceLast} transition(s) ago (< ${PAD_EVERY})`);
+    }
+    if (c.mashupActive) return no("vocal_layer", "a vocal layer is running");
+    if (!fin(c.exitT) || !fin(c.bEntry)) return no("no_plan", "no planned entry for B");
+    if (c.bPlaying) return no("b_rolling", "B already plays: its entry point moves");
+    if (!fin(c.keyScore)) return no("unmeasured", "no Camelot score for the pair: two pads need a key match");
+    if (c.keyScore < PAD_KEY_MIN) return no("key", `Camelot ${c.keyScore.toFixed(2)} < ${PAD_KEY_MIN}: B's pads would clash with A's melody`);
+    const fallbacks = [];
+    const aBpm = c.aBpm > 0 ? c.aBpm : (fallbacks.push("aBpm=128"), 128);
+    const bBpm = c.bBpm > 0 ? c.bBpm : (fallbacks.push("bBpm=128"), 128);
+    const aRate = c.aRate > 0 ? c.aRate : 1, v = aBpm * aRate / bBpm;
+    if (Math.abs(v - 1) * 100 > TEMPO_CAP_PCT) return no("tempo", `B's pads need a ${((v - 1) * 100).toFixed(1)}% stretch (cap ${TEMPO_CAP_PCT}%)`);
+    const env = c.bOtherEnv;
+    if (!env || !Array.isArray(env.v) || env.v.length < 2) return no("no_stems", "B's other stem is not loaded");
+    const beatS = 60 / aBpm, bBeatS = 60 / bBpm;
+    let last = no("late", "less than half a phrase left before B enters");
+    for (const W of PAD_BARS) {
+      const start = c.exitT - W * 4 * beatS, from = c.bEntry - W * 4 * bBeatS;
+      if (from < 0) { last = no("no_room", `B's entry point leaves no ${W} bars before it`); continue; }
+      if (start < c.pos + MIN_LEAD_S * aRate) { last = no("late", `no ${W} bar window left before B enters`); continue; }
+      const bMean = envMean(env, from, c.bEntry);
+      if (!(bMean >= MIN_RMS)) { last = no("no_pads", `B's pads are silent in the ${W} bars before its entry`); continue; }
+      let gain;
+      if (c.aOtherRms > 0) gain = clamp(PAD_REL * c.aOtherRms / bMean, 0.1, 0.7);
+      else { gain = PAD_GAIN_FALLBACK; fallbacks.push(`gain=${PAD_GAIN_FALLBACK}`); }
+      return { ok: true, kind: "pad_lead", start, release: c.exitT, window_beats: W * 4, cap_beats: 32,
+        piece: { a_t: start, b_from: from, b_beats: W * 4 }, b_rate: v, gain, rise_share: PAD_RISE_SHARE, hp_hz: HP_HZ,
+        fallbacks, why: `B's pads alone under A's last ${W} bars (key ${c.keyScore.toFixed(2)}), drums and bass with the transition` };
+    }
+    return last;
+  }
+
+  // ---- S20 chant gate --------------------------------------------------------------------------
+  // c: {pos, lineT, bpm, rate, beats, vocals (regions), drops ([[t0, t1]] drop spans), energyNow, energyNext, count, quiet,
+  //     vocalLive (A's vocal stem sounds), vocalBusy (sliced / held / swapped), inTransition,
+  //     holdActive, mashupActive, relaxed, onDemand}
+  function planChantGate(c) {
+    if (c.inTransition || c.holdActive) return no("transition", "a transition or merge hold owns the deck");
+    if (c.mashupActive) return no("vocal_layer", "a vocal layer is running");
+    if (!c.vocalLive) return no("no_stems", "A's vocal stem is not live");
+    if (c.vocalBusy) return no("busy", "A's vocal stem is already sliced / held / swapped");
+    if (!c.onDemand) {
+      if (c.relaxed) return no("relaxed", "relaxed session: no artist moves");
+      if (c.quiet === false) return no("phrase_busy", "the mind booked another move on this phrase");
+      if ((c.count || 0) >= CHANT_PER_SONG) return no("cap", `${CHANT_PER_SONG} chant gate this song`);
+      if (!(fin(c.energyNow) && fin(c.energyNext))) return no("unmeasured", "no energy curve: cannot tell a build from a fade");
+      if (!(c.energyNext > c.energyNow)) return no("no_build", "the next phrase does not lift: a gate is a build move");
+    }
+    if (!Array.isArray(c.vocals)) return no("unmeasured", "no vocal regions: cannot tell if A sings");
+    const fallbacks = [];
+    const bpm = c.bpm > 0 ? c.bpm : (fallbacks.push("bpm=128"), 128);
+    const beatS = 60 / bpm, rate = c.rate > 0 ? c.rate : 1;
+    let last = no("late", "less than a bar left before the line");
+    for (const W of CHANT_BARS) {
+      const nb = nearestBeat(c.beats, c.lineT - W * 4 * beatS, c.lineT, beatS);
+      if (nb.t < c.pos + MIN_LEAD_S * rate) { last = no("late", `no ${W} bar window left before the line`); continue; }
+      const share = vocalShare(c.vocals, nb.t, c.lineT);
+      if (share < CHANT_MIN_VOCAL) { last = no("no_vocal", `A sings ${Math.round(share * 100)}% of the ${W} bars: nothing to gate`); continue; }
+      if (!Array.isArray(c.drops)) return no("unmeasured", "no drop map: cannot rule out a drop line");
+      const hit = dropHit(c.drops, nb.t, c.lineT);
+      if (hit) return no("drop_line", `the window overlaps the drop at ${hit[0].toFixed(1)} s: never vocal mix a drop line`);
+      const vl = dropVocalLine(c.drops, c.vocals, nb.t, c.lineT);
+      if (vl) return no("drop_line", `the sung line ${vl[0].toFixed(1)}-${vl[1].toFixed(1)} s runs into the drop: never vocal mix a drop line`);
+      if (nb.grid && !fallbacks.includes("beat grid from bpm")) fallbacks.push("beat grid from bpm");
+      const n = Math.round(W * 4 / CHANT_STEP_BEATS), stepS = (c.lineT - nb.t) / n, steps = [];
+      for (let i = 0; i < n; i += 2) steps.push({ t0: nb.t + i * stepS, t1: nb.t + (i + 1) * stepS });
+      return { ok: true, kind: "chant_gate", start: nb.t, release: c.lineT, window_beats: W * 4, cap_beats: 8,
+        step_beats: CHANT_STEP_BEATS, steps, floor: CHANT_FLOOR, grid_err_s: nb.err, fallbacks,
+        why: `A's vocal gated on 16ths over the last ${W} bar${W > 1 ? "s" : ""} of the build, open on the line` };
+    }
+    return last;
+  }
+
+  // ---- desi dhol drop-in ------------------------------------------------------------------------
+  // c: {pos, exitT, aBpm, aRate, bBpm, bEntry, bPlaying, bDrumEnv ({t0, hop, v} of B's drums before its
+  //     entry), aDrumRms, recipe, style, sinceLast, inTransition, mashupActive, relaxed, onDemand,
+  //     sceneLevel (scene-profile.js level for A -> B), aPunjabi / bPunjabi (each song's genre is a Punjabi scene term)}
+  function planDholDrop(c) {
+    // owner rule: Punjabi songs only, never an experiment elsewhere (on demand included)
+    if (!(c.aPunjabi && c.bPunjabi)) return no("scene", `not two Punjabi songs (A ${c.aPunjabi ? "Punjabi" : "not Punjabi / unknown"}, B ${c.bPunjabi ? "Punjabi" : "not Punjabi / unknown"}): the dhol drop-in is for Punjabi sets only`);
+    if (c.sceneLevel !== "full") return no("scene", `Punjabi profile level ${c.sceneLevel || "off"} (needs full): the dhol drop-in is for Punjabi sets only`);
+    if (c.inTransition) return no("transition", "the transition is running");
+    if (c.mashupActive) return no("vocal_layer", "a vocal layer is running");
+    if (!c.onDemand) {
+      if (c.relaxed) return no("relaxed", "relaxed session: no artist moves");
+      if (!(CUT_RECIPES.test(String(c.recipe || "")) || c.style === "instant")) return no("recipe", `${c.recipe || "no recipe"} is not a cut: B already enters over bars`);
+      if (c.sinceLast != null && c.sinceLast < DHOL_EVERY) return no("spacing", `last drop-in ${c.sinceLast} cut(s) ago (< ${DHOL_EVERY})`);
+    }
+    if (!fin(c.exitT) || !fin(c.bEntry)) return no("no_plan", "no planned entry for B");
+    if (c.bPlaying) return no("b_rolling", "B already plays: its entry point moves");
+    const fallbacks = [];
+    const aBpm = c.aBpm > 0 ? c.aBpm : (fallbacks.push("aBpm=128"), 128);
+    const bBpm = c.bBpm > 0 ? c.bBpm : (fallbacks.push("bBpm=128"), 128);
+    const aRate = c.aRate > 0 ? c.aRate : 1, v = aBpm * aRate / bBpm;
+    if (Math.abs(v - 1) * 100 > TEMPO_CAP_PCT) return no("tempo", `B's drums need a ${((v - 1) * 100).toFixed(1)}% stretch (cap ${TEMPO_CAP_PCT}%)`);
+    const env = c.bDrumEnv;
+    if (!env || !Array.isArray(env.v) || env.v.length < 2) return no("no_stems", "B's drum stem is not loaded");
+    const beatS = 60 / aBpm, bBeatS = 60 / bBpm;
+    let last = no("late", "less than a bar left before the cut");
+    for (const W of DHOL_BARS) {
+      const start = c.exitT - W * 4 * beatS, from = c.bEntry - W * 4 * bBeatS;
+      if (from < 0) { last = no("no_room", `B's entry point leaves no ${W} bar${W > 1 ? "s" : ""} before it`); continue; }
+      if (start < c.pos + MIN_LEAD_S * aRate) { last = no("late", `no ${W} bar window left before the cut`); continue; }
+      const bMean = envMean(env, from, c.bEntry);
+      if (!(bMean >= MIN_RMS)) { last = no("no_drums", `B's drums are silent in the ${W} bar${W > 1 ? "s" : ""} before its entry`); continue; }
+      let gain;
+      if (c.aDrumRms > 0) gain = clamp(DHOL_REL * c.aDrumRms / bMean, 0.1, 0.7);
+      else { gain = DHOL_GAIN_FALLBACK; fallbacks.push(`gain=${DHOL_GAIN_FALLBACK}`); }
+      return { ok: true, kind: "dhol_drop", start, release: c.exitT, window_beats: W * 4, cap_beats: 8,
+        piece: { a_t: start, b_from: from, b_beats: W * 4 }, b_rate: v, gain, hp_hz: HP_HZ, fallbacks,
+        why: `B's drums in under A's last ${W} bar${W > 1 ? "s" : ""}, then the cut on the downbeat (desi drop-in)` };
+    }
+    return last;
+  }
+
+  // ---- S18 chop duck --------------------------------------------------------------------------
+  // c: {kind (the learned plan's kind), drumsRms (A's drum stem median over the window), chopRms (median
+  //     level of the chop sources on the vocal stem), start / end (the chop window, song s), drops ([[t0, t1]]), relaxed, onDemand}
+  function planChopDuck(c) {
+    if (c.kind !== "vocal_chop") return no("not_chop", `${c.kind || "no move"} is not a vocal chop`);
+    if (!Array.isArray(c.drops)) return no("unmeasured", "no drop map: cannot rule out a drop line");
+    const hit = dropHit(c.drops, c.start, c.end);
+    if (hit) return no("drop_line", `the chops overlap the drop at ${hit[0].toFixed(1)} s: never vocal mix a drop line`);
+    if (c.relaxed && !c.onDemand) return no("relaxed", "relaxed session: no artist moves");
+    if (!fin(c.drumsRms) || !fin(c.chopRms)) return no("unmeasured", "no drum / vocal stem level over the window");
+    if (c.drumsRms < MIN_RMS) return no("no_drums", "A's drums are silent under the chops: nothing to duck");
+    const rel = 20 * Math.log10(Math.max(1e-9, c.chopRms) / c.drumsRms);
+    if (rel >= DUCK_HEADROOM_DB) return no("no_need", `the chops already sit ${rel.toFixed(1)} dB over the drums`);
+    const duckDb = clamp(rel - DUCK_HEADROOM_DB, DUCK_DB[0], DUCK_DB[1]);
+    return { ok: true, kind: "chop_duck", duck_db: +duckDb.toFixed(1), gain: Math.pow(10, duckDb / 20), rel_db: +rel.toFixed(1), fallbacks: [],
+      why: `drums ${duckDb.toFixed(1)} dB under the vocal chops (chops ${rel.toFixed(1)} dB vs drums): leave room for the sample` };
+  }
+
+  const PLANNERS = { slip_loop: planSlipLoop, cue_tease: planCueTease, roll: planRoll, perc_bridge: planPercBridge,
+    pad_lead: planPadLead, chant_gate: planChantGate, dhol_drop: planDholDrop, chop_duck: planChopDuck };
 
   const core = { KINDS, SPEC, LABEL, MIN_LEAD_S, SLIP_WINDOW_BEATS, SLIP_CAP_BEATS, SLIP_PER_SONG, SLIP_GAP_BARS,
     TEASE_BARS, TEASE_MAX_STABS, TEMPO_CAP_PCT, HP_HZ, ROLL_WET, PLANNERS,
-    vocalShare, meanEnergy, nearestBeat, shadowAt, planSlipLoop, planCueTease, planRoll, planPercBridge };
+    PAD_BARS, PAD_KEY_MIN, PAD_EVERY, PAD_RECIPES, CHANT_BARS, CHANT_PER_SONG, CHANT_MIN_VOCAL, CHANT_STEP_BEATS, CHANT_FLOOR,
+    DHOL_BARS, DHOL_EVERY, CUT_RECIPES, DUCK_DB, DUCK_HEADROOM_DB,
+    vocalShare, meanEnergy, nearestBeat, shadowAt, envMean, planSlipLoop, planCueTease, planRoll, planPercBridge,
+    planPadLead, planChantGate, planDholDrop, planChopDuck, dropHit, dropVocalLine };
   root.artistMovesCore = core;
   if (typeof module !== "undefined" && module.exports) module.exports = core;
 
@@ -225,6 +439,16 @@
       const st = d && d.stems, b = st && st[name];
       if (!d.stemsReady || !b || !b.getChannelData) return null;
       return envelope(b.getChannelData(0), b.sampleRate, Math.max(0, t0), t1, hop, st.lag || 0, st.ratio || 1);
+    }
+    // drop spans of deck d's song: section-map "drop" labels, plus dj-mind's energy drop lines (one phrase each)
+    function dropSpans(d) {
+      const a = d.analysis || {}, out = [];
+      for (const x of a.sections || []) if (x && /drop/i.test(String(x.label || "")) && fin(x.start) && fin(x.end)) out.push([x.start, x.end]);
+      const djc = host.mod.djMind && host.mod.djMind.core, bar = 240 / (d.bpm || 128);
+      if (djc && typeof djc.dropLines === "function") {
+        for (const x of djc.dropLines(a.phrase_boundaries_8bar, a.energy_times, a.energy_curve, bar) || []) if (fin(x.t)) out.push([x.t, x.t + 8 * bar]);
+      }
+      return out;
     }
     const audioAt = (d, o, t) => audioCtx.currentTime + (t - o.pos) / rateOf(d);
 
@@ -267,12 +491,88 @@
         grid_err_s: +p.grid_err_s.toFixed(4), hp_hz: p.hp_hz, params: { window_beats: p.window_beats, slice_beats: p.slice_beats, wet: p.wet }, fallbacks: p.fallbacks });
       return { busyS: 0, why: p.why };
     }
+    // Lane 8 pad lead: B's "other" stem layered into deck A (high-passed), half gain over the first
+    // rise_share of the window, full gain after; B's drums and bass come in with the transition.
+    function runPad(d, b, p, o) {
+      const st = b.stems, k = st.ratio || 1, lag = st.lag || 0, bBeatS = 60 / (b.bpm || 128), aBeatS = 60 / (d.bpm || 128);
+      const pc = p.piece, half = pc.b_beats * p.rise_share;
+      const lo = book(d, st.other, [{ a_t: pc.a_t, from: (pc.b_from + lag) * k, dur: half * bBeatS * k }], p.b_rate * k, p.gain * 0.5, o);
+      if (!lo) return null;
+      const hi = book(d, st.other, [{ a_t: pc.a_t + half * aBeatS, from: (pc.b_from + half * bBeatS + lag) * k,
+        dur: (pc.b_beats - half) * bBeatS * k }], p.b_rate * k, p.gain, o);
+      if (!hi) return null;
+      say(d, "pad_lead", p.why, { t0: audioAt(d, o, pc.a_t), t1: hi.until, beats: p.window_beats, cap_beats: p.cap_beats, hp_hz: p.hp_hz,
+        params: { window_beats: p.window_beats, gain: +p.gain.toFixed(3), b_rate: +p.b_rate.toFixed(4), rise_share: p.rise_share }, fallbacks: p.fallbacks });
+      return { busyS: 0, why: p.why };
+    }
+    // S20 chant gate: A's live vocal stem gain chopped on straight 16ths (open, floor, open, ...),
+    // fully open again on the phrase line. Same stem-mode entry / exit as learned-moves.js runSwap.
+    // dhol drop-in: B's drum stem layered into deck A (high-passed) up to the cut
+    const punjabi = (g) => { const sp = host.mod.sceneProfile; return !!(sp && typeof sp.isPunjabi === "function" && g && sp.isPunjabi(g)); };
+    function runDhol(d, b, p, o) {
+      const st = b.stems, k = st.ratio || 1, lag = st.lag || 0, bBeatS = 60 / (b.bpm || 128), pc = p.piece;
+      const res = book(d, st.drums, [{ a_t: pc.a_t, from: (pc.b_from + lag) * k, dur: pc.b_beats * bBeatS * k }], p.b_rate * k, p.gain, o);
+      if (!res) return null;
+      say(d, "dhol_drop", p.why, { t0: audioAt(d, o, pc.a_t), t1: res.until, beats: p.window_beats, cap_beats: p.cap_beats, hp_hz: p.hp_hz,
+        params: { window_beats: p.window_beats, gain: +p.gain.toFixed(3), b_rate: +p.b_rate.toFixed(4) }, fallbacks: p.fallbacks });
+      return { busyS: 0, why: p.why };
+    }
+    function runChant(d, p, o) {
+      const at = audioAt(d, o, p.start), until = audioAt(d, o, p.release), lead = at - audioCtx.currentTime;
+      if (lead < 0.35 || !(until > at)) return null;
+      if (!d.stemsLiveAt || !d.stemsLiveAt(at)) return null;
+      const live = d.stemLive && d.stemLive.vocals;
+      if (!live || !live.gain) return null;
+      const e = 0.006, rec = d._artistChant = { until };
+      // audio times now: audioAt reads the clock, so it must not run inside the timer
+      const steps = p.steps.map((s) => [audioAt(d, o, s.t0), audioAt(d, o, s.t1)]);
+      later(d.id, lead * 1000 - 250, () => {
+        if (!d.playing || d._artistChant !== rec) return;
+        if (!d.stemMix({}, at - 0.01, 0.01)) return void console.info("artist move chant_gate skipped: stem mode refused");
+        const lg = live.gain;
+        lg.cancelScheduledValues(at); lg.setValueAtTime(1, at);
+        for (const [a0, a1] of steps) {
+          const reopen = Math.min(until, a1 + (a1 - a0));
+          if (a1 - e <= a0 || reopen - e <= a1) continue;
+          lg.setValueAtTime(1, a1 - e); lg.linearRampToValueAtTime(p.floor, a1);
+          lg.setValueAtTime(p.floor, reopen - e); lg.linearRampToValueAtTime(1, reopen);
+        }
+        lg.setValueAtTime(1, until);
+        later(d.id, (until - audioCtx.currentTime) * 1000 - 200, () => {
+          if (d._artistChant === rec) d._artistChant = null;
+          if (d.playing) d.stemMix(null, until + 0.03, 0.02);
+        });
+      });
+      say(d, "chant_gate", p.why, { t0: at, t1: until, beats: p.window_beats, cap_beats: p.cap_beats,
+        grid_err_s: +p.grid_err_s.toFixed(4), params: { window_beats: p.window_beats, step_beats: p.step_beats, floor: p.floor, steps: p.steps.length },
+        fallbacks: p.fallbacks });
+      return { busyS: 0, why: p.why };
+    }
+
+    // S18 hook: learned-moves.js runSlices calls this once the chop slices are booked (stem mode is on from
+    // `at`); the drums ramp down over one beat and come back with the full mix learned-moves restores at `until`.
+    function chopDuck(d, plan, at, until, onDemand = false) {
+      if (!d || !plan || !on("chop_duck")) return null;
+      const beat = 60 / (d.bpm || 128), rate = rateOf(d);
+      const dr = stemEnv(d, "drums", plan.start, plan.end, beat);
+      const lv = (plan.slices || []).map((x) => { const e = stemEnv(d, "vocals", x.from, x.from + x.dur, Math.max(0.01, x.dur)); return e && e.v.length ? e.v[0] : null; })
+        .filter((x) => fin(x));
+      const p = planChopDuck({ kind: plan.kind, relaxed: relaxed(), onDemand, start: plan.start, end: plan.end, drops: dropSpans(d),
+        drumsRms: dr && dr.v.length ? median(dr.v) : null, chopRms: lv.length ? median(lv) : null });
+      if (!p.ok) { refuse(d, "chop_duck", (plan.start || 0).toFixed(1), p); return null; }
+      if (!d.stemMix({ drums: p.gain }, at, beat / rate)) return null;
+      logPlan("chop_duck", p);
+      say(d, "chop_duck", p.why, { t0: at, t1: until, beats: plan.beats, cap_beats: plan.cap_beats,
+        params: { duck_db: p.duck_db, rel_db: p.rel_db }, fallbacks: p.fallbacks });
+      return p;
+    }
 
     // ---- one attempt of one kind on deck d. o: {pos, bar, entryT, lineT, exitT, bEntry, quiet, holdActive,
     //      mashupActive, fxOk, inTransition, onDemand} -> {plan, res} (res null when refused or not armed)
     // per-song state on the deck (a new song = a new analysis object = fresh counters)
     const songOf = (d) => (d._artist && d._artist.ana === d.analysis ? d._artist
-      : (d._artist = { ana: d.analysis, slips: 0, lastSlipBar: null, teaseFor: null, rollFor: null, slipLine: null, bridged: false }));
+      : (d._artist = { ana: d.analysis, slips: 0, lastSlipBar: null, teaseFor: null, rollFor: null, slipLine: null, bridged: false,
+          padFor: null, chants: 0, chantLine: null, slipBooked: null, dholFor: null }));
     function attempt(kind, d, o) {
       const a = d.analysis || {}, b = host.decks && host.decks[other(d.id)], r = songOf(d);
       const base = { pos: o.pos, inTransition: !!o.inTransition, mashupActive: !!o.mashupActive, relaxed: relaxed(), onDemand: !!o.onDemand };
@@ -302,11 +602,48 @@
         p = planRoll(Object.assign(base, { exitT: o.exitT, bpm: d.bpm, rate: rateOf(d), beats: a.beat_times,
           aDrumBars: env ? env.v : null, fxOk: !!o.fxOk }));
         if (p.ok) { logPlan(kind, p); res = runRoll(d, p, o); }
+      } else if (kind === "pad_lead") {
+        const bBeatS = 60 / ((b && b.bpm) || 128), from = fin(o.bEntry) ? o.bEntry - 8 * 4 * bBeatS : null;
+        const aEnv = fin(o.exitT) ? stemEnv(d, "other", o.exitT - 8 * o.bar, o.exitT, o.bar / 4) : null;
+        const cs = host.mod.djMind && host.mod.djMind.core && host.mod.djMind.core.camelotScore;
+        const ka = a.key && a.key.camelot, kb = b && b.analysis && b.analysis.key && b.analysis.key.camelot;
+        p = planPadLead(Object.assign(base, { exitT: o.exitT, aBpm: d.bpm, aRate: rateOf(d), bBpm: b && b.bpm, bEntry: o.bEntry,
+          style: o.style, recipe: o.recipe, sinceLast: padEntries - padLast,
+          bPlaying: !!(b && b.playing), keyScore: cs && ka && kb ? cs(ka, kb) : null,
+          bOtherEnv: b && from != null ? stemEnv(b, "other", Math.max(0, from), o.bEntry, bBeatS / 4) : null,
+          aOtherRms: aEnv && aEnv.v.length ? median(aEnv.v) : null }));
+        if (p.ok) { logPlan(kind, p); res = runPad(d, b, p, o); if (res) padLast = padEntries; }
+      } else if (kind === "dhol_drop") {
+        const bBeatS = 60 / ((b && b.bpm) || 128);
+        const aEnv = fin(o.exitT) ? stemEnv(d, "drums", o.exitT - o.bar, o.exitT, o.bar / 4) : null;
+        p = planDholDrop(Object.assign(base, { exitT: o.exitT, aBpm: d.bpm, aRate: rateOf(d), bBpm: b && b.bpm, bEntry: o.bEntry,
+          bPlaying: !!(b && b.playing), recipe: o.recipe, style: o.style, sinceLast: cutEntries - dholLast,
+          sceneLevel: o.scene || null, aPunjabi: punjabi(o.genreA), bPunjabi: punjabi(o.genreB),
+          bDrumEnv: b && fin(o.bEntry) ? stemEnv(b, "drums", Math.max(0, o.bEntry - 8 * bBeatS), o.bEntry, bBeatS / 4) : null,
+          aDrumRms: aEnv && aEnv.v.length ? median(aEnv.v) : null }));
+        if (p.ok) { logPlan(kind, p); res = runDhol(d, b, p, o); if (res) dholLast = cutEntries; }
+      } else if (kind === "chant_gate") {
+        const len = PHRASE_S(o);
+        p = planChantGate(Object.assign(base, { lineT: o.lineT, bpm: d.bpm, rate: rateOf(d), beats: a.beat_times,
+          vocals: a.vocal_active_regions, drops: dropSpans(d), holdActive: !!o.holdActive, quiet: o.quiet, count: r.chants,
+          energyNow: meanEnergy(a.energy_curve, a.energy_times, o.lineT - len, o.lineT),
+          energyNext: meanEnergy(a.energy_curve, a.energy_times, o.lineT, o.lineT + len),
+          vocalLive: !!(d.stems && d.stems.vocals && d.stemGain && d.stemGain.vocals),
+          vocalBusy: !!((d._slices && d._slices.vocals) || (d._holds && d._holds.vocals) || d._artistSwap || d._artistChant) }));
+        // S21: one "vocal" unit of the FX budget (a choice gate, so AI ACTIONS skip it)
+        const fb = host.mod.fxBudget;
+        if (p.ok && !o.onDemand && fb && typeof fb.spend === "function") {
+          const s = fb.spend("vocal", 1, { phraseS: len, song: d.trackId || d.id });
+          if (s && !s.ok) p = no("fx_budget", `FX budget: ${s.why}`);
+        }
+        if (p.ok) { r.chants++; logPlan(kind, p); res = runChant(d, p, o); }
       }
       if (p && p.ok && !res) p = no("deck", "the deck refused the booking (nothing armed)");
       return { plan: p, res, r };
     }
     const PHRASE_S = (o) => 8 * o.bar;
+    let cutEntries = 0, dholLast = -1e9;             // cut entries seen / the one the last drop-in played on
+    let padEntries = 0, padLast = -1e9;              // planned entries seen / the one the last pad lead played on
 
     // Called by dj-mind on its ticks between phrase lines (never during a transition / hold / layer).
     // -> {busyS, why} when a slip loop was booked (the deck position is spoken for), else null.
@@ -318,9 +655,27 @@
         const x = attempt("perc_bridge", d, o);
         if (!x.plan.ok) refuse(d, "perc_bridge", "song", x.plan);
       }
+      // Lane 8 pad lead: planned once per entry, when the entry is at most 9 bars ahead (8-bar window next)
+      if (on("pad_lead") && o.exitT != null && r.padFor !== o.exitT && o.exitT > o.pos && (o.exitT - o.pos) / o.bar <= 9) {
+        r.padFor = o.exitT;
+        padEntries++;
+        const x = attempt("pad_lead", d, o);
+        if (!x.plan.ok) refuse(d, "pad_lead", o.exitT.toFixed(1), x.plan);
+      }
+      // desi drop-in: planned once per cut entry, 3 bars ahead (the 2-bar bed next). It owns B's drums on this
+      // entry, so the cue tease (B's drum stabs) and the roll (a second FX on the transition, S21) stand down.
+      if (on("dhol_drop") && o.exitT != null && r.dholFor !== o.exitT && o.exitT > o.pos && (o.exitT - o.pos) / o.bar <= 3) {
+        r.dholFor = o.exitT;
+        if (CUT_RECIPES.test(String(o.recipe || "")) || o.style === "instant") cutEntries++;
+        const x = attempt("dhol_drop", d, o);
+        if (!x.plan.ok) refuse(d, "dhol_drop", o.exitT.toFixed(1), x.plan);
+        else { r.teaseFor = o.exitT; r.rollFor = o.exitT; }
+      }
       // S14 / S12: A's last bars before B's planned entry
       if (o.exitT != null && o.exitT > o.pos && (o.exitT - o.pos) / o.bar <= TEASE_BARS) {
-        if (on("cue_tease") && r.teaseFor !== o.exitT) {
+        // on a cut the drop-in decides first (3 bars out); the tease waits for it
+        const dholPending = on("dhol_drop") && r.dholFor !== o.exitT && (CUT_RECIPES.test(String(o.recipe || "")) || o.style === "instant");
+        if (on("cue_tease") && r.teaseFor !== o.exitT && !dholPending) {
           r.teaseFor = o.exitT;                     // one plan per entry
           const x = attempt("cue_tease", d, o);
           if (!x.plan.ok) refuse(d, "cue_tease", o.exitT.toFixed(1), x.plan);
@@ -333,11 +688,19 @@
         return null;
       }
       // S13: planned once per phrase, when the line is at most 4.5 bars ahead (the 16-beat window is next)
-      if (!on("slip_loop") || r.slipLine === o.lineT || o.lineT - o.pos > 4.5 * o.bar) return null;
-      r.slipLine = o.lineT;
-      const x = attempt("slip_loop", d, o);
-      if (!x.plan.ok) { refuse(d, "slip_loop", o.lineT.toFixed(1), x.plan); return null; }
-      return x.res;
+      if (on("slip_loop") && r.slipLine !== o.lineT && o.lineT - o.pos <= 4.5 * o.bar) {
+        r.slipLine = o.lineT;
+        const x = attempt("slip_loop", d, o);
+        if (!x.plan.ok) refuse(d, "slip_loop", o.lineT.toFixed(1), x.plan);
+        else { r.slipBooked = o.lineT; return x.res; }
+      }
+      // S20: planned once per phrase, 3 bars ahead (the 2-bar window next), never on a line a slip loop already owns
+      if (on("chant_gate") && r.chantLine !== o.lineT && r.slipBooked !== o.lineT && o.lineT > o.pos && o.lineT - o.pos <= 3 * o.bar) {
+        r.chantLine = o.lineT;
+        const x = attempt("chant_gate", d, o);
+        if (!x.plan.ok) refuse(d, "chant_gate", o.lineT.toFixed(1), x.plan);
+      }
+      return null;
     }
 
     // ---- AI ACTIONS: run one move now on the audible deck (choice gates skipped, safety gates kept) ----
@@ -360,19 +723,30 @@
         return { ok, why };
       };
       if (!PLANNERS[kind]) return done(false, "unknown move");
+      if (kind === "chop_duck") {                    // a chop now (learned-moves), the duck rides on it
+        const mind = host.mod.djMind, dd = ctx.deck || hostDeck();
+        if (!dd) return done(false, "nothing is playing");
+        if (!mind || !mind.learnedNow) return done(false, "SET MIND not loaded");
+        const r = mind.learnedNow(dd.id, "vocal_chop");
+        d = dd;
+        return r && !r.refused ? done(true, `${r.why}; drums ducked under the chops`) : done(false, (r && r.refused) || "no chop");
+      }
       d = ctx.deck || hostDeck();
       if (!d) return done(false, "nothing is playing");
       const mind = host.mod.djMind;
       const bar = 240 / (d.bpm || 128), pos = d._currentPosition(), a = d.analysis || {};
       const lines = a.phrase_boundaries_8bar || [];
-      const lead = kind === "slip_loop" ? 4 * bar + MIN_LEAD_S * rateOf(d) : bar + MIN_LEAD_S * rateOf(d);
+      const leadBars = { slip_loop: 4, pad_lead: 4, chant_gate: 2, dhol_drop: 2 }[kind] || 1;
+      const lead = leadBars * bar + MIN_LEAD_S * rateOf(d);
       let lineT = lines.find((t) => t - pos >= lead);
       if (lineT == null) { lineT = pos; while (lineT - pos < lead) lineT += 8 * bar; }
       const planned = mind && mind.fireAt ? mind.fireAt(null) : null;
       const b = host.decks && host.decks[other(d.id)];
-      const exitT = kind === "slip_loop" ? planned : fin(planned) && planned > pos + lead && planned - pos <= TEASE_BARS * bar ? planned : lineT;
+      const exitT = kind === "slip_loop" ? planned : fin(planned) && planned > pos + lead && planned - pos <= (kind === "pad_lead" ? 9 : TEASE_BARS) * bar ? planned : lineT;
       const inTransition = ctx.inTransition != null ? ctx.inTransition : !!(mind && typeof mind.busy === "function" && mind.busy());
+      const pl = mind && typeof mind.planInfo === "function" ? mind.planInfo() || {} : {};
       const x = attempt(kind, d, { pos, bar, entryT: d._mindEntry || 0, lineT, exitT, onDemand: true, inTransition,
+        recipe: pl.recipe, style: pl.style, scene: pl.scene, genreA: pl.genreA, genreB: pl.genreB,
         bEntry: b ? (b.playing ? null : b.startOffset || 0) : null, fxOk: true,
         mashupActive: !!(host.mod.mashup && host.mod.mashup.active), holdActive: false });
       return x.plan.ok ? done(true, x.res.why) : done(false, `${x.plan.gate}: ${x.plan.reason}`);
@@ -385,10 +759,17 @@
       (timers[d.id] || []).forEach(clearTimeout);
       timers[d.id] = [];
       if (d._slip && d.slipRelease) d.slipRelease();
+      if (d._artistChant) {                           // an armed / running chant gate opens again now
+        d._artistChant = null;
+        const lg = d.stemLive && d.stemLive.vocals && d.stemLive.vocals.gain;
+        if (lg) { const t = audioCtx.currentTime; lg.cancelScheduledValues(t); lg.setValueAtTime(1, t); if (d.playing && d.stemMix) d.stemMix(null, t + 0.03, 0.02); }
+      }
     }
 
     // on-demand wiring: the AI ACTIONS register API when present, and `ai-action` events on djEvents
-    const ACTION_IDS = { "artist-slip": "slip_loop", "artist-tease": "cue_tease", "artist-roll": "roll", "artist-perc": "perc_bridge" };
+    const ACTION_IDS = { "artist-slip": "slip_loop", "artist-tease": "cue_tease", "artist-roll": "roll", "artist-perc": "perc_bridge",
+      "artist-pad": "pad_lead", "artist-chant": "chant_gate",
+      "artist-dhol": "dhol_drop", "artist-duck": "chop_duck" };
     let registered = false;
     const register = () => {
       const reg = host.mod.aiActions;
@@ -412,7 +793,7 @@
       if (ACTION_IDS[btn.dataset.aiAction]) btn.addEventListener("click", () => fromUi(btn.dataset.aiAction));
     }
 
-    const api = { core, tick, stop, runNow, ACTION_IDS };
+    const api = { core, tick, stop, runNow, chopDuck, ACTION_IDS };
     host.mod.artistMoves = api;
     return api;
   }
