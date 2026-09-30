@@ -233,7 +233,32 @@
     return null;
   }
 
-  const core = { IDS, runNowGate, LABEL, MELODY_KEY_MIN, UNMASK_SHARE, WET_PEAK, THROW_WET, CUE_MOVES, SUPERMOVE_WINDOW_S,
+  // A REPLAY / LIKED throw (macro-mode.js storedMove): the stored echo (delay, feedback, wet) on the
+  // live last word. The live gates keep their say: the tail must still be dead before B's first
+  // vocal (fb^(gap/delay) <= TAIL_FLOOR on the LIVE gap), else the live plan's own feedback is kept.
+  // plan: planVocalThrow's plan; stored: the logged params {delayS, feedback, wet} -> {plan, why}
+  function storedThrow(plan, stored) {
+    if (!plan || !stored || typeof stored !== "object") return { plan, why: null };
+    const num = (v, lo, hi) => (Number.isFinite(v) && v >= lo && v <= hi ? v : null);
+    const delayS = num(stored.delayS, 0.05, 2), wet = num(stored.wet, 0, 1), fb = num(stored.feedback, 0, 0.9);
+    const out = Object.assign({}, plan, { fallbacks: (plan.fallbacks || []).slice() });
+    const notes = [];
+    if (delayS != null) out.delayS = delayS;
+    if (wet != null) out.wet = wet;
+    if (fb != null) {
+      if (Math.pow(fb, plan.gapS / out.delayS) <= TAIL_FLOOR + 1e-9) out.feedback = fb;
+      else {
+        out.feedback = +Math.min(plan.feedback, Math.pow(TAIL_FLOOR, out.delayS / plan.gapS)).toFixed(3);
+        notes.push(`stored fb ${fb} would ring into B's vocal (gap ${plan.gapS} s): fb ${out.feedback}`);
+      }
+    }
+    out.stored = true;
+    out.fallbacks = out.fallbacks.concat(notes);
+    out.why = `stored throw: last word into a ${out.delayS} s echo, fb ${out.feedback}, wet ${out.wet}, gap ${plan.gapS} s`;
+    return { plan: out, why: notes[0] || null };
+  }
+
+  const core = { IDS, runNowGate, storedThrow, LABEL, MELODY_KEY_MIN, UNMASK_SHARE, WET_PEAK, THROW_WET, CUE_MOVES, SUPERMOVE_WINDOW_S,
                  REPLAY_COOLDOWN_BARS, REPLAY_ROOM_BARS, REPLAY_MAX_BARS, REWIND_MAX_S, rmsFreqHz, bandEdges, planMidBlend, kickSlice, planKickRoll,
                  planVocalThrow, sweepDirection, supermoveOf, planReplay, energyAt };
   root.fxMovesCore = core;
@@ -390,6 +415,10 @@
       const bVocalT = next == null ? Infinity : p0 + (next - pB) / rB * rA;
       const r = planVocalThrow({ env, lines: LM.vocalLines(env), t0: p0, swapT, bVocalT, beatS });
       if (!r.plan) return refuse(out, "vocal_throw", r.refusal.gate, r.refusal.reason) || false;
+      // a replayed / liked transition performs its stored throw (never set on a normal autopilot pick)
+      const mm = host.mod.macroMode, ids = host.state || {};
+      const kept = mm && mm.storedMove ? mm.storedMove(out === "a" ? ids.trackA : ids.trackB, inn === "a" ? ids.trackA : ids.trackB, "vocal_throw") : null;
+      if (kept && kept.params) r.plan = storedThrow(r.plan, kept.params).plan;
       const tw = o.t0 + (r.plan.wordS - p0) / rA, te = o.t0 + (r.plan.lineEnd - p0) / rA;
       if (tw - audioCtx.currentTime < 0.05 || !od.stemsLiveAt || !od.stemsLiveAt(tw)) return refuse(out, "vocal_throw", "stems_not_live", "A's stems are not sounding at the last word") || false;
       if (!wetFree(out, "vocal_throw", tw, 8 * o.barS)) return false;
@@ -409,7 +438,8 @@
       // on demand the song plays on: its voice comes back once the tail has died (a 1-beat ramp)
       if (o.restore) later((te + r.plan.gapS / rA - audioCtx.currentTime) * 1000 - 200, () => { if (od.playing) od.stemMix(null, te + r.plan.gapS / rA, beatS / rA); });
       later((tailEnd - audioCtx.currentTime) * 1000, () => { for (const n of [send, delay, fb, hp, lp, wet]) try { n.disconnect(); } catch (e) { /* gone */ } });
-      fire(out, "vocal_throw", r.plan, { params: { delayS: r.plan.delayS, feedback: r.plan.feedback, wet: r.plan.wet, gapS: r.plan.gapS, band: [edges.low, edges.high] },
+      fire(out, "vocal_throw", r.plan, { params: { delayS: r.plan.delayS, feedback: r.plan.feedback, wet: r.plan.wet, gapS: r.plan.gapS, band: [edges.low, edges.high],
+          stored: !!r.plan.stored },
         t0: tw, t1: te + r.plan.gapS / rA });
       return true;
     }

@@ -1,0 +1,112 @@
+{
+ "about": "The owner's liked transitions (2026-09-30), each exactly as it played in session 2026-09-29_235413 (built by app.music_brain.learning.replay from its log). `python3 -m app.music_brain.learning.liked seed` copies them into data/cache/liked.json (user data).",
+ "liked": [
+  {
+   "source": "session:2026-09-29_235413#9",
+   "played_at": "00:11:04",
+   "note": "Owner: \"i really liked catchaman -> no control\". Kept as the record of what played (Long Blend, exit 3:15, entry 0:03). replay false: the owner has not yet chosen Long Blend vs Bass Swap for this pair (stem renders of both first).",
+   "replay": false,
+   "step": {
+    "a": "dd3f0c201c0c0f03",
+    "b": "407c498ddd3a6dab",
+    "a_name": "Adapter - Catchaman",
+    "b_name": "PACS & Ruiz (BR) - No Control",
+    "recipe": "Long Blend",
+    "a_time": 194.93,
+    "b_time": 3.32,
+    "why": "replay 2026-09-29_235413 step 9 (was studied-set-orb_81stwy8 step 8)",
+    "tempo": {
+     "lock": "pitched"
+    },
+    "moves": [],
+    "seconds": 15.2,
+    "set_s": 961.68,
+    "played_at": "00:11:04",
+    "gaps": []
+   }
+  },
+  {
+   "source": "session:2026-09-29_235413#10",
+   "played_at": "00:14:10",
+   "note": "Owner: \"i really liked no control -> neverland\".",
+   "replay": true,
+   "step": {
+    "a": "407c498ddd3a6dab",
+    "b": "c4a392ce13e82bc9",
+    "a_name": "PACS & Ruiz (BR) - No Control",
+    "b_name": "Anyma & Baset - Neverland (From Japan) (HNTR Remix)",
+    "recipe": "Bass Swap",
+    "a_time": 182.04,
+    "b_time": 7.64,
+    "why": "replay 2026-09-29_235413 step 10 (was studied-set-orb_81stwy8 step 9)",
+    "tempo": {
+     "lock": "pitched"
+    },
+    "moves": [
+     {
+      "kind": "stem-move",
+      "move": "STEM BLEND B → A",
+      "label": "STEM BLEND B → A",
+      "dt": -0.002,
+      "side": "a"
+     },
+     {
+      "kind": "stem-move",
+      "move": "AUTO SAMPLER · drop",
+      "label": "AUTO SAMPLER · drop",
+      "dt": 9.716,
+      "side": "b"
+     }
+    ],
+    "seconds": 15.2,
+    "set_s": 1148.04,
+    "played_at": "00:14:10",
+    "gaps": [
+     "at the time Stem Merge was refused (stems: stems missing on a deck)"
+    ]
+   }
+  },
+  {
+   "source": "session:2026-09-29_235413#11",
+   "played_at": "00:16:40",
+   "note": "Owner: \"i really liked neverland -> nocturnal\" and \"i also like vocal throw a lot\": Echo Out with the vocal throw (last word into a 1-beat echo, fb 0.6, gap 7.3 s). Played again as Echo Out in session 2026-09-30_154332 at 16:05:43.",
+   "replay": true,
+   "step": {
+    "a": "c4a392ce13e82bc9",
+    "b": "3ef9ad4b3fd01c79",
+    "a_name": "Anyma & Baset - Neverland (From Japan) (HNTR Remix)",
+    "b_name": "Adam Sellouk & Doriann - Nocturnal",
+    "recipe": "Echo Out",
+    "a_time": 157.47,
+    "b_time": 18.79,
+    "why": "replay 2026-09-29_235413 step 11 (was studied-set-orb_81stwy8 step 10)",
+    "tempo": {
+     "lock": "pitched"
+    },
+    "moves": [
+     {
+      "kind": "artist_move",
+      "move": "vocal_throw",
+      "label": "ARTIST MOVE · VOCAL THROW",
+      "dt": -0.003,
+      "side": "a",
+      "params": {
+       "delayS": 0.46875,
+       "feedback": 0.6,
+       "wet": 0.35,
+       "gapS": 7.32,
+       "band": [
+        250,
+        3000
+       ]
+      }
+     }
+    ],
+    "seconds": 7.7,
+    "set_s": 1298.02,
+    "played_at": "00:16:40",
+    "gaps": []
+   }
+  }
+ ]
+}

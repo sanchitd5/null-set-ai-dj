@@ -60,7 +60,7 @@ def _num(v) -> Optional[float]:
 
 
 def _songs(sdir: Path) -> List[dict]:
-    """Song metas in play order, each with its AI steps under "_steps"."""
+    """Song metas in folder (first-load) order, each with its AI steps under "_steps"."""
     out = []
     for m in sorted((sdir / "songs").glob("*/meta.json")) if (sdir / "songs").is_dir() else []:
         try:
@@ -114,6 +114,8 @@ def _play_order(songs: List[dict], starts: List[dict]) -> List[tuple]:
     track events decide the order; a log without them falls back to the song entry times."""
     def pick(name, t):
         c = [s for s in songs if s.get("name") == name]
+        if not c and name:       # the console's name may drop a suffix the song log keeps ("[set cut ...]")
+            c = [s for s in songs if str(s.get("name") or "").startswith(name) or name.startswith(str(s.get("name") or "\0"))]
         if not c:
             return None
         return min(c, key=lambda s: abs((_num(s.get("entry_t")) or 0) - (t or 0)))
@@ -156,6 +158,11 @@ def timeline(session: str, cache_dir: Optional[Path] = None) -> dict:
             a_time = round(pa["entry_song_s"] + (t0 - pa["entry_t"]), 3)
         if a_time is None:
             a_time = _num(pa.get("exit_song_s"))
+        # B's entry: the console's cue ("B's first downbeat", B's song s) is exact; the song's first
+        # logged position (entry_song_s) is up to ~1 s late
+        cue = [x for x in sb if x.get("kind") == "cue_transition" and _num(x.get("at_song")) is not None
+               and (t0 is None or _num(x.get("t")) is None or abs(x["t"] - t0) <= 5)]
+        b_cue = _num(cue[-1]["at_song"]) if cue else None
         end = next((e for e in ends if _num(e.get("t")) and t0 and e["t"] >= t0 and e.get("now_playing") == pb.get("name")), None)
         merge = next((x.get("result") for x in sa if x.get("kind") == "merge_audition" and isinstance(x.get("result"), dict)), None)
         merge_played = any(x.get("kind") in ("merge_start", "hold", "handover") for x in sa + sb)
@@ -166,15 +173,19 @@ def timeline(session: str, cache_dir: Optional[Path] = None) -> dict:
                 t = _num(x.get("t"))
                 if x.get("kind") in MOVE_KINDS and t is not None and t0 - MOVE_PAD_S <= t <= hi \
                         and str(x.get("phase") or "").startswith("transition"):
-                    moves.append(_move_of(x, t0))
+                    moves.append(dict(_move_of(x, t0), side="a" if any(x is y for y in sa) else "b"))
         trans.append({"n": i + 1, "a": pa["track_id"], "b": pb["track_id"], "a_name": pa.get("name"), "b_name": pb.get("name"),
                       "t": t0, "at": (ev or {}).get("at") or (time.strftime("%H:%M:%S", time.localtime(t0)) if t0 else None),
                       "set_s": round(t0 - start_t, 2) if t0 is not None and start_t is not None else None,
                       "end_t": _num((end or {}).get("t")) or (t0 + seconds if t0 is not None and seconds else None),
                       "recipe": recipe, "planned": planned, "seconds": seconds,
-                      "a_time": a_time, "b_time": _num(pb.get("entry_song_s")),
+                      "a_time": a_time, "b_time": b_cue if b_cue is not None else _num(pb.get("entry_song_s")),
+                      "b_exact": b_cue is not None,
                       "out": (ev or {}).get("out") or pa.get("deck"), "in": (ev or {}).get("in") or pb.get("deck"),
                       "merge": merge, "merge_played": merge_played, "moves": moves,
+                      "macro_lines": [str(x.get("why") or "")[:300] for x in sa if x.get("kind") == "macro"
+                                      and t0 is not None and _num(x.get("t")) is not None
+                                      and x["t"] <= t0 + (seconds or 0) + MOVE_PAD_S][-6:],
                       "bpm_a": pa.get("bpm"), "bpm_b": pb.get("bpm"), "dropped": bool(pb.get("dropped"))})
     return {"session": session, "start_t": start_t, "end_t": max(ts_all) if ts_all else None,
             "songs": [{k: v for k, v in s.items() if k != "_steps"} for s in songs], "transitions": trans}
@@ -238,20 +249,23 @@ def state_at(session: str, at: Union[str, float, int], cache_dir: Optional[Path]
     songs = tl["songs"]
     if not songs:
         raise KeyError("no songs logged in that session")
-    first, last = songs[0], songs[-1]
-    t = min(max(t, _num(first.get("entry_t")) or t), (_num(last.get("exit_t")) or tl["end_t"] or t))
+    end_t = tl["end_t"]
+    played = sorted((x for x in songs if _num(x.get("entry_t")) is not None
+                     and (end_t is None or x["entry_t"] <= end_t)), key=lambda x: x["entry_t"])
+    if not played:
+        raise KeyError("no song with a logged start in that session")
+    t = min(max(t, played[0]["entry_t"]), max([end_t or 0] + [_num(x.get("exit_t")) or 0 for x in played]))
     decks = {}
-    for i, s in enumerate(songs):
-        lo = _num(s.get("entry_t"))
-        nxt = tl["transitions"][i] if i < len(tl["transitions"]) else None
-        hi = _num(s.get("exit_t")) or ((nxt or {}).get("end_t")) or tl["end_t"]
-        if lo is not None and lo <= t and (hi is None or t <= hi):
+    for i, s in enumerate(played):
+        hi = _num(s.get("exit_t")) or end_t
+        if s["entry_t"] <= t and (hi is None or t <= hi):
             decks[s.get("deck") or ("a" if i % 2 == 0 else "b")] = {
                 "track_id": s["track_id"], "name": s.get("name"), "nn": s.get("nn"),
                 "pos": song_pos(_anchors(s, events), t)}
-    cur = next((x for x in tl["transitions"] if x["t"] is not None and x["t"] <= t <= (x["end_t"] or x["t"])), None)
-    playing = next((s for s in reversed(songs) if _num(s.get("entry_t")) is not None and s["entry_t"] <= t), first)
-    step = cur["n"] if cur else next((x["n"] for x in tl["transitions"] if x["a"] == playing["track_id"] and (x["t"] or 0) >= t), None)
+    trans = [x for x in tl["transitions"] if x["t"] is not None]
+    cur = next((x for x in trans if x["t"] <= t <= (x["end_t"] or x["t"])), None)
+    playing = [x for x in played if x["entry_t"] <= t][-1]
+    step = cur["n"] if cur else next((x["n"] for x in sorted(trans, key=lambda y: y["t"]) if x["t"] >= t), None)
     return {"session": session, "t": round(t, 3), "set_s": round(t - tl["start_t"], 2) if tl["start_t"] else None,
             "at": time.strftime("%H:%M:%S", time.localtime(t)), "decks": decks,
             "in_transition": cur["n"] if cur else None, "playing": playing["track_id"], "next_step": step}
