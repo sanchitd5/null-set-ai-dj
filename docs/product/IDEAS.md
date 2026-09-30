@@ -405,3 +405,24 @@ Source: `app/sim/LEARNINGS.md` section (d). Unbuilt; ranked by expected audible 
    its buffer end.
 7. **Real-LLM sim baseline** so stall and empty-pick terms reflect selection quality, not the stub.
 
+
+## Future: automatic learning loop and community knowledge (not scheduled)
+
+The player learns from its own live sets, not only from studied DJ sets, and shares what it learned upstream.
+Owner-only plan notes (research/notes/live-learner-plan.md, private). In short:
+
+- **Loop.** Live set -> signals (transitions, owner overrides, thumbs, ear verdicts, dwell) -> local learning
+  (per-pair bandit starting from the pair atlas, technique weights, macros from good runs) -> the next set.
+  Learning only reorders moves the gates already allow: the key floor, the 8% keylock cap, the energy step and
+  the 8-bar phrase snap never loosen.
+- **Upstream.** `knowledge contribute` builds a delta, runs the privacy check, opens a PR on a
+  `knowledge/<date>` branch; CI validates (schema, privacy, sim suite); the owner reviews and merges. Nothing
+  pushes to main or auto-merges.
+- **Community.** One append-only delta file per install (counts only, so merging is a sum), a pair published
+  only when at least 3 installs saw it, per-contributor caps, opt-in with anonymous install ids, no lyrics.
+  Start Git-only; add a small collector plus GitHub Releases past about 50 contributors.
+- **Phases.** 1 log the missing signals (overrides, thumbs) -> 2 overrides as pair evidence at atlas build ->
+  3 contribute PR + CI -> 4 online bandit with rollback -> 5 learn from the console's own recordings ->
+  6 community contributions.
+- **Pick it up when** the override rate stays flat over about 10 sets, 20+ sets have thumbs, or an outside
+  contributor appears. SQLite is not a prerequisite.
