@@ -536,13 +536,16 @@ button {
 
 .workspace {
   display: grid;
-  grid-template-columns: 5fr 2.1fr 5fr;
+  /* minmax(0, ...): a plain fr column can't shrink below its content's min-content width,
+     so a long nowrap title stretched deck A's column (and the marquee never saw an overflow) */
+  grid-template-columns: minmax(0, 5fr) minmax(0, 2.1fr) minmax(0, 5fr);
   gap: var(--sp-sm);
   padding: var(--sp-xs) var(--sp-md);
   align-items: start;
 }
 
 .deck-panel {
+  min-width: 0;          /* the deck column keeps its width; a long title scrolls (marquee.js) */
   display: flex;
   flex-direction: column;
   gap: var(--sp-sm);
