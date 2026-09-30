@@ -40,7 +40,8 @@ Status legend:
 | Crossfader (equal power) | Working | `deck-controller.js` | |
 | Dedicated per-channel filter knob | Absent | `index.html` FX row `data-type="filter"` | Filter only via the FX row |
 | Mix recording to file | Working | `performance.js` `startRecording`, `POST /api/recordings` | MediaRecorder on the master bus, uploaded and kept under `data/cache/recordings/` |
-| Set-log download and archive | Partial | `performance.js`, `POST /api/set-logs`, `GET /api/set-logs/{id}/markdown` | `djset-v1` JSON plus Markdown export. No replay of a log |
+| Set-log download and archive | Partial | `performance.js`, `POST /api/set-logs`, `GET /api/set-logs/{id}/markdown` | `djset-v1` JSON plus Markdown export. Played sets replay from their session logs (next row) |
+| Replay a past set, time travel, liked transitions | Working (live check pending) | `learning/replay.py`, `learning/history_api.py`, `learning/liked.py`, `services/replay_api.py`, `history-view.js`, `macro-mode.js` | MACROS panel HISTORY: replay a session or one transition as it played (recipe, exit, entry, merge, tempo, in-transition moves with params), jump to a moment, LIKE a row. Replays are macros (`replay:<session>`), every live gate runs. Log gaps are listed per step |
 
 ## 3. AI brain and autopilot
 
@@ -144,4 +145,7 @@ A local, personal and educational tool, not a product. These are not gaps:
 - **No slicer on the deck pads**, no dedicated filter knob, no per-effect parameters.
 - **Sim baseline is stub-LLM era.** See `app/sim/LEARNINGS.md`.
 - **Live ear and learned moves are not verified by listening.**
-- **Set logs cannot be replayed** in the browser.
+- **Replay is only as exact as the session log.** Not logged: the FX rack state, the keylock
+  decision when no macro drove the step, a merge's hold plan when only its audition was logged,
+  and exact call times for artist moves (they fire on the next line after the stored time minus
+  their lead). The replay lists these per step (`gaps`). Session logs are pruned to the newest 60.

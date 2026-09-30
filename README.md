@@ -99,6 +99,27 @@ A **macro** is a stored set: songs, recipes, exit and entry points, hold bars. T
 
 The autopilot prefers a known macro step 80 % of the time (`MACRO_PREFERENCE`), so a set sounds curated without becoming a replay.
 
+**HISTORY** (in the MACROS panel) lists past sessions with every transition and its time:
+
+| Control | Does |
+|---|---|
+| **FROM HERE** | loads that transition's A just before its exit and replays the set from there, as it played |
+| **THIS ONE** | replays only that transition |
+| **TIME TRAVEL** | `HH:MM:SS` (the step log's clock) or seconds into the set: loads the song that played then at its position and replays on |
+| **LIKE** | keeps the transition as it played; the autopilot performs it as stored whenever the pair comes up |
+
+Same from the shell:
+
+```bash
+python -m app.music_brain.learning.replay timeline 2026-09-29_235413
+python -m app.music_brain.learning.replay build 2026-09-29_235413 --from 9 --to 11 --save
+python -m app.music_brain.learning.replay at 2026-09-29_235413 00:16:45
+python -m app.music_brain.learning.liked seed        # the owner's liked transitions
+```
+
+API: `GET /api/sessions`, `GET /api/sessions/{id}/timeline`, `GET /api/sessions/{id}/state?at=`,
+`POST /api/replay {session, at | step, to}`, `GET/POST/DELETE /api/liked`, `POST /api/liked/seed`.
+
 ---
 
 ## 🤖 NULL, the mascot, and the visuals
