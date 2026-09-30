@@ -61,7 +61,10 @@ def test_neighbour_moves_allowed_and_non_neighbours_refused():
                  ("breaks", "uk garage"), ("electronic", "downtempo"), ("electronic", "trance"),
                  # owner decisions 2026-09-30: chill <-> melodic, bass <-> house / melodic, trance's neighbours
                  ("melodic techno", "ambient"), ("electronica", "melodic house"), ("dubstep", "house"),
-                 ("dubstep", "melodic techno"), ("trance", "techno"), ("trance", "house"), ("trance", "dubstep")):
+                 ("dubstep", "melodic techno"), ("trance", "techno"), ("trance", "house"), ("trance", "dubstep"),
+                 # owner decision 2026-09-30: melodic <-> edm (and so trance <-> edm)
+                 ("melodic house", "edm"), ("progressive house", "big room"), ("melodic techno", "eurodance"),
+                 ("trance", "edm"), ("uplifting trance", "big room")):
         assert not family_jump(a, b) and not family_jump(b, a), (a, b)
     for a, b in (("house", "downtempo"), ("techno", "dubstep"), ("trance", "drum and bass"),
                  ("trance", "ambient"), ("trance", "electronica"), ("techno", "downtempo")):
@@ -95,10 +98,10 @@ def test_scene_keys_share_a_token_exactly_for_neighbours():
     assert scene_keys("hip hop") == ["hiphop"] and scene_keys("r&b") == ["rnb"]   # hip-hop anchor unchanged
     assert not share("hip hop", "r&b") and scene_keys(None) == []
     # pinned for app/tests/js/electronic_scenes_check.js
-    assert scene_keys("melodic techno") == ["bass|melodic", "chill|melodic", "electronic|melodic", "house|melodic",
-                                            "melodic", "melodic|techno", "melodic|trance"]
-    assert scene_keys("trance") == ["bass|trance", "electronic|trance", "house|trance", "melodic|trance",
-                                    "techno|trance", "trance"]
+    assert scene_keys("melodic techno") == ["bass|melodic", "chill|melodic", "edm|melodic", "electronic|melodic",
+                                            "house|melodic", "melodic", "melodic|techno", "melodic|trance"]
+    assert scene_keys("trance") == ["bass|trance", "edm|trance", "electronic|trance", "house|trance",
+                                    "melodic|trance", "techno|trance", "trance"]
     assert scene_keys("downtempo") == ["chill", "chill|electronic", "chill|melodic"]
     assert scene_keys("house") == ["bass|house", "breaks|house", "edm|house", "electronic|house", "house",
                                    "house|melodic", "house|techno", "house|trance"]

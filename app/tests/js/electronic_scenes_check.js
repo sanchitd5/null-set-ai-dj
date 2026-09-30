@@ -5,9 +5,10 @@ const assert = require("assert");
 const { sceneAnchorNext } = require("../../ui/static/autopilot.js");
 
 const K = {   // genre.scene_keys output (test_electronic_scenes.py pins the Python side)
-  melodicTechno: ["bass|melodic", "chill|melodic", "electronic|melodic", "house|melodic", "melodic", "melodic|techno",
-                  "melodic|trance"],
-  trance: ["bass|trance", "electronic|trance", "house|trance", "melodic|trance", "techno|trance", "trance"],
+  melodicTechno: ["bass|melodic", "chill|melodic", "edm|melodic", "electronic|melodic", "house|melodic", "melodic",
+                  "melodic|techno", "melodic|trance"],
+  trance: ["bass|trance", "edm|trance", "electronic|trance", "house|trance", "melodic|trance", "techno|trance",
+           "trance"],
   downtempo: ["chill", "chill|electronic", "chill|melodic"],
   house: ["bass|house", "breaks|house", "edm|house", "electronic|house", "house", "house|melodic", "house|techno",
           "house|trance"],

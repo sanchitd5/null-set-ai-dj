@@ -65,16 +65,19 @@ ELECTRONIC_CLUSTERS = {
 
 # Cluster pairs DJs really mix across (owner decisions, 2026-09-30). chill's only neighbour is
 # melodic (organic / melodic house <-> electronica, downtempo); trance <-> chill stays a jump.
+# Trance has exactly melodic's neighbours minus chill: melodic, techno, house, bass, edm.
 ELECTRONIC_NEIGHBOURS = tuple(frozenset(p) for p in (
     ("house", "melodic"),    # melodic house / progressive sit on the house floor
     ("melodic", "techno"),   # melodic techno <-> techno
     ("chill", "melodic"),    # organic / melodic house <-> electronica, downtempo
     ("bass", "melodic"),     # melodic dubstep / future bass <-> melodic house, techno
     ("bass", "house"),       # dubstep <-> house, bass house bridges them
+    ("edm", "melodic"),      # festival main stage: big room / eurodance <-> melodic house, progressive
     ("trance", "melodic"),   # trance keeps melodic's neighbours, chill aside
     ("trance", "techno"),
     ("trance", "house"),
     ("trance", "bass"),
+    ("trance", "edm"),
     ("house", "techno"),     # tech house bridges them
     ("house", "edm"),        # electro / big room house
     ("edm", "bass"),         # festival sets drop dubstep / future bass
