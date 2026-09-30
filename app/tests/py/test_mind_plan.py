@@ -195,6 +195,13 @@ def test_grounding_is_compact_and_from_the_wiki():
     assert "Loops" in g and "Bass Swap" in g
 
 
+def test_loop_hold_rule_is_capped_not_open_ended():
+    # DJ/04 Loops & Beat Jumps: a hold lasts at most one 8-bar phrase; short outro -> Echo Out / breakdown
+    line = next(ln for ln in mp.move_rules().splitlines() if ln.startswith("- loop_extend"))
+    assert "at most one 8-bar phrase" in line and "Echo Out" in line
+    assert not re.search(r"infinite|indefinite", mp.move_rules(), re.I)
+
+
 def test_constants_match_dj_mind_js():
     js = (Path(mp.__file__).parents[1] / "static" / "dj-mind.js").read_text(encoding="utf-8")
     for name in ("PHRASE_BARS", "MIN_SECTION_BARS", "MIN_BARS_ON_TRACK", "EXIT_GUARD_BARS",
