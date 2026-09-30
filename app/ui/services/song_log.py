@@ -9,7 +9,8 @@ future analysis to improve our algorithm".
         waveform.json  song_waveform.compute (mix + stems peaks/RMS, energy, phrases, sections, vocals)
         waveform.png   song_waveform.render
 
-Song folders live inside the session dir, so session_log's pruning (newest 60 runs) covers them.
+Song folders live inside the session dir; sessions are never pruned (every set stays), and each
+meta / step is also indexed into the set history (app/music_brain/history.py, user.db).
 Steps come from the browser (POST /api/session/steps, app/ui/static/step-log.js) and from
 server endpoints (suggest, match, plan, preplan, merge audition, learned pick, hook drops).
 A step is filed under its track id; a deck-only step goes to the song on that deck. Steps
@@ -133,8 +134,12 @@ def _meta_of(s: dict) -> dict:
 def _write_meta(s: dict) -> None:
     p = s["dir"] / "meta.json"
     tmp = p.with_suffix(".tmp")
-    tmp.write_text(json.dumps(_meta_of(s), indent=1, default=str), encoding="utf-8")
+    meta = _meta_of(s)
+    tmp.write_text(json.dumps(meta, indent=1, default=str), encoding="utf-8")
     tmp.replace(p)
+    from app.music_brain import history
+
+    history.on_play(session_log.SESSION_ID, meta, s["dir"])     # the set-history index; never raises
 
 
 def _name(track_id: str, given: Optional[str]) -> str:
@@ -210,6 +215,10 @@ def _record(kind: str, track_id: Optional[str] = None, deck: Optional[str] = Non
             s["steps"] += 1
             with open(s["dir"] / "steps.jsonl", "a", encoding="utf-8") as f:
                 f.write(json.dumps(step, ensure_ascii=False, default=str) + "\n")
+            if not changed:                   # a meta write below indexes the steps too
+                from app.music_brain import history
+
+                history.on_step(session_log.SESSION_ID, s["dir"])     # set-history index; never raises
         else:
             s["dropped"] += 1
             changed = changed or s["dropped"] % 50 == 1  # recorded, without a write per step

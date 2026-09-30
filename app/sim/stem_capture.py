@@ -84,11 +84,25 @@ def seed_cache(dst: Path, src_cache: Path, songs: list[Path]) -> dict:
         out[sid] = {"name": song.stem, "stem_dir": str(sd), "path": str(song)}
     # what the console's other reads need, as the live server has it (read here, copied there):
     # liked transitions (stored moves), macros, learned moves, aliases; fame only where cached
-    for f in ("liked.json", "learned_techniques.json", "track_aliases.json"):
-        if (src_cache / f).is_file():
-            shutil.copy2(src_cache / f, dst / f)
-    if (src_cache / "macros").is_dir():
-        shutil.copytree(src_cache / "macros", dst / "macros", dirs_exist_ok=True)
+    # the stores live in the source's app.db / user.db: written here in their pre-DB file form,
+    # which the capture cache migrates into its own DBs on first read
+    from app.music_brain.atlas import macros as mc
+    from app.music_brain.learning import liked as lk
+    from app.music_brain.learning.set_learner import load_learned
+
+    liked = lk.load(src_cache)
+    if liked:
+        (dst / "liked.json").write_text(json.dumps({"schema": 1, "liked": liked}), encoding="utf-8")
+    learned = load_learned(src_cache / "learned_techniques.json")
+    if learned:
+        (dst / "learned_techniques.json").write_text(json.dumps(learned, indent=2), encoding="utf-8")
+    stored = mc.stored(src_cache)
+    if stored:
+        (dst / "macros").mkdir(parents=True, exist_ok=True)
+        for name, m in stored.items():
+            (dst / "macros" / f"{name}.json").write_text(json.dumps(m, indent=1), encoding="utf-8")
+    if (src_cache / "track_aliases.json").is_file():
+        shutil.copy2(src_cache / "track_aliases.json", dst / "track_aliases.json")
     fame_ids = []
     if (src_cache / "fame.json").is_file():
         try:

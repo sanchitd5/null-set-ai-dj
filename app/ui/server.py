@@ -2110,7 +2110,7 @@ _suggested_genres: Dict[str, str] = {}
 # Normalised title -> release era the model gave it ("1990s"), same lifetime
 # as _suggested_genres: the library fallback holds the set's decade too.
 _suggested_eras: Dict[str, str] = {}
-# Both persist in CACHE_DIR/genre_labels.json (app.music_brain.analysis.genre_labels): lost on a
+# Both persist in the app DB, CACHE_DIR/app.db (app.music_brain.analysis.genre_labels): lost on a
 # restart, the library fallback had no labelled Punjabi song (session 2026-09-30_102327).
 LABELS_PATH: Optional[Path] = None        # None: genre_labels.path(); tests point it at tmp_path
 _labels_dirty = False
@@ -2197,11 +2197,10 @@ _VETO_MEMO: dict = {}
 
 
 def _vetoes() -> list:
-    """The owner's vetoes (seed + CACHE_DIR/vetoes.json), re-read when the file changes."""
+    """The owner's vetoes (seed + the user DB), re-read when a veto is stored."""
     from app.music_brain.atlas import vetoes as vt
 
-    p = vt.path(CACHE_DIR)
-    stamp = (str(p), p.stat().st_mtime_ns if p.exists() else None)
+    stamp = vt.stamp(CACHE_DIR)
     if _VETO_MEMO.get("stamp") != stamp:
         _VETO_MEMO.update(stamp=stamp, rows=vt.load(CACHE_DIR))
     return _VETO_MEMO["rows"]
@@ -2648,6 +2647,12 @@ def save_set_log(payload: dict):
     json_path.write_bytes(raw)
     markdown_path.write_text(export_set_log_markdown(validated), encoding="utf-8")
     _set_logs[log_id] = json_path
+    try:
+        from app.music_brain import history
+
+        history.add_set_log(json_path, SET_LOGS_CACHE_DIR.parent)     # the set-history index (user DB)
+    except Exception:  # noqa: BLE001 -- the file is saved; the index catches up on rebuild()
+        pass
     return {
         "set_log_id": log_id,
         "json_url": f"/api/set-logs/{log_id}",

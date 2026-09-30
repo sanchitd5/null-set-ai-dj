@@ -565,5 +565,43 @@ def test_concurrent_merges_keep_both_sets(tmp_path):
         t.join()
     seen = {o["set_id"] for o in sl.load_learned(p)["bass_swap"]["observations"]}
     assert seen == set(sets)
-    assert (tmp_path / "learned.lock").exists()
-    assert not list(tmp_path.glob("*.tmp"))
+    assert not list(tmp_path.glob("*.tmp")) and not p.exists(), "the store is the app DB, no JSON"
+
+
+def test_concurrent_merges_from_two_processes_lose_nothing(tmp_path):
+    """Two processes (two learn-set runs) merging at once: the DB write transaction serialises
+    them, every set of both survives."""
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    p = tmp_path / "learned.json"
+    code = ("import sys\nfrom app.music_brain.learning import set_learner as sl\n"
+            "for i in range(15):\n"
+            "    sl.merge([sl.Observation('bass_swap', f'{sys.argv[1]}{i}', 60.0, 'A', 'B', 0.01, 1.0, {})],"
+            " path=sys.argv[2])\n")
+    root = Path(__file__).resolve().parents[3]
+    procs = [subprocess.Popen([sys.executable, "-c", code, tag, str(p)], cwd=root) for tag in ("x", "y")]
+    assert [pr.wait(120) for pr in procs] == [0, 0]
+    seen = {o["set_id"] for o in sl.load_learned(p)["bass_swap"]["observations"]}
+    assert seen == {f"{t}{i}" for t in "xy" for i in range(15)}
+
+
+def test_learned_json_migrates_once_and_round_trips(tmp_path):
+    p = tmp_path / "learned_techniques.json"
+    sl.merge([sl.Observation("bass_swap", "s1", 60.0, "A", "B", 0.01, 1.0, {"ai_rule": "r"})], path=p)
+    sl.add_user_rule("bass_swap", "one tonal owner", path=p)
+    golden = sl.load_learned(p)
+    from app.music_brain import db
+    db.close_all()
+    (tmp_path / db.APP_DB).unlink()
+    for x in tmp_path.glob(db.APP_DB + "-*"):
+        x.unlink()
+    import json
+    text = json.dumps(golden, indent=2)
+    p.write_text(text)                                          # the pre-DB file
+    assert sl.load_learned(p) == golden and list(sl.load_learned(p)) == list(golden)
+    assert not p.exists() and (tmp_path / "learned_techniques.json.migrated").read_text() == text
+    assert json.dumps(sl.load_learned(p), indent=2) == text, "key order round-trips (export bytes)"
+    p.write_text("{}")                                          # old code writing again: ignored
+    assert sl.load_learned(p) == golden

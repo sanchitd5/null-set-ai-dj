@@ -225,8 +225,7 @@ def export(cache_dir: Optional[Path] = None, out: Optional[Path] = None,
     names_local, aliases = sc.library_names(cache), ds.load_aliases(cache)
     files: Dict[str, object] = {}
     ids: set = set()
-    for p in sorted(mc.macros_dir(cache).glob("*.json")):
-        raw = _read(p)
+    for raw in mc.stored(cache).values():               # the app DB (migrates an old macros/ once)
         if not isinstance(raw, dict) or raw.get("schema") != mc.SCHEMA:
             continue
         try:
@@ -241,9 +240,11 @@ def export(cache_dir: Optional[Path] = None, out: Optional[Path] = None,
         files[rel] = m
         ids.update(m["tracks"])
     n_macros = len(files)
-    learned = _read(cache / LEARNED)
+    from app.music_brain.learning.set_learner import load_learned
+
+    learned = load_learned(cache / LEARNED)        # the app DB (migrates an old JSON once)
     n_obs = 0
-    if isinstance(learned, dict):
+    if learned:
         files[LEARNED] = learned
         n_obs = sum(len(e.get("observations") or []) for e in learned.values() if isinstance(e, dict))
     from app.music_brain.atlas import pair_atlas as pa
@@ -349,10 +350,10 @@ def seed(cache_dir: Optional[Path] = None, src: Optional[Path] = None,
         rep["atlas"] = "no knowledge folder"
         return rep
     res = _Resolver(cache, _read(src / NAMES, {}) or {})
-    mdir = mc.macros_dir(cache)
+    local_macros = set(mc.stored(cache))
     for p in sorted((src / MACROS).glob("*.json")):
         m = _read(p)
-        if not isinstance(m, dict) or (mdir / p.name).exists():
+        if not isinstance(m, dict) or p.stem in local_macros:
             continue                                        # the local macro wins
         missing = [res.tracked.get(t, t) for t in m.get("tracks") or [] if res(t) is None]
         if missing:
@@ -364,7 +365,7 @@ def seed(cache_dir: Optional[Path] = None, src: Optional[Path] = None,
             rep["macros_skipped"].append({"macro": p.stem, "missing": [], "error": str(exc)[:120]})
             continue
         m2["title"], m2["knowledge"] = m.get("title") or m2["title"], True
-        if _write_bytes(mdir / p.name, (json.dumps(m2, indent=1) + "\n").encode("utf-8"), overwrite=False):
+        if mc.put_new(dict(m2, name=p.stem), cache):
             rep["macros"].append(p.stem)
     # learner observations: a set the local store knows is the local store's
     tracked = _read(src / LEARNED, {}) or {}
@@ -396,8 +397,9 @@ def _seed_atlas(cache: Path, src: Path, res: _Resolver, pa, lock) -> object:
         return "tracked atlas is stale (rules changed): rebuild and export"
     with lock(cache):
         path = pa.atlas_path(cache)
-        local = pa.load(cache)                     # migrates an old single pair_atlas.json first
-        if local is None and ((path / pa.META).exists() or pa._legacy(path).exists()):
+        local = pa.load(cache)                     # migrates an old folder / single pair_atlas.json first
+        if local is None and (pa._has_atlas(pa._db(path)) or (path / pa.META).exists()
+                              or pa._legacy(path).exists()):
             return "local atlas unreadable: left alone"
         if local is not None and local.get("rules") != ka["rules"]:
             return "local atlas has other rules: left alone"
@@ -415,7 +417,7 @@ def _seed_atlas(cache: Path, src: Path, res: _Resolver, pa, lock) -> object:
             added += 1
         if added:
             doc.setdefault("stats", {})["knowledge_pairs"] = added
-            pa.write_atlas(doc, path)              # only the shards the new pairs touch change
+            pa.write_atlas(doc, path)              # only the new pairs' rows are written
         return added
 
 

@@ -256,7 +256,8 @@ def test_apply_moves_the_duplicate_to_quarantine_with_manifest_and_alias_map(lib
     assert B not in json.loads((lib / "uploads" / "_names.json").read_text())
     fame = json.loads((lib / "fame.json").read_text())
     assert B not in fame and A in fame and C in fame
-    assert json.loads((lib / "set_memory.json").read_text())      # name-keyed memory untouched
+    from app.ui.services import set_memory as sm
+    assert sm.peek(lib / "set_memory.json")                       # name-keyed memory untouched
 
 
 def test_apply_is_idempotent_and_a_second_scan_finds_nothing(lib):

@@ -33,8 +33,7 @@ SESSION_ID = time.strftime("%Y-%m-%d_%H%M%S")
 _lock = threading.Lock()
 MAX_FIELD = 300
 MAX_NESTED = 4000
-KEEP_SESSIONS = 60
-_pruned = False
+# Never pruned (owner: "always have all sets"): every session folder and its events.jsonl stay.
 
 
 def _path(session: Optional[str] = None) -> Path:
@@ -65,23 +64,15 @@ def _write(kind: str, **fields) -> None:
             ev[k] = v
         line = json.dumps(ev, ensure_ascii=False, default=str)
         p = _path()
-        global _pruned
         with _lock:
-            if not _pruned:                       # once per run: keep the newest KEEP_SESSIONS
-                _pruned = True
-                _prune()
             p.parent.mkdir(parents=True, exist_ok=True)
             with open(p, "a", encoding="utf-8") as f:
                 f.write(line + "\n")
+        from app.music_brain import history
+
+        history.on_event(SESSION_ID, p)           # the set-history index (user DB); never raises
     except Exception:
         pass
-
-
-def _prune() -> None:
-    import shutil
-
-    for sid in sessions()[KEEP_SESSIONS:]:
-        shutil.rmtree(SESSIONS_DIR / sid, ignore_errors=True)
 
 
 def read(session: Optional[str] = None, limit: int = 500) -> list:

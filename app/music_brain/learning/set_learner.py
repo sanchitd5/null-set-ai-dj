@@ -22,7 +22,7 @@ Pipeline (the manual USB002 study, research/notes/set-study-gfF8jzBVWvM.md, as c
               cut, loop). Per vocal passage: where the song's vocal is
               played out of order, repeated, or cut up (the DJ re-sequencing
               lyrics into new lines).
-5. Learn.     Observations merge into data/cache/learned_techniques.json;
+5. Learn.     Observations merge into the learned store (data/cache/app.db, see load_learned);
               techniques.rank() loads them as conditional techniques with
               the tempo gap / key score ranges they were seen at.
    Parts.     A set longer than split_minutes (SPLIT_MIN, 60) is studied in parts cut at
@@ -835,12 +835,90 @@ def acapella_drops(rows: List[dict], songs: List[SongData], set_id: str, hop_s: 
 
 
 # --------------------------------------------------------------------- store
+# SQLite (app.music_brain.db): the store at legacy path P lives in P.parent/app.db, keyed by
+# P's file name. learned_entries: one row per kind (the entry's JSON with "observations": [] as a
+# placeholder, so key order round-trips), learned_obs: one row per observation (its JSON, in
+# order). learned_files marks a file name as living in the DB: its old JSON was migrated (renamed
+# <name>.migrated) or never existed, and a stray JSON written later by old code is ignored.
+LEARNED_STEPS = (
+    """CREATE TABLE learned_files (file TEXT PRIMARY KEY, migrated_at REAL);
+    CREATE TABLE learned_entries (file TEXT NOT NULL, kind TEXT NOT NULL, ord INTEGER NOT NULL,
+        entry TEXT NOT NULL, PRIMARY KEY (file, kind));
+    CREATE TABLE learned_obs (file TEXT NOT NULL, kind TEXT NOT NULL, pos INTEGER NOT NULL,
+        set_id TEXT, data TEXT NOT NULL, PRIMARY KEY (file, kind, pos));
+    CREATE INDEX learned_obs_set ON learned_obs (file, set_id)""",
+)
+
+
+def _learned_db(path: Path):
+    """(connection, file key) of the store at legacy path `path`; the first open with its JSON
+    still on disk migrates it (once) and renames it .migrated."""
+    from app.music_brain import db
+
+    path = Path(path)
+    conn = db.connect(db.beside(path))
+    db.ensure(conn, "learned", LEARNED_STEPS)
+    f = path.name
+    if conn.execute("SELECT 1 FROM learned_files WHERE file = ?", (f,)).fetchone() is None and path.is_file():
+        with db.tx(conn):
+            if conn.execute("SELECT 1 FROM learned_files WHERE file = ?", (f,)).fetchone() is None:
+                try:
+                    data = json.loads(path.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    data = None                       # unreadable: left alone, the store starts empty
+                if isinstance(data, dict):
+                    _write_store(conn, f, data)
+                    db.retire(path)
+    return conn, f
+
+
+def _read_store(conn, f: str) -> Dict[str, dict]:
+    store: Dict[str, dict] = {}
+    for kind, entry in conn.execute("SELECT kind, entry FROM learned_entries WHERE file = ? ORDER BY ord", (f,)):
+        store[kind] = json.loads(entry)
+        store[kind]["observations"] = []
+    for kind, data in conn.execute("SELECT kind, data FROM learned_obs WHERE file = ? ORDER BY kind, pos", (f,)):
+        if kind in store:
+            store[kind]["observations"].append(json.loads(data))
+    return store
+
+
+def _write_store(conn, f: str, store: Dict[str, dict]) -> None:
+    """Make the DB hold `store` (inside the caller's transaction): only kinds whose entry or
+    observations changed are rewritten; kinds no longer in it are deleted."""
+    import time as _time
+
+    old = {k: (o, e) for k, o, e in conn.execute("SELECT kind, ord, entry FROM learned_entries WHERE file = ?", (f,))}
+    for i, (kind, e) in enumerate(store.items()):
+        head = json.dumps(dict(e, observations=[]))
+        obs = [json.dumps(o) for o in e.get("observations") or []]
+        if old.pop(kind, None) != (i, head):
+            conn.execute("INSERT OR REPLACE INTO learned_entries (file, kind, ord, entry) VALUES (?, ?, ?, ?)",
+                         (f, kind, i, head))
+        have = [d for (d,) in conn.execute("SELECT data FROM learned_obs WHERE file = ? AND kind = ? ORDER BY pos",
+                                           (f, kind))]
+        if have != obs:
+            conn.execute("DELETE FROM learned_obs WHERE file = ? AND kind = ?", (f, kind))
+            conn.executemany("INSERT INTO learned_obs (file, kind, pos, set_id, data) VALUES (?, ?, ?, ?, ?)",
+                             [(f, kind, j, (o.get("set_id") if isinstance(o, dict) else None), d)
+                              for j, (o, d) in enumerate(zip(e.get("observations") or [], obs))])
+    for kind in old:
+        conn.execute("DELETE FROM learned_entries WHERE file = ? AND kind = ?", (f, kind))
+        conn.execute("DELETE FROM learned_obs WHERE file = ? AND kind = ?", (f, kind))
+    conn.execute("INSERT OR IGNORE INTO learned_files (file, migrated_at) VALUES (?, ?)", (f, _time.time()))
+
+
 def load_learned(path: Path = LEARNED_PATH) -> Dict[str, dict]:
     """{kind: {kind, what, stems, live, observations[], tempo_gap_max, key_score_min}}; {} if none/corrupt."""
+    import sqlite3
+
+    from app.music_brain import db
+
     try:
-        data = json.loads(Path(path).read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else {}
-    except (OSError, ValueError):
+        conn, f = _learned_db(path)
+        with db.read(conn):
+            return _read_store(conn, f)
+    except sqlite3.DatabaseError:
         return {}
 
 
@@ -849,8 +927,8 @@ def merge(observations: List[Observation], path: Path = LEARNED_PATH,
     """Merge into the store. Re-learning the same set replaces its old observations;
     set_ids names the sets being re-learned, so a re-study that now finds nothing
     (wrong download caught, every move rejected) still clears what it found before.
-    Load -> write runs under _store_lock, so two learn-set runs finishing together
-    cannot drop each other's observations."""
+    Load -> write is one write transaction (_store_lock), so two learn-set runs finishing
+    together cannot drop each other's observations."""
     with _store_lock(path):
         return _merge_locked(observations, path, set_ids)
 
@@ -947,33 +1025,20 @@ def review_learned(set_id: Optional[str] = None, backend: Optional[str] = None, 
     return out
 
 
-class _store_lock:
-    """Exclusive flock on <store>.lock beside the learned store, held across load -> save.
-    No-op where fcntl is missing (Windows), same as set_import's atlas lock."""
+def _store_lock(path: Path):
+    """The learned store's write transaction (BEGIN IMMEDIATE on its DB), held across load -> save:
+    a second writer (another process's learn-set, a user rule) waits for it (busy_timeout)."""
+    from app.music_brain import db
 
-    def __init__(self, path: Path):
-        self.path = Path(path).with_suffix(".lock")
-
-    def __enter__(self):
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.fh = open(self.path, "a")
-        try:
-            import fcntl
-            fcntl.flock(self.fh, fcntl.LOCK_EX)
-        except ImportError:
-            pass
-        return self
-
-    def __exit__(self, *exc):
-        self.fh.close()          # closing releases the lock
+    return db.tx(_learned_db(path)[0])
 
 
 def _save(store: Dict[str, dict], path: Path) -> None:
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(f".{os.getpid()}.tmp")   # per process: concurrent writers never share a tmp
-    tmp.write_text(json.dumps(store, indent=2), encoding="utf-8")
-    tmp.replace(path)
+    from app.music_brain import db
+
+    conn, f = _learned_db(path)
+    with db.tx(conn):
+        _write_store(conn, f, store)
 
 
 def add_user_rule(kind: str, text: str = "", disable: Optional[bool] = None, path: Path = LEARNED_PATH) -> dict:
