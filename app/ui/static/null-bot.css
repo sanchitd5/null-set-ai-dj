@@ -159,3 +159,14 @@
   0%   { transform: scale(1.35) rotate(-6deg); }
   100% { transform: scale(1) rotate(0); }
 }
+
+/* $Up3R-M@SS!V3-M0v3 (super-move.js): NULL IN FRONT from the move's first transition to its end. #nul-super gets
+   .nul-front: visible, above every console layer (the highest is 1000), in the dock pose (bottom-left, small).
+   The SUPER takeover (.nul-sm-on) still runs over it on the move's first hit. To change what "in front" means,
+   edit these rules (and FRONT_CLASS in super-move.js); nothing else reads the class. */
+.nul-super.nul-front { visibility: visible; z-index: 1100; }
+.nul-front:not(.nul-sm-on) .nul-sm-bot {
+  transform: translate(calc(-50vw + min(22vmin, 190px) * 0.4 + 24px), calc(50vh - min(22vmin, 190px) * 0.4 - 24px)) scale(0.4);
+  filter: drop-shadow(0 0 10px color-mix(in srgb, var(--sm-glow) 60%, transparent));
+}
+.nul-front:not(.nul-sm-on) .nul-sm-cap, .nul-front:not(.nul-sm-on) .nul-sm-scrim { opacity: 0; }

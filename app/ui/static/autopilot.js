@@ -3613,6 +3613,13 @@ function createAutopilotEngine({ host, ai }) {
   let prepStartedAt = 0;  // ms timestamp of the current search
   async function prepareTransition(currentId) {
     if (!active) return;
+    // $Up3R-M@SS!V3-M0v3 (super-move.js): armed only when the owner saved a variant (or a move / press is pending).
+    // It may take the set over from this song; when it says no, nothing below changes.
+    const smv = host.mod.superMove;
+    if (smv && smv.armed) {
+      const se = autopilotCore.setEnergy({ setPos: Math.min(history.length / 10, 1), recent: playedEnergies() });
+      if (smv.takeOver({ currentId, deck: activeDeck, setLevel: se.level, setId })) { ++prepGen; prepStartedAt = 0; return; }
+    }
     const gen = ++prepGen;
     prepStartedAt = host.clock.now();
     showQueue();
@@ -4849,6 +4856,38 @@ function createAutopilotEngine({ host, ai }) {
     });
     return res;
   }
-  return { core: autopilotCore, mergeNow, performNow };
+  // $Up3R-M@SS!V3-M0v3 (super-move.js) only: the move plays the set for a while, then gives it back.
+  //   hold()   stop the tempo-home glide and any next-song search (the move owns the decks now)
+  //   adopt()  a song the move landed is the playing one (the same bookkeeping as a transition's end)
+  //   resume() the normal set books the next song from the playing one
+  const superMove = {
+    hold() { ++homeGen; ++prepGen; prepStartedAt = 0; },
+    adopt({ deck, trackId, name, entry }) {
+      if (!active) return;
+      history.push(name);
+      mixingPair = null;
+      dipAsked = false;
+      sessionEvent("track", { event: "transition_end", now_playing: name, deck, set_songs: history.length });
+      playedIds.push(trackId);
+      genreLog.push(currentGenre || "");
+      songsSinceJump += 1;
+      scheduledNext = null;
+      profileNext = "";
+      heldPool = [];
+      activeDeck = deck;
+      currentTrackId = trackId;
+      entryPos = entry || 0;
+      currentEnergy = null;
+      if (host.mod.beatLayer) host.mod.beatLayer.follow(activeDeck);
+      if (host.mod.djMind) host.mod.djMind.follow(activeDeck);
+      ++homeGen;
+    },
+    resume() {
+      if (!active) return;
+      easePitchHome(activeDeck);
+      prepareTransition(currentTrackId);
+    },
+  };
+  return { core: autopilotCore, mergeNow, performNow, superMove };
 }
 if (typeof Engine !== "undefined") Engine.mount("autopilot", createAutopilotEngine);
