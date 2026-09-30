@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from app.music_brain import keylock
+from app.music_brain.audio import keylock
 from app.music_brain.analysis import waveform_params as wp
 
 

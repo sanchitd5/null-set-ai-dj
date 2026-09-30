@@ -8,7 +8,7 @@ import os
 
 import pytest
 
-from app.music_brain import audio_convert
+from app.music_brain.audio import audio_convert
 from app.tests.py.test_audio_flac import STEMS, _keylock_dir, _stem_dir
 
 
@@ -39,7 +39,7 @@ def _consistent(d):
     assert not (wavs and flacs), f"{d.name} half converted"
     assert not list(d.glob("*.convert*")) and not list(d.glob("*.tmp*"))
     if (d / "manifest.json").exists():
-        from app.music_brain import audio_io
+        from app.music_brain.audio import audio_io
         m = audio_io.read_manifest(d)
         assert all(os.path.exists(p) for p in m.values())
     return "flac" if flacs else "wav"

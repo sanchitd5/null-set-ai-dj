@@ -20,7 +20,7 @@ from typing import Optional
 from app.music_brain.analysis.analyzer import analyze as _analyze
 from app.music_brain.knowledge_parser import KnowledgeParser
 from app.music_brain.recipe_matcher import RecipeMatcher
-from app.music_brain.stem_service import separate as _separate
+from app.music_brain.audio.stem_service import separate as _separate
 from app.music_brain.transition_renderer import render_preview
 
 _knowledge = None
@@ -171,7 +171,7 @@ def hook_drops(path: str, title: str, top_n: int = 3, render: bool = False, ai: 
     from app.music_brain import set_ai
     from app.music_brain.config import ROOT_DIR
     from app.music_brain.set_learner import load_learned
-    from app.music_brain.stem_service import separate as _sep
+    from app.music_brain.audio.stem_service import separate as _sep
 
     a = _analyze(path)
     stems = _sep(path).stems

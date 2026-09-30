@@ -22,7 +22,7 @@ import numpy as np
 import soundfile as sf
 
 from app.music_brain.config import PREVIEWS_CACHE_DIR, SUB_BASS_CROSSOVER_HZ
-from app.music_brain.dsp_rack import (
+from app.music_brain.audio.dsp_rack import (
     bass_swap_mix,
     filter_sweep,
     master,

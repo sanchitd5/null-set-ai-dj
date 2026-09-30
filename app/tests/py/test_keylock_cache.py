@@ -1,7 +1,7 @@
 import os
 import time
 
-from app.music_brain import keylock, keylock_cache as kc
+from app.music_brain.audio import keylock, keylock_cache as kc
 
 NOW = 1_000_000_000.0
 H = 3600.0

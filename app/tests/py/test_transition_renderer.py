@@ -68,7 +68,7 @@ def test_render_preview_never_clips(tmp_path):
 
 
 def test_bass_swap_render_never_doubles_subbass(tmp_path):
-    from app.music_brain.dsp_rack import linkwitz_riley_split
+    from app.music_brain.audio.dsp_rack import linkwitz_riley_split
 
     candidate = _candidate_for("Bass Swap")
     out_path = tmp_path / "bassswap.mp3"

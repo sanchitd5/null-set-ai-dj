@@ -72,7 +72,7 @@ def test_vocal_clash_halves_non_stems_recipes(matcher):
 
 
 def test_api_match_uses_cached_vocal_stem_without_separating(monkeypatch, tmp_path):
-    from app.music_brain import stem_service
+    from app.music_brain.audio import stem_service
     from app.music_brain.analysis import analyzer
     from app.ui import server
 
@@ -95,7 +95,7 @@ def test_api_match_uses_cached_vocal_stem_without_separating(monkeypatch, tmp_pa
 
 
 def test_api_match_without_cached_stem_keeps_zero_penalty(monkeypatch):
-    from app.music_brain import stem_service
+    from app.music_brain.audio import stem_service
     from app.ui import server
 
     tracks = {"a": _track(), "b": _track(bpm=129.0)}

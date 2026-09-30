@@ -271,7 +271,7 @@ def _stub_study(tmp_path, monkeypatch) -> list:
     import types
     import soundfile as sf
     from app.music_brain.analysis import analyzer, lyrics
-    from app.music_brain import stem_service
+    from app.music_brain.audio import stem_service
 
     a_st, _ = _song("A - One", 0.0, 1)
     b_st, _ = _song("B - Two", 36.0, 2)

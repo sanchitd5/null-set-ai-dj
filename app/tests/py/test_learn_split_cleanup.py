@@ -67,7 +67,7 @@ def _three_song_set(tmp_path, monkeypatch):
     import numpy as np
     import soundfile as sf
     from app.music_brain.analysis import analyzer, lyrics
-    from app.music_brain import stem_service
+    from app.music_brain.audio import stem_service
     from app.tests.py.test_set_learner import SR, _place, _song
 
     st = {k: _song(t, 0.0, seed, seconds=200)[0] for k, t, seed in (("a", "A", 1), ("b", "B", 2), ("c", "C", 3))}

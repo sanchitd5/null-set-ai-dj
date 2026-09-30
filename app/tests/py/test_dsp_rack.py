@@ -6,7 +6,7 @@
 import numpy as np
 import pytest
 
-from app.music_brain.dsp_rack import (
+from app.music_brain.audio.dsp_rack import (
     apply_reverb,
     bass_swap_mix,
     filter_sweep,

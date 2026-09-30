@@ -24,7 +24,7 @@ python-dotenv==1.1.1                       # Environment variable management (.e
 # === Music Brain Package (music_brain/) ===
 pyyaml>=6.0                                # Frontmatter parsing in music_brain/knowledge_parser.py
 pytest>=8.0                                # Test suite for music_brain/
-demucs                                     # Phase 2: stem separation (music_brain/stem_service.py)
+demucs                                     # Phase 2: stem separation (music_brain/audio/stem_service.py)
 torch                                      # Phase 2: Demucs backend. Install a CUDA build from
                                             #   https://download.pytorch.org/whl/ for GPU acceleration,
                                             #   or the default PyPI wheel for CPU-only.

@@ -220,7 +220,7 @@ class ServerIO:
         return int(self._host().stems_running()) + self._host().tempo_running()
 
     def _key(self, tid: str, bpm: float):
-        from app.music_brain import keylock, stem_service
+        from app.music_brain.audio import keylock, stem_service
 
         srv = self._server()
         path = srv._track_path(tid)
@@ -230,7 +230,7 @@ class ServerIO:
         return key, native, h
 
     def tempo_state(self, tid: str, bpm: float) -> str:
-        from app.music_brain import keylock
+        from app.music_brain.audio import keylock
 
         try:
             key, native, _ = self._key(tid, bpm)
@@ -250,7 +250,7 @@ class ServerIO:
         return "none"
 
     def start_tempo(self, tid: str, bpm: float) -> None:
-        from app.music_brain import keylock
+        from app.music_brain.audio import keylock
 
         srv = self._server()
         key, native, h = self._key(tid, bpm)

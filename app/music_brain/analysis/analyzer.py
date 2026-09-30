@@ -4,7 +4,7 @@ a ground-truth vocal-presence map.
 
 Pure-librosa/numpy/scipy — no Demucs/torch dependency. The vocal-presence
 map is computed from an already-separated vocals stem (see
-music_brain/stem_service.py); pass its path in via `vocals_stem_path` to
+music_brain/audio/stem_service.py); pass its path in via `vocals_stem_path` to
 enable it, otherwise that field comes back empty.
 """
 

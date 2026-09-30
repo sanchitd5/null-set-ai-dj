@@ -451,7 +451,7 @@ def _default_resolvers() -> None:
         return analyze(p).to_dict()
 
     def stems(tid: str):
-        from app.music_brain.stem_service import cached_four_stems
+        from app.music_brain.audio.stem_service import cached_four_stems
         p = path(tid)
         return cached_four_stems(p) if p else None
 

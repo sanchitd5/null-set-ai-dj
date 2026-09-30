@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 import soundfile as sf
 
-from app.music_brain import audio_convert, audio_io, keylock_cache, stem_service
+from app.music_brain.audio import audio_convert, audio_io, keylock_cache, stem_service
 
 SR = 44100
 STEMS = ("vocals", "drums", "bass", "other")

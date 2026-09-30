@@ -105,7 +105,7 @@ class Host:
 
     def tempo_running(self):
         """Key-locked tempo renders in flight (Rubber Band, one thread each)."""
-        from app.music_brain import keylock
+        from app.music_brain.audio import keylock
 
         with keylock._lock:
             return sum(1 for s in keylock._jobs.values() if s == "running")
@@ -116,7 +116,7 @@ class Host:
         return True
 
     def separate(self, audio_path, **kw):
-        from app.music_brain import stem_service
+        from app.music_brain.audio import stem_service
 
         return stem_service.separate(audio_path, **kw)
 
@@ -131,7 +131,7 @@ class Host:
         return server._safe_hook_drops_impl(track_id)
 
     def keylock_stem_path(self, key, name):
-        from app.music_brain import keylock
+        from app.music_brain.audio import keylock
 
         return keylock.stem_path(key, name)
 

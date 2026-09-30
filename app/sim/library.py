@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from app.music_brain.audio_io import stem_file
+from app.music_brain.audio.audio_io import stem_file
 from app.sim.pool import Pool, find_data_dir
 
 _SPLIT = re.compile(r"\s+[-–—]\s+")

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from app.music_brain import keylock
+from app.music_brain.audio import keylock
 
 
 def _an(bpm, duration, phrases=None):

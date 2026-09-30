@@ -21,7 +21,7 @@ def fake(monkeypatch, tmp_path):
     monkeypatch.setattr(srv, "_stem_queue", [])
     monkeypatch.setattr(srv, "_stem_backlog", [])
     monkeypatch.setattr(srv, "_stem_cv", threading.Condition())
-    from app.music_brain import stem_service
+    from app.music_brain.audio import stem_service
     monkeypatch.setattr(stem_service, "StemWorker", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no worker in tests")))
     monkeypatch.setattr(srv, "_stem_cache", {})
     return done, busy
@@ -66,7 +66,7 @@ def test_persistent_worker_separates_two_songs_pipelined(tmp_path):
 
     import soundfile as sf
 
-    from app.music_brain import stem_service
+    from app.music_brain.audio import stem_service
 
     songs = sorted(Path("data/cache/uploads").glob("*.flac"))[:2]
     if len(songs) < 2:

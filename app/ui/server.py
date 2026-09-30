@@ -83,7 +83,7 @@ def _migrate_analyses() -> None:
 
 @app.on_event("startup")
 def _cap_keylock_cache() -> None:
-    from app.music_brain import keylock_cache
+    from app.music_brain.audio import keylock_cache
 
     keylock_cache.run_async("startup")
 
@@ -496,7 +496,7 @@ def get_recipes():
 def _cached_vocal_regions(track_id: str) -> Optional[list]:
     """Vocal regions only when a Demucs vocal stem is already cached:
     matching must never start a separation."""
-    from app.music_brain import stem_service
+    from app.music_brain.audio import stem_service
     from app.music_brain.config import DEMUCS_MODEL
     from app.music_brain.mashup import MASHUP_DEMUCS_MODEL
 
@@ -536,7 +536,7 @@ _stem_cache: Dict[str, Dict[str, str]] = {}
 
 
 def _cached_stems4(track_id: str) -> Optional[Dict[str, str]]:
-    from app.music_brain import stem_service
+    from app.music_brain.audio import stem_service
 
     if track_id in _stem_cache:
         return _stem_cache[track_id]
@@ -577,13 +577,13 @@ def _next_stem_job() -> Optional[str]:
 
 
 def _stem_worker() -> None:
-    """Feeds the persistent separation process (app/music_brain/stem_worker.py):
+    """Feeds the persistent separation process (app/music_brain/audio/stem_worker.py):
     up to STEM_IN_FLIGHT songs at once so the next one decodes while the current
     one runs on the GPU. Falls back to one-shot Demucs if the process won't start."""
     import queue as _q
 
     global _stem_busy
-    from app.music_brain import stem_service
+    from app.music_brain.audio import stem_service
 
     proc, in_flight = None, {}
     while True:
@@ -930,7 +930,7 @@ def get_track_stems(track_id: str, separate: bool = False, bpm: Optional[float] 
     _track_path(track_id)
     stems = _cached_stems4(track_id)
     if stems and bpm:
-        from app.music_brain import keylock, stem_service
+        from app.music_brain.audio import keylock, stem_service
 
         native = analyze_track(_track_path(track_id)).bpm
         if abs(bpm / native - 1) > 0.005:
@@ -1445,8 +1445,8 @@ def post_riff_plan(req: RiffRequest):
     import librosa
     import numpy as np
 
-    from app.music_brain import keylock
-    from app.music_brain import stem_service
+    from app.music_brain.audio import keylock
+    from app.music_brain.audio import stem_service
     from app.music_brain import techniques as tq
     from app.music_brain.analysis import waveform_params as wp
 
@@ -1499,7 +1499,7 @@ def post_riff_plan(req: RiffRequest):
 
 @app.get("/api/riff/{key}")
 def get_riff_state(key: str):
-    from app.music_brain import keylock
+    from app.music_brain.audio import keylock
 
     return {"state": keylock.state(key), "meta": keylock.meta(key)}
 
@@ -1507,7 +1507,7 @@ def get_riff_state(key: str):
 @app.post("/api/riff/{key}/balance")
 def post_riff_balance(key: str, b_levels: dict):
     """Gains for a rendered riff (A level-matched, B's rap and bass under the riff)."""
-    from app.music_brain import keylock
+    from app.music_brain.audio import keylock
 
     m = keylock.backfill_voice_band(key)
     if not m or "a_mix_db" not in m:
@@ -1520,12 +1520,12 @@ def post_riff_balance(key: str, b_levels: dict):
 
 @app.get("/api/riff/{key}/{name}")
 def get_riff_stem(key: str, name: str):
-    from app.music_brain import keylock
+    from app.music_brain.audio import keylock
 
     p = _host().keylock_stem_path(key, name)
     if not p:
         raise HTTPException(status_code=404, detail="key-locked stem not rendered")
-    from app.music_brain.audio_io import media_type
+    from app.music_brain.audio.audio_io import media_type
     return FileResponse(p, media_type=media_type(p))
 
 
@@ -1536,7 +1536,7 @@ def get_track_stem_audio(track_id: str, name: str):
     stems = _cached_stems4(track_id)
     if not stems:
         raise HTTPException(status_code=404, detail="stems not separated yet")
-    from app.music_brain.audio_io import media_type
+    from app.music_brain.audio.audio_io import media_type
     return FileResponse(stems[name], media_type=media_type(stems[name]))
 
 
@@ -1741,7 +1741,7 @@ def _vocals_cached(track_id: str) -> bool:
     if track_id in _vocal_regions:
         return True
     from app.music_brain.mashup import MASHUP_DEMUCS_MODEL
-    from app.music_brain.stem_service import _cache_dir_for, _load_from_cache, file_hash
+    from app.music_brain.audio.stem_service import _cache_dir_for, _load_from_cache, file_hash
 
     try:
         path = _track_path(track_id)

@@ -168,7 +168,7 @@ dead ends in (c); re-rank (d).
 - Verdict: open. The fix for cause (3) landed after the single allowed sim run and is covered by node checks only (UNVERIFIED in the sim).
 - Cache growth: `keylock/t*` tempo sets are now capped by `KEYLOCK_CACHE_MAX_GB` (default 20, negative disables), evicted
   oldest-first by dir mtime (bumped on every serve, at most once a minute), never while rendering, in `protect`, or younger than
-  30 min; runs at server start and after each tempo render (`app/music_brain/keylock_cache.py`). Preview with
+  30 min; runs at server start and after each tempo render (`app/music_brain/audio/keylock_cache.py`). Preview with
   `python3 -m app.music_brain.keylock_cache --dry-run [--max-gb N]`, delete with `--apply`. `data/cache/stems` (98.9 GB / 615 sets)
   stays uncapped: each set costs a Demucs run (~26 s). A separate policy is needed (e.g. by last use, sparing library songs); not implemented.
 

@@ -217,7 +217,7 @@ def learn_transform(source_id: str, target: str, label: Optional[str] = None, st
     import librosa
 
     from app.music_brain import set_learner as sl
-    from app.music_brain.stem_service import separate
+    from app.music_brain.audio.stem_service import separate
 
     d = _dir(source_id)
     caps = captions(source_id)

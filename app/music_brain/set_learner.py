@@ -1318,7 +1318,7 @@ def _study_part(set_path: Path, set_id: str, all_entries: List[TrackEntry], part
     Returns plain JSON (the checkpoint): observations, timeline rows (song indices global),
     per-entry verdicts keyed by global index, the song paths, and the working files to clean."""
     from app.music_brain.analysis.analyzer import analyze
-    from app.music_brain.stem_service import separate
+    from app.music_brain.audio.stem_service import separate
 
     lo, hi = part["lo"], part["hi"]
     entries = all_entries[lo:hi + 1]

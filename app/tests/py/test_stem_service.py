@@ -14,7 +14,7 @@ import pytest
 import soundfile as sf
 
 from app.music_brain.config import ROOT_DIR, STEMS_CACHE_DIR
-from app.music_brain.stem_service import (
+from app.music_brain.audio.stem_service import (
     _cache_dir_for,
     _load_from_cache,
     _manifest_path,
