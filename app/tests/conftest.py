@@ -22,6 +22,13 @@ def _private_session_log(tmp_path_factory, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _private_genre_labels(tmp_path_factory, monkeypatch):
+    """Tests never write the real data/cache/genre_labels.json."""
+    import app.ui.server as srv
+    monkeypatch.setattr(srv, "LABELS_PATH", tmp_path_factory.mktemp("labels") / "genre_labels.json")
+
+
+@pytest.fixture(autouse=True)
 def _no_tracked_knowledge(tmp_path_factory, monkeypatch):
     """Tests never seed from, or export into, the tracked app/music_brain/knowledge/."""
     from app.music_brain import knowledge

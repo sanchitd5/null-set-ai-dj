@@ -8,6 +8,7 @@ session logs, absolute paths or e-mail addresses (export refuses to write any).
     python3 -m app.music_brain.knowledge import [--cache-dir D] [--src K]   knowledge/ -> cache
 
 Files: macros/<name>.json, learned_techniques.json, names.json (track id -> "Artist - Title"),
+genre_labels.json (track id -> {genre, era}, the model's labels; the server backfills by name),
 and the slim atlas (slim_atlas) segmented as atlas/meta.json (schema, rules, built_at, slim, stats,
 tracks, shards) + atlas/pairs/<a>.json.gz (one gzip shard per A), so a new song changes a few
 shards, not one 2 MB blob. Import still reads an old single pair_atlas.json.gz; export replaces
@@ -42,6 +43,7 @@ ATLAS = "pair_atlas.json.gz"                # the old single-file slim atlas (st
 ATLAS_DIR, ATLAS_META = "atlas", "meta.json"  # segmented: atlas/meta.json + atlas/pairs/<a>.json.gz
 _SHARD_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
 NAMES = "names.json"
+LABELS = "genre_labels.json"                # track id -> {genre, era}: the model's labels (genre_labels.py)
 STAMP = "knowledge_seed.json"
 KEEP, PER_MOVE = 60, 20                     # slim atlas: the server Index's own selection per A
 TRACK_FIELDS = ("name", "artist", "bpm", "key", "duration", "level", "stems")
@@ -257,6 +259,14 @@ def export(cache_dir: Optional[Path] = None, out: Optional[Path] = None,
         if n:
             names[t] = n
     files[NAMES] = dict(sorted(names.items()))
+    # the model's genre / era labels per exported name (another machine's library fallback
+    # needs them; see genre_labels.py). A tracked label survives when the local store lacks it.
+    from app.music_brain import genre_labels as gl
+    labels = dict(_read(out / LABELS, {}) or {})
+    labels.update(gl.for_export(names, *gl.load(gl.path(cache))))
+    labels = dict(sorted((t, v) for t, v in labels.items() if t in names))
+    if labels:
+        files[LABELS] = labels
     hits = [h for k, v in files.items() for h in privacy_hits(v, k)] + (privacy_hits(slim, ATLAS) if slim else [])
     if hits:
         raise ValueError(f"knowledge export refused, {len(hits)} private strings: " + "; ".join(hits[:5]))

@@ -2089,6 +2089,53 @@ _suggested_genres: Dict[str, str] = {}
 # Normalised title -> release era the model gave it ("1990s"), same lifetime
 # as _suggested_genres: the library fallback holds the set's decade too.
 _suggested_eras: Dict[str, str] = {}
+# Both persist in CACHE_DIR/genre_labels.json (app.music_brain.genre_labels): lost on a
+# restart, the library fallback had no labelled Punjabi song (session 2026-09-30_102327).
+LABELS_PATH: Optional[Path] = None        # None: genre_labels.path(); tests point it at tmp_path
+_labels_dirty = False
+
+
+def _set_label(store: Dict[str, str], key: str, value) -> None:
+    """Newest label last (the store keeps the newest genre_labels.MAX_LABELS)."""
+    global _labels_dirty
+    v = str(value)
+    if key and store.get(key) != v:
+        store.pop(key, None)
+        store[key] = v
+        _labels_dirty = True
+
+
+def _save_labels() -> None:
+    global _labels_dirty
+    if not _labels_dirty:
+        return
+    from app.music_brain import genre_labels as gl
+
+    if gl.save(_suggested_genres, _suggested_eras, LABELS_PATH):
+        _labels_dirty = False
+
+
+def _load_labels() -> int:
+    """Startup: the stored labels, then the knowledge export's for songs that have none
+    (matched by name; no model call). Returns how many came from the export."""
+    from app.music_brain import genre_labels as gl
+    from app.music_brain import knowledge
+
+    g, e = gl.load(LABELS_PATH)
+    _suggested_genres.update(g)
+    _suggested_eras.update(e)
+    try:
+        tracked = json.loads((knowledge.KNOWLEDGE_DIR / knowledge.LABELS).read_text(encoding="utf-8"))
+        names = json.loads((knowledge.KNOWLEDGE_DIR / knowledge.NAMES).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return 0
+    return gl.backfill(_suggested_genres, _suggested_eras, tracked, names)
+
+
+try:
+    _load_labels()
+except Exception as _exc:  # noqa: BLE001 -- a bad label file must not stop the server
+    print(f"WARNING [labels] not loaded: {type(_exc).__name__}: {_exc}", flush=True)
 _set_memory = None  # app.ui.set_memory.SetMemory, created on first suggest
 
 
@@ -2302,15 +2349,16 @@ def _autopilot_suggest_impl(req: AutopilotSuggestRequest):
         raise HTTPException(status_code=500, detail=f"LLM suggest error: {exc}") from exc
     for s in suggestions:
         if s.get("title") and s.get("genre"):
-            _suggested_genres[_genre_key(s["title"])] = str(s["genre"])
+            _set_label(_suggested_genres, _genre_key(s["title"]), s["genre"])
         if s.get("title") and s.get("era"):
-            _suggested_eras[_genre_key(s["title"])] = str(s["era"])
+            _set_label(_suggested_eras, _genre_key(s["title"]), s["era"])
     # The playing song's own genre (the model's current_genre): library songs
     # get labels as they play, so the library fallback can check genre.
     if meta.get("current_genre") and not req.lookahead:
-        _suggested_genres[_genre_key(title_part)] = str(meta["current_genre"])
+        _set_label(_suggested_genres, _genre_key(title_part), meta["current_genre"])
     if meta.get("current_era") and not req.lookahead:
-        _suggested_eras[_genre_key(title_part)] = str(meta["current_era"])
+        _set_label(_suggested_eras, _genre_key(title_part), meta["current_era"])
+    _save_labels()
     _song_step("suggest", req.track_id,
                decision=f"{len(suggestions)} next-song pick(s)" + (" (look-ahead)" if req.lookahead else ""),
                why=meta.get("current_genre"),
