@@ -2151,6 +2151,7 @@ function createAutopilotEngine({ host, ai }) {
   // downloaded and waiting (READY), and songs still downloading (⬇).
   let scheduledNext = null;   // candidate booked for the coming transition
   let scheduledFireAt = null; // track time of the booked transition on the playing deck
+  let bookedTick = null;      // the booked transition's timer until it fires (superMove.rebook drops it)
   let preplanFor = null;      // song name while the silent ear pre-plans (read by vibe-ui.js)
   let bookedRecipe = null;    // recipe the booked transition will play (read by vibe-ui.js)
   // Punjabi scene profile (scene-profile.js). profileNext: genre of the song being evaluated /
@@ -3617,8 +3618,10 @@ function createAutopilotEngine({ host, ai }) {
     // It may take the set over from this song; when it says no, nothing below changes.
     const smv = host.mod.superMove;
     if (smv && smv.armed) {
-      const se = autopilotCore.setEnergy({ setPos: Math.min(history.length / 10, 1), recent: playedEnergies() });
-      if (smv.takeOver({ currentId, deck: activeDeck, setLevel: se.level, setId })) { ++prepGen; prepStartedAt = 0; return; }
+      const setPos = Math.min(history.length / 10, 1), recent = playedEnergies();
+      const se = autopilotCore.setEnergy({ setPos, recent });
+      if (smv.takeOver({ currentId, deck: activeDeck, setLevel: se.level, setId, setPos, recent,
+        curMeasured: Number.isFinite(measuredById[currentId]) })) { ++prepGen; prepStartedAt = 0; return; }
     }
     const gen = ++prepGen;
     prepStartedAt = host.clock.now();
@@ -4147,6 +4150,7 @@ function createAutopilotEngine({ host, ai }) {
       if (executed) return;
       executed = true;
       clearInterval(tick);
+      if (bookedTick === tick) bookedTick = null;   // mixing now: superMove.rebook refuses until it lands
       if (host.mod.djMind) host.mod.djMind.onTransition();
 
       if (host.mod.mashup) host.mod.mashup.cancel();
@@ -4290,6 +4294,7 @@ function createAutopilotEngine({ host, ai }) {
       }
     }, 200);
     runTimers.push(tick);
+    bookedTick = tick;
     return fireAt;
   }
 
@@ -4886,6 +4891,21 @@ function createAutopilotEngine({ host, ai }) {
       if (!active) return;
       easePitchHome(activeDeck);
       prepareTransition(currentTrackId);
+    },
+    // rebook(why) the owner pressed the move and a song was armed for it (macroMode.armStep): drop the transition
+    // booked so far (nothing is mixing yet) and book again from the playing song now, so the armed step is the one
+    // booked (loaded onto the staging deck by the normal load path). -> {ok, why}
+    rebook(why) {
+      if (!active) return { ok: false, why: "the autopilot is off" };
+      if (mixingPair) return { ok: false, why: "a transition is mixing" };
+      if (bookedTick) { clearInterval(bookedTick); bookedTick = null; }
+      if (host.mod.mashup) host.mod.mashup.cancel();
+      mashupTag = "";
+      scheduledNext = null;
+      host.log.step("rebook", { phase: "selection", decision: "rebook", why });
+      apStatus(`Re-booking: ${why}`);
+      prepareTransition(currentTrackId);
+      return { ok: true, why: "" };
     },
   };
   return { core: autopilotCore, mergeNow, performNow, superMove };
