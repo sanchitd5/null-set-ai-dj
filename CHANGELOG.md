@@ -3,7 +3,7 @@
 All notable changes to NULL::SET. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and versions follow [Semantic Versioning](https://semver.org/).
 
-## [1.2.0] - 2026-10-03
+## [1.1.0.1] - 2026-10-03
 
 ### Added
 
@@ -184,7 +184,7 @@ First public release (tag `v1`): two-deck autopilot with merge, hold and transit
 moves from studied DJ sets, the pair atlas, macros, NULL-BOT and the visuals, the virtual set sim and the
 Obsidian DJ knowledge base. See the [v1 release notes](https://github.com/sanchitd5/null-set-ai-dj/releases/tag/v1).
 
-[1.2.0]: https://github.com/sanchitd5/null-set-ai-dj/compare/v1.1.0...v1.2.0
+[1.1.0.1]: https://github.com/sanchitd5/null-set-ai-dj/compare/v1.1.0...v1.1.0.1
 [1.1.0]: https://github.com/sanchitd5/null-set-ai-dj/compare/v1.0.1...v1.1.0
 [1.0.1]: https://github.com/sanchitd5/null-set-ai-dj/compare/v1...v1.0.1
 [1.0.0]: https://github.com/sanchitd5/null-set-ai-dj/releases/tag/v1

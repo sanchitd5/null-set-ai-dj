@@ -13,7 +13,7 @@
 
 **stems · phrase-locked transitions · merge → hold → drop · a local LLM that picks the next song**
 
-![version](https://img.shields.io/badge/version-v1.2.0-00ff66?style=for-the-badge&labelColor=0a0f0d)
+![version](https://img.shields.io/badge/version-v1.1.0.1-00ff66?style=for-the-badge&labelColor=0a0f0d)
 ![AI DJ](https://img.shields.io/badge/AI%20DJ-NULL%3A%3ASET-00e5ff?style=for-the-badge&labelColor=0a0f0d)
 ![local](https://img.shields.io/badge/runs-100%25%20local-ff2bd6?style=for-the-badge&labelColor=0a0f0d)
 ![license](https://img.shields.io/badge/license-MIT-8a8f8c?style=for-the-badge&labelColor=0a0f0d)
@@ -341,7 +341,7 @@ The decision engine talks to the world only through an injected **Host port** (`
 
 <div align="center">
 
-**v1.2.0** · see [CHANGELOG.md](CHANGELOG.md) · built with a lot of late nights, two decks and an AI that will not stop mixing
+**v1.1.0.1** · see [CHANGELOG.md](CHANGELOG.md) · built with a lot of late nights, two decks and an AI that will not stop mixing
 
 <sub>MIT. See <a href="LICENSE">LICENSE</a>. Use only music you are legally allowed to use.</sub>
 
