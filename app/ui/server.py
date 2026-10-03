@@ -61,7 +61,7 @@ UPLOAD_DIR = CACHE_DIR / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
-app = FastAPI(title="AI Music Brain", version="1.1.0")
+app = FastAPI(title="AI Music Brain", version="1.2.0")
 
 
 @app.on_event("startup")

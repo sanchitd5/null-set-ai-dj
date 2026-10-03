@@ -3,6 +3,16 @@
 All notable changes to NULL::SET. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and versions follow [Semantic Versioning](https://semver.org/).
 
+## [1.2.0] - 2026-10-03
+
+### Added
+
+- **Studied set `NpL_bT5vgmU` (Boris Brejcha).** 11 of 12 songs in the library, 9 new macros (`studied-set-npl_bt5vgmu`, `studied-npl_bt5vgmu-2` to `-9`), one new learned move (a `vocal_resequence` in In This World). The knowledge base now holds 269 macros and 275 observations.
+
+### Changed
+
+- **Set import cuts missing songs from the set.** A named song with no usable download is now cut out of the set recording at its slot, as unreleased ID entries already were, instead of being skipped.
+
 ## [1.1.0] - 2026-10-01
 
 **NULL::SET 1.1 is the release where the player grew up.** It has a peak-time signature move of its own, it listens to how a song is built (sections, drops, the main drop) instead of a raw energy curve, it keeps a set inside one scene, it plays studied sets reliably, and everything it knows now lives in a real database that travels with the repo.
@@ -174,6 +184,7 @@ First public release (tag `v1`): two-deck autopilot with merge, hold and transit
 moves from studied DJ sets, the pair atlas, macros, NULL-BOT and the visuals, the virtual set sim and the
 Obsidian DJ knowledge base. See the [v1 release notes](https://github.com/sanchitd5/null-set-ai-dj/releases/tag/v1).
 
+[1.2.0]: https://github.com/sanchitd5/null-set-ai-dj/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/sanchitd5/null-set-ai-dj/compare/v1.0.1...v1.1.0
 [1.0.1]: https://github.com/sanchitd5/null-set-ai-dj/compare/v1...v1.0.1
 [1.0.0]: https://github.com/sanchitd5/null-set-ai-dj/releases/tag/v1
