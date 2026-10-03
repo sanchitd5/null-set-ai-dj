@@ -110,24 +110,30 @@ def plan_tracks(cache_dir: Path, set_id: str, tracks: List[dict], set_audio: Opt
         title = str(t.get("title") or "")
         row = {"position": i + 1, "title": title, "path": t.get("path"), "action": "skip", "id": None, "why": _why_skip(t)}
         rows.append(row)
-        if _ID_TITLE.search(title):             # an unreleased ID: cut its slot out of the set recording
+        def cut(label: str) -> None:
+            """Cut this entry's slot (its start to the next entry's start) out of the set recording."""
             name = sc.cut_name(title, set_id, i + 1)
             t0 = float(t.get("start") or 0.0)
             t1 = float(tracks[i + 1].get("start") or 0.0) if i + 1 < len(tracks) else None
             if rev.get(name):
                 row.update(action="reuse", id=rev[name], why=f"already cut from the set: {name}")
             elif set_audio is None:
-                row["why"] = "ID: no set recording to cut it from"
+                row["why"] = f"{label}: no set recording to cut it from"
             elif t1 is None or t1 - t0 < MIN_CUT_S:
-                row["why"] = f"ID: slot too short to cut ({(t1 or t0) - t0:.0f} s)"
+                row["why"] = f"{label}: slot too short to cut ({(t1 or t0) - t0:.0f} s)"
             else:
                 row.update(action="cut", name=name, src=str(set_audio), t0=t0, t1=t1,
-                           why=f"cut from the set {t0 / 60:.1f}-{t1 / 60:.1f} min")
+                           why=f"cut from the set {t0 / 60:.1f}-{t1 / 60:.1f} min ({label})")
+
+        if _ID_TITLE.search(title):             # an unreleased ID: cut its slot out of the set recording
+            cut("ID")
             continue
         if row["why"]:
-            lib = None if row["why"].startswith("ID") else res.find(title)
+            lib = res.find(title)
             if lib:                                         # the set's file is unusable, the library has the song
                 row.update(action="reuse", id=lib, why=f"library copy of the same recording: {names.get(lib)} ({row['why']})")
+            else:                                           # no usable song anywhere: use the set's own audio
+                cut(row["why"])
             continue
         cid = content_id(Path(t["path"]))
         if cid in seen:                                     # listed twice in the set
