@@ -53,7 +53,40 @@ for arg in "$@"; do
     *) echo "unknown option: $arg (see ./start.sh --help)" >&2; exit 2 ;;
   esac
 done
-PY="${PYTHON:-python3}"
+# PYTHON wins; otherwise the first interpreter that can run uvicorn: the repo's
+# venv first, then the python3s on PATH (Homebrew's python3 often lacks the deps).
+if [[ -n "${PYTHON:-}" ]]; then
+  PY="$PYTHON"
+else
+  PY=""
+  for c in .venv/bin/python venv/bin/python python3 python3.13 python3.12 python3.11 python3.10 python; do
+    if command -v "$c" >/dev/null 2>&1 && "$c" -m uvicorn --version >/dev/null 2>&1; then PY="$c"; break; fi
+  done
+  if [[ -z "$PY" ]]; then
+    # Nothing has the deps: build .venv once. requirements.txt pins scipy 1.10.1 and
+    # numpy 1.26.4, which ship wheels for Python 3.10-3.11 only, so the venv is built
+    # from one of those (uv downloads 3.11 when neither is installed).
+    BASE=""
+    for c in python3.11 python3.10; do command -v "$c" >/dev/null 2>&1 && { BASE="$c"; break; }; done
+    if [[ -n "$BASE" ]]; then
+      echo "python: no interpreter has uvicorn - creating .venv from $BASE and installing requirements.txt (one-off, takes minutes)"
+      "$BASE" -m venv .venv || { echo "could not create .venv with $BASE" >&2; exit 1; }
+    elif command -v uv >/dev/null 2>&1; then
+      echo "python: no interpreter has uvicorn - creating .venv with uv (Python 3.11) and installing requirements.txt (one-off, takes minutes)"
+      uv venv --seed --allow-existing --python 3.11 .venv || { echo "uv could not create .venv" >&2; exit 1; }
+    else
+      echo "no python with uvicorn, and no Python 3.10/3.11 to build .venv from (requirements.txt needs <= 3.11)." >&2
+      echo "Install one:  brew install python@3.11   (or: brew install uv)   then re-run ./start.sh" >&2
+      exit 1
+    fi
+    if ! .venv/bin/python -m pip install --upgrade pip || ! .venv/bin/python -m pip install -r requirements.txt; then
+      echo "installing requirements.txt into .venv failed (see above); re-run ./start.sh to retry" >&2
+      exit 1
+    fi
+    PY=.venv/bin/python
+  fi
+  echo "python: $PY ($(command -v "$PY"))"
+fi
 MLX_MODEL="${MLX_MODEL:-mlx-community/Qwen3-30B-A3B-Instruct-2507-4bit}"
 MLX_PORT="${MLX_PORT:-8081}"
 OMNI_PY="${OMNI_PY:-$HOME/.venvs/mlx-vlm/bin/python}"
@@ -93,7 +126,11 @@ RESTART_WINDOW_S=600
 export PYTHONUNBUFFERED=1
 
 if ! "$PY" -m uvicorn --version >/dev/null 2>&1; then
-  echo "uvicorn not found for $PY. Install the requirements first:  pip install -r requirements.txt" >&2
+  if [[ -n "${PYTHON:-}" ]]; then
+    echo "uvicorn not found for PYTHON=$PY. Install the requirements into it:  $PY -m pip install -r requirements.txt" >&2
+  else
+    echo "no python with uvicorn found (tried .venv, venv, python3, python3.10-3.13). Install the requirements:  python3 -m venv .venv && .venv/bin/pip install -r requirements.txt   (or set PYTHON=...)" >&2
+  fi
   exit 1
 fi
 command -v ffmpeg >/dev/null 2>&1 || echo "warning: ffmpeg not found - downloads will fail (brew install ffmpeg)" >&2

@@ -15,6 +15,7 @@ soundfile==0.13.1                          # Audio file I/O
 resampy==0.4.3                             # Audio resampling (librosa dependency)
 numba==0.62.1                              # JIT compiler for librosa performance
 joblib==1.5.2                              # Caching for librosa
+setuptools<81                              # librosa 0.9.2 imports pkg_resources, removed in setuptools 81
 matplotlib>=3.7.0                          # Waveform visualization for DJ analysis
 
 # === OpenAI Integration ===
