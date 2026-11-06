@@ -133,7 +133,7 @@
   let last = 0;
   function frame(t) {
     requestAnimationFrame(frame);
-    if (t - last < 33) return;
+    if (t - last < 33 || root.djLite) return;   // djLite: phone Lite view hides the waveforms (phone-ui.js)
     last = t;
     for (const id of ["a", "b"]) {
       const d = root.decks && root.decks[id];

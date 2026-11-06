@@ -2,8 +2,17 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>NULL::SET — AI DJ Console</title>
+  <!-- PWA / phone (phone.css + phone-ui.js): manifest and icons are public auth paths -->
+  <link rel="manifest" href="/manifest.json" crossorigin="use-credentials" />
+  <meta name="theme-color" content="#040806" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="NULL::SET" />
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+  <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -13,6 +22,8 @@
   <link rel="stylesheet" href="/anyma-show.css" />
 <link rel="stylesheet" href="/anyma-ui.css" />
   <link rel="stylesheet" href="/toggle-drawer.css" />
+  <!-- phone Lite layout (phone-ui.js sets html.phone-lite on PHONE_QUERY); every rule is scoped to it -->
+  <link rel="stylesheet" href="/phone.css" />
   <script src="https://unpkg.com/wavesurfer.js@7/dist/wavesurfer.min.js"></script>
   <script src="https://unpkg.com/wavesurfer.js@7/dist/plugins/regions.min.js"></script>
 </head>
@@ -1135,5 +1146,6 @@
 <script src="/marquee.js"></script>
 <script src="/toggle-drawer.js"></script>
 <script src="/devices.js"></script>
+<script src="/phone-ui.js"></script>
 </body>
 </html>
