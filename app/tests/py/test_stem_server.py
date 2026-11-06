@@ -268,6 +268,25 @@ def test_reuses_the_console_backfill_set(srv, track, stems_audio):
     assert srv.calls == []
 
 
+def test_analysis_route_uses_the_console_analyzer(srv, track, monkeypatch):
+    from app.music_brain.analysis import analyzer
+
+    seen = []
+
+    class _A:
+        def to_dict(self):
+            return {"bpm": 124.0, "key": "8A"}
+
+    monkeypatch.setattr(analyzer, "analyze", lambda p: seen.append(p) or _A())
+    tid, body = track
+    assert srv.req("GET", f"/v1/tracks/{tid}/analysis")[0] == 404
+    assert srv.req("GET", f"/v1/tracks/{tid}/analysis", token=None)[0] == 401
+    srv.req("POST", f"/v1/tracks?id={tid}&ext=mp3", body)
+    st, _, b = srv.req("GET", f"/v1/tracks/{tid}/analysis")
+    assert st == 200 and json.loads(b) == {"bpm": 124.0, "key": "8A"}
+    assert seen and seen[0].name == f"{tid}.mp3"
+
+
 def test_window_needs_split_first(srv, track):
     tid, body = track
     srv.req("POST", f"/v1/tracks?id={tid}&ext=mp3", body)
