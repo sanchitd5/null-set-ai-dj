@@ -559,7 +559,7 @@ def _best_vocals(root: Path, pattern: str) -> List[Tuple[str, str]]:
 
 
 GATE_UTIL_PCT = float(os.environ.get("LYRICS_ASR_GATE_UTIL") or 30)      # GPU busier than this: wait
-GATE_FREE_MB = float(os.environ.get("LYRICS_ASR_GATE_FREE_MB") or 800)  # less VRAM free than this: wait
+GATE_FREE_MB = float(os.environ.get("LYRICS_ASR_GATE_FREE_MB") or 3000)  # less VRAM free than this: wait (large-v3-turbo fp16 OOMs at ~1 GB free)
 GATE_POLL_S = 20.0
 
 
