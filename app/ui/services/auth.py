@@ -91,15 +91,45 @@ class AuthConfigError(RuntimeError):
     """The auth settings are unsafe; the server must not start."""
 
 
-def default_store_path() -> Path:
-    """DJ_AUTH_FILE, else <cache>/auth/auth.json where <cache> is AIDJ_CACHE_DIR or the
-    repo's gitignored data/cache (the same place the server and the CLI both look)."""
-    env = os.environ.get("DJ_AUTH_FILE")
-    if env:
-        return Path(env).expanduser()
-    cache = os.environ.get("AIDJ_CACHE_DIR")
-    base = Path(cache).expanduser().resolve() if cache else Path(__file__).resolve().parents[3] / "data" / "cache"
-    return base / "auth" / "auth.json"
+_REPO = Path(__file__).resolve().parents[3]
+
+
+def default_store_path(environ: Optional[Dict[str, str]] = None) -> Path:
+    """DJ_AUTH_FILE, else $XDG_STATE_HOME/null-set/auth.json (~/.local/state/null-set/auth.json):
+    a private per-user directory, never the data/ tree (it may be a shared mount where the
+    store can't be made private). A store left at the old default (<cache>/auth/auth.json) is
+    still used, with a warning, until it is moved."""
+    env = os.environ if environ is None else environ
+    if env.get("DJ_AUTH_FILE"):
+        return Path(env["DJ_AUTH_FILE"]).expanduser()
+    state = env.get("XDG_STATE_HOME") or str(Path.home() / ".local" / "state")
+    new = Path(state).expanduser() / "null-set" / "auth.json"
+    cache = env.get("AIDJ_CACHE_DIR")
+    old = (Path(cache).expanduser().resolve() if cache else _REPO / "data" / "cache") / "auth" / "auth.json"
+    if not new.exists() and old.exists():
+        log.warning("auth store at the old place %s: move it to %s (or set DJ_AUTH_FILE)", old, new)
+        return old
+    return new
+
+
+def _private_dir_error(d: Path) -> Optional[str]:
+    """Why directory `d` can't hold the account store, or None. Group / world-writable means
+    someone else could swap the file."""
+    try:
+        st = d.stat()
+    except OSError as exc:
+        return f"cannot use {d}: {exc.strerror or exc}"
+    if st.st_mode & 0o022:
+        return f"{d} is group/world-writable ({oct(st.st_mode & 0o777)})"
+    if hasattr(os, "getuid") and st.st_uid != os.getuid():
+        return f"{d} is owned by uid {st.st_uid}, not this user"
+    return None
+
+
+def _store_refusal(path: Path, why: str) -> AuthConfigError:
+    return AuthConfigError(f"auth store {path}: {why}. The store needs a private directory (0700, "
+                           "owned by this user, not a shared mount). Set DJ_AUTH_FILE to a path in one, "
+                           "e.g. DJ_AUTH_FILE=~/.local/state/null-set/auth.json (docs/engineering/AUTH.md).")
 
 
 # ---- password hashing (stdlib scrypt) ----------------------------------------------------------
@@ -172,6 +202,9 @@ class AuthStore:
         stamp = (st.st_mtime_ns, st.st_size)
         if stamp == self._stamp:
             return
+        why = _private_dir_error(self.path.parent)
+        if why:
+            raise _store_refusal(self.path, why)
         try:
             data = json.loads(self.path.read_text(encoding="utf-8"))
         except (OSError, ValueError) as exc:
@@ -181,14 +214,27 @@ class AuthStore:
         self._data, self._stamp = data, stamp
 
     def _save(self) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        except OSError as exc:
+            raise _store_refusal(self.path, f"cannot create the directory: {exc.strerror or exc}") from None
         try:
             os.chmod(self.path.parent, 0o700)
         except OSError:
-            pass
-        fd, tmp = tempfile.mkstemp(prefix=".auth-", dir=str(self.path.parent))
+            pass                                  # not ours to change: the check below decides
+        why = _private_dir_error(self.path.parent)
+        if why:
+            raise _store_refusal(self.path, why)
         try:
-            os.fchmod(fd, 0o600)
+            fd, tmp = tempfile.mkstemp(prefix=".auth-", dir=str(self.path.parent))
+        except OSError as exc:
+            raise _store_refusal(self.path, f"cannot write: {exc.strerror or exc}") from None
+        try:
+            try:
+                os.fchmod(fd, 0o600)
+            except OSError as exc:
+                raise _store_refusal(self.path, f"cannot make the file private (chmod 600): "
+                                                f"{exc.strerror or exc}") from None
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 json.dump(self._data, f, indent=2)
                 f.flush()
@@ -1293,7 +1339,9 @@ def env_bytes(name: str, default: int, environ: Optional[Dict[str, str]] = None)
 def main(argv: Optional[Sequence[str]] = None) -> int:
     ap = argparse.ArgumentParser(prog="python -m app.ui.services.auth",
                                  description="Owner password, Google accounts and device tokens for the console API.")
-    ap.add_argument("--file", type=Path, default=None, help="account store (default: DJ_AUTH_FILE or data/cache/auth/auth.json)")
+    ap.add_argument("--file", type=Path, default=None,
+                    help="account store (default: DJ_AUTH_FILE from the env or the repo .env, "
+                         "else ~/.local/state/null-set/auth.json)")
     sub = ap.add_subparsers(dest="cmd", required=True)
     sp = sub.add_parser("set-password", help="set or change the owner password (logs out every browser)")
     sp.add_argument("--user", default=None, help="username (default: the current one, else 'owner')")
@@ -1306,6 +1354,25 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     fg = sub.add_parser("forget-google", help="unpin a Google account (ends its sessions, revokes its tokens)")
     fg.add_argument("sub", help="the account's sub (from list-google)")
     a = ap.parse_args(argv)
+    _load_repo_env()
+    try:
+        return _run(a)
+    except AuthConfigError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+
+def _load_repo_env() -> None:
+    """The repo's .env, the same file the server loads, so DJ_AUTH_FILE etc. agree. Never
+    overrides a variable already set. python-dotenv is optional here."""
+    try:
+        from dotenv import load_dotenv
+    except ImportError:
+        return
+    load_dotenv(_REPO / ".env", override=False)
+
+
+def _run(a) -> int:
     store = AuthStore(a.file or default_store_path())
 
     if a.cmd == "set-password":

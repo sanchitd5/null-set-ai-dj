@@ -79,7 +79,8 @@ class _Srv:
         import uvicorn
 
         self.cache = tmp / "cache"
-        self.settings = Settings({"STEM_SERVER_TOKEN": TOKEN, "AIDJ_CACHE_DIR": str(self.cache)})
+        self.settings = Settings({"STEM_SERVER_TOKEN": TOKEN, "AIDJ_CACHE_DIR": str(self.cache),
+                                  "DJ_AUTH_FILE": str(tmp / "state" / "auth.json")})
         self.app = create_app(self.settings, separate_fn)
         port = _free_port()
         self.base = f"http://127.0.0.1:{port}"
@@ -181,7 +182,7 @@ def test_console_device_token_accepted(srv, track):
     from app.ui.services.auth import AuthStore
 
     tid, _ = track
-    store = AuthStore(srv.cache / "auth" / "auth.json")
+    store = AuthStore(srv.settings.auth_store.path)
     tok, row = store.new_token("phone", sub="1234567890")
     assert srv.req("GET", f"/v1/tracks/{tid}", token=tok)[0] == 404          # past auth, unknown id
     assert srv.req("GET", f"/v1/tracks/{tid}")[0] == 404                      # STEM_SERVER_TOKEN still works
