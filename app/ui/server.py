@@ -73,6 +73,8 @@ UPLOAD_LIMITS = {
     ("POST", "/api/tracks"): _auth.env_bytes("DJ_MAX_TRACK_BYTES", 300 * _MB),
     ("POST", "/api/samples"): _auth.env_bytes("DJ_MAX_SAMPLE_BYTES", 26 * _MB),
     ("POST", "/api/recordings"): _auth.env_bytes("DJ_MAX_RECORDING_BYTES", 1024 * _MB),
+    # live ear: one few-second 16 kHz clip (live_ear.MAX_AUDIO_BYTES 1.5 MB) + metrics; phones post it too
+    ("POST", "/api/live/ear"): _auth.env_bytes("DJ_MAX_EAR_BYTES", 2 * _MB + _MB // 2),
 }
 MAX_BODY_BYTES = _auth.env_bytes("DJ_MAX_BODY_BYTES", 64 * _MB)   # every other request
 
