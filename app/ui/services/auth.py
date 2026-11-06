@@ -29,6 +29,8 @@ Ways in:
   * Machines: `Authorization: Bearer <device token>`. A device gets one from
     POST <token_path> {username, password, device_name}; only its sha256 is stored.
     GET <devices_path> lists them, DELETE <devices_path>/<id> revokes one.
+  * Device sign-in (RFC 8628 style): POST <device_start_path> -> codes; the owner approves at
+    <device_path> in a signed-in browser; POST <device_poll_path> hands the device token over once.
 Secrets are never accepted in the query string. Cookie-authenticated unsafe requests must
 carry a matching Origin / Referer (CSRF). Failed logins are limited per client IP and per
 username. X-Forwarded-For / -Proto are honoured only from a trusted proxy.
@@ -456,6 +458,10 @@ class AuthSettings:
     devices_path: str = "/api/auth/devices"
     google_start_path: str = "/auth/google/start"
     google_token_path: str = "/api/auth/google/token"
+    # Device authorization (RFC 8628 style): a phone starts, the owner approves in a signed-in browser.
+    device_start_path: str = "/api/auth/device/start"
+    device_poll_path: str = "/api/auth/device/poll"
+    device_path: str = "/device"
     preauth_cookie: str = "dj_oauth"
     google: GoogleConfig = field(default_factory=GoogleConfig)
     # None: password login on unless Google is configured. A loopback client may always use it.
@@ -764,29 +770,171 @@ class GoogleVerifier:
 
 
 class PendingLogins:
-    """Server-side state of browser sign-ins in flight: state -> (nonce, PKCE verifier, expiry).
-    pop() hands each state out once, so a replayed callback finds nothing."""
+    """Server-side state of browser sign-ins in flight: state -> (nonce, PKCE verifier, expiry,
+    return path). pop() hands each state out once, so a replayed callback finds nothing."""
 
     def __init__(self, max_items: int = 1000):
-        self._items: "OrderedDict[str, Tuple[str, str, float]]" = OrderedDict()
+        self._items: "OrderedDict[str, Tuple[str, str, float, str]]" = OrderedDict()
         self._lock = threading.Lock()
         self.max_items = max_items
 
-    def put(self, state: str, nonce: str, verifier: str, now: Optional[float] = None) -> None:
+    def put(self, state: str, nonce: str, verifier: str, now: Optional[float] = None, nxt: str = "") -> None:
         now = time.time() if now is None else now
         with self._lock:
             for k in [k for k, v in self._items.items() if v[2] <= now]:
                 del self._items[k]
-            self._items[state] = (nonce, verifier, now + _PREAUTH_S)
+            self._items[state] = (nonce, verifier, now + _PREAUTH_S, nxt)
             while len(self._items) > self.max_items:
                 self._items.popitem(last=False)
 
     def pop(self, state: str, now: Optional[float] = None) -> Optional[Tuple[str, str]]:
+        item = self.pop_with_next(state, now)
+        return None if item is None else (item[0], item[1])
+
+    def pop_with_next(self, state: str, now: Optional[float] = None) -> Optional[Tuple[str, str, str]]:
         with self._lock:
             item = self._items.pop(state, None)
         if item is None or item[2] <= (time.time() if now is None else now):
             return None
-        return item[0], item[1]
+        return item[0], item[1], item[3]
+
+
+# ---- device authorization (RFC 8628 style) -----------------------------------------------------
+
+# Consonants only: no words, no digits, no O/0, I/1/L lookalikes. 19 letters, 8 of them = 1.7e10 codes.
+USER_CODE_ALPHABET = "BCDFGHJKMNPQRSTVWXZ"
+DEVICE_TTL_S = 600
+DEVICE_INTERVAL_S = 3
+_DEVICE_SLOW_DOWN_S = 5
+_NEXT_RE = re.compile(r"^/device(\?code=[A-Za-z0-9-]{1,16})?$")
+
+
+def _safe_next(raw: str) -> str:
+    """A post-login return path: only the device page (never an open redirect)."""
+    return raw if raw and _NEXT_RE.match(raw) else ""
+
+
+def normalize_user_code(raw: str) -> str:
+    """'bcdf-ghjk' / 'BCDF GHJK' -> 'BCDFGHJK'; '' when it can't be a code."""
+    code = "".join(ch for ch in str(raw or "").upper() if ch.isalnum())
+    return code if len(code) == 8 and all(ch in USER_CODE_ALPHABET for ch in code) else ""
+
+
+def format_user_code(code: str) -> str:
+    return f"{code[:4]}-{code[4:]}"
+
+
+@dataclass
+class DeviceFlow:
+    device_hash: str                    # sha256 of the device code (the secret the phone holds)
+    user_hash: str                      # sha256 of the user code (what the owner types / sees)
+    user_code: str                      # shown on the approval page; useless without a signed-in owner
+    device_name: str
+    ip: str
+    created: float
+    expires: float
+    interval: int = DEVICE_INTERVAL_S
+    status: str = "pending"             # pending | approved | denied
+    owner_sub: Optional[str] = None     # Google sub of the approver (None: the password owner)
+    last_poll: float = 0.0
+
+
+class DeviceFlows:
+    """Device sign-ins in flight, in memory (a restart ends them; the phone starts over). Codes
+    are kept only as sha256 and found by comparing every row with compare_digest. The device
+    token is minted when the phone collects it, once; the flow is then gone."""
+
+    MAX_FLOWS = 200
+    MAX_LIVE_PER_IP = 5
+    STARTS_PER_IP = 10
+    START_WINDOW_S = 600
+    KEEP_S = 600                        # an expired flow still answers expired_token this long
+
+    def __init__(self):
+        self._flows: List[DeviceFlow] = []
+        self._starts: Dict[str, deque] = {}
+        self._lock = threading.Lock()
+
+    def _purge(self, now: float) -> None:
+        self._flows = [f for f in self._flows if f.expires + self.KEEP_S > now]
+        for ip in [ip for ip, q in self._starts.items() if not q or q[-1] <= now - self.START_WINDOW_S]:
+            del self._starts[ip]
+
+    @staticmethod
+    def _find(flows: List[DeviceFlow], attr: str, digest: str) -> Optional[DeviceFlow]:
+        hit = None
+        for f in flows:                                   # every row compared: no early exit
+            if hmac.compare_digest(getattr(f, attr).encode(), digest.encode()):
+                hit = f
+        return hit
+
+    def start(self, device_name: str, ip: str, now: Optional[float] = None) -> Optional[Tuple[str, DeviceFlow]]:
+        """(device_code, flow), or None when this IP (or the server) has too many in flight."""
+        now = time.time() if now is None else now
+        with self._lock:
+            self._purge(now)
+            q = self._starts.setdefault(ip, deque())
+            while q and q[0] <= now - self.START_WINDOW_S:
+                q.popleft()
+            live = sum(1 for f in self._flows if f.ip == ip and f.expires > now and f.status == "pending")
+            if len(q) >= self.STARTS_PER_IP or live >= self.MAX_LIVE_PER_IP or len(self._flows) >= self.MAX_FLOWS:
+                return None
+            q.append(now)
+            while True:
+                user_code = "".join(secrets.choice(USER_CODE_ALPHABET) for _ in range(8))
+                if self._find(self._flows, "user_hash", _sha256(user_code)) is None:
+                    break
+            device_code = secrets.token_urlsafe(32)
+            flow = DeviceFlow(device_hash=_sha256(device_code), user_hash=_sha256(user_code), user_code=user_code,
+                              device_name=device_name, ip=ip, created=now, expires=now + DEVICE_TTL_S)
+            self._flows.append(flow)
+            return device_code, flow
+
+    def pending(self, user_code: str, now: Optional[float] = None) -> Optional[DeviceFlow]:
+        """The live, undecided flow for this user code, or None."""
+        now = time.time() if now is None else now
+        code = normalize_user_code(user_code)
+        if not code:
+            return None
+        with self._lock:
+            f = self._find(self._flows, "user_hash", _sha256(code))
+            return f if f is not None and f.status == "pending" and f.expires > now else None
+
+    def decide(self, user_code: str, approve: bool, owner_sub: Optional[str],
+               now: Optional[float] = None) -> Optional[DeviceFlow]:
+        """Approve / deny a live, undecided flow (once). None: unknown, expired or decided."""
+        now = time.time() if now is None else now
+        code = normalize_user_code(user_code)
+        if not code:
+            return None
+        with self._lock:
+            f = self._find(self._flows, "user_hash", _sha256(code))
+            if f is None or f.status != "pending" or f.expires <= now:
+                return None
+            f.status = "approved" if approve else "denied"
+            f.owner_sub = owner_sub if approve else None
+            return f
+
+    def poll(self, device_code: str, now: Optional[float] = None) -> Tuple[str, Optional[DeviceFlow]]:
+        """'authorization_pending' | 'slow_down' | 'access_denied' | 'expired_token' | 'invalid_grant'
+        | 'approved' (the flow is removed: a second poll with the same code is invalid_grant)."""
+        now = time.time() if now is None else now
+        with self._lock:
+            self._purge(now)
+            f = self._find(self._flows, "device_hash", _sha256(device_code))
+            if f is None:
+                return "invalid_grant", None
+            if f.expires <= now:
+                return "expired_token", None
+            if f.last_poll and now - f.last_poll < f.interval - 0.5:      # 0.5 s slack for timer jitter
+                f.interval += _DEVICE_SLOW_DOWN_S
+                f.last_poll = now
+                return "slow_down", f
+            f.last_poll = now
+            if f.status == "pending":
+                return "authorization_pending", f
+            self._flows.remove(f)                                         # single use either way
+            return ("approved" if f.status == "approved" else "access_denied"), f
 
 
 def _preauth_sig(settings: AuthSettings, state: str) -> str:
@@ -870,7 +1018,7 @@ a.g{{background:#fff;color:#222;text-align:center;text-decoration:none;display:g
 </head><body><main><h1>{title}</h1>{error}{google}{form}</main></body></html>"""
 _PASSWORD_FORM = """<form method="post" action="{action}">
 <input name="username" autocomplete="username" placeholder="username" required>
-<input type="password" name="password" autocomplete="current-password" placeholder="password" required>
+<input type="password" name="password" autocomplete="current-password" placeholder="password" required>{hidden}
 <button type="submit">Sign in with password</button></form>"""
 _GOOGLE_LINK = '<a class="g" href="{href}">Sign in with Google</a>'
 # After the Google callback: a same-site navigation (meta refresh) to the console, so the
@@ -878,6 +1026,19 @@ _GOOGLE_LINK = '<a class="g" href="{href}">Sign in with Google</a>'
 _DONE_HTML = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta http-equiv="refresh" content="0;url={home}"><title>Signed in</title></head>
 <body style="font:16px system-ui,sans-serif;background:#111;color:#eee"><a href="{home}" style="color:#9cf">Continue</a></body></html>"""
+_DEVICE_ENTER = """{error}<form method="get" action="device">
+<label for="code">Code shown on the device</label>
+<input id="code" name="code" autocomplete="off" autocapitalize="characters" placeholder="XXXX-XXXX" required>
+<button type="submit">Continue</button></form>"""
+_DEVICE_CONFIRM = """<p style="color:#eee">Sign in <b>{name}</b> to this server?</p>
+<p style="color:#eee;font:700 2rem ui-monospace,monospace;letter-spacing:.15em;text-align:center">{code}</p>
+<p style="color:#aaa">Only approve if this code is on your own device right now. Requested from {ip};
+expires in {mins} min.</p>
+<form method="post" action="{action}"><input type="hidden" name="code" value="{code}">
+<input type="hidden" name="csrf" value="{csrf}">
+<button type="submit" name="decision" value="approve">APPROVE</button>
+<button type="submit" name="decision" value="deny">DENY</button></form>"""
+_DEVICE_DONE = """<p style="color:#eee">{msg}</p>"""
 _PAGE_CSP = b"default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'"
 _JSON = (b"content-type", b"application/json")
 # Any of these on a request = it came through a reverse proxy (published), never a local browser.
@@ -938,9 +1099,13 @@ class TokenAuthMiddleware:
                 if method == "POST":
                     return await self._login(scope, receive, send, headers, ip)
                 if method in ("GET", "HEAD"):
-                    return await self._login_page(send, 200, ip)
+                    return await self._login_page(send, 200, ip, nxt=self._query_next(scope))
             if scope["type"] == "http" and path == s.token_path and method == "POST":
                 return await self._issue_token(receive, send, ip)
+            if scope["type"] == "http" and path == s.device_start_path and method == "POST":
+                return await self._device_start(scope, receive, send, headers, ip)
+            if scope["type"] == "http" and path == s.device_poll_path and method == "POST":
+                return await self._device_poll(receive, send, ip)
             if scope["type"] == "http" and s.google.configured:
                 if path == s.google_start_path and method in ("GET", "HEAD"):
                     return await self._google_start(scope, send, headers)
@@ -958,6 +1123,8 @@ class TokenAuthMiddleware:
         if auth:
             scheme, _, cred = auth.partition(" ")
             row = s.store.check_token(cred.strip()) if scheme.lower() == "bearer" and cred.strip() else None
+            if row and self._token_identity_ok(row) and path == s.device_path:
+                return await self._deny(scope, send, 403)      # approving needs the owner's browser login
             if row and self._token_identity_ok(row):
                 # who asked, for the app (set lease holder): never the token itself
                 scope["dj_auth"] = {"kind": "device", "key": "device:" + row["id"], "name": row.get("name")}
@@ -972,11 +1139,21 @@ class TokenAuthMiddleware:
                 if (scope["type"] == "websocket" or method not in _SAFE_METHODS) and not origin_ok(s, headers):
                     return await self._deny(scope, send, 403)
                 scope["dj_auth"] = {"kind": "browser", "key": "browser:" + _sha256(cookie)[:16], "name": "browser"}
+                if scope["type"] == "http" and path == s.device_path:
+                    try:
+                        return await self._device_page(scope, receive, send, headers, ip, cookie, method)
+                    except _BodyTooLarge:
+                        return await self._send(send, 413, b'{"detail":"too large"}', [_JSON])
                 return await self._authed(scope, receive, send, path, method)
             if state == "bad":
                 self.guard.limiter.fail("ip:" + ip, s)
-            return await self._deny(scope, send, 401,
-                                    extra=[(b"set-cookie", self._cookie_header(headers, scope, "", 0))])
+            clear = (b"set-cookie", self._cookie_header(headers, scope, "", 0))
+            if scope["type"] == "http" and path == s.device_path:
+                return await self._to_login(scope, send, [clear])
+            return await self._deny(scope, send, 401, extra=[clear])
+
+        if scope["type"] == "http" and path == s.device_path:
+            return await self._to_login(scope, send)
 
         if (scope["type"] == "http" and method in ("GET", "HEAD") and not path.startswith("/api/")
                 and "text/html" in headers.get("accept", "")):
@@ -1055,7 +1232,9 @@ class TokenAuthMiddleware:
         if user is None:
             return await self._login_page(send, 401, ip, error=INVALID_LOGIN)
         value = make_session(s, user)
-        return await self._send(send, 303, b"", [(b"location", b"./"),
+        nxt = _safe_next((form.get("next") or [""])[0])
+        loc = nxt.lstrip("/").encode() if nxt else b"./"                # relative: works under a path prefix
+        return await self._send(send, 303, b"", [(b"location", loc),
                                                  (b"set-cookie", self._cookie_header(headers, scope, value,
                                                                                      s.session_seconds))])
 
@@ -1082,11 +1261,13 @@ class TokenAuthMiddleware:
             return await self._send(send, 400, json.dumps({"detail": str(exc)}).encode(), [_JSON])
         return await self._send(send, 200, json.dumps({**row, "token": token}).encode(), [_JSON])
 
-    async def _login_page(self, send, status, ip, error: str = ""):
+    async def _login_page(self, send, status, ip, error: str = "", nxt: str = ""):
         s = self.guard.settings
         action = html.escape(s.login_path.rsplit("/", 1)[-1] or "login")   # relative: works under a path prefix
-        google = _GOOGLE_LINK.format(href=html.escape(s.google_start_path.lstrip("/"))) if s.google.configured else ""
-        form = _PASSWORD_FORM.format(action=action) if s.password_login_ok(ip) else ""
+        href = s.google_start_path.lstrip("/") + ("?" + urlencode({"next": nxt}) if nxt else "")
+        google = _GOOGLE_LINK.format(href=html.escape(href)) if s.google.configured else ""
+        hidden = f'<input type="hidden" name="next" value="{html.escape(nxt)}">' if nxt else ""
+        form = _PASSWORD_FORM.format(action=action, hidden=hidden) if s.password_login_ok(ip) else ""
         page = _LOGIN_HTML.format(title=html.escape(s.title), google=google, form=form,
                                   error=f"<p>{html.escape(error)}</p>" if error else "")
         return await self._send(send, status, page.encode("utf-8"), [
@@ -1109,7 +1290,7 @@ class TokenAuthMiddleware:
     async def _google_start(self, scope, send, headers):
         s = self.guard.settings
         state, nonce, verifier = (secrets.token_urlsafe(32) for _ in range(3))
-        self.guard.pending.put(state, nonce, verifier)
+        self.guard.pending.put(state, nonce, verifier, nxt=self._query_next(scope))
         challenge = _b64(hashlib.sha256(verifier.encode("ascii")).digest())
         q = {"client_id": s.google.client_id, "redirect_uri": s.google.redirect_uri, "response_type": "code",
              "scope": "openid email", "state": state, "nonce": nonce, "code_challenge": challenge,
@@ -1135,10 +1316,10 @@ class TokenAuthMiddleware:
             if not (hmac.compare_digest(sig.encode(), _preauth_sig(s, cstate).encode())
                     and hmac.compare_digest(cstate.encode(), state.encode())):
                 raise GoogleAuthError("state does not match this browser")
-            pending = self.guard.pending.pop(state)
+            pending = self.guard.pending.pop_with_next(state)
             if pending is None:
                 raise GoogleAuthError("unknown, expired or replayed state")
-            nonce, verifier = pending
+            nonce, verifier, nxt = pending
             id_token = await asyncio.to_thread(self.guard.google.exchange, s.google, code, verifier)
             claims = await asyncio.to_thread(self.guard.google.verify, s.google, id_token, [s.google.client_id], nonce)
             ident = s.store.bind_google(claims["sub"], claims["email"])
@@ -1151,7 +1332,7 @@ class TokenAuthMiddleware:
             return await self._send(send, 403, page.encode("utf-8"), [
                 (b"content-type", b"text/html; charset=utf-8"), (b"content-security-policy", _PAGE_CSP), clear])
         value = make_session(s, {"name": _SESSION_GOOGLE + ident["sub"], "pw_version": ident["version"]})
-        home = html.escape((s.google.public_url or "") + "/")
+        home = html.escape((s.google.public_url or "") + (_safe_next(nxt) or "/"))
         return await self._send(send, 200, _DONE_HTML.format(home=home).encode("utf-8"), [
             (b"content-type", b"text/html; charset=utf-8"), (b"content-security-policy", _PAGE_CSP), clear,
             (b"set-cookie", self._cookie_header(headers, scope, value, s.session_seconds))])
@@ -1182,6 +1363,144 @@ class TokenAuthMiddleware:
         except ValueError as exc:
             return await self._send(send, 400, json.dumps({"detail": str(exc)}).encode(), [_JSON])
         return await self._send(send, 200, json.dumps({**row, "token": token}).encode(), [_JSON])
+
+    # -- device authorization ------------------------------------------------------------------
+    @staticmethod
+    def _query_next(scope) -> str:
+        q = parse_qs(scope.get("query_string", b"").decode("latin-1"))
+        return _safe_next((q.get("next") or [""])[0])
+
+    async def _to_login(self, scope, send, extra=None):
+        """The device page needs the owner's browser login: there, then back here."""
+        s = self.guard.settings
+        q = parse_qs(scope.get("query_string", b"").decode("latin-1"))
+        code = normalize_user_code((q.get("code") or [""])[0])
+        nxt = s.device_path + (f"?code={format_user_code(code)}" if code else "")
+        loc = s.login_path + "?" + urlencode({"next": nxt})
+        return await self._send(send, 303, b"", [(b"location", loc.encode()), *(extra or [])])
+
+    def _base_url(self, scope, headers) -> str:
+        s = self.guard.settings
+        if s.public_url or s.google.public_url:
+            return s.public_url or s.google.public_url
+        scheme = "https" if is_https(s, scope, headers) else "http"
+        return f"{scheme}://{headers.get('host', 'localhost')}"
+
+    async def _json_body(self, receive, send, cap: int = _FORM_BODY_MAX):
+        """(dict | None, handled). handled=True: a reply (400) was already sent or the client left."""
+        body = await _read_body(receive, cap)
+        if body is None:
+            return None, True
+        try:
+            req = json.loads(body or b"{}")
+            if not isinstance(req, dict):
+                raise ValueError
+        except ValueError:
+            await self._send(send, 400, b'{"error":"invalid_request"}', [_JSON])
+            return None, True
+        return req, False
+
+    async def _device_start(self, scope, receive, send, headers, ip):
+        """Phone: {device_name} -> device_code (secret, kept by the phone) + user_code (shown)."""
+        req, handled = await self._json_body(receive, send)
+        if handled:
+            return
+        name = " ".join(str(req.get("device_name") or "").split())[:64]
+        if not name or not isinstance(req.get("device_name"), str):
+            return await self._send(send, 400, b'{"error":"invalid_request","detail":"device_name required"}', [_JSON])
+        got = self.guard.devices.start(name, ip)
+        if got is None:
+            return await self._send(send, 429, b'{"error":"slow_down","detail":"too many sign-ins in flight"}',
+                                    [_JSON, (b"retry-after", b"60")])
+        device_code, flow = got
+        uri = self._base_url(scope, headers) + self.guard.settings.device_path
+        shown = format_user_code(flow.user_code)
+        body = {"device_code": device_code, "user_code": shown, "verification_uri": uri,
+                "verification_uri_complete": uri + "?" + urlencode({"code": shown}),
+                "expires_in": DEVICE_TTL_S, "interval": flow.interval}
+        return await self._send(send, 200, json.dumps(body).encode(), [_JSON])
+
+    _POLL_STATUS = {"authorization_pending": 428, "slow_down": 429, "access_denied": 403,
+                    "expired_token": 410, "invalid_grant": 400}
+
+    async def _device_poll(self, receive, send, ip):
+        """Phone: {device_code} -> 428 authorization_pending | 429 slow_down | 403 access_denied |
+        410 expired_token | 400 invalid_grant | 200 {token, token_id} (once)."""
+        s = self.guard.settings
+        req, handled = await self._json_body(receive, send)
+        if handled:
+            return
+        code = req.get("device_code")
+        if not isinstance(code, str) or not code or len(code) > 128:
+            return await self._send(send, 400, b'{"error":"invalid_request"}', [_JSON])
+        status, flow = self.guard.devices.poll(code)
+        if status == "approved":
+            try:
+                token, row = s.store.new_token(flow.device_name, sub=flow.owner_sub)
+            except ValueError:
+                return await self._send(send, 400, b'{"error":"invalid_request"}', [_JSON])
+            log.info("device sign-in approved: token %s (%s)", row["id"], row["name"])
+            body = {"token": token, "token_id": row["id"], "name": row["name"], "created": row["created"]}
+            return await self._send(send, 200, json.dumps(body).encode(), [_JSON])
+        if status == "invalid_grant":
+            self.guard.limiter.fail("ip:" + ip, s)                 # guessing device codes: locks the IP
+        out = {"error": status}
+        if flow is not None and status in ("slow_down", "authorization_pending"):
+            out["interval"] = flow.interval
+        return await self._send(send, self._POLL_STATUS[status], json.dumps(out).encode(), [_JSON])
+
+    def _device_csrf(self, cookie: str, user_code: str) -> str:
+        key = hmac.new(self.guard.settings.session_secret.encode(), b"device-csrf-v1", hashlib.sha256).digest()
+        return _b64(hmac.new(key, f"{_sha256(cookie)}:{user_code}".encode(), hashlib.sha256).digest())
+
+    async def _device_page(self, scope, receive, send, headers, ip, cookie, method):
+        """GET: enter / confirm a code. POST (same-origin, CSRF token): approve or deny it."""
+        s = self.guard.settings
+        if method in ("GET", "HEAD"):
+            q = parse_qs(scope.get("query_string", b"").decode("latin-1"))
+            raw = (q.get("code") or [""])[0]
+            if not raw:
+                return await self._device_html(send, 200, _DEVICE_ENTER.format(error=""))
+            flow = self.guard.devices.pending(raw)
+            if flow is None:
+                self.guard.limiter.fail("ip:" + ip, s)
+                return await self._device_html(send, 404, _DEVICE_ENTER.format(
+                    error="<p>That code is wrong, already used or expired. Check the code on the device.</p>"))
+            return await self._device_html(send, 200, _DEVICE_CONFIRM.format(
+                name=html.escape(flow.device_name), code=format_user_code(flow.user_code),
+                ip=html.escape(flow.ip), mins=max(1, int((flow.expires - time.time()) // 60)),
+                action=html.escape(s.device_path.rsplit("/", 1)[-1]),
+                csrf=self._device_csrf(cookie, flow.user_code)))
+        if method != "POST":
+            return await self._send(send, 405, b'{"detail":"method not allowed"}', [_JSON])
+        body = await _read_body(receive, _FORM_BODY_MAX)
+        if body is None:
+            return
+        form = parse_qs(body.decode("utf-8", "replace"))
+        code = normalize_user_code((form.get("code") or [""])[0])
+        decision = (form.get("decision") or [""])[0]
+        csrf = (form.get("csrf") or [""])[0]
+        if not code or decision not in ("approve", "deny") or not hmac.compare_digest(
+                csrf.encode(), self._device_csrf(cookie, code).encode()):
+            self.guard.limiter.fail("ip:" + ip, s)
+            return await self._device_html(send, 403, _DEVICE_DONE.format(
+                msg="This request could not be checked. Open the link from the device again."))
+        user = cookie.split(".")[1]
+        owner_sub = user[len(_SESSION_GOOGLE):] if user.startswith(_SESSION_GOOGLE) else None
+        flow = self.guard.devices.decide(code, decision == "approve", owner_sub)
+        if flow is None:
+            return await self._device_html(send, 404, _DEVICE_DONE.format(
+                msg="That code is already used or expired. Start again on the device."))
+        log.info("device sign-in %s for %r (client %s)", "approved" if decision == "approve" else "denied",
+                 flow.device_name, ip)
+        msg = ("Approved. Go back to the app: it signs in by itself in a few seconds. The device is listed under DEVICES."
+               if decision == "approve" else "Denied. The device was not signed in.")
+        return await self._device_html(send, 200, _DEVICE_DONE.format(msg=html.escape(msg)))
+
+    async def _device_html(self, send, status, inner: str):
+        page = _LOGIN_HTML.format(title="Sign in a device", error="", google="", form=inner)
+        return await self._send(send, status, page.encode("utf-8"), [
+            (b"content-type", b"text/html; charset=utf-8"), (b"content-security-policy", _PAGE_CSP)])
 
     def _cookie_header(self, headers, scope, value: str, max_age: int) -> bytes:
         s = self.guard.settings
@@ -1278,7 +1597,7 @@ class RedactFilter(logging.Filter):
              r"\1[redacted]"),
             (re.compile(r"(?i)([?&](?:token|access_token|api_token|api_key|password|code|state|id_token)=)"
                         r"[^&\s'\"]+"), r"\1[redacted]"),
-            (re.compile(r"(?i)(['\"]?(?:id_token|client_secret|code_verifier)['\"]?\s*[:=]\s*['\"]?)[^'\"&\s,}]+"),
+            (re.compile(r"(?i)(['\"]?(?:id_token|client_secret|code_verifier|device_code|user_code)['\"]?\s*[:=]\s*['\"]?)[^'\"&\s,}]+"),
              r"\1[redacted]"),
             (re.compile(r"eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]+"), "[redacted-jwt]"),
             (re.compile(r"(?i)(['\"]?password['\"]?\s*[:=]\s*['\"]?)[^'\"&\s,}]+"), r"\1[redacted]"),
@@ -1306,6 +1625,7 @@ class Guard:
     settings: AuthSettings
     limiter: FailureLimiter = field(default_factory=FailureLimiter)
     pending: PendingLogins = field(default_factory=PendingLogins)
+    devices: DeviceFlows = field(default_factory=DeviceFlows)
     google: GoogleVerifier = field(default_factory=GoogleVerifier)
 
 

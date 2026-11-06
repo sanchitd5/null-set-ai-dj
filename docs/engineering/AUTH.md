@@ -35,6 +35,8 @@ Public: `GET /health` (`{"ok": true}`, nothing else), `GET/POST /login`, `/logou
 `POST /api/auth/token` (it needs the password itself), and with Google:
 `GET /auth/google/start`, `GET /auth/google/callback`, `POST /api/auth/google/token` (each
 needs a valid Google sign-in).
+`POST /api/auth/device/start` and `POST /api/auth/device/poll` are public too (device sign-in,
+below); the `/device` approval page needs the browser login.
 
 401 / 403 bodies are `{"detail": "unauthorized"}` and nothing more; a browser asking for a
 page gets a redirect to `/login` instead.
@@ -89,7 +91,7 @@ separately.
 | client | how |
 |---|---|
 | Browser (the console) | `/login` -> **Sign in with Google** (or username + password where that is on) -> session cookie. The console's JS is same-origin and unchanged; `<audio>`, `fetch`, workers all send the cookie. **DEVICES** (bottom-left) lists device tokens with a revoke button, and SIGN OUT. |
-| Phone | Once: Google sign-in in the app, `POST /api/auth/google/token` with `{"id_token", "device_name"}` -> a device token (see below). The password route below still exists where password login is on: `POST /api/auth/token` with JSON `{"username", "password", "device_name"}` -> `{"id", "name", "created", "token"}`. Keep `token` in secure storage, send `Authorization: Bearer <token>` on every request. |
+| Phone | Primary: **Sign in with browser** (device sign-in, below). Fallback: Google sign-in in the app, `POST /api/auth/google/token` with `{"id_token", "device_name"}` -> a device token (see below). The password route below still exists where password login is on: `POST /api/auth/token` with JSON `{"username", "password", "device_name"}` -> `{"id", "name", "created", "token"}`. Keep `token` in secure storage, send `Authorization: Bearer <token>` on every request. |
 | Sim (`app/sim`: virtual_set, suite, stem_capture) | `python -m app.ui.services.auth new-token sim`, put it in `.env` as `DJ_API_TOKEN=...`. The sim's node side sends it as a Bearer header. |
 | Scripts / curl | Same: a named device token, `curl -H "Authorization: Bearer $DJ_API_TOKEN" ...`. |
 | `start.sh` readiness | `GET /health`, no credentials. |
@@ -188,6 +190,35 @@ Break-glass either way:
 * password login from a loopback client, e.g. `ssh -L 8000:127.0.0.1:8000 ct116` and
   `http://localhost:8000/login` (behind Caddy the client IP is the real remote address, so
   this never opens up through the proxy).
+
+### Device sign-in (phone, no native Google Sign-In)
+
+RFC 8628 style, for when the phone's own Google Sign-In fails. The phone needs no Google
+setup at all; the owner approves in any browser that can reach the console.
+
+1. Phone: `POST /api/auth/device/start` `{"device_name"}` -> `{"device_code", "user_code",
+   "verification_uri", "verification_uri_complete", "expires_in": 600, "interval": 3}`.
+   `device_code` is 32 random bytes and stays on the phone. `user_code` is 8 letters from
+   `BCDFGHJKMNPQRSTVWXZ` shown as `XXXX-XXXX`. `verification_uri` is `DJ_PUBLIC_URL/device`.
+2. The phone opens `verification_uri_complete` in the browser and shows the code big.
+   `/device` needs the normal browser login; signed out, it goes to `/login?next=/device?code=...`
+   and Google (or the password form) brings the owner back. `next` accepts the device page
+   only, so it is not an open redirect.
+3. The page shows the device name, the code, the requesting IP, and APPROVE / DENY. The
+   POST must be same-origin and carry a form token (HMAC of the session cookie and the code).
+   A bearer token can't use the page.
+4. Phone: `POST /api/auth/device/poll` `{"device_code"}` every `interval` seconds:
+   428 `authorization_pending`, 429 `slow_down` (the interval grows by 5 s), 403
+   `access_denied`, 410 `expired_token`, 400 `invalid_grant` (unknown or already used), or
+   200 `{"token", "token_id", "name", "created"}` exactly once. The device token is minted at
+   that moment, bound to the approving owner (a Google approver's `sub`, so `forget-google`
+   revokes it too), and listed under DEVICES. Same token on the console and the stem server.
+
+Limits: per IP 10 starts per 10 minutes and 5 undecided flows; 200 flows in flight in total.
+A wrong device code or user code counts toward the per-IP failure limiter (10 -> 429 for 15
+minutes). Codes are kept in memory as sha256 only, compared with `compare_digest`, single
+use, and gone 10 minutes after expiry; a restart ends every flow in flight. Neither code nor
+the token is logged (the redaction filter also strips `device_code` / `user_code` fields).
 
 ### Settings (`.env`; secrets never in the repo)
 
