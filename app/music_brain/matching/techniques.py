@@ -379,7 +379,8 @@ def learned_techniques(store: Optional[Dict[str, dict]] = None, scene: Optional[
                 res.append((f.vocal_b_entry >= 0.3, f"B sings {f.vocal_b_entry:.0%} of the entry (needs 30 %)"))
             if kind == "acapella_drop":
                 d = f.a_hook_drops[0] if f.a_hook_drops else None
-                res.append((d is not None, f'A\'s hook "{d["text"]}": beat out at {d["cut_at"]:.0f}s, drop at {d["drop_at"]:.0f}s'
+                res.append((d is not None, f'A\'s hook "{d["text"]}"{" (transcribed)" if d.get("lyrics_source") == "asr" else ""}: '
+                            f'beat out at {d["cut_at"]:.0f}s, drop at {d["drop_at"]:.0f}s'
                             if d else "no hook line on a phrase boundary in A (needs synced lyrics)"))
             return res
 

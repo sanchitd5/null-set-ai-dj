@@ -58,8 +58,9 @@ def plan(lines: List[dict], bpm: float, boundaries: Sequence[float], energy_time
     # learned holds are seconds at another song's tempo: whole bars here, so the beat
     # leaves on a bar line (drop_at is a phrase boundary)
     hold = float(np.clip(round((hold or DEFAULT_HOLD_BARS * bar) / bar), 1, MAX_HOLD_BARS)) * bar
-    from app.music_brain.analysis.lyrics import _norm
+    from app.music_brain.analysis.lyrics import _norm, hook_lines
 
+    lines = hook_lines(lines)              # unsure transcribed lines are never held alone
     hk = hooks(lines)[:3]
     ai = {_norm(x["text"]): x for x in ai_lines if x.get("text")}
     for key, x in ai.items():                      # an emotional line sung once is still a candidate
@@ -102,7 +103,8 @@ def plan(lines: List[dict], bpm: float, boundaries: Sequence[float], energy_time
                    f"voice alone {drop_at - cut_at:.1f}s ({hold_src})"]
             out.append({"line_t": line["t"], "line_end": line["end"], "text": line["text"], "count": h["count"],
                         "cut_at": round(cut_at, 2), "drop_at": round(drop_at, 2), "hold_s": round(drop_at - cut_at, 2),
-                        "energy_rise": round(rise, 3), "score": round(score, 1), "ai": bool(pick), "why": why})
+                        "energy_rise": round(rise, 3), "score": round(score, 1), "ai": bool(pick), "why": why,
+                        "lyrics_source": line.get("source") or "lrclib"})
     out.sort(key=lambda x: -x["score"])
     return out[:top_n]
 
