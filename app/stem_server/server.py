@@ -123,12 +123,25 @@ class StemServer:
             self._hash[track_id] = (st.st_mtime, st.st_size, h)
         return h
 
-    def cache_dir(self, track_id: str, p: Path) -> Path:
-        return self.s.stems / f"{self.full_hash(track_id, p)}_{self.s.model}"
+    def models(self) -> List[str]:
+        """Stem sets this server serves, best first: its own model, then the console's fast
+        backfill model (stem_service.cached_four_stems order), so a song the console already
+        split is never split again here."""
+        return list(dict.fromkeys([self.s.model, stem_service.DEMUCS_MODEL, stem_service.FAST_MODEL]))
+
+    def ready_set(self, track_id: str, p: Path) -> Optional[tuple[Dict[str, str], Path, str]]:
+        """(stems, set folder, model) of the best complete 4-stem set in the shared cache."""
+        h = self.full_hash(track_id, p)
+        for m in self.models():
+            d = self.s.stems / f"{h}_{m}"
+            st = stem_service.read_manifest(d)
+            if st and all(st.get(n) and os.path.exists(st[n]) for n in FOUR):
+                return st, d, m
+        return None
 
     def ready_stems(self, track_id: str, p: Path) -> Optional[Dict[str, str]]:
-        st = stem_service.read_manifest(self.cache_dir(track_id, p))
-        return st if st and all(st.get(n) for n in FOUR) else None
+        r = self.ready_set(track_id, p)
+        return r[0] if r else None
 
     # ---- jobs -----------------------------------------------------------------------------------
     def submit(self, track_id: str, stems: int) -> Job:
@@ -181,10 +194,10 @@ class StemServer:
             raise HTTPException(404, f"unknown stem {name}")
         if not (end > start >= 0) or end - start > windows.MAX_WINDOW_S:
             raise HTTPException(400, f"need 0 <= start < end, window <= {windows.MAX_WINDOW_S:.0f} s")
-        stems = self.ready_stems(track_id, p)
-        if stems is None:
+        ready = self.ready_set(track_id, p)
+        if ready is None:
             raise HTTPException(409, "not separated yet; POST /v1/separate")
-        cdir = self.cache_dir(track_id, p)
+        stems, cdir, model = ready
         total = windows.total_frames(stems[parts[0]])
         s0 = min(round(start * windows.SAMPLE_RATE), total)
         s1 = min(round(end * windows.SAMPLE_RATE), total)
@@ -203,7 +216,7 @@ class StemServer:
                     self.submit(track_id, 4)
                     raise HTTPException(409, f"stem cache failed its check ({bad}); re-splitting, retry later")
                 meta = windows.encode_m4a(windows.read_window([stems[n] for n in parts], s0, s1), dest)
-                meta.update(start_frame=s0, total_frames=total, model=self.s.model)
+                meta.update(start_frame=s0, total_frames=total, model=model)
                 windows.store_window_meta(dest, meta)
         return dest, meta
 
@@ -243,7 +256,8 @@ def create_app(settings: Optional[Settings] = None, separate_fn=separate_once) -
         p = srv.track_path(check_id(track_id))
         if p is None:
             raise HTTPException(404, "unknown track")
-        return {"id": track_id, "separated": srv.ready_stems(track_id, p) is not None, "model": s.model}
+        ready = srv.ready_set(track_id, p)
+        return {"id": track_id, "separated": ready is not None, "model": ready[2] if ready else s.model}
 
     @app.post("/v1/tracks", dependencies=[Depends(auth)])
     async def upload(request: Request, id: str, ext: str = "mp3"):

@@ -6,7 +6,21 @@ only the routes below exist.
 
 It shares the console's cache. Tracks live in `data/cache/uploads/<id>.<ext>` and stems in
 `data/cache/stems/<sha256>_<model>/`. A song the console has already split is served without a second
-split, and a song split here is available to the console too. Encoded windows are derived files in
+split, and a song split here is available to the console too:
+
+* The server reads the best complete 4-stem set first: its own model (`htdemucs_ft`), then the
+  console's backfill set (`htdemucs`, from the console's warm `stem_worker`). This is the same order
+  as `stem_service.cached_four_stems`. `X-Stem-Model` and `GET /v1/tracks/{id}` name the set that
+  was served.
+* An `htdemucs_ft` set written here is read first by the console, and its `htdemucs` copy is pruned
+  (`stem_service._auto_prune`).
+* Both pick the device the same way: cuda, then mps, then cpu (`stem_service._detect_device`,
+  `stem_worker.py`).
+* The console's library backfill (`_backfill_stems` at startup, `_stem_worker`) uses the GPU once
+  CUDA torch is in the venv and the console's service user can open `/dev/nvidia*` (gid 44).
+
+The console's warm worker keeps its model on the GPU while the console runs, and it is not capped
+by `STEM_SERVER_VRAM_GB`. Encoded windows are derived files in
 `data/cache/stem_windows/`, and deleting that folder is safe.
 
 ## API

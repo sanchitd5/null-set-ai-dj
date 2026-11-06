@@ -200,6 +200,24 @@ def test_split_once_and_queue_dedup(srv, track):
     assert srv.req("POST", "/v1/separate", js={"id": tid, "stems": 3})[0] == 400
 
 
+def test_reuses_the_console_backfill_set(srv, track, stems_audio):
+    """A song the console's backfill already split (htdemucs, warm worker) is served, never re-split."""
+    from app.music_brain.audio.stem_service import FAST_MODEL
+
+    tid, body = track
+    srv.req("POST", f"/v1/tracks?id={tid}&ext=mp3", body)
+    h = hashlib.sha256(body).hexdigest()
+    d = srv.cache / "stems" / f"{h}_{FAST_MODEL}"
+    d.mkdir(parents=True)
+    write_manifest(d, {n: str(write_flac(d / f"{n}.flac", (x * 32767).astype(np.int16), SR))
+                       for n, x in stems_audio.items()})
+    assert json.loads(srv.req("GET", f"/v1/tracks/{tid}")[2]) == {"id": tid, "separated": True, "model": FAST_MODEL}
+    assert json.loads(srv.req("POST", "/v1/separate", js={"id": tid, "stems": 4})[2])["status"] == "done"
+    st, hd, _ = srv.req("GET", f"/v1/tracks/{tid}/stems/drums.m4a?start=0&end=5")
+    assert st == 200 and hd["X-Stem-Model"] == FAST_MODEL
+    assert srv.calls == []
+
+
 def test_window_needs_split_first(srv, track):
     tid, body = track
     srv.req("POST", f"/v1/tracks?id={tid}&ext=mp3", body)
