@@ -258,6 +258,7 @@ def test_gpu_busy_reads_nvidia_smi_and_fails_open(monkeypatch):
 def test_batch_waits_for_a_busy_gpu_and_releases_the_model(monkeypatch):
     monkeypatch.setattr(asr, "pick_backend", lambda *a, **k: "cuda")
     monkeypatch.setattr(asr, "vocal_stems", lambda: [("h1", "v1"), ("h2", "v2")])
+    monkeypatch.setattr(asr, "current_vocal", lambda h: {"h1": "v1", "h2": "v2"}[h])
     monkeypatch.setattr(asr, "cached", lambda *a, **k: None)
     events = []
     monkeypatch.setattr(asr, "for_stem", lambda v, **k: events.append(("asr", v)) or
@@ -267,3 +268,32 @@ def test_batch_waits_for_a_busy_gpu_and_releases_the_model(monkeypatch):
     out = asr.batch(gate=lambda: next(busy), sleep=lambda s: events.append(("sleep", s)), log=lambda m: None)
     assert out["done"] == 2 and out["with_lyrics"] == 2
     assert events == [("asr", "v1"), ("release",), ("sleep", asr.GATE_POLL_S), ("asr", "v2"), ("release",)]
+
+
+def test_batch_follows_a_stem_set_replaced_during_the_wait(tmp_path, monkeypatch):
+    from app.music_brain.audio import stem_service
+
+    def stem_set(h, model):
+        d = tmp_path / f"{h}_{model}"
+        d.mkdir()
+        v = d / "vocals.wav"
+        v.write_bytes(b"x")
+        monkeypatch.setattr(stem_service, "read_manifest",
+                            lambda p, real=stem_service.read_manifest: {"vocals": str(p / "vocals.wav")})
+        return str(v)
+
+    old = stem_set("h1", "htdemucs")
+    assert asr.current_vocal("h1", tmp_path) == old
+    ft = stem_set("h1", "htdemucs_ft")
+    assert asr.current_vocal("h1", tmp_path) == ft                        # ft wins once it exists
+    assert asr.current_vocal("h9", tmp_path) is None
+
+    monkeypatch.setattr(asr, "pick_backend", lambda *a, **k: "cuda")
+    monkeypatch.setattr(asr, "vocal_stems", lambda: [("h1", old), ("h2", "gone")])
+    monkeypatch.setattr(asr, "current_vocal", lambda h: {"h1": ft}.get(h))
+    monkeypatch.setattr(asr, "cached", lambda *a, **k: None)
+    monkeypatch.setattr(asr, "release", lambda: None)
+    seen = []
+    monkeypatch.setattr(asr, "for_stem", lambda v, **k: seen.append(v) or {"lines": [], "language": None, "stats": {}})
+    out = asr.batch(gate=lambda: False, log=lambda m: None)
+    assert seen == [ft] and out["done"] == 1 and out["skipped"] == 1
