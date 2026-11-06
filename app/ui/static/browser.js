@@ -67,11 +67,49 @@
       while (queue.length) {
         const t = queue.shift();
         await fetchAnalysis(t.track_id);
-        render();
+        if (phone()) renderSoon(); else render();
       }
     });
     await Promise.all(workers);
   }
+
+  // PHONE (same query as phone-ui.js PHONE_QUERY): warming the whole library re-rendered every
+  // row after every analysis and kept a phone's main thread busy for minutes. There, only the
+  // rows on or near the screen are warmed (on refresh, search, scroll and when the LIBRARY tab
+  // opens), never while the page is hidden, and the list re-renders at most every 400 ms.
+  const PHONE_QUERY = "(max-width: 600px), (max-height: 500px) and (pointer: coarse)";
+  const phone = () => !!(window.matchMedia && window.matchMedia(PHONE_QUERY).matches);
+  const WARM_NEAR = 24;
+  let renderTimer = null;
+  function renderSoon() {
+    if (renderTimer) return;
+    renderTimer = setTimeout(() => { renderTimer = null; render(); }, 400);
+  }
+  let warming = false;
+  async function warmVisible() {
+    if (warming || document.hidden || !rowsEl.offsetParent) return;
+    const near = [];
+    for (const row of rowsEl.querySelectorAll(".browser-row")) {
+      const id = row.dataset.track;
+      if (!id || analysisCache.has(id)) continue;
+      const r = row.getBoundingClientRect();
+      if (r.bottom > -300 && r.top < window.innerHeight + 900) near.push({ track_id: id });
+      if (near.length >= WARM_NEAR) break;
+    }
+    if (!near.length) return;
+    warming = true;
+    try { await warmAnalyses(near); } finally { warming = false; }
+    renderSoon();
+    setTimeout(warmVisible, 450);   // after the re-render: the next rows on screen, if any
+  }
+  let scrollTimer = null;
+  window.addEventListener("scroll", () => {
+    if (!phone()) return;
+    clearTimeout(scrollTimer);
+    scrollTimer = setTimeout(warmVisible, 400);
+  }, { passive: true });
+  document.addEventListener("visibilitychange", () => { if (phone() && !document.hidden) warmVisible(); });
+  window.trackBrowser = { warmVisible };
 
   function deckStatus(trackId) {
     if (state.trackA === trackId) return "a";
@@ -175,7 +213,11 @@
     loadToDeck(btn.dataset.track, btn.dataset.load);
   });
 
-  if (searchEl) searchEl.addEventListener("input", render);
+  let searchTimer = null;
+  if (searchEl) searchEl.addEventListener("input", () => {
+    render();
+    if (phone()) { clearTimeout(searchTimer); searchTimer = setTimeout(warmVisible, 300); }
+  });
 
   document.querySelectorAll(".sort-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -184,6 +226,7 @@
       document.querySelectorAll(".sort-btn").forEach((b) => b.classList.toggle("is-on", b === btn));
       btn.textContent = `${btn.dataset.sort.toUpperCase()} ${sortDir > 0 ? "↑" : "↓"}`;
       render();
+      if (phone()) warmVisible();
     });
   });
 
@@ -193,7 +236,8 @@
       const data = await res.json();
       tracks = (data.tracks || []).map((t) => ({ track_id: t.track_id, name: t.display_name || baseName(t.path) }));
       render();
-      warmAnalyses(tracks.filter((t) => !analysisCache.has(t.track_id)));
+      if (phone()) warmVisible();
+      else warmAnalyses(tracks.filter((t) => !analysisCache.has(t.track_id)));
     } catch (e) {
       rowsEl.innerHTML = `<div class="browser-empty">Could not reach /api/tracks: ${e.message}</div>`;
     }

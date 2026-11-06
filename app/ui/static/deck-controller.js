@@ -241,8 +241,13 @@ class Deck {
     // AudioBuffer here; fall back to WaveSurfer's own decoded data if that
     // path was not used (it is not a playable AudioBuffer in every case, but
     // it keeps a legacy load working rather than crashing).
-    this.buffer = (window.decodedBuffers && window.decodedBuffers[this.id]) || this.wavesurfer.getDecodedData();
-    if (!this.buffer) return;
+    const buffer = (window.decodedBuffers && window.decodedBuffers[this.id]) || this.wavesurfer.getDecodedData();
+    if (!buffer) return;
+    // Once per buffer: app.js loadIntoDeck calls this straight after decoding, and WaveSurfer's
+    // "ready" (if and when it comes) for the same buffer must not reset the deck a second time.
+    if (buffer === this._readyBuffer) return;
+    this._readyBuffer = buffer;
+    this.buffer = buffer;
     // New song: the old one's stems (and any stem move) go.
     this.tempoStems = null;
     this._nativeStems = null;

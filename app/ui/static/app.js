@@ -124,16 +124,28 @@ async function loadIntoDeck(deckLetter, trackId, displayName, blob) {
   const waveform = deckLetter === "a" ? waveformA : waveformB;
   const objectUrl = URL.createObjectURL(blob);
 
+  let audioBuffer = null;
   try {
-    const audioBuffer = await audioCtx.decodeAudioData(await blob.arrayBuffer());
+    audioBuffer = await audioCtx.decodeAudioData(await blob.arrayBuffer());
+  } catch (e) {
+    console.warn(`deck ${deckLetter}: Web Audio could not decode ${displayName}:`, e && e.message);
+  }
+  if (audioBuffer) {
     window.decodedBuffers[deckLetter] = audioBuffer;
+    // The deck plays from this buffer: make it ready now rather than on WaveSurfer's "ready"
+    // (on a phone a hidden or slow waveform never emitted it and the load hung). The ready
+    // path runs once per buffer, so WaveSurfer's own "ready" afterwards is a no-op.
+    const deck = window.decks && window.decks[deckLetter];
+    if (deck) deck._onWavesurferReady();
     const channels = [];
     for (let c = 0; c < audioBuffer.numberOfChannels; c++) channels.push(audioBuffer.getChannelData(c));
-    waveform.load(objectUrl, channels, audioBuffer.duration);
-  } catch (e) {
+    Promise.resolve(waveform.load(objectUrl, channels, audioBuffer.duration))
+      .catch((e) => console.warn(`deck ${deckLetter}: waveform not drawn:`, e && e.message));
+  } else {
     // Fall back to WaveSurfer's own decoding if Web Audio can't read the file.
     window.decodedBuffers[deckLetter] = null;
-    waveform.load(objectUrl);
+    Promise.resolve(waveform.load(objectUrl)).catch((e) =>
+      setStatus(`Could not decode ${displayName} on this device: ${(e && e.message) || "unknown error"}`));
   }
 
   refreshControlAvailability();
