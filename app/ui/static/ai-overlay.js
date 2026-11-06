@@ -166,6 +166,7 @@
   // Background stem separation (server queue): one quiet progress row.
   let stemRow = null, stemTotal = 0;
   async function pollStems() {
+    if (document.hidden && window.phoneUi && window.phoneUi.phone) return;   // a hidden phone tab: no polling
     try {
       const st = await (await realFetch("/api/stems/status")).json();
       const left = st.backlog + st.urgent.length + (st.remote ? st.remote.jobs.length : (st.busy ? 1 : 0));

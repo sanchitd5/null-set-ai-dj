@@ -455,6 +455,8 @@
       b.addEventListener("click", () => {
         tab = t; store.set("phoneTab", t); apply();
         root.scrollTo(0, 0);
+        // the library warms only the analyses of rows on screen (browser.js)
+        if (t === "library" && root.trackBrowser) setTimeout(root.trackBrowser.warmVisible, 0);
       });
       ui.tabs[t] = b;
       bar.append(b);

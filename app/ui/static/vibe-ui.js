@@ -420,7 +420,9 @@
       finally { clearTimeout(to); busy = false; }
     };
     run();
-    setInterval(run, ms);
+    // a phone (phone-ui.js PHONE_QUERY) polls at half the rate; nothing is polled while hidden (above)
+    const phone = root.matchMedia && root.matchMedia("(max-width: 600px), (max-height: 500px) and (pointer: coarse)").matches;
+    setInterval(run, phone ? ms * 2 : ms);
   }
   poll("/api/llm/status", "llm", 2500);
   poll("/api/youtube/status", "yt", 5000);
