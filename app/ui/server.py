@@ -81,6 +81,9 @@ MAX_BODY_BYTES = _auth.env_bytes("DJ_MAX_BODY_BYTES", 64 * _MB)   # every other 
 # /docs, /redoc, /openapi.json: also 404 from the auth middleware whenever auth is on.
 _docs = dict(docs_url=None, redoc_url=None, openapi_url=None) if AUTH_SETTINGS.enabled else {}
 app = FastAPI(title="AI Music Brain", version="1.1.0.1", **_docs)
+from app.ui.services import set_lease as _set_lease  # noqa: E402 -- one set at a time (docs/engineering/SET_LEASE.md)
+
+app.add_middleware(_set_lease.Gate)        # added before auth = runs inside it: only signed-in callers see the holder
 AUTH_GUARD = _auth.install(app, AUTH_SETTINGS, body_limits=UPLOAD_LIMITS, default_body_limit=MAX_BODY_BYTES)
 
 
@@ -803,7 +806,8 @@ def _start_stem_worker() -> None:
 
 
 def _queue_stems(track_id: str, urgent: bool = True) -> bool:
-    return _host().queue_stems(track_id, urgent)
+    # a caller without the running set's lease never jumps ahead of that set's decks
+    return _host().queue_stems(track_id, urgent and _set_lease.may_lead())
 
 
 def _queue_stems_impl(track_id: str, urgent: bool = True) -> bool:
@@ -2899,6 +2903,7 @@ app.include_router(_mobile_router)
 from app.ui.services.session_events_api import router as _session_events_router  # noqa: E402 -- batched session events (phone watchdog)
 
 app.include_router(_session_events_router)
+app.include_router(_set_lease.router)      # /api/set/lease: one set at a time
 
 class _RevalidatingStatic(StaticFiles):
     """The console's own JS/CSS/HTML: always revalidated (ETag -> cheap 304), never taken from the
