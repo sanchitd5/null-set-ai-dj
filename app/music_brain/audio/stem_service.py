@@ -81,6 +81,7 @@ def separate(
     model: str = DEMUCS_MODEL,
     device: Optional[str] = None,
     force: bool = False,
+    runner: str = "demucs",
 ) -> StemResult:
     """Separate a track into stems, caching results by content hash.
 
@@ -91,6 +92,8 @@ def separate(
         model: Demucs model name (default htdemucs_ft).
         device: "cuda" or "cpu"; auto-detected via torch if not given.
         force: bypass the cache and re-run separation.
+        runner: module run as `python -m <runner>` with Demucs' CLI args (the stem server
+            passes app.stem_server.demucs_runner: weight checks, VRAM cap, OOM exit code).
     """
     audio_path = Path(audio_path)
     if not audio_path.exists():
@@ -115,7 +118,7 @@ def separate(
     demucs_out_dir.mkdir(parents=True, exist_ok=True)
 
     cmd = [
-        sys.executable, "-m", "demucs",
+        sys.executable, "-m", runner,
         "-n", model,
         "-d", device,
         "-o", str(demucs_out_dir),
