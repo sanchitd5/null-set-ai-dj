@@ -18,6 +18,7 @@ def _dirs(tmp_path, monkeypatch):
     ai = types.SimpleNamespace(chat=lambda *a, **k: '{"suggestions": []}')
     monkeypatch.setattr(svc.engine.current(), "ai", ai)
     monkeypatch.setattr(llm_capture, "_CTX", threading.local())   # no note from another test
+    monkeypatch.setattr(llm_gate, "gate", llm_gate.PriorityGate())  # no ear hold left by another test
 
 
 def test_capture_off_by_default_writes_nothing(tmp_path, monkeypatch):
