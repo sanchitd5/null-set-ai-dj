@@ -239,3 +239,31 @@ def test_real_model_on_a_cached_stem():
     assert doc["backend"] and doc["language"]
     assert all(0 <= l["conf"] <= 1 and l["source"] == "asr" and l["t"] < l["end"] for l in doc["lines"])
     asr.release()
+
+
+def test_gpu_busy_reads_nvidia_smi_and_fails_open(monkeypatch):
+    monkeypatch.setattr(asr.time, "sleep", lambda s: None)
+    out = lambda txt: (lambda *a, **k: type("R", (), {"stdout": txt})())
+    assert asr.gpu_busy(out("5, 3900\n")) is False
+    assert asr.gpu_busy(out("95, 3900\n")) is True             # a separation pegs the card
+    assert asr.gpu_busy(out("0, 300\n")) is True                # no room for the model
+    assert asr.gpu_busy(out("garbage")) is False                # unreadable: no gate
+
+    def missing(*a, **k):
+        raise FileNotFoundError("nvidia-smi")
+
+    assert asr.gpu_busy(missing) is False
+
+
+def test_batch_waits_for_a_busy_gpu_and_releases_the_model(monkeypatch):
+    monkeypatch.setattr(asr, "pick_backend", lambda *a, **k: "cuda")
+    monkeypatch.setattr(asr, "vocal_stems", lambda: [("h1", "v1"), ("h2", "v2")])
+    monkeypatch.setattr(asr, "cached", lambda *a, **k: None)
+    events = []
+    monkeypatch.setattr(asr, "for_stem", lambda v, **k: events.append(("asr", v)) or
+                        {"lines": [{"t": 0}], "language": "en", "stats": {}})
+    monkeypatch.setattr(asr, "release", lambda: events.append(("release",)))
+    busy = iter([False, True, True, False])                   # free, then busy twice before song 2
+    out = asr.batch(gate=lambda: next(busy), sleep=lambda s: events.append(("sleep", s)), log=lambda m: None)
+    assert out["done"] == 2 and out["with_lyrics"] == 2
+    assert events == [("asr", "v1"), ("release",), ("sleep", asr.GATE_POLL_S), ("asr", "v2"), ("release",)]

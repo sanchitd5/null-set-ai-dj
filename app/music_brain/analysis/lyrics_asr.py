@@ -550,10 +550,39 @@ def _best_vocals(root: Path, pattern: str) -> List[Tuple[str, str]]:
     return [(h, v) for h, (_, v) in sorted(best.items())]
 
 
+GATE_UTIL_PCT = float(os.environ.get("LYRICS_ASR_GATE_UTIL") or 30)      # GPU busier than this: wait
+GATE_FREE_MB = float(os.environ.get("LYRICS_ASR_GATE_FREE_MB") or 800)  # less VRAM free than this: wait
+GATE_POLL_S = 20.0
+
+
+def gpu_busy(run=None, samples: int = 3) -> bool:
+    """The shared card is in use by someone else (a stem separation, the LLM): any of a few
+    nvidia-smi samples over GATE_UTIL_PCT, or under GATE_FREE_MB free. False when nvidia-smi
+    is missing or fails (no gate rather than a batch that never starts)."""
+    import subprocess
+
+    run = run or subprocess.run
+    for k in range(samples):
+        if k:
+            time.sleep(1.0)
+        try:
+            r = run(["nvidia-smi", "--query-gpu=utilization.gpu,memory.free", "--format=csv,noheader,nounits"],
+                    capture_output=True, text=True, timeout=10)
+            util, free = (float(x) for x in r.stdout.strip().splitlines()[0].split(","))
+        except (OSError, ValueError, IndexError, subprocess.SubprocessError):
+            return False
+        if util > GATE_UTIL_PCT or free < GATE_FREE_MB:
+            return True
+    return False
+
+
 def batch(missing_only: bool = True, limit: Optional[int] = None, backend: Optional[str] = None,
-          model: Optional[str] = None, log: Callable[[str], None] = print) -> dict:
+          model: Optional[str] = None, log: Callable[[str], None] = print,
+          gate: Optional[Callable[[], bool]] = None, sleep: Callable[[float], None] = time.sleep) -> dict:
     """Transcribe every cached vocal stem (missing_only: those without a cached result for
-    this model). The model is freed at the end. -> {done, skipped, failed, with_lyrics}."""
+    this model). The model is freed at the end. -> {done, skipped, failed, with_lyrics}.
+    gate() True = the shared GPU is busy: the model is released and the batch waits before the
+    next song (default on cuda: gpu_busy; LYRICS_ASR_GPU_GATE=off turns it off)."""
     be = pick_backend(backend)
     if be is None:
         raise ValueError("no ASR backend: pip install -r requirements-asr.txt (or LYRICS_ASR is off)")
@@ -564,8 +593,15 @@ def batch(missing_only: bool = True, limit: Optional[int] = None, backend: Optio
         todo = todo[:limit]
     out = {"backend": be, "model": model_name(model), "todo": len(todo), "done": 0, "failed": 0, "with_lyrics": 0}
     log(f"ASR batch: {len(todo)} vocal stem(s), backend {be}, model {model_name(model)}")
+    if gate is None and be == "cuda" and (os.environ.get("LYRICS_ASR_GPU_GATE") or "on").lower() not in ("off", "0", "no"):
+        gate = gpu_busy
     try:
         for i, (h, v) in enumerate(todo, 1):
+            if gate is not None and gate():
+                release()                     # the card is shared: hand it back while others work
+                log(f"[{i}/{len(todo)}] GPU busy (stems / LLM): waiting")
+                while gate():
+                    sleep(GATE_POLL_S)
             try:
                 doc = for_stem(v, force=not missing_only, backend=be, model=model, log=log)
                 out["done"] += 1
