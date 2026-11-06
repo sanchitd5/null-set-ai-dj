@@ -1966,11 +1966,11 @@ function paintOverview(deck) {
 let cursorTick = 0;
 
 function animateFrame() {
-  const levelA = decks.a.currentLevel();
-  const levelB = decks.b.currentLevel();
-  paintLadder(ladderA, levelA);
-  paintLadder(ladderB, levelB);
-  paintLadder(masterLadder, masterLevel());
+  if (!window.djLite) {          // VU ladders are hidden in the phone Lite view (phone-ui.js)
+    paintLadder(ladderA, decks.a.currentLevel());
+    paintLadder(ladderB, decks.b.currentLevel());
+    paintLadder(masterLadder, masterLevel());
+  }
 
   [decks.a, decks.b].forEach((deck) => {
     const timeEl = deck.id === "a" ? timeElA : timeElB;
@@ -1995,7 +1995,8 @@ function animateFrame() {
   // ~10fps: this is what makes the waveform actually scroll under the playhead
   // when zoomed in, since playback is driven by AudioBufferSourceNode, not by
   // WaveSurfer's own media element).
-  if (++cursorTick % 6 === 0) {
+  // (skipped while the phone Lite view hides the waveforms: window.djLite, phone-ui.js)
+  if (++cursorTick % 6 === 0 && !window.djLite) {
     [decks.a, decks.b].forEach((deck) => {
       if (deck.playing && deck.buffer) {
         try { deck.wavesurfer.seekTo(deck._currentPosition() / deck.buffer.duration); } catch (e) { /* not ready */ }
