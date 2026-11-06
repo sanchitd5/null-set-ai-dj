@@ -39,6 +39,11 @@ needs a valid Google sign-in).
 401 / 403 bodies are `{"detail": "unauthorized"}` and nothing more; a browser asking for a
 page gets a redirect to `/login` instead.
 
+One set at a time: on top of auth, the set-scoped routes need the set lease while a set runs
+(`SET_LEASE.md`). The middleware hands the caller's identity to the app as `scope["dj_auth"]`
+(`device:<token id>` or a hash of the browser session cookie, never the secret itself); the lease
+uses it to name the holder. CORS (when `DJ_ALLOWED_ORIGINS` is set) allows the `X-Set-Lease` header.
+
 ## The owner account
 
 One account. Password hashed with `hashlib.scrypt` (n=2^14, r=8, p=1, 16-byte salt), stored

@@ -123,6 +123,15 @@ def _private_learn_progress(tmp_path_factory, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _private_set_lease(tmp_path_factory):
+    """Each test starts with no set lease, in a private file (never data/cache/set_lease.json)."""
+    from app.ui.services import set_lease
+    set_lease.use(set_lease.LeaseStore(tmp_path_factory.mktemp("set_lease") / "set_lease.json"))
+    yield
+    set_lease.use(None)
+
+
+@pytest.fixture(autouse=True)
 def _private_library(tmp_path_factory, monkeypatch):
     """A learn's cleanup never registers into, or deletes from, the real library: it gets a
     temporary CACHE_DIR whose uploads/ is filled by content hash, like POST /api/tracks."""
