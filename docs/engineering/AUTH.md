@@ -8,8 +8,14 @@ app, so the stem server can reuse it). Tests: `app/tests/py/test_auth.py`. TLS f
 
 * **Auth is on once an owner password exists**, for every request, localhost included
   (behind a reverse proxy every request looks local, so loopback is never exempt).
-* No password + loopback bind (`127.0.0.1`, `::1`, a unix socket): auth off, with a warning
-  in the log and at `./start.sh`. Local development only.
+* No password + loopback bind (`127.0.0.1`, `::1`, a unix socket) + no `DJ_PUBLIC_URL` + no
+  forwarded headers: auth off, with a warning in the log and at `./start.sh`. Local
+  development only.
+* **Fail closed behind a proxy:** with no password, a request carrying `X-Forwarded-For`,
+  `-Proto`, `-Host`, `X-Real-IP` or `Forwarded` (Caddy always adds them), or any request
+  while `DJ_PUBLIC_URL` is set, answers 503 `{"detail": "auth not configured"}`. Only
+  `GET /health` still answers. Behind Caddy the console binds 127.0.0.1, so the bind alone
+  would look local.
 * No password + any other bind (`--host 0.0.0.0`, a LAN address, `--fd`): **the server
   refuses to start** and says to run `set-password`. A request that still arrives on a
   non-loopback address with no password gets 503.

@@ -291,6 +291,54 @@ def test_no_password_serves_loopback_only(tmp_path):
     assert TestClient(app, auth=False, base_url="http://192.168.1.5").get("/x").status_code == 503
 
 
+def _no_login_app(tmp_path, **kw):
+    from fastapi import FastAPI
+
+    app = FastAPI()
+    app.get("/x")(lambda: {"ok": True})
+    app.get("/health")(lambda: {"ok": True})
+    auth.install(app, auth.AuthSettings(store=auth.AuthStore(tmp_path / "a.json"), session_secret="x" * 40, **kw),
+                 log_names=())
+    return TestClient(app, auth=False, base_url="http://127.0.0.1")
+
+
+@pytest.mark.parametrize("hdr", [{"X-Forwarded-For": "203.0.113.7"}, {"X-Forwarded-Proto": "https"},
+                                 {"X-Forwarded-Host": "dj.example.com"}, {"Forwarded": "for=203.0.113.7"},
+                                 {"X-Real-IP": "203.0.113.7"}])
+def test_no_login_behind_a_proxy_fails_closed(tmp_path, hdr):
+    """Loopback bind behind Caddy: every request looks local, but carries forwarded headers."""
+    c = _no_login_app(tmp_path)
+    r = c.get("/x", headers=hdr)
+    assert r.status_code == 503 and r.json() == {"detail": "auth not configured"}
+    assert c.post("/x", headers=hdr).status_code == 503
+    assert c.get("/health", headers=hdr).status_code == 200
+    assert c.get("/x").status_code == 200                       # plain local dev still works
+
+
+def test_no_login_with_public_url_fails_closed(tmp_path):
+    c = _no_login_app(tmp_path, public_url="https://dj.example.com:8448")
+    assert c.get("/x").status_code == 503
+    assert c.get("/health").status_code == 200
+    s = auth.AuthSettings.from_env(store_path=tmp_path / "b.json",
+                                   environ={"DJ_SESSION_SECRET": "s" * 40, "DJ_PUBLIC_URL": "https://dj.example.com:8448/"})
+    assert s.public_url == "https://dj.example.com:8448"
+    auth.check_bind(s, argv=["--host", "127.0.0.1"], environ={})   # starts (for /health), but serves 503
+
+
+def test_csrf_origin_with_a_non_default_port(tmp_path):
+    s = auth.AuthSettings(store=auth.AuthStore(tmp_path / "a.json"), session_secret="x" * 40,
+                          public_url="https://dj.example.com:8448")
+    # Caddy passes the client's Host through, port included
+    assert auth.origin_ok(s, {"host": "dj.example.com:8448", "origin": "https://dj.example.com:8448"})
+    assert auth.origin_ok(s, {"host": "dj.example.com:8448", "referer": "https://dj.example.com:8448/index.html"})
+    # a proxy that rewrote Host: the published origin still counts as same-origin
+    assert auth.origin_ok(s, {"host": "127.0.0.1:8000", "origin": "https://dj.example.com:8448"})
+    assert not auth.origin_ok(s, {"host": "dj.example.com:8448", "origin": "https://dj.example.com"})
+    assert not auth.origin_ok(s, {"host": "dj.example.com:8448", "origin": "https://evil.example.com:8448"})
+    hdr = {"x-forwarded-proto": "https", "host": "dj.example.com:8448"}
+    assert auth.is_https(s, {"client": ("127.0.0.1", 1), "scheme": "http"}, hdr)       # Secure cookie behind Caddy
+
+
 def test_store_file_is_private_and_hashed(tmp_path):
     st = auth.AuthStore(tmp_path / "sub" / "auth.json")
     st.set_password("owner", "correct horse battery")
