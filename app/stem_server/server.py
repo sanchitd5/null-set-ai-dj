@@ -26,6 +26,7 @@ import threading
 import time
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Dict, List, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
@@ -36,12 +37,16 @@ from app.music_brain.audio import stem_service
 from app.music_brain.config import CACHE_DIR, DEMUCS_MODEL
 from app.stem_server import windows
 from app.stem_server.demucs_runner import OOM_EXIT
+from app.ui.services.auth import FailureLimiter, client_ip   # stdlib-only module: no console import chain
 
 ID_RE = re.compile(r"^[0-9a-f]{16}$")
 AUDIO_EXTS = {"mp3", "m4a", "aac", "wav", "flac", "ogg", "opus", "aiff", "aif", "webm"}
 FOUR = list(stem_service.FOUR_STEM_NAMES)
 TWO = {"vocals": ["vocals"], "no_vocals": ["drums", "bass", "other"]}
-MIN_TOKEN_LEN = 16
+MIN_TOKEN_LEN = 32
+# Same numbers as the console (AuthSettings): 10 failures in 10 min -> that IP locked for 15 min.
+# Trusted proxy = Caddy on this host only.
+LIMITS = SimpleNamespace(trusted_proxies=("127.0.0.1", "::1"), max_failures=10, failure_window_s=600, lockout_s=900)
 
 
 class Settings:
@@ -232,10 +237,17 @@ def create_app(settings: Optional[Settings] = None, separate_fn=separate_once) -
     app = FastAPI(title="null-set stem server", docs_url=None, redoc_url=None, openapi_url=None)
     app.state.server = srv
     want = f"Bearer {s.token}".encode()
+    limiter = app.state.limiter = FailureLimiter()
 
     def auth(request: Request) -> None:
+        # per-IP failed-auth limiter (the console's): X-Forwarded-For honoured only from Caddy on loopback
+        key = "ip:" + client_ip(LIMITS, request.scope, {k.lower(): v for k, v in request.headers.items()})
+        wait = limiter.retry_after(key)
+        if wait:
+            raise HTTPException(429, "too many failed attempts; retry later", headers={"Retry-After": str(wait)})
         got = request.headers.get("authorization", "").encode()
         if not hmac.compare_digest(got, want):
+            limiter.fail(key, LIMITS)
             raise HTTPException(401, "bad or missing bearer token", headers={"WWW-Authenticate": "Bearer"})
 
     def check_id(track_id: str) -> str:

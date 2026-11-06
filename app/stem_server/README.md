@@ -26,7 +26,8 @@ by `STEM_SERVER_VRAM_GB`. Encoded windows are derived files in
 ## API
 
 Every route except `/health` needs `Authorization: Bearer $STEM_SERVER_TOKEN`. The token is compared in
-constant time, and the server refuses to start without a token of at least 16 characters. Track ids
+constant time, and the server refuses to start without a token of at least 32 characters (`openssl rand -hex 32` gives 64). Failed attempts are
+rate-limited per client IP (see Network). Track ids
 are `sha256(file bytes)[:16]`, the same as the console and the phone.
 
 | route | does |
@@ -134,18 +135,27 @@ CT116 already has the RTX 3090 passed in (`/dev/nvidia0`, `nvidiactl`, `nvidia-u
    cp deploy/stem-server.service /etc/systemd/system/
    systemctl daemon-reload && systemctl enable --now stem-server
    journalctl -u stem-server -f
-   curl http://10.0.0.116:47830/health
+   curl http://127.0.0.1:47830/health
    ```
 5. Optional: run the real-GPU test with `.venv/bin/python -m pytest app/tests/py/test_stem_server.py -m slow`.
 
-### Two network modes
+### Network
 
-* **Private (now):** `STEM_SERVER_HOST=10.0.0.116`. The phone reaches `http://10.0.0.116:47830`
-  over Tailscale, because the Proxmox host advertises 10.0.0.0/24. Do not add a LAN port forward.
-* **Behind Caddy (TLS):** `STEM_SERVER_HOST=127.0.0.1`. Caddy routes `/stems/*` here with the prefix
-  stripped, and the phone uses `https://<domain>/stems`.
+**Primary mode: behind Caddy (TLS).** Set `STEM_SERVER_HOST=127.0.0.1`. Caddy, in the same CT,
+terminates TLS on the public address and routes `/stems/*` here with the prefix stripped (see
+`deploy/Caddyfile`). In the phone's settings the URL is `https://<domain>/stems`, and the phone
+accepts only `https://` URLs. The server is never reachable except through Caddy.
 
-The token is required in both modes.
+Failed auth is limited per client IP with the console's limiter (`app/ui/services/auth.py`):
+10 bad tokens in 10 minutes lock that IP out for 15 minutes, and a locked IP gets 429 until then.
+The client IP is read from `X-Forwarded-For` only when the request comes from Caddy on
+127.0.0.1 or ::1. Any other peer is counted by its own address.
+
+*Secondary (testing only):* bind CT116's own address (`STEM_SERVER_HOST=10.0.0.116`) and reach it
+over Tailscale, because the Proxmox host advertises 10.0.0.0/24. That path is plain HTTP, and
+release builds of the phone refuse it. Never add a LAN port forward.
+
+The token (at least 32 characters) is required in every mode.
 
 CT116 has `onboot: 0`. If the phone should rely on the server, run `pct set 116 --onboot 1` on the
 Proxmox host.
@@ -154,7 +164,7 @@ Proxmox host.
 
 | var | default | |
 |---|---|---|
-| `STEM_SERVER_TOKEN` | (required) | at least 16 chars; refuses to start without it |
+| `STEM_SERVER_TOKEN` | (required) | at least 32 chars; refuses to start without it |
 | `STEM_SERVER_HOST` | 127.0.0.1 | bind address |
 | `STEM_PORT` | 47830 | port |
 | `STEM_SERVER_VRAM_GB` | 6 | CUDA allocator cap per split |
