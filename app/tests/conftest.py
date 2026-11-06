@@ -15,7 +15,11 @@ _AUTH_DIR = Path(tempfile.mkdtemp(prefix="dj-auth-test-"))
 atexit.register(shutil.rmtree, _AUTH_DIR, True)
 os.environ["DJ_AUTH_FILE"] = str(_AUTH_DIR / "auth.json")
 os.environ["DJ_SESSION_SECRET"] = secrets.token_urlsafe(32)
-os.environ["DJ_PUBLIC_URL"] = ""   # an owner .env value must not leak in (load_dotenv never overrides)
+# Google sign-in off in the shared server (an owner .env setting must not leak in: load_dotenv
+# never overrides a variable that is already set). test_auth_google.py builds its own app.
+for _k in ("DJ_GOOGLE_CLIENT_ID", "DJ_GOOGLE_CLIENT_SECRET", "DJ_PUBLIC_URL", "DJ_ALLOWED_EMAILS",
+           "DJ_GOOGLE_MOBILE_CLIENT_IDS", "DJ_GOOGLE_HD", "DJ_PASSWORD_LOGIN"):
+    os.environ[_k] = ""
 TEST_USER, TEST_PASSWORD = "owner", "pw-" + secrets.token_urlsafe(16)
 from app.ui.services import auth as _auth  # noqa: E402
 

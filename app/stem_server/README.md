@@ -25,7 +25,11 @@ by `STEM_SERVER_VRAM_GB`. Encoded windows are derived files in
 
 ## API
 
-Every route except `/health` needs `Authorization: Bearer $STEM_SERVER_TOKEN`. The token is compared in
+Every route except `/health` needs `Authorization: Bearer $STEM_SERVER_TOKEN`, or a console device
+token. Device tokens come from the console's account store (`data/cache/auth/auth.json`, or
+`DJ_AUTH_FILE`; see `docs/engineering/AUTH.md`), so a phone that signed in with Google once uses the
+same token for both servers, and revoking it in the console's DEVICES panel cuts it off here too. Both
+services must run as the same user (the store is chmod 600). The static token is compared in
 constant time, and the server refuses to start without a token of at least 32 characters (`openssl rand -hex 32` gives 64). Failed attempts are
 rate-limited per client IP (see Network). Track ids
 are `sha256(file bytes)[:16]`, the same as the console and the phone.

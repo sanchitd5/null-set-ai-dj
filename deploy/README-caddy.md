@@ -29,7 +29,8 @@ not been run on it yet. Run it (below) before the first start.
 * Headers: HSTS 1 year (no `preload`, no `includeSubDomains`), `nosniff`,
   `Referrer-Policy: same-origin`, `X-Frame-Options: DENY` plus CSP `frame-ancestors 'none'`
   (only where the app sent no CSP of its own), `Server` removed.
-* JSON access log at `/var/log/caddy/dj-access.log`, rolled at 50 MiB, 10 files, 30 days.
+* JSON access log at `/var/log/caddy/dj-access.log`, rolled at 50 MiB, 10 files, 30 days;
+  the `code` and `state` query parameters (Google's callback) are replaced with `REDACTED`.
   Caddy redacts `Authorization`, `Cookie` and `Set-Cookie` in logs by default. Never add
   `log_credentials`.
 * A commented IP allow-list (`remote_ip`) if the site should only answer certain networks.
@@ -95,6 +96,14 @@ tls {
 
 with the provider token in `/etc/caddy/dj.env`.
 
+**Public port other than 443** (the router's 443 belongs to another service, e.g. router
+8448 -> CT116 443): Caddy still listens on 443 inside CT116 and matches the site by host name
+(the `:8448` in the client's `Host` header is ignored for matching and passed through to the
+app). Set `DJ_PUBLIC_URL=https://<name>:8448` in the app's `.env` and use that URL, port
+included, for the Google redirect URI. The TLS-ALPN challenge needs public 443, so the
+certificate needs either the HTTP-01 challenge (router 80 -> CT116 80) or the DNS challenge
+above (DuckDNS: `github.com/caddy-dns/duckdns`, `dns duckdns {env.DUCKDNS_TOKEN}`).
+
 ## Network path for exposure (owner does this, later)
 
 1. Router: forward TCP 80 and 443 -> Proxmox host `192.168.1.2`. Nothing else.
@@ -108,6 +117,7 @@ with the provider token in `/etc/caddy/dj.env`.
    No rule for the console port (8000) or the stem port: those stay on 127.0.0.1 in CT116.
 3. CT116 firewall: inbound 80/443 only; 8000 and the stem port are not reachable from
    outside the container (they are bound to 127.0.0.1 anyway).
-4. Before opening the router: owner password set, `DJ_SESSION_SECRET` in `.env`,
+4. Before opening the router: Google sign-in configured (or an owner password), `DJ_SESSION_SECRET` in `.env`,
+   `DJ_PUBLIC_URL` in `.env` (with no login method set, it makes every request answer 503),
    `curl -I https://$DJ_DOMAIN/health` answers 200 and `curl https://$DJ_DOMAIN/api/recipes`
    answers 401.

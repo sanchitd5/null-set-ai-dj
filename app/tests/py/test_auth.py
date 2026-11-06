@@ -354,7 +354,9 @@ def test_store_file_is_private_and_hashed(tmp_path):
 
 def test_cli(tmp_path, monkeypatch, capsys):
     f = str(tmp_path / "auth.json")
-    assert auth.main(["--file", f, "new-token", "x"]) == 1                    # no password yet
+    assert auth.main(["--file", f, "new-token", ""]) == 1                     # a name is required
+    assert auth.main(["--file", f, "new-token", "pre"]) == 0                  # break-glass: no password needed
+    capsys.readouterr()
     answers = iter(["a-long-password-1", "a-long-password-1"])
     monkeypatch.setattr(auth.getpass, "getpass", lambda prompt="": next(answers))
     assert auth.main(["--file", f, "set-password", "--user", "dj"]) == 0

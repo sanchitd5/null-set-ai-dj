@@ -176,6 +176,19 @@ def test_auth_required_except_health(srv, track):
     assert srv.req("GET", "/docs", token=None)[0] == 404           # no console / docs routes
 
 
+def test_console_device_token_accepted(srv, track):
+    """A device token from the console's store (same cache) works here; revoked -> 401."""
+    from app.ui.services.auth import AuthStore
+
+    tid, _ = track
+    store = AuthStore(srv.cache / "auth" / "auth.json")
+    tok, row = store.new_token("phone", sub="1234567890")
+    assert srv.req("GET", f"/v1/tracks/{tid}", token=tok)[0] == 404          # past auth, unknown id
+    assert srv.req("GET", f"/v1/tracks/{tid}")[0] == 404                      # STEM_SERVER_TOKEN still works
+    assert store.revoke(row["id"])
+    assert srv.req("GET", f"/v1/tracks/{tid}", token=tok)[0] == 401
+
+
 def test_token_needs_32_chars(tmp_path):
     with pytest.raises(RuntimeError):
         Settings({"STEM_SERVER_TOKEN": "x" * 31, "AIDJ_CACHE_DIR": str(tmp_path)})
