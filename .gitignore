@@ -30,3 +30,5 @@ research/notes/*
 !research/notes/set-study-gfF8jzBVWvM.md
 !research/notes/set-study-mDtud5fLgFQ.md
 !research/notes/set_study_analyze.py
+# local fine-tuned model weights (app/music_brain/llm_train)
+data/models/

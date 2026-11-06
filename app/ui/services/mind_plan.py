@@ -24,7 +24,7 @@ from functools import lru_cache
 from typing import Any, Optional
 
 from app.music_brain.render.blend import track_drop_lines
-from app.ui.services import llm_gate
+from app.ui.services import llm_capture, llm_gate
 from app.ui.services.autopilot_service import STRICT_RETRY, _extract_json, chat_raw, failure_reason, note_retry
 
 log = logging.getLogger("mind_plan")
@@ -618,6 +618,8 @@ def plan_pair(facts: dict, timeout: float = 60.0, llm=None) -> dict:
     # PLAN priority: jumps any queued suggest / look-ahead call (llm_gate.py).
     call = llm or (lambda s, u: chat_raw(s, u, temperature=0.3, timeout=timeout, model=model,
                                           max_tokens=PLAN_MAX_TOKENS, priority=llm_gate.PLAN, kind="plan"))
+    if llm_capture.enabled():  # the facts validate_plan checks a reply against (training judge)
+        llm_capture.note("plan", facts=facts)
     t0 = time.monotonic()
     prompt = build_prompt(facts)
     raw_text = call(_SYSTEM, prompt)
