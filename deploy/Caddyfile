@@ -1,0 +1,97 @@
+# Caddy: the only public listener for the AI DJ in CT116 (:80 for ACME + redirect, :443).
+# Console (uvicorn app.ui.server) and stem server both bind 127.0.0.1 behind it; the app
+# trusts X-Forwarded-For / -Proto from 127.0.0.1 / ::1 only (DJ_TRUSTED_PROXIES default).
+# See deploy/README-caddy.md. Env (from /etc/caddy/dj.env via the systemd drop-in):
+#   DJ_DOMAIN  public hostname (required)    DJ_PORT    console port (default 8000)
+#   STEM_PORT  stem server port (default 47830)
+# Upload caps below mirror the app's: DJ_MAX_TRACK_BYTES 300 MB, DJ_MAX_SAMPLE_BYTES 26 MB,
+# DJ_MAX_RECORDING_BYTES 1 GB, DJ_MAX_BODY_BYTES 64 MB, STEM_SERVER_MAX_UPLOAD_MB 200.
+# Change both sides together.
+
+{
+	# Uncomment for a staging certificate while testing (no rate limits):
+	# acme_ca https://acme-staging-v02.api.letsencrypt.org/directory
+	servers {
+		timeouts {
+			read_header 15s
+			read_body 15m # a 1 GB recording on a slow uplink
+			write 0 # no cap: audio streams and long renders
+			idle 5m
+		}
+		# Never set log_credentials: Caddy's default keeps Authorization, Cookie and
+		# Set-Cookie redacted in the access log.
+	}
+}
+
+{$DJ_DOMAIN} {
+	encode zstd gzip
+
+	log {
+		output file /var/log/caddy/dj-access.log {
+			roll_size 50MiB
+			roll_keep 10
+			roll_keep_for 720h
+		}
+		format json
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "same-origin"
+		X-Frame-Options "DENY"
+		# Set only when the app sent none (the login page sends its own, stricter one).
+		?Content-Security-Policy "frame-ancestors 'none'"
+		-Server
+		defer
+	}
+
+	# Optional: only these networks may reach the site at all (the app still asks for login).
+	# @outside not remote_ip 192.168.1.0/24 100.64.0.0/10
+	# respond @outside 403
+
+	# Stem server (app/stem_server): /stems/* with the prefix stripped. It must bind 127.0.0.1
+	# here (STEM_SERVER_HOST=127.0.0.1), never 0.0.0.0 or the LXC address.
+	handle_path /stems/* {
+		request_body {
+			max_size 201MB
+		}
+		reverse_proxy 127.0.0.1:{$STEM_PORT:47830} {
+			flush_interval -1
+			header_down -Server
+			transport http {
+				read_timeout 15m
+				write_timeout 15m
+			}
+		}
+	}
+
+	handle {
+		@tracks path /api/tracks
+		@samples path /api/samples
+		@recordings path /api/recordings
+		@other not path /api/tracks /api/samples /api/recordings
+		request_body @tracks {
+			max_size 301MB
+		}
+		request_body @samples {
+			max_size 27MB
+		}
+		request_body @recordings {
+			max_size 1025MB
+		}
+		request_body @other {
+			max_size 65MB
+		}
+		# X-Forwarded-For / -Proto / -Host are set by Caddy itself (client values are not
+		# trusted from the internet); Host is passed through, which the app's CSRF check uses.
+		reverse_proxy 127.0.0.1:{$DJ_PORT:8000} {
+			flush_interval -1 # streaming / SSE; websockets work by default
+			header_down -Server
+			transport http {
+				read_timeout 15m # renders and stem splits can take minutes
+				write_timeout 15m # large uploads
+			}
+		}
+	}
+}
