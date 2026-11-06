@@ -4659,6 +4659,7 @@ function createAutopilotEngine({ host, ai }) {
     } catch (e) {
       apStatus(`Autopilot error: ${e.message}`);
       active = false;
+      if (host.mod.setLease) host.mod.setLease.release();
       updateButtons();
     }
   }
@@ -4694,6 +4695,7 @@ function createAutopilotEngine({ host, ai }) {
     unmuteBeatLayer();
     if (host.mod.beatLayer) host.mod.beatLayer.stop();
     if (host.mod.djMind) host.mod.djMind.stop();
+    if (host.mod.setLease) host.mod.setLease.release();
     apStatus("Autopilot stopped.");
     updateButtons();
   }
@@ -4788,11 +4790,20 @@ function createAutopilotEngine({ host, ai }) {
     if (li) pickLead(Number(li.dataset.i));
   });
 
-  startBtn.addEventListener("click", start);
+  // One set at a time (set-lease.js): START SET takes the server's set lease (409 -> TAKE OVER / CANCEL),
+  // stop() gives it back, and a takeover elsewhere stops this set.
+  const leased = (fn) => async () => {
+    const L = host.mod.setLease;
+    if (active || (L && !(await L.acquire()))) return;
+    await fn();
+    if (!active && L) L.release();                    // the set did not start (nothing loaded, seed failed)
+  };
+  if (host.mod.setLease) host.mod.setLease.onLost((why) => { if (active) { stop(); apStatus(`■ ${why}`); } });
+  startBtn.addEventListener("click", leased(start));
   const startCurBtn = ui.el("ap-start-current-btn");
-  if (startCurBtn) startCurBtn.addEventListener("click", () => { if (!active) startFromCurrent(); });
+  if (startCurBtn) startCurBtn.addEventListener("click", leased(startFromCurrent));
   if (stopBtn) stopBtn.addEventListener("click", stop);
-  if (seedInput) seedInput.addEventListener("keydown", (e) => { if (e.key === "Enter") start(); });
+  if (seedInput) seedInput.addEventListener("keydown", (e) => { if (e.key === "Enter") leased(start)(); });
 
   // On demand (ai-actions.js MERGE -> HOLD): merge -> hold -> transition on the loaded pair, A's song time aT
   // (a phrase line) at audio time t0. The same planMerge / holdPlan gates as the set; a refusal names the

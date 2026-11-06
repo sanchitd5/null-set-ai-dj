@@ -959,6 +959,8 @@ class TokenAuthMiddleware:
             scheme, _, cred = auth.partition(" ")
             row = s.store.check_token(cred.strip()) if scheme.lower() == "bearer" and cred.strip() else None
             if row and self._token_identity_ok(row):
+                # who asked, for the app (set lease holder): never the token itself
+                scope["dj_auth"] = {"kind": "device", "key": "device:" + row["id"], "name": row.get("name")}
                 return await self._authed(scope, receive, send, path, method)
             self.guard.limiter.fail("ip:" + ip, s)
             return await self._deny(scope, send, 401)
@@ -969,6 +971,7 @@ class TokenAuthMiddleware:
             if state == "ok":
                 if (scope["type"] == "websocket" or method not in _SAFE_METHODS) and not origin_ok(s, headers):
                     return await self._deny(scope, send, 403)
+                scope["dj_auth"] = {"kind": "browser", "key": "browser:" + _sha256(cookie)[:16], "name": "browser"}
                 return await self._authed(scope, receive, send, path, method)
             if state == "bad":
                 self.guard.limiter.fail("ip:" + ip, s)
@@ -1319,7 +1322,7 @@ def install(app, settings: AuthSettings, body_limits: Optional[Dict[Tuple[str, s
         from starlette.middleware.cors import CORSMiddleware
         app.add_middleware(CORSMiddleware, allow_origins=list(settings.allowed_origins),
                            allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
-                           allow_headers=["Authorization", "Content-Type"], allow_credentials=False)
+                           allow_headers=["Authorization", "Content-Type", "X-Set-Lease"], allow_credentials=False)
     flt = RedactFilter(guard)
     for name in log_names:
         logging.getLogger(name).addFilter(flt)
