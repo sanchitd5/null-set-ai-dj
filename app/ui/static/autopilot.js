@@ -1185,7 +1185,7 @@ function createAutopilotEngine({ host, ai }) {
     // background jobs (app/ui/services/bg_jobs.py): the POST starts one, the GET polls it; both answer at once
     if (u.includes("/api/transition/preplan") || u.includes("/api/merge/audition")) return 20000;
     if (u.includes("/api/autopilot/suggest")) return 240000; // ~50 s per call, may queue behind a plan
-    if (u.includes("/api/audio/")) return 120000;
+    if (u.includes("/api/audio/")) return 600000;   // full-length WAV/FLAC over a slow phone link: 120 s cut 54 MB loads short
     if (u.includes("/api/match") || u.includes("/analysis")) return 90000;
     if (u.includes("/api/tracks")) return 20000;
     return 60000;
