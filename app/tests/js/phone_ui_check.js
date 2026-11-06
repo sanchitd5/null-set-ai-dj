@@ -58,4 +58,30 @@ assert.strictEqual(p.wakeWanted(false, true), true);
 assert.strictEqual(p.wakeWanted(false, false), false);
 
 assert.deepStrictEqual(p.TABS, ["now", "library", "set", "pads", "more"]);
+
+// phone audio: only deck / stem audio routes without a query get ?q=phone
+assert.strictEqual(p.smallAudioUrl("/api/audio/tracks/0123456789abcdef"), "/api/audio/tracks/0123456789abcdef?q=phone");
+assert.strictEqual(p.smallAudioUrl("/api/tracks/0123456789abcdef/stems/vocals"), "/api/tracks/0123456789abcdef/stems/vocals?q=phone");
+assert.strictEqual(p.smallAudioUrl("/api/riff/k-12ab/drums"), "/api/riff/k-12ab/drums?q=phone");
+assert.strictEqual(p.smallAudioUrl("https://h.example:8448/api/audio/tracks/0123456789abcdef"),
+  "https://h.example:8448/api/audio/tracks/0123456789abcdef?q=phone");
+assert.strictEqual(p.smallAudioUrl("/api/audio/tracks/0123456789abcdef?q=phone"), null);   // never doubled
+assert.strictEqual(p.smallAudioUrl("/api/tracks/0123456789abcdef/analysis"), null);
+assert.strictEqual(p.smallAudioUrl("/api/tracks/0123456789abcdef/stems"), null);            // the JSON listing
+assert.strictEqual(p.smallAudioUrl("/api/riff/plan"), null);
+assert.strictEqual(p.smallAudioUrl("/api/audio/stems/0123456789abcdef/vocals"), null);      // short clips stay WAV
+assert.strictEqual(p.smallAudioUrl(null), null);
+assert.strictEqual(p.wantSmallAudio(true, null), true);
+assert.strictEqual(p.wantSmallAudio(false, { effectiveType: "4g" }), false);
+assert.strictEqual(p.wantSmallAudio(false, { effectiveType: "3g" }), false);   // an estimate: a desktop on localhost reads 3g
+assert.strictEqual(p.wantSmallAudio(false, { effectiveType: "slow-2g" }), false);
+assert.strictEqual(p.wantSmallAudio(false, { effectiveType: "4g", saveData: true }), true);
+assert.strictEqual(p.wantSmallAudio(false, undefined), false);
+// download size from 200 / 206 headers
+assert.strictEqual(p.totalBytes(200, "5000", null, 0), 5000);
+assert.strictEqual(p.totalBytes(206, "4000", "bytes 1000-4999/5000", 1000), 5000);
+assert.strictEqual(p.totalBytes(200, null, null, 0), null);
+assert.strictEqual(p.totalBytes(206, "1", "bytes 0-0/*", 0), null);
+assert.strictEqual(p.fmtProgress(12.34e6, 34e6), "12.3 / 34.0 MB (36 %)");
+assert.strictEqual(p.fmtProgress(5e6, null), "5.0 MB");
 console.log("phone ui ok");

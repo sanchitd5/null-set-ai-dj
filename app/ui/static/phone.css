@@ -343,3 +343,18 @@ html.phone-lite .pad-name { font-size: 13px; }
 @media (prefers-reduced-motion: reduce) {
   html.phone-lite .lite-btn:active { transform: none; }
 }
+
+/* ---------------------------------------------------------------------------- download progress */
+html:not(.phone-lite) #lite-dl { display: none !important; }
+html.phone-lite .lite-dl {
+  position: fixed; left: 0; right: 0; z-index: 951;
+  bottom: calc(64px + env(safe-area-inset-bottom));
+  padding: 6px max(10px, env(safe-area-inset-right)) 8px max(10px, env(safe-area-inset-left));
+  background: rgba(4, 8, 6, 0.96); border-top: 1px solid var(--outline-var);
+  font: 600 12px var(--mono); color: var(--ai); overflow: hidden;
+}
+html.phone-lite .lite-dl[hidden] { display: none; }
+.lite-dl-txt { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lite-dl-bar { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: var(--ai);
+  transform-origin: left; transform: scaleX(var(--p, 0)); }
+@media (orientation: landscape) { html.phone-lite .lite-dl { bottom: calc(52px + env(safe-area-inset-bottom)); } }
