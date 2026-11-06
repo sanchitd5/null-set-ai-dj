@@ -32,7 +32,16 @@
 			roll_keep 10
 			roll_keep_for 720h
 		}
-		format json
+		# The Google callback carries ?code=&state= in its URL: keep them out of the log.
+		format filter {
+			wrap json
+			fields {
+				request>uri query {
+					replace code REDACTED
+					replace state REDACTED
+				}
+			}
+		}
 	}
 
 	header {

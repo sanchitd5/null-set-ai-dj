@@ -15,6 +15,13 @@ a JSON store (chmod 600, atomic writes), managed by the CLI:
     python -m app.ui.services.auth revoke-token ID
 
 Ways in:
+  * Google (when DJ_GOOGLE_CLIENT_ID etc. are set): browser OIDC code flow with PKCE at
+    <google_start_path> -> Google -> <google_callback_path> -> session cookie; a phone posts a
+    Google ID token to <google_token_path> for a device token. Only DJ_ALLOWED_EMAILS get in,
+    and each address is pinned to the Google account (`sub`) that first used it. Password
+    login is then off (DJ_PASSWORD_LOGIN=1 turns it back on) except from a loopback client
+    (an SSH tunnel: break-glass). ID tokens are checked with PyJWT against Google's JWKS;
+    PyJWT is imported only when Google is configured.
   * Browser: GET/POST <login_path> with username + password -> session cookie (HttpOnly,
     SameSite=Strict, Secure on HTTPS, HMAC-signed with DJ_SESSION_SECRET, expiry, carries
     the password version so a password change logs out every browser). <logout_path>
@@ -26,11 +33,11 @@ Secrets are never accepted in the query string. Cookie-authenticated unsafe requ
 carry a matching Origin / Referer (CSRF). Failed logins are limited per client IP and per
 username. X-Forwarded-For / -Proto are honoured only from a trusted proxy.
 
-Auth is ON once a password is set (localhost included). With no password the app runs
-auth-off ONLY on a loopback bind with no DJ_PUBLIC_URL and no forwarded request headers (plain
-local development); anything else answers 503 "auth not configured" except /health. Behind a
-reverse proxy the bind is loopback and every request looks local, so the forwarded headers and
-DJ_PUBLIC_URL are what mark a published deployment.
+Auth is ON once a password is set or Google is configured (localhost included). With
+neither, the app runs auth-off ONLY on a loopback bind with no DJ_PUBLIC_URL and no forwarded
+request headers (plain local development); anything else answers 503 "auth not configured"
+except /health. Behind a reverse proxy the bind is loopback and every request looks local, so
+the forwarded headers and DJ_PUBLIC_URL are what mark a published deployment.
 
 Second factor seam: `user["totp"]` is stored (null today) and `_second_factor_ok()` is
 called on every password login; a TOTP check slots in there without touching the rest.
@@ -57,8 +64,8 @@ import time
 from collections import OrderedDict, deque
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
-from urllib.parse import parse_qs, urlsplit
+from typing import Callable, Dict, FrozenSet, Iterable, List, Optional, Sequence, Tuple
+from urllib.parse import parse_qs, urlencode, urlsplit
 
 log = logging.getLogger("auth")
 
@@ -70,6 +77,14 @@ _FORM_BODY_MAX = 4096
 _SCRYPT = dict(n=2 ** 14, r=8, p=1)
 TOKEN_PREFIX = "dj_"
 INVALID_LOGIN = "invalid username or password"
+NOT_AUTHORISED = "not authorised"
+GOOGLE_ISSUERS = ("https://accounts.google.com", "accounts.google.com")
+GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
+GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
+GOOGLE_JWKS_URL = "https://www.googleapis.com/oauth2/v3/certs"
+_GOOGLE_SKEW_S = 60
+_PREAUTH_S = 600
+_SESSION_GOOGLE = "g-"            # session user field for a Google identity: g-<sub>
 
 
 class AuthConfigError(RuntimeError):
@@ -205,8 +220,8 @@ class AuthStore:
         return bool(u and u.get("hash"))
 
     def set_password(self, username: str, password: str) -> None:
-        if not USERNAME_RE.match(username or ""):
-            raise ValueError("username: 1-64 of letters, digits, _ and -")
+        if not USERNAME_RE.match(username or "") or username.startswith(_SESSION_GOOGLE):
+            raise ValueError("username: 1-64 of letters, digits, _ and -, not starting with 'g-'")
         if len(password) < MIN_PASSWORD_LEN:
             raise ValueError(f"password must be at least {MIN_PASSWORD_LEN} characters")
         with self._lock:
@@ -224,24 +239,71 @@ class AuthStore:
             return None
         return u if verify_password(password, u["hash"]) else None
 
+    # -- Google identities: each allowed address is pinned to the account (sub) that first used it
+    def bind_google(self, sub: str, email: str) -> Optional[dict]:
+        """The identity row for this Google account, created on first sign-in. None when the
+        address is already pinned to a different Google account (a recycled or re-registered
+        address must not inherit access; `forget-google` clears the old pin)."""
+        email = email.strip().lower()
+        with self._lock:
+            self._load()
+            ids = self._data.setdefault("google", [])
+            if any(r["email"] == email and r["sub"] != sub for r in ids):
+                return None
+            now = int(time.time())
+            row = next((r for r in ids if r["sub"] == sub), None)
+            if row is None:
+                row = {"sub": sub, "email": email, "version": 1, "created": now, "last_login": now}
+                ids.append(row)
+            else:
+                row["email"], row["last_login"] = email, now
+            self._save()
+            return dict(row)
+
+    def google_identity(self, sub: str) -> Optional[dict]:
+        with self._lock:
+            self._load()
+            row = next((r for r in self._data.get("google", []) if r["sub"] == sub), None)
+            return dict(row) if row else None
+
+    def list_google(self) -> List[dict]:
+        with self._lock:
+            self._load()
+            return [dict(r) for r in self._data.get("google", [])]
+
+    def forget_google(self, sub: str) -> bool:
+        """Drop the pin (its browser sessions end) and revoke the device tokens it issued."""
+        with self._lock:
+            self._load()
+            ids = self._data.get("google", [])
+            keep = [r for r in ids if r["sub"] != sub]
+            if len(keep) == len(ids):
+                return False
+            self._data["google"] = keep
+            self._data["tokens"] = [t for t in self._data["tokens"] if t.get("sub") != sub]
+            self._save()
+            return True
+
     # -- device tokens
-    def new_token(self, name: str) -> Tuple[str, dict]:
+    def new_token(self, name: str, sub: Optional[str] = None) -> Tuple[str, dict]:
         name = " ".join((name or "").split())[:64]
         if not name:
             raise ValueError("device name required")
         token = TOKEN_PREFIX + secrets.token_urlsafe(32)
         row = {"id": secrets.token_hex(4), "name": name, "sha256": _sha256(token),
                "created": int(time.time()), "last_used": None}
+        if sub:
+            row["sub"] = sub                                 # issued by a Google sign-in
         with self._lock:
             self._load()
             self._data["tokens"].append(row)
             self._save()
-        return token, {k: v for k, v in row.items() if k != "sha256"}
+        return token, {k: v for k, v in row.items() if k not in ("sha256", "sub")}
 
     def list_tokens(self) -> List[dict]:
         with self._lock:
             self._load()
-            return [{k: v for k, v in t.items() if k != "sha256"} for t in self._data["tokens"]]
+            return [{k: v for k, v in t.items() if k not in ("sha256", "sub")} for t in self._data["tokens"]]
 
     def revoke(self, token_id: str) -> bool:
         with self._lock:
@@ -280,6 +342,52 @@ def _split(value: str) -> Tuple[str, ...]:
 
 
 @dataclass
+class GoogleConfig:
+    """Google sign-in. Empty client_id = off."""
+    client_id: str = ""
+    client_secret: str = ""
+    public_url: str = ""                     # https://<name>, builds the redirect URI exactly
+    allowed_emails: FrozenSet[str] = frozenset()
+    mobile_client_ids: Tuple[str, ...] = ()
+    hd: str = ""                             # optional Workspace domain lock
+    callback_path: str = "/auth/google/callback"
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.client_id)
+
+    @property
+    def redirect_uri(self) -> str:
+        return self.public_url + self.callback_path
+
+    def validate(self) -> None:
+        if not self.client_id:
+            if self.client_secret or self.mobile_client_ids:
+                raise AuthConfigError("Google sign-in: DJ_GOOGLE_CLIENT_ID is not set but other DJ_GOOGLE_* are")
+            return
+        if not self.allowed_emails:
+            raise AuthConfigError("Google sign-in: DJ_GOOGLE_CLIENT_ID is set but DJ_ALLOWED_EMAILS is empty")
+        if not self.client_secret or not self.public_url:
+            raise AuthConfigError("Google sign-in needs DJ_GOOGLE_CLIENT_SECRET and DJ_PUBLIC_URL too")
+        p = urlsplit(self.public_url)
+        local = _is_loopback(p.hostname)
+        if p.scheme != "https" and not (p.scheme == "http" and local):
+            raise AuthConfigError("DJ_PUBLIC_URL must be https:// (http only for localhost)")
+        if p.path or p.query or p.fragment:
+            raise AuthConfigError("DJ_PUBLIC_URL is scheme://host[:port] only, no path")
+        if any("@" not in e for e in self.allowed_emails):
+            raise AuthConfigError("DJ_ALLOWED_EMAILS: comma-separated email addresses")
+
+    @classmethod
+    def from_env(cls, env, prefix: str = "DJ_") -> "GoogleConfig":
+        g = lambda k: (env.get(prefix + k) or "").strip()  # noqa: E731
+        return cls(client_id=g("GOOGLE_CLIENT_ID"), client_secret=g("GOOGLE_CLIENT_SECRET"),
+                   public_url=g("PUBLIC_URL").rstrip("/"),
+                   allowed_emails=frozenset(e.lower() for e in _split(g("ALLOWED_EMAILS"))),
+                   mobile_client_ids=_split(g("GOOGLE_MOBILE_CLIENT_IDS")), hd=g("GOOGLE_HD").lower())
+
+
+@dataclass
 class AuthSettings:
     store: AuthStore
     session_secret: str = ""
@@ -297,6 +405,12 @@ class AuthSettings:
     logout_path: str = "/logout"
     token_path: str = "/api/auth/token"
     devices_path: str = "/api/auth/devices"
+    google_start_path: str = "/auth/google/start"
+    google_token_path: str = "/api/auth/google/token"
+    preauth_cookie: str = "dj_oauth"
+    google: GoogleConfig = field(default_factory=GoogleConfig)
+    # None: password login on unless Google is configured. A loopback client may always use it.
+    password_login: Optional[bool] = None
     max_failures: int = 10
     failure_window_s: int = 600
     lockout_s: int = 900
@@ -323,6 +437,9 @@ class AuthSettings:
             kw["public_url"] = env[prefix + "PUBLIC_URL"].strip().rstrip("/")
         if env.get(prefix + "ALLOWED_ORIGINS"):
             kw["allowed_origins"] = tuple(o.rstrip("/") for o in _split(env[prefix + "ALLOWED_ORIGINS"]))
+        kw["google"] = GoogleConfig.from_env(env, prefix)
+        if (env.get(prefix + "PASSWORD_LOGIN") or "").strip():
+            kw["password_login"] = env[prefix + "PASSWORD_LOGIN"].strip().lower() in ("1", "true", "yes", "on")
         kw.update(overrides)
         s = cls(**kw)
         s.validate()
@@ -335,10 +452,20 @@ class AuthSettings:
             raise AuthConfigError("allowed origins must be an explicit list, not '*'")
         for p in self.trusted_proxies:
             ipaddress.ip_network(p, strict=False)       # raises ValueError on a typo
+        self.google.validate()
 
     @property
     def enabled(self) -> bool:
-        return self.store.has_password
+        return self.google.configured or self.store.has_password
+
+    def password_login_ok(self, ip: str) -> bool:
+        """Password sign-in for this client: on without Google, else only when DJ_PASSWORD_LOGIN
+        says so or the client itself is loopback (an SSH tunnel; behind Caddy the client IP is
+        the real remote one)."""
+        if not self.store.has_password:
+            return False
+        on = (not self.google.configured) if self.password_login is None else self.password_login
+        return on or _is_loopback(ip)
 
 
 # ---- bind check ------------------------------------------------------------------------------
@@ -381,13 +508,15 @@ def bind_host_from_argv(argv: Sequence[str], environ: Optional[Dict[str, str]] =
 
 def check_bind(settings: AuthSettings, argv: Optional[Sequence[str]] = None,
                environ: Optional[Dict[str, str]] = None) -> None:
-    """Fail closed: no password and a non-loopback bind -> refuse to start."""
+    """Fail closed: no password, no Google sign-in and a non-loopback bind -> refuse to start.
+    (Incomplete Google settings already failed in AuthSettings.validate.)"""
     if settings.enabled:
         return
     host = bind_host_from_argv(sys.argv if argv is None else argv, environ)
     if not _is_loopback(host):
-        raise AuthConfigError(f"refusing to start: binding {host or 'an unknown address'} with no owner password. "
-                              "Run: python -m app.ui.services.auth set-password   (or bind 127.0.0.1 only)")
+        raise AuthConfigError(f"refusing to start: binding {host or 'an unknown address'} with no owner password "
+                              "and no Google sign-in. Configure DJ_GOOGLE_* (docs/engineering/AUTH.md) or run: "
+                              "python -m app.ui.services.auth set-password   (or bind 127.0.0.1 only)")
     if settings.public_url:
         log.error("AUTH NOT CONFIGURED: DJ_PUBLIC_URL is set but no owner password exists - every request "
                   "except /health answers 503. Run: python -m app.ui.services.auth set-password")
@@ -420,6 +549,12 @@ def check_session(settings: AuthSettings, value: str, now: Optional[float] = Non
         return "bad"
     if int(parts[3]) <= (time.time() if now is None else now):
         return "expired"
+    if parts[1].startswith(_SESSION_GOOGLE):
+        g = settings.store.google_identity(parts[1][len(_SESSION_GOOGLE):])
+        if (not settings.google.configured or not g or int(g.get("version", 0)) != int(parts[2])
+                or g["email"] not in settings.google.allowed_emails):
+            return "stale"
+        return "ok"
     u = settings.store.user
     if not u or u["name"] != parts[1] or int(u.get("pw_version", 0)) != int(parts[2]):
         return "stale"
@@ -470,6 +605,145 @@ class FailureLimiter:
         with self._lock:
             self._fails.clear()
             self._locked.clear()
+
+
+# ---- Google ID tokens --------------------------------------------------------------------------
+
+class GoogleAuthError(Exception):
+    """A refused Google sign-in. str() is a reason for the log: never a token or a code."""
+
+
+def _http_json(url: str, data: Optional[dict] = None, timeout: float = 10.0) -> Tuple[dict, Dict[str, str]]:
+    import urllib.error
+    import urllib.request
+    body = urlencode(data).encode() if data is not None else None
+    req = urllib.request.Request(url, data=body, headers={"Accept": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:      # noqa: S310 -- fixed https URLs
+            return json.loads(r.read(1 << 20)), {k.lower(): v for k, v in r.headers.items()}
+    except urllib.error.HTTPError as exc:
+        raise GoogleAuthError(f"{urlsplit(url).netloc} answered HTTP {exc.code}") from None
+    except (OSError, ValueError) as exc:
+        raise GoogleAuthError(f"{urlsplit(url).netloc} unreachable: {type(exc).__name__}") from None
+
+
+def _max_age(headers: Dict[str, str], default: int = 3600) -> int:
+    m = re.search(r"max-age=(\d+)", headers.get("cache-control", ""))
+    return min(int(m.group(1)), 86400) if m else default
+
+
+class GoogleVerifier:
+    """Code exchange and ID-token checks. JWKS keys are cached for the max-age Google sends and
+    refetched (at most every 30 s) when a token names a kid we don't have, so key rotation is
+    picked up without a restart. `fetch(url, data|None) -> (json, headers)` is swappable for tests."""
+
+    REFETCH_MIN_S = 30
+
+    def __init__(self, fetch: Callable[..., Tuple[dict, Dict[str, str]]] = _http_json):
+        self.fetch = fetch
+        self._keys: Dict[str, object] = {}
+        self._keys_until = 0.0
+        self._last_fetch = 0.0
+        self._lock = threading.Lock()
+
+    def _key(self, kid: str):
+        import jwt
+        now = time.time()
+        with self._lock:
+            stale = now >= self._keys_until
+            if (stale or kid not in self._keys) and (stale or now - self._last_fetch >= self.REFETCH_MIN_S):
+                self._last_fetch = now
+                data, headers = self.fetch(GOOGLE_JWKS_URL, None)
+                try:
+                    jwks = jwt.PyJWKSet.from_dict(data)
+                except jwt.PyJWTError as exc:
+                    raise GoogleAuthError(f"bad JWKS: {type(exc).__name__}") from None
+                self._keys = {k.key_id: k for k in jwks.keys if k.key_id}
+                self._keys_until = now + _max_age(headers)
+            key = self._keys.get(kid)
+        if key is None:
+            raise GoogleAuthError("ID token signed by an unknown key")
+        return key
+
+    def exchange(self, cfg: GoogleConfig, code: str, code_verifier: str) -> str:
+        data, _ = self.fetch(GOOGLE_TOKEN_URL, {
+            "grant_type": "authorization_code", "code": code, "code_verifier": code_verifier,
+            "client_id": cfg.client_id, "client_secret": cfg.client_secret, "redirect_uri": cfg.redirect_uri})
+        tok = data.get("id_token") if isinstance(data, dict) else None
+        if not isinstance(tok, str) or not tok:
+            raise GoogleAuthError("token endpoint returned no id_token")
+        return tok
+
+    def verify(self, cfg: GoogleConfig, id_token: str, audiences: Sequence[str],
+               nonce: Optional[str] = None) -> dict:
+        """Claims of a valid ID token for an allowed, verified address; else GoogleAuthError."""
+        import jwt
+        try:
+            header = jwt.get_unverified_header(id_token)
+        except jwt.PyJWTError:
+            raise GoogleAuthError("malformed ID token") from None
+        if header.get("alg") != "RS256":
+            raise GoogleAuthError("ID token alg is not RS256")
+        key = self._key(str(header.get("kid") or ""))
+        try:
+            claims = jwt.decode(id_token, key.key, algorithms=["RS256"], audience=list(audiences),
+                                leeway=_GOOGLE_SKEW_S,
+                                options={"require": ["iss", "aud", "sub", "exp", "iat"]})
+        except jwt.ExpiredSignatureError:
+            raise GoogleAuthError("ID token expired") from None
+        except jwt.InvalidAudienceError:
+            raise GoogleAuthError("ID token audience is not ours") from None
+        except jwt.PyJWTError as exc:
+            raise GoogleAuthError(f"ID token rejected: {type(exc).__name__}") from None
+        if claims.get("iss") not in GOOGLE_ISSUERS:
+            raise GoogleAuthError("ID token issuer is not Google")
+        if not isinstance(claims.get("iat"), (int, float)) or claims["iat"] > time.time() + _GOOGLE_SKEW_S:
+            raise GoogleAuthError("ID token issued in the future")
+        if nonce is not None and not hmac.compare_digest(str(claims.get("nonce") or "").encode(), nonce.encode()):
+            raise GoogleAuthError("nonce mismatch")
+        if claims.get("email_verified") not in (True, "true"):
+            raise GoogleAuthError("email not verified")
+        email = str(claims.get("email") or "").strip().lower()
+        if not email or email not in cfg.allowed_emails:
+            raise GoogleAuthError("address not in DJ_ALLOWED_EMAILS")
+        if cfg.hd and str(claims.get("hd") or "").lower() != cfg.hd:
+            raise GoogleAuthError("hosted domain mismatch")
+        if not str(claims.get("sub") or "").isalnum():
+            raise GoogleAuthError("bad sub")
+        claims["email"] = email
+        return claims
+
+
+class PendingLogins:
+    """Server-side state of browser sign-ins in flight: state -> (nonce, PKCE verifier, expiry).
+    pop() hands each state out once, so a replayed callback finds nothing."""
+
+    def __init__(self, max_items: int = 1000):
+        self._items: "OrderedDict[str, Tuple[str, str, float]]" = OrderedDict()
+        self._lock = threading.Lock()
+        self.max_items = max_items
+
+    def put(self, state: str, nonce: str, verifier: str, now: Optional[float] = None) -> None:
+        now = time.time() if now is None else now
+        with self._lock:
+            for k in [k for k, v in self._items.items() if v[2] <= now]:
+                del self._items[k]
+            self._items[state] = (nonce, verifier, now + _PREAUTH_S)
+            while len(self._items) > self.max_items:
+                self._items.popitem(last=False)
+
+    def pop(self, state: str, now: Optional[float] = None) -> Optional[Tuple[str, str]]:
+        with self._lock:
+            item = self._items.pop(state, None)
+        if item is None or item[2] <= (time.time() if now is None else now):
+            return None
+        return item[0], item[1]
+
+
+def _preauth_sig(settings: AuthSettings, state: str) -> str:
+    key = hmac.new(settings.session_secret.encode(), b"preauth-v1:" + settings.preauth_cookie.encode(),
+                   hashlib.sha256).digest()
+    return _b64(hmac.new(key, state.encode(), hashlib.sha256).digest())
 
 
 # ---- request helpers -------------------------------------------------------------------------
@@ -539,11 +813,20 @@ def origin_ok(settings: AuthSettings, headers: Dict[str, str]) -> bool:
 _LOGIN_HTML = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>{title}</title>
 <style>body{{font:16px system-ui,sans-serif;background:#111;color:#eee;display:grid;place-items:center;min-height:90vh}}
-form{{display:grid;gap:.6rem;min-width:18rem}}input,button{{font:inherit;padding:.5rem}}p{{color:#f77;margin:0}}</style>
-</head><body><form method="post" action="{action}"><h1>{title}</h1>{error}
-<input name="username" autocomplete="username" placeholder="username" required autofocus>
+main,form{{display:grid;gap:.6rem;min-width:18rem}}input,button,a.g{{font:inherit;padding:.5rem}}
+a.g{{background:#fff;color:#222;text-align:center;text-decoration:none;border-radius:4px}}p{{color:#f77;margin:0}}</style>
+</head><body><main><h1>{title}</h1>{error}{google}{form}</main></body></html>"""
+_PASSWORD_FORM = """<form method="post" action="{action}">
+<input name="username" autocomplete="username" placeholder="username" required>
 <input type="password" name="password" autocomplete="current-password" placeholder="password" required>
-<button type="submit">Sign in</button></form></body></html>"""
+<button type="submit">Sign in with password</button></form>"""
+_GOOGLE_LINK = '<a class="g" href="{href}">Sign in with Google</a>'
+# After the Google callback: a same-site navigation (meta refresh) to the console, so the
+# SameSite=Strict session cookie is sent (a redirect chain that began at Google would not).
+_DONE_HTML = """<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta http-equiv="refresh" content="0;url={home}"><title>Signed in</title></head>
+<body style="font:16px system-ui,sans-serif;background:#111;color:#eee"><a href="{home}" style="color:#9cf">Continue</a></body></html>"""
+_PAGE_CSP = b"default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'"
 _JSON = (b"content-type", b"application/json")
 # Any of these on a request = it came through a reverse proxy (published), never a local browser.
 _FORWARDED = ("x-forwarded-for", "x-forwarded-proto", "x-forwarded-host", "x-real-ip", "forwarded")
@@ -603,9 +886,16 @@ class TokenAuthMiddleware:
                 if method == "POST":
                     return await self._login(scope, receive, send, headers, ip)
                 if method in ("GET", "HEAD"):
-                    return await self._login_page(send, 200)
+                    return await self._login_page(send, 200, ip)
             if scope["type"] == "http" and path == s.token_path and method == "POST":
                 return await self._issue_token(receive, send, ip)
+            if scope["type"] == "http" and s.google.configured:
+                if path == s.google_start_path and method in ("GET", "HEAD"):
+                    return await self._google_start(scope, send, headers)
+                if path == s.google.callback_path and method == "GET":
+                    return await self._google_callback(scope, send, headers, ip)
+                if path == s.google_token_path and method == "POST":
+                    return await self._google_token(receive, send, ip)
         except _BodyTooLarge:
             return await self._send(send, 413, b'{"detail":"too large"}', [_JSON])
         if scope["type"] == "http" and path == s.logout_path and method in ("GET", "POST"):
@@ -615,7 +905,8 @@ class TokenAuthMiddleware:
         auth = headers.get("authorization", "")
         if auth:
             scheme, _, cred = auth.partition(" ")
-            if scheme.lower() == "bearer" and cred.strip() and s.store.check_token(cred.strip()):
+            row = s.store.check_token(cred.strip()) if scheme.lower() == "bearer" and cred.strip() else None
+            if row and self._token_identity_ok(row):
                 return await self._authed(scope, receive, send, path, method)
             self.guard.limiter.fail("ip:" + ip, s)
             return await self._deny(scope, send, 401)
@@ -681,10 +972,22 @@ class TokenAuthMiddleware:
         """Seam for TOTP: today no account has one, so the password alone signs in."""
         return not user.get("totp")
 
+    def _token_identity_ok(self, row: dict) -> bool:
+        """A token issued by a Google sign-in lives only while that identity is still pinned and
+        its address still allowed (a CLI-made or password-made token has no sub)."""
+        sub = row.get("sub")
+        if not sub:
+            return True
+        s = self.guard.settings
+        g = s.store.google_identity(sub)
+        return bool(s.google.configured and g and g["email"] in s.google.allowed_emails)
+
     async def _login(self, scope, receive, send, headers, ip):
         s = self.guard.settings
         if not origin_ok(s, headers):                 # login CSRF: a foreign page can't sign you in
             return await self._deny(scope, send, 403)
+        if not s.password_login_ok(ip):
+            return await self._send(send, 403, b'{"detail":"password login is off"}', [_JSON])
         body = await _read_body(receive, _FORM_BODY_MAX)
         if body is None:
             return
@@ -695,13 +998,15 @@ class TokenAuthMiddleware:
             return await self._send(send, 429, b'{"detail":"too many attempts"}',
                                     [_JSON, (b"retry-after", str(wait).encode())])
         if user is None:
-            return await self._login_page(send, 401, error=True)
+            return await self._login_page(send, 401, ip, error=INVALID_LOGIN)
         value = make_session(s, user)
         return await self._send(send, 303, b"", [(b"location", b"./"),
                                                  (b"set-cookie", self._cookie_header(headers, scope, value,
                                                                                      s.session_seconds))])
 
     async def _issue_token(self, receive, send, ip):
+        if not self.guard.settings.password_login_ok(ip):
+            return await self._send(send, 403, b'{"detail":"password login is off"}', [_JSON])
         body = await _read_body(receive, _FORM_BODY_MAX)
         if body is None:
             return
@@ -722,16 +1027,106 @@ class TokenAuthMiddleware:
             return await self._send(send, 400, json.dumps({"detail": str(exc)}).encode(), [_JSON])
         return await self._send(send, 200, json.dumps({**row, "token": token}).encode(), [_JSON])
 
-    async def _login_page(self, send, status, error=False):
+    async def _login_page(self, send, status, ip, error: str = ""):
         s = self.guard.settings
         action = html.escape(s.login_path.rsplit("/", 1)[-1] or "login")   # relative: works under a path prefix
-        page = _LOGIN_HTML.format(title=html.escape(s.title), action=action,
-                                  error=f"<p>{INVALID_LOGIN}</p>" if error else "")
+        google = _GOOGLE_LINK.format(href=html.escape(s.google_start_path.lstrip("/"))) if s.google.configured else ""
+        form = _PASSWORD_FORM.format(action=action) if s.password_login_ok(ip) else ""
+        page = _LOGIN_HTML.format(title=html.escape(s.title), google=google, form=form,
+                                  error=f"<p>{html.escape(error)}</p>" if error else "")
         return await self._send(send, status, page.encode("utf-8"), [
-            (b"content-type", b"text/html; charset=utf-8"),
-            (b"content-security-policy",
-             b"default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'"),
-        ])
+            (b"content-type", b"text/html; charset=utf-8"), (b"content-security-policy", _PAGE_CSP)])
+
+    # -- Google ---------------------------------------------------------------------------------
+    def _refuse(self, ip: str, reason: str) -> None:
+        self.guard.limiter.fail("ip:" + ip, self.guard.settings)
+        log.warning("google sign-in refused (client %s): %s", ip, reason)   # never a token or code
+
+    def _preauth_header(self, headers, scope, value: str, max_age: int) -> bytes:
+        """Lax, not Strict: the callback is a cross-site top-level redirect from Google."""
+        s = self.guard.settings
+        parts = [f"{s.preauth_cookie}={value}", "Path=" + s.google.callback_path.rsplit("/", 1)[0] + "/",
+                 f"Max-Age={max_age}", "HttpOnly", "SameSite=Lax"]
+        if s.google.public_url.startswith("https://") or is_https(s, scope, headers):
+            parts.append("Secure")
+        return "; ".join(parts).encode("latin-1")
+
+    async def _google_start(self, scope, send, headers):
+        s = self.guard.settings
+        state, nonce, verifier = (secrets.token_urlsafe(32) for _ in range(3))
+        self.guard.pending.put(state, nonce, verifier)
+        challenge = _b64(hashlib.sha256(verifier.encode("ascii")).digest())
+        q = {"client_id": s.google.client_id, "redirect_uri": s.google.redirect_uri, "response_type": "code",
+             "scope": "openid email", "state": state, "nonce": nonce, "code_challenge": challenge,
+             "code_challenge_method": "S256", "prompt": "select_account"}
+        if s.google.hd:
+            q["hd"] = s.google.hd
+        cookie = self._preauth_header(headers, scope, f"{state}.{_preauth_sig(s, state)}", _PREAUTH_S)
+        return await self._send(send, 303, b"", [(b"location", (GOOGLE_AUTH_URL + "?" + urlencode(q)).encode()),
+                                                 (b"set-cookie", cookie)])
+
+    async def _google_callback(self, scope, send, headers, ip):
+        import asyncio
+        s = self.guard.settings
+        clear = (b"set-cookie", self._preauth_header(headers, scope, "", 0))
+        q = parse_qs(scope.get("query_string", b"").decode("latin-1"))
+        state, code = (q.get("state") or [""])[0], (q.get("code") or [""])[0]
+        try:
+            if q.get("error"):
+                raise GoogleAuthError("Google returned an error (cancelled or denied)")
+            cstate, _, sig = (_cookie(headers, s.preauth_cookie) or "").partition(".")
+            if not (state and code and cstate and sig):
+                raise GoogleAuthError("missing state, code or pre-auth cookie")
+            if not (hmac.compare_digest(sig.encode(), _preauth_sig(s, cstate).encode())
+                    and hmac.compare_digest(cstate.encode(), state.encode())):
+                raise GoogleAuthError("state does not match this browser")
+            pending = self.guard.pending.pop(state)
+            if pending is None:
+                raise GoogleAuthError("unknown, expired or replayed state")
+            nonce, verifier = pending
+            id_token = await asyncio.to_thread(self.guard.google.exchange, s.google, code, verifier)
+            claims = await asyncio.to_thread(self.guard.google.verify, s.google, id_token, [s.google.client_id], nonce)
+            ident = s.store.bind_google(claims["sub"], claims["email"])
+            if ident is None:
+                raise GoogleAuthError("address is pinned to a different Google account (forget-google)")
+        except GoogleAuthError as exc:
+            self._refuse(ip, str(exc))
+            page = _LOGIN_HTML.format(title=html.escape(s.title), error=f"<p>{NOT_AUTHORISED}</p>", form="",
+                                      google=_GOOGLE_LINK.format(href=html.escape(s.google_start_path)))
+            return await self._send(send, 403, page.encode("utf-8"), [
+                (b"content-type", b"text/html; charset=utf-8"), (b"content-security-policy", _PAGE_CSP), clear])
+        value = make_session(s, {"name": _SESSION_GOOGLE + ident["sub"], "pw_version": ident["version"]})
+        home = html.escape((s.google.public_url or "") + "/")
+        return await self._send(send, 200, _DONE_HTML.format(home=home).encode("utf-8"), [
+            (b"content-type", b"text/html; charset=utf-8"), (b"content-security-policy", _PAGE_CSP), clear,
+            (b"set-cookie", self._cookie_header(headers, scope, value, s.session_seconds))])
+
+    async def _google_token(self, receive, send, ip):
+        """Phone: {id_token, device_name} -> a device token (shown once)."""
+        import asyncio
+        s = self.guard.settings
+        body = await _read_body(receive, 16384)
+        if body is None:
+            return
+        try:
+            req = json.loads(body or b"{}")
+            assert isinstance(req, dict) and isinstance(req.get("id_token"), str) and req["id_token"]
+        except (ValueError, AssertionError):
+            return await self._send(send, 400, b'{"detail":"JSON body: id_token, device_name"}', [_JSON])
+        audiences = [*s.google.mobile_client_ids, s.google.client_id]
+        try:
+            claims = await asyncio.to_thread(self.guard.google.verify, s.google, req["id_token"], audiences)
+            ident = s.store.bind_google(claims["sub"], claims["email"])
+            if ident is None:
+                raise GoogleAuthError("address is pinned to a different Google account (forget-google)")
+        except GoogleAuthError as exc:
+            self._refuse(ip, str(exc))
+            return await self._send(send, 401, json.dumps({"detail": NOT_AUTHORISED}).encode(), [_JSON])
+        try:
+            token, row = s.store.new_token(str(req.get("device_name") or ""), sub=ident["sub"])
+        except ValueError as exc:
+            return await self._send(send, 400, json.dumps({"detail": str(exc)}).encode(), [_JSON])
+        return await self._send(send, 200, json.dumps({**row, "token": token}).encode(), [_JSON])
 
     def _cookie_header(self, headers, scope, value: str, max_age: int) -> bytes:
         s = self.guard.settings
@@ -815,7 +1210,8 @@ class BodyLimitMiddleware:
 # ---- log redaction ---------------------------------------------------------------------------
 
 class RedactFilter(logging.Filter):
-    """Strips bearer tokens, device tokens, cookies, passwords and query-string secrets."""
+    """Strips bearer tokens, device tokens, cookies, passwords, OAuth codes / state, ID tokens
+    (any JWT) and query-string secrets."""
 
     def __init__(self, guard: "Guard"):
         super().__init__()
@@ -825,7 +1221,11 @@ class RedactFilter(logging.Filter):
             (re.compile(re.escape(TOKEN_PREFIX) + r"[A-Za-z0-9_-]{20,}"), "[redacted]"),
             (re.compile(r"(?i)((?:^|[\s'\"{,])(?:authorization|cookie|set-cookie)['\"]?\s*[:=]\s*['\"]?)[^'\"\r\n]+"),
              r"\1[redacted]"),
-            (re.compile(r"(?i)([?&](?:token|access_token|api_token|api_key|password)=)[^&\s'\"]+"), r"\1[redacted]"),
+            (re.compile(r"(?i)([?&](?:token|access_token|api_token|api_key|password|code|state|id_token)=)"
+                        r"[^&\s'\"]+"), r"\1[redacted]"),
+            (re.compile(r"(?i)(['\"]?(?:id_token|client_secret|code_verifier)['\"]?\s*[:=]\s*['\"]?)[^'\"&\s,}]+"),
+             r"\1[redacted]"),
+            (re.compile(r"eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]+"), "[redacted-jwt]"),
             (re.compile(r"(?i)(['\"]?password['\"]?\s*[:=]\s*['\"]?)[^'\"&\s,}]+"), r"\1[redacted]"),
         ]
 
@@ -834,7 +1234,8 @@ class RedactFilter(logging.Filter):
             msg = record.getMessage()
         except Exception:  # noqa: BLE001 -- a broken record is the logger's problem, not ours
             return True
-        name = re.escape(self.guard.settings.cookie_name)
+        s = self.guard.settings
+        name = f"(?:{re.escape(s.cookie_name)}|{re.escape(s.preauth_cookie)})"
         red = re.sub(rf"({name}=)[^;\s'\"]+", r"\1[redacted]", msg)
         for pat, rep in self._pats:
             red = pat.sub(rep, red)
@@ -849,6 +1250,8 @@ class RedactFilter(logging.Filter):
 class Guard:
     settings: AuthSettings
     limiter: FailureLimiter = field(default_factory=FailureLimiter)
+    pending: PendingLogins = field(default_factory=PendingLogins)
+    google: GoogleVerifier = field(default_factory=GoogleVerifier)
 
 
 def install(app, settings: AuthSettings, body_limits: Optional[Dict[Tuple[str, str], int]] = None,
@@ -889,7 +1292,7 @@ def env_bytes(name: str, default: int, environ: Optional[Dict[str, str]] = None)
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     ap = argparse.ArgumentParser(prog="python -m app.ui.services.auth",
-                                 description="Owner password and device tokens for the console API.")
+                                 description="Owner password, Google accounts and device tokens for the console API.")
     ap.add_argument("--file", type=Path, default=None, help="account store (default: DJ_AUTH_FILE or data/cache/auth/auth.json)")
     sub = ap.add_subparsers(dest="cmd", required=True)
     sp = sub.add_parser("set-password", help="set or change the owner password (logs out every browser)")
@@ -897,8 +1300,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     sub.add_parser("list-tokens", help="list device tokens")
     rv = sub.add_parser("revoke-token", help="revoke a device token by id")
     rv.add_argument("id")
-    nt = sub.add_parser("new-token", help="create a device token (printed once)")
+    nt = sub.add_parser("new-token", help="create a device token (printed once; break-glass over SSH)")
     nt.add_argument("name")
+    sub.add_parser("list-google", help="list Google accounts pinned to an allowed address")
+    fg = sub.add_parser("forget-google", help="unpin a Google account (ends its sessions, revokes its tokens)")
+    fg.add_argument("sub", help="the account's sub (from list-google)")
     a = ap.parse_args(argv)
     store = AuthStore(a.file or default_store_path())
 
@@ -934,10 +1340,23 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             return 0
         print(f"no token with id {a.id}", file=sys.stderr)
         return 1
+    if a.cmd == "list-google":
+        rows = store.list_google()
+        if not rows:
+            print("no Google accounts")
+        for r in rows:
+            seen = time.strftime("%Y-%m-%d %H:%M", time.localtime(r["last_login"]))
+            print(f"{r['sub']}  {r['email']}  last sign-in {seen}")
+        return 0
+    if a.cmd == "forget-google":
+        if store.forget_google(a.sub):
+            print(f"forgot {a.sub} (its sessions and device tokens no longer work)")
+            return 0
+        print(f"no Google account {a.sub}", file=sys.stderr)
+        return 1
     if a.cmd == "new-token":
-        if not store.has_password:
-            print("set the owner password first: python -m app.ui.services.auth set-password", file=sys.stderr)
-            return 1
+        # Works with no password too (Google-only setups): having the store file is the authority.
+        # The token only matters once sign-in is on (a password or Google).
         try:
             token, row = store.new_token(a.name)
         except ValueError as exc:

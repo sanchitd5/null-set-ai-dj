@@ -275,7 +275,7 @@ for _ in $(seq 1 60); do
   sleep 1
 done
 say "console up: http://localhost:$PORT   (Ctrl+C here stops everything together)"
-if [[ ! -s "${DJ_AUTH_FILE:-${AIDJ_CACHE_DIR:-data/cache}/auth/auth.json}" ]]; then
+if [[ -z "${DJ_GOOGLE_CLIENT_ID:-}" && ! -s "${DJ_AUTH_FILE:-${AIDJ_CACHE_DIR:-data/cache}/auth/auth.json}" ]]; then
   say "sign-in is OFF (localhost only): set the owner password with  $PY -m app.ui.services.auth set-password"
 fi
 if (( OPEN )) && command -v open >/dev/null 2>&1; then open "http://localhost:$PORT"; fi
