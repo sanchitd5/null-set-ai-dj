@@ -109,7 +109,10 @@
     scrollTimer = setTimeout(warmVisible, 400);
   }, { passive: true });
   document.addEventListener("visibilitychange", () => { if (phone() && !document.hidden) warmVisible(); });
-  window.trackBrowser = { warmVisible };
+  window.trackBrowser = {
+    warmVisible,
+    nameOf: (id) => { const t = tracks.find((x) => x.track_id === id); return t ? t.name : ""; },   // phone-ui.js progress label
+  };
 
   function deckStatus(trackId) {
     if (state.trackA === trackId) return "a";
