@@ -445,7 +445,10 @@ class AuthSettings:
     allowed_origins: Tuple[str, ...] = ()
     # The address users reach (https://host[:port]); set = published, so never auth-off.
     public_url: str = ""
-    public_paths: Tuple[str, ...] = ("/health",)
+    # /health plus the PWA manifest and its icons: an install / home-screen fetch may carry no
+    # cookie (static files, no user data).
+    public_paths: Tuple[str, ...] = ("/health", "/manifest.json", "/icons/icon-192.png", "/icons/icon-512.png",
+                                     "/icons/icon-maskable-512.png", "/icons/apple-touch-icon.png")
     hidden_paths: Tuple[str, ...] = ("/docs", "/docs/oauth2-redirect", "/redoc", "/openapi.json")
     login_path: str = "/login"
     logout_path: str = "/logout"
@@ -857,10 +860,13 @@ def origin_ok(settings: AuthSettings, headers: Dict[str, str]) -> bool:
 # ---- ASGI middleware -------------------------------------------------------------------------
 
 _LOGIN_HTML = """<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>{title}</title>
-<style>body{{font:16px system-ui,sans-serif;background:#111;color:#eee;display:grid;place-items:center;min-height:90vh}}
-main,form{{display:grid;gap:.6rem;min-width:18rem}}input,button,a.g{{font:inherit;padding:.5rem}}
-a.g{{background:#fff;color:#222;text-align:center;text-decoration:none;border-radius:4px}}p{{color:#f77;margin:0}}</style>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>{title}</title>
+<meta name="theme-color" content="#040806">
+<style>body{{font:16px system-ui,sans-serif;background:#111;color:#eee;display:grid;place-items:center;min-height:90vh;
+margin:0;padding:1rem max(1rem,env(safe-area-inset-right)) 1rem max(1rem,env(safe-area-inset-left));box-sizing:border-box}}
+main,form{{display:grid;gap:.6rem;width:min(22rem,100%)}}h1{{font-size:1.5rem;overflow-wrap:anywhere}}
+input,button,a.g{{font:inherit;padding:.5rem;min-height:44px;box-sizing:border-box;border-radius:4px;touch-action:manipulation}}
+a.g{{background:#fff;color:#222;text-align:center;text-decoration:none;display:grid;place-items:center}}p{{color:#f77;margin:0}}</style>
 </head><body><main><h1>{title}</h1>{error}{google}{form}</main></body></html>"""
 _PASSWORD_FORM = """<form method="post" action="{action}">
 <input name="username" autocomplete="username" placeholder="username" required>

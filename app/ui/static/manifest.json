@@ -1,0 +1,17 @@
+{
+  "name": "NULL::SET AI DJ",
+  "short_name": "NULL::SET",
+  "description": "The AI DJ console: the live set, next pick and booked transition, library, macros and sampler pads.",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#040806",
+  "theme_color": "#040806",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
