@@ -533,6 +533,14 @@ def vocal_for_song(song_path, stems_dir: Optional[Path] = None) -> Optional[str]
     return got[0][1] if got else None
 
 
+def current_vocal(song_hash: str, stems_dir: Optional[Path] = None) -> Optional[str]:
+    """The song's best vocal stem right now (ft first), or None when its stems are gone."""
+    from app.music_brain.config import STEMS_CACHE_DIR
+
+    got = _best_vocals(Path(stems_dir or STEMS_CACHE_DIR), f"{song_hash}_*")
+    return got[0][1] if got else None
+
+
 def _best_vocals(root: Path, pattern: str) -> List[Tuple[str, str]]:
     from app.music_brain.audio.stem_service import read_manifest
     from app.music_brain.config import DEMUCS_MODEL
@@ -602,6 +610,12 @@ def batch(missing_only: bool = True, limit: Optional[int] = None, backend: Optio
                 log(f"[{i}/{len(todo)}] GPU busy (stems / LLM): waiting")
                 while gate():
                     sleep(GATE_POLL_S)
+            # the stem backfill may have replaced this song's set (htdemucs -> htdemucs_ft) since the
+            # scan: transcribe the vocal the app reads now, and skip it when that one is already done
+            v = current_vocal(h)
+            if v is None or (missing_only and cached(v, model) is not None):
+                out["skipped"] = out.get("skipped", 0) + 1
+                continue
             try:
                 doc = for_stem(v, force=not missing_only, backend=be, model=model, log=log)
                 out["done"] += 1
