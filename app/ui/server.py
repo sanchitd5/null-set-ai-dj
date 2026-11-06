@@ -1759,7 +1759,10 @@ def _audio_response(path: Path, label: str, q: str, media: Optional[str] = None)
 
         small = phone_audio.phone_variant(Path(path), label, PHONE_AUDIO_DIR)
         if small is not None:
-            return FileResponse(small, media_type=phone_audio.MEDIA_TYPE)
+            # the phone caches this copy: X-Content-SHA256 lets it verify the bytes it stored
+            return FileResponse(small, media_type=phone_audio.MEDIA_TYPE,
+                                headers={"X-Content-SHA256": phone_audio.sha256_of(small),
+                                         "X-Source-Id": label})
     elif q:
         raise HTTPException(status_code=400, detail="q must be 'phone' or empty")
     return FileResponse(path, media_type=media) if media else FileResponse(path)

@@ -58,6 +58,32 @@ def ffmpeg_cmd(src: Path, out: Path) -> list:
             "-use_editlist", "1", "-movflags", "+faststart", "-f", "mp4", str(out)]
 
 
+def sha256_of(path: Path) -> str:
+    """sha256 of a cached phone copy, kept in a `<file>.sha256` sidecar so the phone can verify
+    the bytes it cached (the copy's hash differs from the source's content id)."""
+    side = path.with_name(path.name + ".sha256")
+    try:
+        st = path.stat()
+        if side.exists() and side.stat().st_mtime_ns >= st.st_mtime_ns:
+            val = side.read_text().strip()
+            if re.fullmatch(r"[0-9a-f]{64}", val):
+                return val
+    except OSError:
+        pass
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    val = h.hexdigest()
+    try:
+        tmp = side.with_name(side.name + f".tmp{os.getpid()}")
+        tmp.write_text(val)
+        os.replace(tmp, side)
+    except OSError:
+        pass
+    return val
+
+
 def phone_variant(src: Path, label: str, cache_dir: Path) -> Optional[Path]:
     """The cached .m4a for `src`, transcoding it first if needed. None = serve the original."""
     if not shutil.which("ffmpeg"):
