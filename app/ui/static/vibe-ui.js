@@ -644,6 +644,9 @@
       holdLoop: !!(mind && mind.holdLoopInfo && mind.holdLoopInfo()),
       earRecent: !!(ear && Date.now() - ear.at < 4000),
     });
+    const mName = document.getElementById("ap-model-name"), mBack = document.getElementById("ap-model-backend");
+    if (mName) put(mName, "text", llm.model || (llm.detail ? `none (${llm.detail})` : "checking…"));
+    if (mBack) put(mBack, "text", llm.backend ? `${llm.backend}${llm.ready ? "" : ", not ready"}` : "-");
     put(el.orb, "data-state", s.state);
     put(el.state, "text", s.label);
     put(el.detail, "text", s.detail);
