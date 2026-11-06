@@ -199,6 +199,16 @@ def _verify_key(artist, title) -> tuple[str, str]:
     return " ".join(str(artist or "").lower().split()), " ".join(str(title or "").lower().split())
 
 
+def _library_id(artist: str, title: str):
+    """Library track_id for this pick, or None (also when the host has no library)."""
+    try:
+        fn = getattr(engine.current().host, "library_match", None)
+        return fn(artist, title) if fn else None
+    except Exception as exc:
+        print(f"[suggest] library match failed: {exc}", flush=True)
+        return None
+
+
 def _yt_cooling() -> bool:
     """YouTube paused by the bot-check breaker. An unreadable state counts as not
     paused: yt_guard.call() checks again and the lookup then fails to unknown."""
@@ -248,6 +258,13 @@ def _verify_picks(picks: list[dict]) -> tuple[list[dict], list[dict]]:
         return list(picks), []
     keys = [_verify_key(p.get("artist", ""), p.get("title", "")) for p in picks]
     verdict = {k: _cached_verdict(k) for k in keys}
+    # A song the server library already holds is real: no internet check, and the pick
+    # carries its library track_id.
+    for p, k in zip(picks, keys):
+        tid = _library_id(p.get("artist", ""), p.get("title", ""))
+        if tid:
+            p["track_id"] = tid
+            verdict[k] = True
     futs = {}
     if not _yt_cooling():
         for p, k in zip(picks, keys):
@@ -268,7 +285,16 @@ def _verify_picks(picks: list[dict]) -> tuple[list[dict], list[dict]]:
             verdict[k] = f.result()
     real, fake = [], []
     for p, k in zip(picks, keys):
-        (fake if verdict[k] is False else real).append(p)
+        song = f"{p.get('artist', '')} - {p.get('title', '')}"[:120]
+        if verdict[k] is False:
+            fake.append(p)
+            print(f"[suggest] reject {song}: no YouTube upload matches", flush=True)
+        else:
+            real.append(p)
+            if verdict[k] is None:
+                print(f"[suggest] keep {song}: lookup unavailable (cooling, failed or past budget)", flush=True)
+            elif p.get("track_id"):
+                print(f"[suggest] keep {song}: in library ({p['track_id']})", flush=True)
     return real, fake
 
 

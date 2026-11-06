@@ -99,3 +99,16 @@ def test_energy_and_hash_read_the_hosts_view_of_the_world(tmp_path):
     f = tmp_path / "real.bin"
     f.write_bytes(b"abc")
     assert analyzer._file_hash(f) == analyzer._file_hash_impl(f)        # production: the real sha256
+
+
+def test_host_library_match_uses_library_identity(monkeypatch, tmp_path):
+    from pathlib import Path
+    from app.ui import server
+    from app.ui.services import engine
+    f = tmp_path / "a.mp3"
+    f.write_bytes(b"x")
+    monkeypatch.setattr(server, "_track_names", {"t1": "Fred again.. - Delilah (pull me out of this)"})
+    monkeypatch.setattr(server, "_tracks", {"t1": Path(f)})
+    h = engine.Host()
+    assert h.library_match("Fred again..", "Delilah (pull me out of this)") == "t1"
+    assert h.library_match("Fred again..", "Not In Library") is None
