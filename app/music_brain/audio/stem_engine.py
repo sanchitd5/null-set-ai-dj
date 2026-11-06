@@ -247,8 +247,10 @@ class StemEngine:
             t_decode = time.monotonic() - t0
             x = np.memmap(raw, dtype=np.float32, mode="r", shape=(n, CHANNELS))
             for name in self.sources:
+                # encoded in the local work dir: many small FLAC writes onto the FUSE/HDD pool cost
+                # ~50 s a song on CT116; one sequential copy per stem at the end costs ~1 s
                 tmps[name] = out_dir / f".{name}.flac.tmp{os.getpid()}"
-                files[name] = sf.SoundFile(str(tmps[name]), "w", samplerate=self.samplerate, channels=CHANNELS,
+                files[name] = sf.SoundFile(str(tmpdir / f"{name}.flac"), "w", samplerate=self.samplerate, channels=CHANNELS,
                                            format="FLAC", subtype="PCM_16", compression_level=_SF_LEVEL)
 
             def writer():
@@ -278,6 +280,8 @@ class StemEngine:
             for f in files.values():
                 f.close()
             written = {}
+            for name in self.sources:
+                shutil.copyfile(tmpdir / f"{name}.flac", tmps[name])
             for name in self.sources:
                 dest = out_dir / f"{name}.flac"
                 os.replace(tmps[name], dest)

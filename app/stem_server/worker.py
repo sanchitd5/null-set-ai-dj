@@ -40,8 +40,8 @@ def main() -> int:
     if bad:
         print(f"[stem-worker] model weights failed sha256, re-downloading: {', '.join(bad)}", file=sys.stderr, flush=True)
     if torch.cuda.is_available():
-        _cap_vram(torch)
-        torch.backends.cudnn.benchmark = True       # fixed segment shape: autotuned kernels pay off
+        _cap_vram(torch)                            # (no cudnn.benchmark: the batch varies with free VRAM,
+                                                    #  and each new shape would be autotuned again)
     engines: dict = {}
     lines: "queue.Queue[str]" = queue.Queue()
 
