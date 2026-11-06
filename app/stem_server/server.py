@@ -37,7 +37,7 @@ from app.music_brain.audio import stem_service
 from app.music_brain.config import CACHE_DIR, DEMUCS_MODEL
 from app.stem_server import windows
 from app.stem_server.demucs_runner import OOM_EXIT
-from app.ui.services.auth import AuthStore, FailureLimiter, client_ip   # stdlib-only module: no console import chain
+from app.ui.services.auth import AuthStore, FailureLimiter, client_ip, default_store_path   # stdlib-only module: no console import chain
 
 ID_RE = re.compile(r"^[0-9a-f]{16}$")
 AUDIO_EXTS = {"mp3", "m4a", "aac", "wav", "flac", "ogg", "opus", "aiff", "aif", "webm"}
@@ -64,7 +64,7 @@ class Settings:
         self.device = env.get("STEM_SERVER_DEVICE") or None   # None = cuda -> mps -> cpu
         # The console's account store (same cache): its per-device tokens work here too, so a phone
         # that signed in with Google once uses one token for both. Re-read when it changes on disk.
-        self.auth_store = AuthStore(Path(env.get("DJ_AUTH_FILE") or (cache / "auth" / "auth.json")).expanduser())
+        self.auth_store = AuthStore(default_store_path(env))
 
 
 class Job:

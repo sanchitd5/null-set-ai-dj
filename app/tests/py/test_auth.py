@@ -1,5 +1,6 @@
 """Owner-account auth (app/ui/services/auth.py) as wired into the console API."""
 import logging
+import os
 import time
 
 import pytest
@@ -404,3 +405,56 @@ def test_log_redaction(api_token, owner_login):
     rec = logging.LogRecord("x", logging.INFO, __file__, 1, "body %s", ({"password": owner_login[1]},), None)
     flt.filter(rec)
     assert owner_login[1] not in rec.getMessage()
+
+
+# ---- where the store lives ------------------------------------------------------------------------
+
+def test_default_store_path(tmp_path):
+    assert auth.default_store_path({"DJ_AUTH_FILE": str(tmp_path / "x.json")}) == tmp_path / "x.json"
+    env = {"XDG_STATE_HOME": str(tmp_path / "state"), "AIDJ_CACHE_DIR": str(tmp_path / "cache")}
+    assert auth.default_store_path(env) == tmp_path / "state" / "null-set" / "auth.json"   # never under data/
+    old = tmp_path / "cache" / "auth" / "auth.json"
+    old.parent.mkdir(parents=True)
+    old.write_text("{}")
+    assert auth.default_store_path(env) == old                    # a store at the old place keeps working
+    (tmp_path / "state" / "null-set").mkdir(parents=True)
+    (tmp_path / "state" / "null-set" / "auth.json").write_text("{}")
+    assert auth.default_store_path(env) == tmp_path / "state" / "null-set" / "auth.json"
+
+
+def test_store_refuses_a_shared_directory(tmp_path, monkeypatch, capsys):
+    shared = tmp_path / "pool"
+    shared.mkdir()
+    os.chmod(shared, 0o777)
+    monkeypatch.setattr(auth.os, "chmod", lambda *a, **k: (_ for _ in ()).throw(PermissionError(1, "Operation not permitted")))
+    st = auth.AuthStore(shared / "auth.json")
+    with pytest.raises(auth.AuthConfigError, match="DJ_AUTH_FILE"):
+        st.set_password("owner", "a-long-enough-password")
+    # an existing store there is refused on read too (someone else could swap it)
+    (shared / "auth.json").write_text('{"version": 1, "user": null, "tokens": []}')
+    with pytest.raises(auth.AuthConfigError, match="group/world-writable"):
+        auth.AuthStore(shared / "auth.json").has_password
+    # the CLI says so in one line, no traceback
+    assert auth.main(["--file", str(shared / "auth.json"), "list-tokens"]) == 2
+    err = capsys.readouterr().err
+    assert err.startswith("error: ") and "DJ_AUTH_FILE" in err and "Traceback" not in err
+
+
+def test_store_refuses_when_chmod_600_fails(tmp_path, monkeypatch):
+    def no_fchmod(fd, mode):
+        raise PermissionError(1, "Operation not permitted")
+    monkeypatch.setattr(auth.os, "fchmod", no_fchmod)
+    st = auth.AuthStore(tmp_path / "d" / "auth.json")
+    with pytest.raises(auth.AuthConfigError, match="chmod 600"):
+        st.set_password("owner", "a-long-enough-password")
+    assert not list((tmp_path / "d").iterdir())                      # no temp file left behind
+
+
+def test_cli_reads_the_repo_env(tmp_path, monkeypatch, capsys):
+    store = tmp_path / "private" / "auth.json"
+    (tmp_path / ".env").write_text(f"DJ_AUTH_FILE={store}\n")
+    monkeypatch.setattr(auth, "_REPO", tmp_path)
+    monkeypatch.delenv("DJ_AUTH_FILE")                              # restored after the test
+    assert auth.main(["new-token", "cli"]) == 0                      # no --file
+    assert store.exists() and capsys.readouterr().out.strip().startswith(auth.TOKEN_PREFIX)
+    assert (store.parent.stat().st_mode & 0o777) == 0o700 and (store.stat().st_mode & 0o777) == 0o600

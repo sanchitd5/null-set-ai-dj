@@ -42,8 +42,28 @@ page gets a redirect to `/login` instead.
 ## The owner account
 
 One account. Password hashed with `hashlib.scrypt` (n=2^14, r=8, p=1, 16-byte salt), stored
-with the device tokens in `data/cache/auth/auth.json` (gitignored, chmod 600, written
-atomically; override with `DJ_AUTH_FILE`; follows `AIDJ_CACHE_DIR`). Not in `.env`.
+with the device tokens in one JSON store (chmod 600, written atomically). Not in `.env`.
+
+Where the store lives:
+* `DJ_AUTH_FILE` if set: in the environment, or in the repo `.env`. The server and the CLI
+  both read `.env`, so `set-password` finds the same file without `--file`.
+* Else `$XDG_STATE_HOME/null-set/auth.json`, i.e. `~/.local/state/null-set/auth.json`
+  (directory 0700).
+* It is **never under `data/`**. `data/` may be a shared mount, e.g. the mergerfs pool on
+  CT116 with 777 directories, where the file can't be made private.
+* A store left at the old default `data/cache/auth/auth.json` is still used, with a warning,
+  until you move it.
+
+The store's directory must be private: owned by the user running the server, and not group-
+or world-writable. Otherwise the server refuses to start and the CLI exits with one line
+saying to set `DJ_AUTH_FILE`; there is no traceback. Someone else who can write there could
+swap the file. The same refusal happens when the file can't be chmod 600, which some FUSE /
+network filesystems don't allow. On CT116:
+
+```bash
+sudo install -d -m 700 -o nullset -g nullset /var/lib/null-set
+echo 'DJ_AUTH_FILE=/var/lib/null-set/auth.json' >> /opt/null-set-ai-dj/.env      # and in the stem server's env file
+```
 
 ```bash
 python -m app.ui.services.auth set-password            # prompts twice, min 12 chars; --user NAME to rename
@@ -206,8 +226,8 @@ device token after that; it never stores a Google access or refresh token.
 
 Today the stem server keeps its own small auth (`STEM_SERVER_TOKEN` plus the console's
 limiter) and **also accepts the console's device tokens** by reading the same store
-(`AuthStore(<cache>/auth/auth.json)`; `DJ_AUTH_FILE` overrides). Both services must run as
-the same user. A full switch to this module would look like:
+(`DJ_AUTH_FILE`, else the same default as above; set `DJ_AUTH_FILE` in both env files).
+Both services must run as the same user. A full switch to this module would look like:
 
 ```python
 from app.ui.services import auth
