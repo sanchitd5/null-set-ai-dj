@@ -34,7 +34,7 @@
   bus.gain.value = 0.25;
   bus.connect(masterGain);
 
-  let enabled = true;
+  let enabled = false;     // off by default (owner: drums over the record spoil the songs); LIVE DRUMS turns it on
   let deckId = null;       // deck whose beatgrid we follow
   let timer = null;
   let lastTrackT = null;   // track time up to which steps are already booked
