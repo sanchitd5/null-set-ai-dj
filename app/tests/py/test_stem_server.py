@@ -176,6 +176,42 @@ def test_auth_required_except_health(srv, track):
     assert srv.req("GET", "/docs", token=None)[0] == 404           # no console / docs routes
 
 
+def test_token_needs_32_chars(tmp_path):
+    with pytest.raises(RuntimeError):
+        Settings({"STEM_SERVER_TOKEN": "x" * 31, "AIDJ_CACHE_DIR": str(tmp_path)})
+    assert Settings({"STEM_SERVER_TOKEN": "x" * 32, "AIDJ_CACHE_DIR": str(tmp_path)}).token == "x" * 32
+
+
+def _xff(srv, ip: str, token: str):
+    r = urllib.request.Request(srv.base + "/v1/tracks/0123456789abcdef", method="GET",
+                               headers={"Authorization": f"Bearer {token}", "X-Forwarded-For": ip})
+    try:
+        with urllib.request.urlopen(r, timeout=10) as resp:
+            return resp.status
+    except urllib.error.HTTPError as e:
+        return e.code
+
+
+def test_failed_auth_locks_the_ip(srv):
+    """10 bad tokens from one client IP (X-Forwarded-For from Caddy on loopback) -> 429, even with
+    the right token; another IP is unaffected."""
+    for _ in range(9):
+        assert _xff(srv, "203.0.113.7", "y" * 32) == 401
+    assert _xff(srv, "203.0.113.7", "y" * 32) == 401          # 10th failure locks
+    assert _xff(srv, "203.0.113.7", TOKEN) == 429
+    assert _xff(srv, "198.51.100.9", TOKEN) == 404             # authenticated, unknown track
+    assert srv.req("GET", "/health", token=None)[0] == 200     # health never limited
+
+
+def test_xff_ignored_from_untrusted_peer():
+    from app.stem_server.server import LIMITS
+    from app.ui.services.auth import client_ip
+
+    xff = {"x-forwarded-for": "1.2.3.4"}
+    assert client_ip(LIMITS, {"client": ("127.0.0.1", 5)}, xff) == "1.2.3.4"
+    assert client_ip(LIMITS, {"client": ("10.0.0.50", 5)}, xff) == "10.0.0.50"
+
+
 def test_upload_verifies_hash_and_caps_size(srv, track):
     tid, body = track
     assert srv.req("POST", f"/v1/tracks?id={tid}&ext=mp3", body + b"x")[0] == 422
