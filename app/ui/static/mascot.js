@@ -465,7 +465,7 @@
   }
   function waves(t) {
     requestAnimationFrame(waves);
-    if (!cx || t - lastT < 33) return;         // ~30 fps
+    if (!cx || t - lastT < 33 || root.djLite) return;   // ~30 fps; djLite: header hidden on the phone (phone-ui.js)
     lastT = t;
     tap();
     if (!col) col = colours();

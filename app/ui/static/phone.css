@@ -1,0 +1,340 @@
+/* PHONE LITE (phone-ui.js): the console on a phone. phone-ui.js sets html.phone-lite exactly when
+   PHONE_QUERY matches ((max-width: 600px), (max-height: 500px) and (pointer: coarse)), plus
+   html.phone-adv for ADVANCED (the full console stacked) and html[data-ptab] for the tab.
+   Every rule below is scoped to those classes, so the desktop is unchanged. Motion is transform /
+   opacity only; nothing here is read back per frame (PERFORMANCE_AUDIT.md). */
+
+/* the Lite elements exist only after a phone visit; never show them on a desktop-sized screen */
+html:not(.phone-lite) #lite,
+html:not(.phone-lite) #lite-more,
+html:not(.phone-lite) #lite-tabs,
+html:not(.phone-lite) #lite-tap { display: none !important; }
+.lite [hidden], .lite-more [hidden], .lite-tap[hidden], .lite-tabs [hidden] { display: none !important; }
+
+/* ---------------------------------------------------------------- whole page, both phone modes */
+html.phone-lite {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  touch-action: manipulation;              /* no double-tap zoom anywhere */
+}
+html.phone-lite body {
+  overflow-x: hidden;
+  padding-bottom: calc(68px + env(safe-area-inset-bottom));
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+  -webkit-tap-highlight-color: transparent;
+}
+html.phone-lite button,
+html.phone-lite .hw-btn,
+html.phone-lite select,
+html.phone-lite input[type="checkbox"],
+html.phone-lite a.lite-btn { touch-action: manipulation; }
+/* iOS zooms into any focused field under 16 px */
+html.phone-lite input[type="text"],
+html.phone-lite input[type="search"],
+html.phone-lite input[type="number"],
+html.phone-lite select { font-size: 16px; }
+html.phone-lite .hw-btn { min-height: 44px; min-width: 44px; padding: 8px 10px; font-size: 11px; }
+html.phone-lite .hud-label input[type="checkbox"] { width: 22px; height: 22px; }
+html.phone-lite .autopilot-panel .hud-label { min-height: 44px; display: inline-flex; align-items: center; gap: 6px; }
+
+/* devices.js: its floating button would sit on the tab bar; MORE opens the same panel */
+html.phone-lite #devices-btn { display: none; }
+html.phone-lite #devices-panel[hidden] { display: none !important; }   /* its inline display: grid beats [hidden] */
+html.phone-lite #devices-panel {
+  left: 8px !important; right: 8px !important; max-width: none !important;
+  bottom: calc(72px + env(safe-area-inset-bottom)) !important;
+  font-size: 14px !important;
+}
+html.phone-lite #devices-panel .hw-btn { min-height: 44px; }
+
+/* ------------------------------------------------------------------- Lite: what each tab shows */
+html.phone-lite:not(.phone-adv) .topbar,
+html.phone-lite:not(.phone-adv) .fx-bar,
+html.phone-lite:not(.phone-adv) .wave-stage,
+html.phone-lite:not(.phone-adv) #ai-panel,
+html.phone-lite:not(.phone-adv) #ai-actions,
+html.phone-lite:not(.phone-adv) .deck-panel,
+html.phone-lite:not(.phone-adv) .mixer,
+html.phone-lite:not(.phone-adv) #remix-panel,
+html.phone-lite:not(.phone-adv) .footbar,
+html.phone-lite:not(.phone-adv) .nul-super,
+html.phone-lite:not(.phone-adv) .ai-hud,
+html.phone-lite:not(.phone-adv) .ai-touch-tag,
+html.phone-lite:not(.phone-adv) .sampler-bank .seq { display: none !important; }
+
+html.phone-lite:not(.phone-adv) .workspace { display: block; padding: 8px; }
+html.phone-lite:not(.phone-adv) #lite,
+html.phone-lite:not(.phone-adv) #vibe-bar,
+html.phone-lite:not(.phone-adv) #lite-more,
+html.phone-lite:not(.phone-adv) .panel.browser,
+html.phone-lite:not(.phone-adv) #autopilot-panel,
+html.phone-lite:not(.phone-adv) .panel.sampler-bank { display: none; }
+
+html.phone-lite:not(.phone-adv)[data-ptab="now"] #lite { display: flex; }
+html.phone-lite:not(.phone-adv)[data-ptab="now"] #vibe-bar { display: flex; }
+html.phone-lite:not(.phone-adv)[data-ptab="library"] .panel.browser { display: block; }
+html.phone-lite:not(.phone-adv)[data-ptab="set"] #autopilot-panel { display: block; }
+html.phone-lite:not(.phone-adv)[data-ptab="pads"] .panel.sampler-bank { display: block; }
+html.phone-lite[data-ptab="more"] #lite-more { display: flex; }
+
+/* ADVANCED: the full console, one column; the NOW card stays on top */
+html.phone-lite.phone-adv #lite { display: flex; }
+html.phone-lite.phone-adv .workspace { display: flex; flex-direction: column; gap: 8px; }
+html.phone-lite.phone-adv .workspace > * { min-width: 0; max-width: 100%; }
+html.phone-lite.phone-adv .topbar { flex-wrap: wrap; height: auto; position: static; }
+html.phone-lite.phone-adv .telemetry { flex-wrap: wrap; row-gap: 6px; }
+html.phone-lite.phone-adv .deck-bottom,
+html.phone-lite.phone-adv .deck-bottom-mirror { grid-template-columns: minmax(0, 1fr) 88px; }
+html.phone-lite.phone-adv .deck-bottom .pad-module { grid-column: 1 / -1; }
+html.phone-lite.phone-adv .transport-top { flex-wrap: wrap; }
+html.phone-lite.phone-adv .ai-hud { bottom: calc(76px + env(safe-area-inset-bottom)); }
+html.phone-lite.phone-adv .split-chip { white-space: normal; max-width: 100%; }
+html.phone-lite.phone-adv .seq-grid { overflow-x: auto; }   /* 16 steps: the one panel that scrolls sideways */
+html.phone-lite.phone-adv .seq-row { min-width: 520px; }
+html.phone-lite.phone-adv:not([data-ptab="more"]) #lite-more { display: none; }
+html.phone-lite.phone-adv[data-ptab="more"] .workspace,
+html.phone-lite.phone-adv[data-ptab="more"] .wave-stage,
+html.phone-lite.phone-adv[data-ptab="more"] .fx-bar { display: none; }
+
+/* ------------------------------------------------------------------- VIBE strip: orb + feed only */
+html.phone-lite:not(.phone-adv) .vibe-bar { margin: 0 8px; border-radius: var(--r-lg); }
+html.phone-lite:not(.phone-adv) .vibe-bar .vb-toggle,
+html.phone-lite:not(.phone-adv) .vibe-bar .vb-cell:not(.vb-orb) { display: none; }
+html.phone-lite:not(.phone-adv) .vibe-bar .vb-body { flex-wrap: nowrap; }
+html.phone-lite:not(.phone-adv) .vibe-bar .vb-orb { min-width: 0; max-width: 46%; flex: 0 0 auto; }
+html.phone-lite:not(.phone-adv) .vibe-bar .vb-detail { max-width: 100%; }
+html.phone-lite:not(.phone-adv) .vibe-bar .vb-feed { flex: 1 1 0; min-width: 0; max-height: 16px; }
+html.phone-lite:not(.phone-adv) .vibe-bar .vb-feed li:not(:first-child) { display: none; }
+
+/* ---------------------------------------------------------------------------- the NOW card */
+html.phone-lite .lite {
+  flex-direction: column;
+  gap: 10px;
+  padding: calc(8px + env(safe-area-inset-top)) 8px 8px;
+  color: var(--on-surface);
+  font-family: var(--mono);
+}
+.lite-k { font-size: 10px; font-weight: 700; letter-spacing: 0.12em; color: var(--outline); margin: 0; }
+.lite-head { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.lite-brand { font-weight: 700; letter-spacing: 0.1em; color: var(--ai); flex: none; }
+.lite-model { font-size: 11px; color: var(--on-surface-var); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
+.lite-wake { font-size: 10px; color: var(--ok); flex: none; }
+
+.lite-banner {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px; border: 1px solid var(--warn); border-radius: var(--r-lg);
+  font-size: 12px; line-height: 1.35; color: var(--warn); background: rgba(255, 204, 0, 0.08);
+}
+.lite-banner span { flex: 1; }
+
+.lite-decks { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.lite-deck {
+  display: flex; flex-direction: column; gap: 4px; min-width: 0;
+  padding: 8px; border: 1px solid var(--outline-var); border-radius: var(--r-lg);
+  background: var(--s-low);
+}
+.lite-deck.is-air { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.lite-deck-top { display: flex; align-items: center; gap: 6px; }
+.lite-id { font-size: 18px; font-weight: 700; color: var(--accent); }
+.lite-onair { font-size: 9px; font-weight: 700; letter-spacing: 0.1em; color: var(--outline-var); flex: 1; }
+.lite-deck.is-air .lite-onair { color: var(--accent); }
+.lite-play {
+  width: 44px; height: 44px; flex: none; border-radius: 50%;
+  border: 1px solid var(--accent); background: transparent; color: var(--accent);
+  font: 700 16px var(--mono); cursor: pointer;
+}
+.lite-deck.is-playing .lite-play { background: var(--accent); color: var(--s-lowest); }
+.lite-play:disabled { opacity: 0.35; }
+.lite-title {
+  font-size: 13px; font-weight: 600; line-height: 1.25; min-height: 2.5em;
+  overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow-wrap: anywhere;
+}
+.lite-meta { display: flex; flex-wrap: wrap; gap: 2px 8px; font-size: 12px; font-variant-numeric: tabular-nums; }
+.lite-left { font-size: 18px; font-weight: 700; color: var(--accent); width: 100%; }
+.lite-key { color: var(--a-soft); }
+.lite-prog { height: 4px; background: var(--s-high); border-radius: 2px; overflow: hidden; }
+.lite-prog i { display: block; height: 100%; background: var(--accent); transform-origin: left; transform: scaleX(var(--p, 0)); }
+
+.lite-row { display: flex; align-items: center; gap: 8px; }
+.lite-xfv { min-width: 44px; text-align: right; font-size: 12px; font-variant-numeric: tabular-nums; }
+
+/* swipe-safe slider: vertical swipes scroll the page (touch-action: pan-y); the thumb moves by transform */
+/* overflow: hidden keeps the translated .ls-run box out of the page's scroll width */
+.ls { --p: 0.5; position: relative; flex: 1; min-width: 0; height: 44px; overflow: hidden; touch-action: pan-y; cursor: pointer; outline: none; }
+.ls:focus-visible { outline: 2px solid var(--ai); outline-offset: -2px; border-radius: var(--r-lg); }
+.ls-track { position: absolute; left: 16px; right: 16px; top: 19px; height: 6px; border-radius: 3px; background: var(--s-high); }
+.ls-fill { position: absolute; inset: 0; border-radius: 3px; background: var(--ai-soft); transform-origin: left; transform: scaleX(var(--p)); }
+.lite-xf .ls-fill { background: linear-gradient(90deg, var(--a), var(--b)); opacity: 0.6; }
+.ls-run { position: absolute; inset: 0; transform: translateX(calc(var(--p) * 100%)); pointer-events: none; }
+.ls-thumb {
+  position: absolute; left: -16px; top: -13px; width: 32px; height: 32px; border-radius: 50%;
+  background: var(--on-surface); box-shadow: 0 2px 6px rgba(0, 0, 0, 0.6);
+}
+.ls.ls-on .ls-thumb { background: var(--ai); }
+
+.lite-strip { display: flex; flex-direction: column; gap: 6px; padding: 8px; border-radius: var(--r-lg); background: var(--s-low); border: 1px solid var(--outline-var); }
+.lite-strip-top { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; font-variant-numeric: tabular-nums; }
+.lite-linetxt { color: var(--ai); }
+.lite-bars { display: grid; grid-template-columns: repeat(8, 1fr); gap: 3px; }
+.lite-bars i { height: 14px; border-radius: 2px; background: var(--s-high); }
+.lite-bars i.on { background: var(--ai-soft); }
+.lite-bars i.now { background: var(--ai); }
+.lite-bars i:nth-child(4) { margin-right: 3px; }
+.lite-nrg { display: flex; align-items: center; gap: 6px; font-size: 11px; }
+.lite-chips { display: inline-flex; gap: 2px; }
+.lite-chips i { width: 7px; height: 10px; border-radius: 1px; background: var(--s-high); }
+.lite-cur i.on { background: var(--a); }
+.lite-nxt i.on { background: var(--b); }
+.lite-nrgtxt { margin-left: auto; font-variant-numeric: tabular-nums; }
+
+.lite-next { display: flex; flex-direction: column; gap: 2px; padding: 8px; border-radius: var(--r-lg); border: 1px solid var(--ai); background: var(--s-low); }
+.lite-next-head { display: flex; justify-content: space-between; align-items: baseline; }
+.lite-next-cd { font-size: 20px; font-weight: 700; color: var(--ai); font-variant-numeric: tabular-nums; }
+.lite-next-name { font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lite-next-recipe { font-size: 12px; color: var(--ai); }
+.lite-next-when { font-size: 11px; color: var(--on-surface-var); }
+
+.lite-ctl { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.lite-btn {
+  min-height: 52px; padding: 8px; border-radius: var(--r-lg);
+  border: 1px solid var(--outline); background: var(--s-high); color: var(--on-surface);
+  font: 700 13px var(--mono); letter-spacing: 0.06em; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; text-align: center; text-decoration: none;
+}
+.lite-btn:active { transform: translateY(1px); }
+.lite-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+.lite-btn.is-on { border-color: var(--warn); color: var(--warn); }
+.lite-btn.lite-small { min-height: 44px; min-width: 52px; }
+.lite-start { grid-column: 1 / -1; min-height: 60px; font-size: 16px; border-color: var(--ok); color: var(--ok); }
+.lite-stop { border-color: var(--err); color: var(--err); }
+.lite-skip, .lite-mix { border-color: var(--ai); color: var(--ai); }
+/* style.css's `button:hover` / `button:active` (a sticky hover after a touch) must not repaint these */
+html.phone-lite .lite-btn:hover { background: var(--s-high); box-shadow: none; color: var(--on-surface); }
+html.phone-lite .lite-start, html.phone-lite .lite-start:hover { border-color: var(--ok); color: var(--ok); }
+html.phone-lite .lite-stop, html.phone-lite .lite-stop:hover { border-color: var(--err); color: var(--err); }
+html.phone-lite .lite-skip, html.phone-lite .lite-skip:hover,
+html.phone-lite .lite-mix, html.phone-lite .lite-mix:hover { border-color: var(--ai); color: var(--ai); }
+html.phone-lite .lite-btn.is-on, html.phone-lite .lite-btn.is-on:hover { border-color: var(--warn); color: var(--warn); }
+html.phone-lite .lite-play:hover { background: transparent; color: var(--accent); box-shadow: none; }
+html.phone-lite .lite-deck.is-playing .lite-play:hover { background: var(--accent); color: var(--s-lowest); }
+html.phone-lite .lite-tab, html.phone-lite .lite-tab:hover, html.phone-lite .lite-tab:active {
+  background: transparent; border: 0; border-radius: 0; box-shadow: none; transform: none; color: var(--outline);
+}
+html.phone-lite .lite-tab[aria-pressed="true"] { color: var(--ai); box-shadow: inset 0 2px 0 var(--ai); }
+html.phone-lite .lite-tap-btn, html.phone-lite .lite-tap-btn:hover { background: transparent; color: var(--ai); box-shadow: none; }
+.lite-status { font-size: 12px; color: var(--on-surface-var); min-height: 1.3em; overflow-wrap: anywhere; }
+
+/* ---------------------------------------------------------------------------- MORE */
+html.phone-lite .lite-more { flex-direction: column; gap: 12px; padding: calc(12px + env(safe-area-inset-top)) 12px 12px; }
+.lite-sec { display: flex; flex-direction: column; gap: 8px; padding: 10px; border: 1px solid var(--outline-var); border-radius: var(--r-lg); background: var(--s-low); }
+.lite-note { font-size: 12px; line-height: 1.4; color: var(--on-surface-var); margin: 0; }
+
+/* ---------------------------------------------------------------------------- tab bar */
+html.phone-lite .lite-tabs {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 950;
+  display: grid; grid-template-columns: repeat(5, 1fr);
+  padding: 4px max(4px, env(safe-area-inset-right)) calc(4px + env(safe-area-inset-bottom)) max(4px, env(safe-area-inset-left));
+  background: rgba(4, 8, 6, 0.96); border-top: 1px solid var(--outline-var);
+}
+.lite-tab {
+  min-height: 56px; border: 0; background: transparent; color: var(--outline);
+  font: 700 10px var(--mono); letter-spacing: 0.1em; cursor: pointer;
+}
+.lite-tab[aria-pressed="true"] { color: var(--ai); box-shadow: inset 0 2px 0 var(--ai); }
+
+/* ---------------------------------------------------------------------------- tap to start */
+html.phone-lite .lite-tap {
+  position: fixed; inset: 0; z-index: 10000;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px;
+  padding: 24px; background: rgba(4, 8, 6, 0.9); text-align: center;
+}
+.lite-tap-btn {
+  min-width: 240px; min-height: 88px; border-radius: 44px;
+  border: 2px solid var(--ai); background: transparent; color: var(--ai);
+  font: 700 18px var(--mono); letter-spacing: 0.08em; cursor: pointer;
+}
+
+/* ---------------------------------------------------------------------------- tabs' desktop panels */
+html.phone-lite .panel.browser,
+html.phone-lite #autopilot-panel,
+html.phone-lite .panel.sampler-bank { padding: 8px; }
+/* library: LOAD, TRACK, BPM, KEY (time, energy and status stay in ADVANCED) */
+html.phone-lite .browser-head,
+html.phone-lite .browser-row { grid-template-columns: 100px minmax(0, 1fr) 46px 40px; gap: 6px; }
+html.phone-lite .browser-head > :nth-child(n+5),
+html.phone-lite .browser-row > :nth-child(n+5) { display: none; }
+html.phone-lite .browser-rows { max-height: none; }
+html.phone-lite .row-load .hw-btn { min-height: 44px; min-width: 44px; }
+html.phone-lite .search-box { min-width: 0; max-width: none; flex: 1 1 100%; }
+html.phone-lite .sort-group { flex-wrap: wrap; min-width: 0; }
+html.phone-lite #url-import-input { min-width: 0; }
+html.phone-lite .url-import-row { flex-wrap: wrap; }
+/* every select, chip button and pad LOAD button reaches 44 px */
+html.phone-lite select { min-height: 44px; }
+/* a phone's native field chrome is white; keep the console's dark fields */
+html.phone-lite select,
+html.phone-lite input[type="search"],
+html.phone-lite input[type="number"] {
+  -webkit-appearance: none; appearance: none;
+  background-color: var(--s-lowest); color: var(--on-surface);
+  border: 1px solid var(--outline-var); border-radius: var(--r-lg); padding: 6px 10px;
+  font-family: var(--mono);
+}
+html.phone-lite select {
+  padding-right: 28px;
+  background-image: linear-gradient(45deg, transparent 50%, var(--outline) 50%), linear-gradient(135deg, var(--outline) 50%, transparent 50%);
+  background-position: right 14px center, right 9px center;
+  background-size: 5px 5px; background-repeat: no-repeat;
+}
+html.phone-lite button.chip,
+html.phone-lite .pad-mini,
+html.phone-lite .sampler-tools button,
+html.phone-lite .pad-grid button { min-height: 44px; min-width: 44px; }
+/* set: rows wrap, inputs full width */
+html.phone-lite .ap-btns,
+html.phone-lite .ap-controls,
+html.phone-lite .panel-head,
+html.phone-lite .macro-body,
+html.phone-lite .sampler-tools { flex-wrap: wrap; min-width: 0; }
+html.phone-lite .ap-btns > * { flex: 1 1 auto; }
+html.phone-lite #autopilot-panel h3.hud-label { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; white-space: normal; }
+html.phone-lite #autopilot-panel h3.hud-label input[type="text"] { min-width: 0; flex: 1 1 140px; }
+html.phone-lite #ap-seed-input,
+html.phone-lite #ap-occasion-input,
+html.phone-lite .ap-lead input[type="search"] { min-width: 0; flex: 1 1 100%; }
+html.phone-lite .macro-body select,
+html.phone-lite .macro-body input[type="text"] { max-width: 100%; }
+/* pads: 4 across, thumb-sized */
+html.phone-lite .pad-grid { grid-template-columns: repeat(4, 1fr); gap: 8px; }
+html.phone-lite .sample-pad { min-height: 76px; }
+html.phone-lite .pad-name { font-size: 13px; }
+
+/* landscape phone: two columns (decks, crossfader, phrase | next, buttons, volume), a shorter tab bar */
+@media (orientation: landscape) {
+  html.phone-lite:not(.phone-adv)[data-ptab="now"] #lite {
+    display: grid; column-gap: 12px; row-gap: 8px; align-items: start;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-areas: "banner banner" "head head" "decks next" "xf ctl" "strip ctl" "strip vol" "strip status";
+    padding-left: max(8px, env(safe-area-inset-left)); padding-right: max(8px, env(safe-area-inset-right));
+  }
+  html.phone-lite .lite-banner { grid-area: banner; }
+  html.phone-lite .lite-head { grid-area: head; }
+  html.phone-lite .lite-decks { grid-area: decks; }
+  html.phone-lite .lite-xf { grid-area: xf; }
+  html.phone-lite .lite-strip { grid-area: strip; }
+  html.phone-lite .lite-next { grid-area: next; }
+  html.phone-lite .lite-ctl { grid-area: ctl; }
+  html.phone-lite .lite-vol { grid-area: vol; }
+  html.phone-lite .lite-status { grid-area: status; }
+  html.phone-lite .lite-title { min-height: 0; }
+  html.phone-lite .lite-btn { min-height: 44px; }
+  html.phone-lite .lite-start { min-height: 48px; }
+  html.phone-lite .lite-tab { min-height: 44px; }
+  html.phone-lite body { padding-bottom: calc(54px + env(safe-area-inset-bottom)); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html.phone-lite .lite-btn:active { transform: none; }
+}
