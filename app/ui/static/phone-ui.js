@@ -80,7 +80,37 @@
   // what the wake lock should do now: want it while a set runs or a deck plays, only when visible
   function wakeWanted(setActive, anyPlaying) { return !!(setActive || anyPlaying); }
 
-  const core = { PHONE_QUERY, TABS, fmtClock, timeLeft, xfLabel, nextLine, swipeIntent, dragValue, isIOS, splitTitle, wakeWanted };
+  // -- phone-sized audio (server: app/ui/services/phone_audio.py, ?q=phone) --------------------
+  // the routes the console decodes as deck / stem audio
+  const AUDIO_ROUTE = /^\/api\/(audio\/tracks\/[0-9a-f]{16}|tracks\/[0-9a-f]{16}\/stems\/\w+|riff\/[\w-]+\/\w+)$/;
+  // url -> the phone variant's url, or null when it is not deck audio / already has a query
+  function smallAudioUrl(url) {
+    const m = String(url || "").match(/^(https?:\/\/[^/]+)?(\/[^?#]*)(\?[^#]*)?$/);
+    if (!m || m[3] || !AUDIO_ROUTE.test(m[2])) return null;
+    return `${m[1] || ""}${m[2]}?q=phone`;
+  }
+  // a small screen, or the user's own Data Saver. Not effectiveType: Chrome's estimate said "3g"
+  // for a desktop on localhost, which would have sent a desktop the AAC copy.
+  function wantSmallAudio(phoneView, conn) {
+    return !!(phoneView || (conn && conn.saveData));
+  }
+  // total bytes from a 200 (Content-Length) or 206 (Content-Range "bytes a-b/total"); null = unknown
+  function totalBytes(status, contentLength, contentRange, already) {
+    if (status === 206) {
+      const m = String(contentRange || "").match(/\/(\d+)$/);
+      return m ? Number(m[1]) : null;
+    }
+    const n = Number(contentLength);
+    return contentLength != null && contentLength !== "" && Number.isFinite(n) ? n + (already || 0) : null;
+  }
+  // "12.3 / 34.0 MB (36 %)" or "12.3 MB" when the size is unknown
+  function fmtProgress(loaded, total) {
+    const mb = (b) => (b / 1e6).toFixed(1);
+    return total > 0 ? `${mb(loaded)} / ${mb(total)} MB (${Math.min(100, Math.floor((100 * loaded) / total))} %)` : `${mb(loaded)} MB`;
+  }
+
+  const core = { PHONE_QUERY, TABS, fmtClock, timeLeft, xfLabel, nextLine, swipeIntent, dragValue, isIOS, splitTitle, wakeWanted,
+    smallAudioUrl, wantSmallAudio, totalBytes, fmtProgress };
   if (typeof module !== "undefined" && module.exports) module.exports = core;
   if (typeof document === "undefined") return;
 
@@ -258,6 +288,78 @@
     if (!phone) { wake.want = false; wakeRelease(); return; }   // desktop: untouched
     wakeUpdate(); mediaUpdate();
   }, 1000);
+
+  // ---- deck / stem audio on a phone: the small variant, resumable, with progress ------------------
+  // One wrapper over window.fetch (outermost, so every caller goes through it: browser.js, the
+  // autopilot preload, macros, stems). Only GETs of AUDIO_ROUTE without a query, and only when
+  // wantSmallAudio: the desktop request path is untouched. The body is read here with a byte count
+  // (downloads, painted by tick) and, if the link drops part-way, resumed with a Range request
+  // (FileResponse answers 206) instead of starting again; the caller's abort signal still wins.
+  const downloads = new Set();          // {label, loaded, total}, one per transfer in flight
+  const innerFetch = root.fetch.bind(root);
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  function audioLabel(path) {
+    const id = (path.match(/[0-9a-f]{16}/) || [""])[0];
+    const stem = (path.match(/\/stems\/(\w+)$|\/riff\/[\w-]+\/(\w+)$/) || []).slice(1).find(Boolean);
+    const name = (root.trackBrowser && root.trackBrowser.nameOf && root.trackBrowser.nameOf(id)) || id || "audio";
+    return stem ? `${name} · ${stem}` : name;
+  }
+  async function resumableGet(url, init, label) {
+    const signal = init && init.signal;
+    const chunks = [];
+    let got = 0, total = null, type = "", tries = 0;
+    const entry = { label, loaded: 0, total: null };
+    downloads.add(entry);
+    try {
+      for (;;) {
+        const headers = new Headers((init && init.headers) || undefined);
+        if (got) headers.set("Range", `bytes=${got}-`);
+        let res;
+        try {
+          res = await innerFetch(url, Object.assign({}, init, { headers }));
+        } catch (e) {
+          if ((signal && signal.aborted) || ++tries > 4) throw e;
+          await sleep(1000 * tries);
+          continue;
+        }
+        if (!res.ok) {
+          if (!got) return res;                            // 404 etc.: the caller handles it as before
+          throw new Error(`resume failed: HTTP ${res.status}`);
+        }
+        if (got && res.status !== 206) { chunks.length = 0; got = 0; }   // Range ignored: whole file again
+        if (total == null) total = totalBytes(res.status, res.headers.get("content-length"), res.headers.get("content-range"), got);
+        type = type || res.headers.get("content-type") || "";
+        entry.total = total;
+        const reader = res.body.getReader();
+        try {
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            chunks.push(value);
+            got += value.length;
+            entry.loaded = got;
+          }
+        } catch (e) {
+          if ((signal && signal.aborted) || ++tries > 4) throw e;
+          await sleep(1000 * tries);
+          continue;                                        // resume from `got`
+        }
+        if (total == null || got >= total) break;
+        if (++tries > 4) throw new Error(`download incomplete: ${got} of ${total} bytes`);
+      }
+      return new Response(new Blob(chunks, { type }), { status: 200, headers: { "content-type": type, "content-length": String(got) } });
+    } finally {
+      downloads.delete(entry);
+    }
+  }
+  root.fetch = function (input, init) {
+    const method = ((init && init.method) || (input && input.method) || "GET").toUpperCase();
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : null;
+    const small = method === "GET" && url && wantSmallAudio(html.classList.contains("phone-lite"), navigator.connection)
+      ? smallAudioUrl(url) : null;
+    if (!small) return innerFetch(input, init);
+    return resumableGet(small, init, audioLabel(small.replace(/^https?:\/\/[^/]+/, "").split("?")[0]));
+  };
 
   // ---- the Lite view ---------------------------------------------------------------------------
   let built = false, phone = false;
@@ -461,7 +563,24 @@
       ui.tabs[t] = b;
       bar.append(b);
     }
-    document.body.append(bar);
+    // download progress, above the tab bar on every tab (filled by paintDownloads)
+    ui.dl = el("div", { id: "lite-dl", class: "lite-dl", role: "status", "aria-live": "polite", hidden: "" });
+    ui.dlTxt = el("span", { class: "lite-dl-txt" });
+    ui.dlBar = el("i", { class: "lite-dl-bar" });
+    ui.dl.append(ui.dlTxt, ui.dlBar);
+    document.body.append(bar, ui.dl);
+  }
+
+  function paintDownloads() {
+    if (!built) return;
+    let first = null, more = 0;
+    for (const d of downloads) { if (!first) first = d; else more++; }
+    put(ui.dl, "hidden", !first);
+    if (!first) return;
+    // no bytes and no size yet: the server is still making the phone copy (first request per song)
+    const what = !first.loaded && first.total == null ? "preparing phone audio…" : fmtProgress(first.loaded, first.total);
+    put(ui.dlTxt, "text", `⬇${more ? ` ${more + 1} files ·` : ""} ${first.label}: ${what}`);
+    put(ui.dl, "--p", first.total > 0 ? Math.min(1, first.loaded / first.total).toFixed(3) : "0");
   }
 
   function buildTapOverlay() {
@@ -528,6 +647,7 @@
   let lastStatus = { ap: "", st: "", shown: "" };
   function tick(force) {
     if (!built || !phone || document.hidden) return;
+    paintDownloads();
     if (!force && tab !== "now" && tab !== "more") return;
     const ds = decks(), a = ap(), air = onAirDeck();
     for (const id of ["a", "b"]) {
