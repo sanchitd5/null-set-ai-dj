@@ -168,7 +168,7 @@
   async function pollStems() {
     try {
       const st = await (await realFetch("/api/stems/status")).json();
-      const left = st.backlog + st.urgent.length + (st.busy ? 1 : 0);
+      const left = st.backlog + st.urgent.length + (st.remote ? st.remote.jobs.length : (st.busy ? 1 : 0));
       stemTotal = Math.max(stemTotal, left + st.separated);
       if (!left) {
         if (stemRow) { stemRow.el.classList.add("ai-leaving"); setTimeout(() => stemRow && stemRow.el.remove(), 380); stemRow = null; }
@@ -181,8 +181,9 @@
         list.appendChild(el);
         stemRow = { el };
       }
-      stemRow.el.querySelector(".ai-label").textContent =
-        `Separating the library in the background${st.llm_busy && !st.urgent.length && st.wait_note ? ` (${st.wait_note})` : ""}`;
+      stemRow.el.querySelector(".ai-label").textContent = st.line
+        ? `Separating stems: ${st.line}`
+        : `Separating the library in the background${st.llm_busy && !st.urgent.length && st.wait_note ? ` (${st.wait_note})` : ""}`;
       stemRow.el.querySelector(".ai-time").textContent = `${left} left`;
     } catch (e) { /* server restarting */ }
   }

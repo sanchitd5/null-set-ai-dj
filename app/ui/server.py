@@ -604,14 +604,131 @@ def _next_stem_job() -> Optional[str]:
     return None
 
 
+_stem_remote: Dict[str, dict] = {}            # stem server mode: tid -> its job (queued / running)
+_stem_remote_err: Dict[str, Optional[str]] = {"error": None}
+REMOTE_BACKFILL_PARKED = 2                     # backfill jobs handed to the stem server at once
+
+
+def _remote_has_ft(tid: str) -> bool:
+    from app.music_brain.audio import stem_service
+
+    return stem_service.complete_ft(stem_service.file_hash(_track_path(tid))) is not None
+
+
+def _remote_finish(tid: str, js: dict) -> None:
+    _stem_cache.pop(tid, None)                 # resolve again: the ft set wins (cached_four_stems order)
+    if _cached_stems4(tid) is None:
+        _stem_done["failed"] += 1
+        print(f"[stems] {tid}: stem server says done but no complete set is cached", flush=True)
+        return
+    _stem_done["separated"] += 1
+    if js.get("seconds") is not None:
+        _stem_done["last_seconds"] = js.get("seconds")
+    _cached_vocal_regions(tid)
+
+
+def _remote_stem_worker() -> None:
+    """Stem server mode (STEM_SERVER_URL): the decks' songs go to the server at deck priority as soon
+    as they are asked for; the library backfill trickles in (REMOTE_BACKFILL_PARKED at a time, only
+    while the LLM is idle, as before) at backfill priority. The server runs one split at a time in
+    priority order; this loop polls the jobs and refreshes the console's stem cache when one lands."""
+    from app.ui.services import stem_remote
+
+    while stem_remote.enabled():
+        wait = _remote_stem_step()
+        with _stem_cv:
+            _stem_cv.wait(timeout=wait)
+    _stem_worker.started = False
+
+
+def _remote_submit(todo: list, retry: list) -> None:
+    from app.ui.services import stem_remote
+
+    for tid, prio in todo:
+        try:
+            if tid not in _tracks or (tid not in _stem_remote and _remote_has_ft(tid)):
+                continue
+            js = stem_remote.submit(tid, _track_path(tid), prio, CACHE_DIR)
+            _stem_remote_err["error"] = None
+        except stem_remote.Unreachable as exc:
+            _stem_remote_err["error"] = str(exc)
+            retry.append((tid, prio))
+            continue
+        except Exception as exc:  # noqa: BLE001 -- one bad track never stops the loop
+            _stem_done["failed"] += 1
+            print(f"[stems] {tid}: {exc}", flush=True)
+            continue
+        if js.get("status") == "done":
+            _stem_remote.pop(tid, None)
+            _remote_finish(tid, js)
+        else:
+            _stem_remote[tid] = js
+
+
+def _remote_poll(retry: list) -> None:
+    from app.ui.services import stem_remote
+
+    for tid, js in list(_stem_remote.items()):
+        try:
+            cur = stem_remote.job(js["job"])
+        except stem_remote.Unreachable as exc:
+            _stem_remote_err["error"] = str(exc)
+            return
+        except Exception as exc:  # noqa: BLE001
+            print(f"[stems] poll {tid}: {exc}", flush=True)
+            continue
+        if cur is None:                                    # server lost it: hand it over again
+            _stem_remote.pop(tid, None)
+            retry.append((tid, js.get("priority") or "deck"))
+        elif cur["status"] == "done":
+            _stem_remote.pop(tid, None)
+            _remote_finish(tid, cur)
+        elif cur["status"] == "error":
+            _stem_remote.pop(tid, None)
+            _stem_done["failed"] += 1
+            _stem_done["last_error"] = f"{tid}: {cur.get('error')}"[:200]
+            print(f"[stems] {tid}: stem server: {cur.get('error')}", flush=True)
+        else:
+            _stem_remote[tid] = cur
+
+
+def _remote_stem_step() -> float:
+    """One round: hand over what is due, poll what is out. -> seconds to wait before the next round."""
+    global _stem_busy
+
+    with _stem_cv:
+        todo = [(t, "deck") for t in _stem_queue]
+        _stem_queue.clear()
+        parked = sum(1 for j in _stem_remote.values() if j.get("priority") == "backfill")
+        while _stem_backlog and parked < REMOTE_BACKFILL_PARKED and not _llm_busy():
+            todo.append((_stem_backlog.pop(0), "backfill"))
+            parked += 1
+    retry: list = []
+    _remote_submit(todo, retry)
+    _remote_poll(retry)
+    with _stem_cv:
+        for tid, prio in reversed(retry):
+            q = _stem_backlog if prio == "backfill" else _stem_queue
+            if tid not in q:
+                q.insert(0, tid)
+        running = [t for t, j in _stem_remote.items() if j.get("status") == "running"]
+        _stem_busy = (running or list(_stem_remote) or [None])[0]
+    return 5.0 if retry else 1.0
+
+
 def _stem_worker() -> None:
     """Feeds the persistent separation process (app/music_brain/audio/stem_worker.py):
     up to STEM_IN_FLIGHT songs at once so the next one decodes while the current
-    one runs on the GPU. Falls back to one-shot Demucs if the process won't start."""
+    one runs on the GPU. Falls back to one-shot Demucs if the process won't start.
+    With STEM_SERVER_URL set the stem server does the splitting instead (_remote_stem_worker)."""
     import queue as _q
 
     global _stem_busy
     from app.music_brain.audio import stem_service
+    from app.ui.services import stem_remote
+
+    if stem_remote.enabled():
+        return _remote_stem_worker()
 
     proc, in_flight = None, {}
     while True:
@@ -691,6 +808,11 @@ def _queue_stems_impl(track_id: str, urgent: bool = True) -> bool:
     """Queue a 4-stem separation; True while queued or running. Urgent jobs
     (a deck, a new track) go ahead of the library backfill."""
     with _stem_cv:
+        if track_id in _stem_remote:                 # at the stem server: a deck asking raises it
+            if urgent and _stem_remote[track_id].get("priority") == "backfill" and track_id not in _stem_queue:
+                _stem_queue.append(track_id)
+                _stem_cv.notify_all()
+            return True
         if _stem_busy == track_id or track_id in _stem_queue:
             return True
         if track_id in _stem_backlog:
@@ -767,11 +889,16 @@ def get_prerender():
 @app.on_event("startup")
 def _backfill_stems() -> None:
     """Every library track gets its stems separated ahead of time, in the
-    background, so a deck load never waits on Demucs."""
+    background, so a deck load never waits on Demucs. Stem server mode: every song without an
+    htdemucs_ft set (the console's old htdemucs backfill included) is queued for an ft split; its
+    htdemucs set keeps serving until the ft set is verified, then it is pruned."""
     def scan():
         import soundfile as _sf
 
+        from app.ui.services import stem_remote
         from app.ui.services.download_service import _is_live, _is_mix
+
+        want_ft = stem_remote.enabled()
 
         missing = []
         for tid in list(_tracks):
@@ -784,7 +911,7 @@ def _backfill_stems() -> None:
                         continue                         # an album / mix file, not a song
                 except Exception:
                     pass
-                if _cached_stems4(tid) is None:
+                if (not _remote_has_ft(tid)) if want_ft else _cached_stems4(tid) is None:
                     missing.append(tid)
             except Exception:
                 continue
@@ -952,9 +1079,20 @@ def get_library_lockable(bpm: float, key: str = "", exclude: str = "", limit: in
 
 @app.get("/api/stems/status")
 def get_stems_status():
+    """The stem queue. Stem server mode adds `remote` (the console's jobs there: priority, position,
+    device, model, real progress, elapsed, eta) and `line`, the one-line status the STEMS badge shows."""
+    from app.ui.services import stem_remote
+
     with _stem_cv:
-        return {"busy": _stem_busy, "urgent": list(_stem_queue), "backlog": len(_stem_backlog),
-                "llm_busy": _llm_busy(), "wait_note": _stem_wait_note(), **_stem_done}
+        out = {"busy": _stem_busy, "urgent": list(_stem_queue), "backlog": len(_stem_backlog),
+               "llm_busy": _llm_busy(), "wait_note": _stem_wait_note(), **_stem_done}
+        if stem_remote.enabled():
+            jobs = sorted(_stem_remote.values(), key=lambda j: (j.get("status") != "running", j.get("position") or 0))
+            head = jobs[0] if jobs else None
+            out["remote"] = {"jobs": [dict(j) for j in jobs], "error": _stem_remote_err["error"]}
+            out["line"] = stem_remote.status_line(head, max(0, len(jobs) - 1) + len(_stem_queue) + len(_stem_backlog),
+                                                  _stem_remote_err["error"])
+        return out
 
 
 @app.get("/api/tracks/{track_id}/vocals")

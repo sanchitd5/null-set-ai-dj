@@ -35,7 +35,7 @@ def verify_weights(checkpoints: Path) -> list[str]:
 
 
 def _cap_vram(torch) -> None:
-    gb = float(os.environ.get("STEM_SERVER_VRAM_GB", "6"))
+    gb = float(os.environ.get("STEM_SERVER_VRAM_GB", "3.8"))
     if gb <= 0 or not torch.cuda.is_available():
         return
     total = torch.cuda.get_device_properties(0).total_memory

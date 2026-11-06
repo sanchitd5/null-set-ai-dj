@@ -15,9 +15,10 @@ console already split is served without a second split, and a song split here is
 from __future__ import annotations
 
 import hashlib
+import heapq
 import hmac
+import json
 import os
-import queue
 import re
 import shutil
 import subprocess
@@ -61,23 +62,53 @@ class Settings:
         self.uploads = cache / "uploads"                # the console's track store (server.py UPLOAD_DIR)
         self.stems = cache / "stems"                    # the console's stem cache (config.STEMS_CACHE_DIR)
         self.windows = cache / "stem_windows"           # encoded AAC windows (derived, safe to delete)
+        # The console's library tracks live outside uploads/: it links them here as <id>.<ext> (a symlink
+        # to the real file). The sha256 check on every first use still binds the id to the bytes.
+        self.links = cache / "stem_links"
+        self.state = Path(env.get("STEM_SERVER_STATE") or cache / "stem_server_jobs.json")   # queue across restarts
         self.device = env.get("STEM_SERVER_DEVICE") or None   # None = cuda -> mps -> cpu
+        self.rss_limit = int(float(env.get("STEM_JOB_RSS_GB", "6")) * (1 << 30))
+        self.scope_mem = env.get("STEM_JOB_MEMORY_MAX") or None   # e.g. "7G": systemd scope for the worker
+        # fp16 autocast on CUDA: ~1.3x faster, stems within 56-65 dB SDR of fp32 (STEMS_PERF.md)
+        self.half = env.get("STEM_SERVER_HALF", "1") == "1"
         # The console's account store (same cache): its per-device tokens work here too, so a phone
         # that signed in with Google once uses one token for both. Re-read when it changes on disk.
         self.auth_store = AuthStore(default_store_path(env))
 
 
+# Queue order: a deck or a booked transition first, then a phone booking, then the library backfill.
+PRIORITIES = {"deck": 0, "booked": 0, "phone": 1, "backfill": 2}
+
+
 class Job:
-    def __init__(self, track_id: str, path: Path, stems: int):
-        self.job = uuid.uuid4().hex[:12]
+    def __init__(self, track_id: str, path: Path, stems: int, priority: str = "phone", job: Optional[str] = None):
+        self.job = job or uuid.uuid4().hex[:12]
         self.id, self.path, self.stems = track_id, path, stems
+        self.priority = priority
         self.status, self.progress, self.error, self.device, self.note = "queued", 0.0, None, None, None
+        self.model: Optional[str] = None
         self.created, self.started, self.finished = time.time(), None, None
+        self.seq = 0                       # queue order inside one priority (FIFO)
+        self.position: Optional[int] = None
+        self.info: dict = {}
+
+    @property
+    def prio(self) -> int:
+        return PRIORITIES.get(self.priority, 1)
+
+    def eta(self) -> Optional[float]:
+        if self.status != "running" or not self.started or self.progress < 0.03:
+            return None
+        el = time.time() - self.started
+        return round(el / self.progress * (1 - self.progress), 1)
 
     def to_dict(self) -> dict:
         return {"job": self.job, "id": self.id, "stems": self.stems, "status": self.status,
-                "progress": self.progress, "error": self.error, "device": self.device, "note": self.note,
-                "elapsed": round((self.finished or time.time()) - (self.started or self.created), 1)}
+                "priority": self.priority, "position": self.position if self.status == "queued" else None,
+                "progress": round(self.progress, 3), "error": self.error, "device": self.device,
+                "model": self.model, "note": self.note, "eta": self.eta(),
+                "elapsed": round((self.finished or time.time()) - (self.started or self.created), 1),
+                "seconds": self.info.get("seconds")}
 
 
 def separate_once(path: Path, model: str, device: Optional[str], stems_dir: Path) -> tuple[Dict[str, str], str, Optional[str]]:
@@ -99,23 +130,32 @@ def separate_once(path: Path, model: str, device: Optional[str], stems_dir: Path
 
 
 class StemServer:
-    def __init__(self, settings: Settings, separate_fn=separate_once):
+    """separate_fn None: the streaming engine in the long-lived GPU worker (app/stem_server/gpu.py).
+    A function (path, model, device, stems_dir) -> (stems, device, note) replaces it (tests, fallback)."""
+
+    def __init__(self, settings: Settings, separate_fn=None):
         self.s = settings
         self.separate_fn = separate_fn
         self.jobs: Dict[str, Job] = {}
-        self.q: "queue.Queue[Job]" = queue.Queue()
-        self.lock = threading.Lock()          # jobs dict + hash memo
+        self.heap: list = []                  # (prio, seq, job id); stale entries skipped on pop
+        self.cv = threading.Condition()
+        self._seq = 0
+        self.lock = threading.RLock()         # jobs dict + hash memo + state file
         self.encode_lock = threading.Lock()   # window encode + integrity repair
         self._hash: Dict[str, tuple] = {}     # track id -> (mtime, size, full sha256)
+        self.gpu = None
+        self.current: Optional[Job] = None
+        self._restoring = False
         for d in (self.s.uploads, self.s.windows):
             d.mkdir(parents=True, exist_ok=True)
         threading.Thread(target=self._worker, daemon=True, name="stem-gpu").start()
 
     # ---- tracks ---------------------------------------------------------------------------------
     def track_path(self, track_id: str) -> Optional[Path]:
-        for p in sorted(self.s.uploads.glob(f"{track_id}.*")):
-            if p.is_file() and p.suffix.lstrip(".").lower() in AUDIO_EXTS:
-                return p
+        for d in (self.s.uploads, self.s.links):
+            for p in sorted(d.glob(f"{track_id}.*")):
+                if p.is_file() and p.suffix.lstrip(".").lower() in AUDIO_EXTS:
+                    return p
         return None
 
     def full_hash(self, track_id: str, p: Path) -> str:
@@ -151,24 +191,71 @@ class StemServer:
         r = self.ready_set(track_id, p)
         return r[0] if r else None
 
+    def own_ready(self, track_id: str, p: Path) -> bool:
+        """The song has a complete set of THIS server's model (htdemucs_ft): nothing left to split.
+        A cheaper set (the console's old htdemucs backfill) is still served meanwhile (ready_set)."""
+        st = stem_service.read_manifest(self.s.stems / f"{self.full_hash(track_id, p)}_{self.s.model}")
+        return bool(st and all(st.get(n) and os.path.exists(st[n]) for n in FOUR))
+
     # ---- jobs -----------------------------------------------------------------------------------
-    def submit(self, track_id: str, stems: int) -> Job:
+    def submit(self, track_id: str, stems: int, priority: str = "phone", job_id: Optional[str] = None) -> Job:
+        """Queue a split, one job per song: a second request for a song already queued or running
+        returns that job (raising its priority when the new one ranks higher)."""
+        if priority not in PRIORITIES:
+            raise HTTPException(400, f"priority must be one of {sorted(PRIORITIES)}")
         p = self.track_path(track_id)
         if p is None:
             raise HTTPException(404, "unknown track; upload it first")
-        with self.lock:
+        with self.cv:
             for j in self.jobs.values():
                 if j.id == track_id and j.status in ("queued", "running"):
+                    if j.status == "queued" and PRIORITIES[priority] < j.prio:
+                        j.priority = priority
+                        self._push(j)
+                        self._save()
                     return j
-        j = Job(track_id, p, stems)
-        if self.ready_stems(track_id, p):
-            j.status, j.progress, j.finished = "done", 1.0, time.time()
-        with self.lock:
+        j = Job(track_id, p, stems, priority, job_id)
+        if self.own_ready(track_id, p):
+            j.status, j.progress, j.finished, j.model = "done", 1.0, time.time(), self.s.model
+        with self.cv:
             self.jobs[j.job] = j
             self._trim_jobs()
-        if j.status == "queued":
-            self.q.put(j)
+            if j.status == "queued":
+                self._push(j)
+                self._save()
         return j
+
+    def _push(self, j: Job) -> None:
+        """Caller holds self.cv."""
+        self._seq += 1
+        j.seq = self._seq
+        heapq.heappush(self.heap, (j.prio, j.seq, j.job))
+        self._positions()
+        self.cv.notify_all()
+
+    def _positions(self) -> None:
+        q = sorted((j for j in self.jobs.values() if j.status == "queued"), key=lambda j: (j.prio, j.seq))
+        for i, j in enumerate(q):
+            j.position = i + 1
+
+    def _pop(self) -> Job:
+        with self.cv:
+            while True:
+                while self.heap:
+                    prio, seq, jid = heapq.heappop(self.heap)
+                    j = self.jobs.get(jid)
+                    if j is not None and j.status == "queued" and (j.prio, j.seq) == (prio, seq):
+                        j.status, j.started, j.position = "running", time.time(), None
+                        self.current = j
+                        self._positions()
+                        self._save()
+                        return j
+                self.cv.wait()
+
+    def active(self) -> List[Job]:
+        with self.cv:
+            return sorted((j for j in self.jobs.values() if j.status in ("queued", "running")),
+                          key=lambda j: (j.status != "running", j.prio, j.seq))
 
     def _trim_jobs(self, keep: int = 500) -> None:
         if len(self.jobs) > keep:
@@ -176,21 +263,103 @@ class StemServer:
                 if self.jobs[k].status in ("done", "error"):
                     del self.jobs[k]
 
-    def _worker(self) -> None:
-        while True:                           # one GPU job at a time
-            j = self.q.get()
-            j.status, j.started = "running", time.time()
+    # ---- crash safety: the queue survives a restart ---------------------------------------------
+    def _save(self) -> None:
+        """Queued + running jobs to the state file (tmp + replace). Caller holds self.cv."""
+        if self._restoring:
+            return                            # the file still lists what is not re-queued yet
+        rows = [{"job": j.job, "id": j.id, "stems": j.stems, "priority": j.priority, "created": j.created}
+                for j in sorted(self.jobs.values(), key=lambda j: (j.status != "running", j.prio, j.seq))
+                if j.status in ("queued", "running")]
+        tmp = self.s.state.with_name(f".{self.s.state.name}.tmp{os.getpid()}")
+        try:
+            self.s.state.parent.mkdir(parents=True, exist_ok=True)
+            tmp.write_text(json.dumps({"version": 1, "jobs": rows}), encoding="utf-8")
+            os.replace(tmp, self.s.state)
+        except OSError as exc:
+            print(f"[stem-server] queue state not saved: {exc}", file=sys.stderr, flush=True)
+        finally:
+            tmp.unlink(missing_ok=True)
+
+    def _restore(self) -> None:
+        """Re-queue what was queued or running when the server stopped (a running one starts over)."""
+        try:
+            rows = json.loads(self.s.state.read_text(encoding="utf-8")).get("jobs") or []
+        except (OSError, ValueError, AttributeError):
+            return
+        n = 0
+        self._restoring = True
+        for r in rows:
             try:
-                if not self.ready_stems(j.id, j.path):
-                    _, j.device, j.note = self.separate_fn(j.path, self.s.model, self.s.device, self.s.stems)
-                if not self.ready_stems(j.id, j.path):
+                if not ID_RE.match(str(r.get("id"))):
+                    continue
+                self.submit(r["id"], int(r.get("stems") or 4), r.get("priority") or "phone", r.get("job"))
+                n += 1
+            except Exception as exc:  # noqa: BLE001 -- a track that went away: drop its job
+                print(f"[stem-server] not re-queued {r.get('id')}: {exc}", file=sys.stderr, flush=True)
+        with self.cv:
+            self._restoring = False
+            self._save()
+        if n:
+            print(f"[stem-server] re-queued {n} job(s) from {self.s.state.name}", file=sys.stderr, flush=True)
+
+    # ---- the GPU job loop ----------------------------------------------------------------------
+    def _worker(self) -> None:
+        self._restore()                       # here, not in __init__: hashing the queued tracks takes a while
+        while True:                           # one GPU job at a time
+            j = self._pop()
+            try:
+                if not self.own_ready(j.id, j.path):
+                    if self.separate_fn is not None:
+                        _, j.device, j.note = self.separate_fn(j.path, self.s.model, self.s.device, self.s.stems)
+                    else:
+                        self._split(j)
+                if not self.own_ready(j.id, j.path):
                     raise RuntimeError("separation finished without a complete 4-stem set")
-                j.status, j.progress = "done", 1.0
+                j.status, j.progress, j.model = "done", 1.0, self.s.model
             except Exception as exc:  # noqa: BLE001 -- reported through the job, the worker lives on
                 j.status, j.error = "error", f"{type(exc).__name__}: {exc}"[:300]
                 print(f"[stem-server] job {j.job} {j.id} failed: {j.error}", file=sys.stderr, flush=True)
             finally:
                 j.finished = time.time()
+                with self.cv:
+                    self.current = None
+                    self._save()
+
+    def _split(self, j: Job) -> None:
+        """Streaming engine in the GPU worker; stems verified (every stem as long as the decoded mix)
+        before the manifest, the cache-hit marker, is written; then the song's non-ft sets are pruned."""
+        import soundfile as sf
+
+        from app.stem_server import gpu
+
+        if self.gpu is None:
+            self.gpu = gpu.GpuWorker(self.s.rss_limit, self.s.scope_mem)
+        h = self.full_hash(j.id, j.path)
+        out = self.s.stems / f"{h}_{self.s.model}"
+        j.model = self.s.model
+
+        def progress(p: float, device: Optional[str] = None) -> None:
+            j.progress = max(0.0, min(1.0, p))
+            if device:
+                j.device = device
+
+        # device None: the worker picks cuda -> mps -> cpu (torch is never imported in this process)
+        info, _, j.note = gpu.split(self.gpu, j.job, j.path, out, self.s.model, self.s.device, progress, self.s.half)
+        j.info, j.device = info, info.get("device")
+        stems = info["stems"]
+        if sorted(stems) != sorted(FOUR):
+            raise RuntimeError(f"split returned {sorted(stems)}")
+        for name, path in stems.items():
+            frames = sf.info(path).frames
+            if frames != info["frames"]:
+                raise RuntimeError(f"{name}.flac has {frames} frames, the mix {info['frames']}")
+        stem_service.write_manifest(out, stems)
+        if self.s.model == stem_service.DEMUCS_MODEL:
+            stem_service._auto_prune(h, self.s.stems)
+        print(f"[stem-server] {j.id} {self.s.model} on {j.device}: {info['frames'] / 44100:.0f} s of audio in "
+              f"{info['seconds']} s (batch {info.get('batch')}, peak RSS {info.get('peak_rss_mb')} MB"
+              f"{', ' + j.note if j.note else ''})", file=sys.stderr, flush=True)
 
     # ---- windows --------------------------------------------------------------------------------
     def window(self, track_id: str, name: str, start: float, end: float) -> tuple[Path, dict]:
@@ -232,9 +401,10 @@ class StemServer:
 class SeparateReq(BaseModel):
     id: str
     stems: int = 4
+    priority: str = "phone"     # deck | booked | phone | backfill; above phone only with STEM_SERVER_TOKEN
 
 
-def create_app(settings: Optional[Settings] = None, separate_fn=separate_once) -> FastAPI:
+def create_app(settings: Optional[Settings] = None, separate_fn=None) -> FastAPI:
     s = settings or Settings()
     srv = StemServer(s, separate_fn)
     app = FastAPI(title="null-set stem server", docs_url=None, redoc_url=None, openapi_url=None)
@@ -242,7 +412,8 @@ def create_app(settings: Optional[Settings] = None, separate_fn=separate_once) -
     want = f"Bearer {s.token}".encode()
     limiter = app.state.limiter = FailureLimiter()
 
-    def auth(request: Request) -> None:
+    def auth(request: Request) -> str:
+        """-> "server" for STEM_SERVER_TOKEN (the console on this host), "device" for an account token."""
         # per-IP failed-auth limiter (the console's): X-Forwarded-For honoured only from Caddy on loopback
         key = "ip:" + client_ip(LIMITS, request.scope, {k.lower(): v for k, v in request.headers.items()})
         wait = limiter.retry_after(key)
@@ -250,11 +421,12 @@ def create_app(settings: Optional[Settings] = None, separate_fn=separate_once) -
             raise HTTPException(429, "too many failed attempts; retry later", headers={"Retry-After": str(wait)})
         got = request.headers.get("authorization", "")
         if hmac.compare_digest(got.encode(), want):
-            return                                         # STEM_SERVER_TOKEN (static)
+            return "server"                                # STEM_SERVER_TOKEN (static)
         scheme, _, cred = got.partition(" ")
         if not (scheme.lower() == "bearer" and cred.strip() and s.auth_store.check_token(cred.strip())):
             limiter.fail(key, LIMITS)
             raise HTTPException(401, "bad or missing bearer token", headers={"WWW-Authenticate": "Bearer"})
+        return "device"
 
     def check_id(track_id: str) -> str:
         if not ID_RE.match(track_id):
@@ -307,12 +479,26 @@ def create_app(settings: Optional[Settings] = None, separate_fn=separate_once) -
             tmp.unlink(missing_ok=True)
         return {"id": id, "stored": True}
 
-    @app.post("/v1/separate", dependencies=[Depends(auth)])
-    def separate(req: SeparateReq):
+    @app.post("/v1/separate")
+    def separate(req: SeparateReq, who: str = Depends(auth)):
         check_id(req.id)
         if req.stems not in (2, 4):
             raise HTTPException(400, "stems must be 2 or 4")
-        return srv.submit(req.id, req.stems).to_dict()
+        if req.priority not in PRIORITIES:
+            raise HTTPException(400, f"priority must be one of {sorted(PRIORITIES)}")
+        prio = req.priority
+        if who != "server" and PRIORITIES[prio] < PRIORITIES["phone"]:
+            prio = "phone"                                 # a deck / booked slot is the console's to claim
+        return srv.submit(req.id, req.stems, prio).to_dict()
+
+    @app.get("/v1/jobs", dependencies=[Depends(auth)])
+    def jobs():
+        """The queue in run order (running first) and the GPU worker."""
+        act = srv.active()
+        w = srv.gpu
+        return {"jobs": [j.to_dict() for j in act], "queued": sum(j.status == "queued" for j in act),
+                "model": s.model, "device": s.device or "auto",
+                "worker": {"alive": bool(w and w.alive), "pid": w.pid if w else None}}
 
     @app.get("/v1/jobs/{job}", dependencies=[Depends(auth)])
     def job(job: str):

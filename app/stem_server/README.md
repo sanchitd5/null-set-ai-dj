@@ -19,8 +19,11 @@ split, and a song split here is available to the console too:
 * The console's library backfill (`_backfill_stems` at startup, `_stem_worker`) uses the GPU once
   CUDA torch is in the venv and the console's service user can open `/dev/nvidia*` (gid 44).
 
-The console's warm worker keeps its model on the GPU while the console runs, and it is not capped
-by `STEM_SERVER_VRAM_GB`. Encoded windows are derived files in
+With `STEM_SERVER_URL` set in the console's env (CT116), the console splits nothing itself: its decks,
+its library backfill and `POST /api/tracks/{id}/separate` all go through this server's queue
+(`app/ui/services/stem_remote.py`), so one process owns the GPU. Library tracks outside `uploads/` are
+linked into `data/cache/stem_links/<id>.<ext>`. Without it (a laptop) the console keeps its own warm
+`htdemucs` worker as before. Encoded windows are derived files in
 `data/cache/stem_windows/`, and deleting that folder is safe.
 
 ## API
@@ -39,9 +42,10 @@ are `sha256(file bytes)[:16]`, the same as the console and the phone.
 | `GET /health` | `{"ok": true}` (no auth) |
 | `HEAD/GET /v1/tracks/{id}` | 404 when unknown; otherwise `{"id", "separated", "model"}`. The phone hashes locally and skips the upload when this returns 200 |
 | `POST /v1/tracks?id=<id>&ext=<ext>` | raw audio body (capped at `STEM_SERVER_MAX_UPLOAD_MB`, default 200). 422 when `sha256(body)[:16] != id` |
-| `POST /v1/separate {"id", "stems": 2\|4}` | returns a job. The whole song is split once, 4-way. A 2-stem request is served from that split (`no_vocals` = drums + bass + other), because htdemucs_ft runs all of its sources either way |
+| `POST /v1/separate {"id", "stems": 2\|4, "priority"}` | returns a job. `priority`: deck / booked (only with `STEM_SERVER_TOKEN`, i.e. the console) > phone (default, and what a device token gets) > backfill. One job per song: asking again returns the same job, raised to the higher priority. A job is done once the song has an `htdemucs_ft` set; a cheaper set already in the cache is served meanwhile. The whole song is split once, 4-way. A 2-stem request is served from that split (`no_vocals` = drums + bass + other), because htdemucs_ft runs all of its sources either way |
 | `GET /v1/tracks/{id}/analysis` | the console's analysis v6 of an uploaded track (`analyzer.analyze`, same disk cache as `/api/tracks/{id}/analysis`). The phone reads it instead of analysing on the device |
-| `GET /v1/jobs/{job}` | `status`: queued / running / done / error, plus `progress`, `error`, `device`, `note` |
+| `GET /v1/jobs/{job}` | `status`: queued / running / done / error, plus `priority`, `position` (1 = next), real `progress` (segments done), `elapsed`, `eta`, `device`, `model`, `error`, `note`, `seconds` |
+| `GET /v1/jobs` | the queue in run order (running first), `queued`, `model`, `device`, `worker` (`alive`, `pid`) |
 | `GET /v1/tracks/{id}/stems/{name}.m4a?start=S&end=E` | AAC-LC 256 kbps, 44.1 kHz stereo, covering that window only (at most 600 s). `name`: vocals, drums, bass, other, no_vocals. Returns 409 before the split, 416 past the end of the track |
 
 Window response headers: `X-Stem-Sample-Rate`, `X-Stem-Start-Frame` (`round(S*44100)`),
@@ -95,9 +99,18 @@ on purpose.
 
 ### GPU sharing
 
-One job runs at a time. Each split runs in its own process (`app.stem_server.demucs_runner`), so all
-of its VRAM is freed when it exits. The CUDA allocator is capped at `STEM_SERVER_VRAM_GB` (default 6).
-If CUDA runs out of memory or fails, the job is retried on the CPU, and the job's `note` says why.
+One job runs at a time, in priority order, in ONE long-lived worker process (`app/stem_server/worker.py`,
+started on the first job, exits after `STEM_WORKER_IDLE_S` idle so its VRAM goes back to the card). It
+runs `app/music_brain/audio/stem_engine.py`: the model's 7.8 s segments batched on the GPU, fp16
+autocast, the output streamed to FLAC, so RAM stays flat for any track length (a 2-hour set costs what a
+song costs). The batch is picked per song from the VRAM free at that moment and the allocator cap
+`STEM_SERVER_VRAM_GB` (~500 MB per segment); CUDA out of memory halves the batch, and at batch 1 the job
+goes to the CPU (emergency only: ~7 min per song for htdemucs_ft). The job's `note` says why.
+The worker's RAM is guarded twice (`app/stem_server/gpu.py`): a systemd scope with `STEM_JOB_MEMORY_MAX`
+when set, and an RSS watchdog at `STEM_JOB_RSS_GB`; either kill hits the worker, never the server, and
+the job is retried once at batch 1. The queue is saved to `data/cache/stem_server_jobs.json` on every
+change and re-queued after a restart (a job that was running starts over). Numbers:
+`docs/engineering/STEMS_PERF.md`; re-measure with `python -m app.stem_server.bench SONG ...`.
 The device is picked automatically in the order cuda, mps, cpu, so the owner's Mac runs the same code
 as a fallback host.
 
@@ -172,7 +185,14 @@ Proxmox host.
 | `STEM_SERVER_TOKEN` | (required) | at least 32 chars; refuses to start without it |
 | `STEM_SERVER_HOST` | 127.0.0.1 | bind address |
 | `STEM_PORT` | 47830 | port |
-| `STEM_SERVER_VRAM_GB` | 6 | CUDA allocator cap per split |
+| `STEM_SERVER_VRAM_GB` | 3.8 | CUDA allocator cap of the worker (the process adds ~0.3 GB of CUDA context) |
+| `STEM_SERVER_HALF` | 1 | fp16 autocast on CUDA (0 = fp32) |
+| `STEM_BATCH` | auto | fixed segments per forward instead of the VRAM-based pick |
+| `STEM_WORKER_IDLE_S` | 120 | the worker exits (VRAM freed) after this long without a job |
+| `STEM_JOB_MEMORY_MAX` | unset | e.g. `6G`: run the worker in a systemd scope with that MemoryMax (root + systemd-run) |
+| `STEM_JOB_RSS_GB` | 6 | RSS watchdog: the worker is killed above this |
+| `STEM_SERVER_STATE` | data/cache/stem_server_jobs.json | the saved queue |
+| `STEM_WORK_DIR` | system tmp | where the decoded mix is memory-mapped (local disk, float32 stereo: ~0.64 GB per 30 min of audio) |
 | `STEM_SERVER_MODEL` | htdemucs_ft | any 4-source Demucs model name; a RoFormer model can be swapped in here later |
 | `STEM_SERVER_DEVICE` | auto | cuda / mps / cpu |
 | `STEM_SERVER_MAX_UPLOAD_MB` | 200 | upload cap |

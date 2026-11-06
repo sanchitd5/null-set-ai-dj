@@ -190,6 +190,21 @@ def test_console_device_token_accepted(srv, track):
     assert srv.req("GET", f"/v1/tracks/{tid}", token=tok)[0] == 401
 
 
+def test_only_the_server_token_claims_a_deck_slot(srv, track):
+    """A phone (device token) asking for "deck" is queued as "phone"; the console's static token may."""
+    from app.ui.services.auth import AuthStore
+
+    tid, body = track
+    srv.req("POST", f"/v1/tracks?id={tid}&ext=mp3", body)
+    tok, _ = AuthStore(srv.settings.auth_store.path).new_token("phone", sub="1234567890")
+    st, _, b = srv.req("POST", "/v1/separate", token=tok, js={"id": tid, "stems": 4, "priority": "deck"})
+    assert st == 200 and json.loads(b)["priority"] == "phone"
+    assert srv.req("POST", "/v1/separate", js={"id": tid, "priority": "urgent"})[0] == 400
+    st, _, b = srv.req("GET", "/v1/jobs")
+    js = json.loads(b)
+    assert st == 200 and {"jobs", "queued", "model", "device", "worker"} <= set(js)
+
+
 def test_token_needs_32_chars(tmp_path):
     with pytest.raises(RuntimeError):
         Settings({"STEM_SERVER_TOKEN": "x" * 31, "AIDJ_CACHE_DIR": str(tmp_path)})
@@ -250,9 +265,10 @@ def test_split_once_and_queue_dedup(srv, track):
     assert srv.req("POST", "/v1/separate", js={"id": tid, "stems": 3})[0] == 400
 
 
-def test_reuses_the_console_backfill_set(srv, track, stems_audio):
-    """A song the console's backfill already split (htdemucs, warm worker) is served, never re-split."""
-    from app.music_brain.audio.stem_service import FAST_MODEL
+def test_serves_the_console_backfill_set_until_the_ft_set_lands(srv, track, stems_audio):
+    """A song the console's old backfill split (htdemucs) is served at once, but a split request still
+    makes the htdemucs_ft set (quality: ft for everything served); then ft is what is served."""
+    from app.music_brain.audio.stem_service import DEMUCS_MODEL, FAST_MODEL
 
     tid, body = track
     srv.req("POST", f"/v1/tracks?id={tid}&ext=mp3", body)
@@ -262,10 +278,13 @@ def test_reuses_the_console_backfill_set(srv, track, stems_audio):
     write_manifest(d, {n: str(write_flac(d / f"{n}.flac", (x * 32767).astype(np.int16), SR))
                        for n, x in stems_audio.items()})
     assert json.loads(srv.req("GET", f"/v1/tracks/{tid}")[2]) == {"id": tid, "separated": True, "model": FAST_MODEL}
-    assert json.loads(srv.req("POST", "/v1/separate", js={"id": tid, "stems": 4})[2])["status"] == "done"
     st, hd, _ = srv.req("GET", f"/v1/tracks/{tid}/stems/drums.m4a?start=0&end=5")
     assert st == 200 and hd["X-Stem-Model"] == FAST_MODEL
-    assert srv.calls == []
+    _upload_and_split(srv, track)
+    assert len(srv.calls) == 1
+    assert json.loads(srv.req("GET", f"/v1/tracks/{tid}")[2])["model"] == DEMUCS_MODEL
+    st, hd, _ = srv.req("GET", f"/v1/tracks/{tid}/stems/drums.m4a?start=0&end=5")
+    assert st == 200 and hd["X-Stem-Model"] == DEMUCS_MODEL
 
 
 def test_analysis_route_uses_the_console_analyzer(srv, track, monkeypatch):
