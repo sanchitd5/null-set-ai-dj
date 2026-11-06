@@ -1826,3 +1826,17 @@ body::after {
 .compat-studied { margin-left: 4px; padding: 0 4px; border: 1px solid currentColor; border-radius: 3px; font-size: 10px; font-weight: 700; letter-spacing: 0.06em; }
 .combo-streak { text-align: center; font-weight: 700; letter-spacing: 0.08em; padding: 2px 0; }
 #ap-macro-pref { width: 52px; }
+
+/* reload prompt (build-watch.js): a newer server build is live; never reloads by itself */
+.build-banner {
+  position: fixed; top: calc(8px + env(safe-area-inset-top)); left: 50%; transform: translateX(-50%);
+  z-index: 10000; display: flex; gap: 4px; align-items: stretch;
+  font-family: var(--mono); font-size: 12px;
+}
+.build-banner[hidden] { display: none; }
+.build-banner button {
+  min-height: 36px; padding: 6px 12px; border: 1px solid var(--warn); border-radius: 6px;
+  background: var(--s-low); color: var(--warn); font: inherit; font-weight: 700; letter-spacing: 0.06em; cursor: pointer;
+}
+.build-banner .build-later { padding: 6px 10px; font-weight: 400; }
+html.phone-lite .build-banner button { min-height: 44px; }

@@ -201,6 +201,11 @@ _LOCK = threading.Lock()           # one transcription at a time (one model, one
 _ENGINE: Dict[str, object] = {}    # {"key": (backend, model), "engine": ...}
 
 
+def busy() -> bool:
+    """A transcription is running in this process."""
+    return _LOCK.locked()
+
+
 def _engine(backend: str, model: str):
     if _ENGINE.get("key") != (backend, model):
         release()

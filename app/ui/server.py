@@ -1243,18 +1243,20 @@ def _hook_drops(track_id: str, top_n: int = 3, ai_call: bool = False) -> list:
         return []                 # no lyrics a moment ago: don't re-ask LRCLIB or reload stems
     if track_id not in _hook_drop_cache:
         a = analyze_track(path)
+        stems = _cached_stems4(track_id)
+        vocal_path = stems.get("vocals") if stems else None
         # lyrics first (cached on disk; one network call at most): the vocal stem is
-        # only decoded when there are lines to align
-        if not (lyrics.fetch(name, duration=a.duration) or lyrics.load_plain(name)):
+        # only decoded when there are lines to align. A cached transcription counts.
+        from app.music_brain.analysis import lyrics_asr
+
+        if not (lyrics.fetch(name, duration=a.duration) or lyrics.load_plain(name)
+                or (vocal_path and (lyrics_asr.cached(vocal_path) or {}).get("lines"))):
             _hook_drop_miss[track_id] = time.time()
             return []
-        stems = _cached_stems4(track_id)
         y = None
-        if stems and stems.get("vocals"):
-            import librosa
-
-            y, _ = _load_audio(stems["vocals"], sr=11025, mono=True)
-        lines = lyrics.for_file(name, y, 11025, duration=a.duration)
+        if vocal_path:
+            y, _ = _load_audio(vocal_path, sr=11025, mono=True)
+        lines = lyrics.for_file(name, y, 11025, duration=a.duration, vocal_path=vocal_path)
         if not lines:
             _hook_drop_miss[track_id] = time.time()
             return []
@@ -1276,6 +1278,34 @@ def get_hook_drops(track_id: str, top_n: int = 3, ai: bool = True):
                result=[{k: d.get(k) for k in ("text", "cut_at", "drop_at", "score", "ai")} for d in drops[:3]
                        if isinstance(d, dict)])
     return {"track_id": track_id, "hook_drops": drops}
+
+
+@app.post("/api/tracks/{track_id}/lyrics/transcribe")
+def transcribe_track_lyrics(track_id: str, force: bool = False):
+    """Speech-to-text lyrics from the track's cached vocal stem (lyrics_asr; cached by stem
+    hash + model). Blocking (one job at a time, ~seconds per minute of audio): call it
+    from a background task, not the console's hot path. 409 without a vocal stem or while
+    another transcription runs, 503 without an ASR backend. Library work: not set-scoped."""
+    from app.music_brain.analysis import lyrics_asr
+
+    _track_path(track_id)                                   # 404 for an unknown id
+    stems = _cached_stems4(track_id)
+    if not stems or not stems.get("vocals"):
+        raise HTTPException(status_code=409, detail="no cached vocal stem: separate the track first")
+    hit = None if force else lyrics_asr.cached(stems["vocals"])
+    if hit is None:
+        if lyrics_asr.pick_backend() is None:
+            raise HTTPException(status_code=503, detail="no ASR backend (pip install -r requirements-asr.txt, LYRICS_ASR not off)")
+        if lyrics_asr.busy():
+            raise HTTPException(status_code=409, detail="another transcription is running: try again later")
+        try:
+            hit = lyrics_asr.for_stem(stems["vocals"], force=force)
+        finally:
+            lyrics_asr.release()                            # the GPU is shared
+    _hook_drop_cache.pop(track_id, None)                    # next hook-drop read sees the new lines
+    _hook_drop_miss.pop(track_id, None)
+    return {"track_id": track_id, "language": hit.get("language"), "model": hit.get("model"),
+            "backend": hit.get("backend"), "stats": hit.get("stats"), "lines": hit.get("lines") or []}
 
 
 def _song_step(kind: str, track_id: Optional[str], **fields) -> None:
@@ -2933,6 +2963,9 @@ from app.ui.services.session_events_api import router as _session_events_router 
 
 app.include_router(_session_events_router)
 app.include_router(_set_lease.router)      # /api/set/lease: one set at a time
+from app.ui.services.build_info import router as _build_router  # noqa: E402 -- GET /api/build (reload prompt)
+
+app.include_router(_build_router)
 
 class _RevalidatingStatic(StaticFiles):
     """The console's own JS/CSS/HTML: always revalidated (ETag -> cheap 304), never taken from the
