@@ -321,6 +321,21 @@ def create_app(settings: Optional[Settings] = None, separate_fn=separate_once) -
             raise HTTPException(404, "unknown job")
         return j.to_dict()
 
+    analysis_lock = threading.Lock()   # one analysis at a time (CPU; the GPU queue is separate)
+
+    @app.get("/v1/tracks/{track_id}/analysis", dependencies=[Depends(auth)])
+    def analysis(track_id: str):
+        """The console's analysis v6 of an uploaded track (same function and disk cache as
+        GET /api/tracks/{id}/analysis): BPM, beatgrid, key, phrases, sections, drops, energy, vocals."""
+        p = srv.track_path(check_id(track_id))
+        if p is None:
+            raise HTTPException(404, "unknown track; upload it first")
+        srv.full_hash(track_id, p)                      # a corrupt stored file is refused, not analysed
+        from app.music_brain.analysis.analyzer import analyze
+
+        with analysis_lock:
+            return analyze(p).to_dict()
+
     @app.get("/v1/tracks/{track_id}/stems/{name}.m4a", dependencies=[Depends(auth)])
     def stem_window(track_id: str, name: str, start: float, end: float):
         path, meta = srv.window(check_id(track_id), name, start, end)
