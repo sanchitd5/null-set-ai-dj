@@ -1714,26 +1714,43 @@ def post_riff_balance(key: str, b_levels: dict):
         raise HTTPException(status_code=400, detail=f"b_levels: {exc}") from exc
 
 
+PHONE_AUDIO_DIR = CACHE_DIR / "phone_audio"
+
+
+def _audio_response(path: Path, label: str, q: str, media: Optional[str] = None) -> FileResponse:
+    """The file, or with q=phone its cached AAC .m4a (app/ui/services/phone_audio.py; the
+    original when the transcode is impossible). FileResponse answers Range with 206."""
+    if q == "phone":
+        from app.ui.services import phone_audio
+
+        small = phone_audio.phone_variant(Path(path), label, PHONE_AUDIO_DIR)
+        if small is not None:
+            return FileResponse(small, media_type=phone_audio.MEDIA_TYPE)
+    elif q:
+        raise HTTPException(status_code=400, detail="q must be 'phone' or empty")
+    return FileResponse(path, media_type=media) if media else FileResponse(path)
+
+
 @app.get("/api/riff/{key}/{name}")
-def get_riff_stem(key: str, name: str):
+def get_riff_stem(key: str, name: str, q: str = ""):
     from app.music_brain.audio import keylock
 
     p = _host().keylock_stem_path(key, name)
     if not p:
         raise HTTPException(status_code=404, detail="key-locked stem not rendered")
     from app.music_brain.audio.audio_io import media_type
-    return FileResponse(p, media_type=media_type(p))
+    return _audio_response(p, f"riff-{key}-{name}", q, media_type(p))
 
 
 @app.get("/api/tracks/{track_id}/stems/{name}")
-def get_track_stem_audio(track_id: str, name: str):
+def get_track_stem_audio(track_id: str, name: str, q: str = ""):
     if name not in STEM_NAMES:
         raise HTTPException(status_code=404, detail="unknown stem")
     stems = _cached_stems4(track_id)
     if not stems:
         raise HTTPException(status_code=404, detail="stems not separated yet")
     from app.music_brain.audio.audio_io import media_type
-    return FileResponse(stems[name], media_type=media_type(stems[name]))
+    return _audio_response(stems[name], f"{track_id}-{name}", q, media_type(stems[name]))
 
 
 _fame: Dict[str, dict] = {}
@@ -2879,9 +2896,9 @@ def get_set_log_markdown(set_log_id: str):
 
 
 @app.get("/api/audio/tracks/{track_id}")
-def get_track_audio(track_id: str):
+def get_track_audio(track_id: str, q: str = ""):
     path = _track_path(track_id)
-    return FileResponse(path)
+    return _audio_response(path, track_id, q)
 
 
 from app.ui.services.atlas_api import router as _atlas_router  # noqa: E402 -- pair atlas + macros (/api/atlas, /api/macros)
