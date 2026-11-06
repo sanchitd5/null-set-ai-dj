@@ -51,7 +51,6 @@ html.phone-lite #devices-panel .hw-btn { min-height: 44px; }
 /* ------------------------------------------------------------------- Lite: what each tab shows */
 html.phone-lite:not(.phone-adv) .topbar,
 html.phone-lite:not(.phone-adv) .fx-bar,
-html.phone-lite:not(.phone-adv) .wave-stage,
 html.phone-lite:not(.phone-adv) #ai-panel,
 html.phone-lite:not(.phone-adv) #ai-actions,
 html.phone-lite:not(.phone-adv) .deck-panel,
@@ -62,6 +61,12 @@ html.phone-lite:not(.phone-adv) .nul-super,
 html.phone-lite:not(.phone-adv) .ai-hud,
 html.phone-lite:not(.phone-adv) .ai-touch-tag,
 html.phone-lite:not(.phone-adv) .sampler-bank .seq { display: none !important; }
+/* Hotfix: the decks only become ready when WaveSurfer emits "ready", which needs a laid-out container.
+   Keep the waveform stage rendered but offscreen and invisible in Lite instead of display:none. */
+html.phone-lite:not(.phone-adv) .wave-stage {
+  position: fixed !important; left: -10000px !important; top: 0 !important;
+  width: 400px !important; visibility: hidden !important; pointer-events: none !important;
+}
 
 html.phone-lite:not(.phone-adv) .workspace { display: block; padding: 8px; }
 html.phone-lite:not(.phone-adv) #lite,
