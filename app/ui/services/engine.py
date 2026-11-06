@@ -66,6 +66,17 @@ class Host:
 
         return download_service.search_songs(query, limit)
 
+    def library_match(self, artist, title):
+        """track_id of the server-library song that is this "artist - title" (the app's own
+        name identity, aliases resolved), else None. No network."""
+        from app.music_brain.config import CACHE_DIR
+        from app.ui import server
+        from app.ui.services import dedup_songs
+
+        return dedup_songs.find_existing(
+            f"{artist} - {title}", dict(server._track_names),
+            exists=lambda i: i in server._tracks and server._tracks[i].exists(), cache=CACHE_DIR)
+
     def verify_song(self, artist, title):
         from app.ui.services import download_service
 

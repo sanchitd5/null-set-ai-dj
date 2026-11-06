@@ -152,3 +152,32 @@ def test_remembered_answers_are_capped_and_expire(monkeypatch):
     monkeypatch.setattr(svc, "VERIFY_CACHE_TTL_S", 0.0)
     svc._verify_picks(_picks("One"))                  # expired
     assert fake.calls[-1] == "One" and len(fake.calls) == 5
+
+
+def test_library_song_accepted_without_lookup_and_carries_track_id(monkeypatch):
+    fake = FakeLookups(verdict=False)                  # the internet would call everything invented
+    monkeypatch.setattr(svc, "_verify_song", fake)
+    monkeypatch.setattr(svc, "_library_id", lambda a, t: "abc123" if t == "Held Song" else None)
+    real, invented = svc._verify_picks(_picks("Held Song", "Made Up"))
+    _drain()
+    assert _titles(real) == ["Held Song"] and real[0]["track_id"] == "abc123"
+    assert _titles(invented) == ["Made Up"]
+    assert fake.calls == ["Made Up"]                   # the library song never reached YouTube
+
+
+def test_outage_keeps_picks_and_logs_reason(monkeypatch, capsys):
+    monkeypatch.setattr(svc, "_verify_song", FakeLookups(verdict=None))   # lookups fail: unknown
+    monkeypatch.setattr(svc, "_library_id", lambda a, t: None)
+    real, invented = svc._verify_picks(_picks("Outage One", "Outage Two"))
+    _drain()
+    assert len(real) == 2 and invented == []
+    assert capsys.readouterr().out.count("lookup unavailable") == 2
+
+
+def test_rejected_pick_logs_reason(monkeypatch, capsys):
+    monkeypatch.setattr(svc, "_verify_song", FakeLookups(verdict=False))
+    monkeypatch.setattr(svc, "_library_id", lambda a, t: None)
+    svc._verify_picks(_picks("Invented Reject"))
+    _drain()
+    assert "reject Beach House - Invented Reject: no YouTube upload matches" in capsys.readouterr().out
+
