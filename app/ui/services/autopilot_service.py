@@ -20,7 +20,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, wait
 
-from app.ui.services import engine, llm_gate
+from app.ui.services import engine, llm_capture, llm_gate
 from app.ui.services.set_memory import PROMPT_LIMIT
 
 # ── Camelot wheel compatibility rules ─────────────────────────────────────────
@@ -936,6 +936,10 @@ def chat_raw(
                     prompt_chars=len(system) + len(user), reply_chars=len(raw or ""),
                     cut_off=quality == "cut_off", quality=quality,
                     chars_per_s=round(len(raw or "") / elapsed, 1) if elapsed > 0 else None)
+    if llm_capture.enabled():  # LLM_CAPTURE=1: prompt + reply for the text-model training corpus
+        llm_capture.record(kind=kind or llm_gate.NAMES.get(priority), priority=llm_gate.NAMES.get(priority),
+                           system=system, user=user, temperature=temperature, max_tokens=max_tokens,
+                           reply=raw, quality=quality)
     return raw
 
 
@@ -1302,6 +1306,13 @@ def suggest_next_tracks(
     # cost ~2x the model time, and starved the live ear that shares the model).
     mt = max(1100 if lead_to else 900, _suggest_need)
     kind = "lookahead" if lookahead else "suggest"
+    if llm_capture.enabled():  # this call's own filter inputs, so the training judge can rerun them
+        llm_capture.note(kind, n=n, title=title, artist=artist, bpm=bpm, camelot=camelot, history=list(history),
+                         occasion=occasion, lead_to=lead_to, measured_energy=measured_energy, energy_lo=energy_lo,
+                         punjabi_profile=punjabi_profile, scene_genre=scene_genre, tempo_target=tempo_target,
+                         relaxed=relaxed, earlier_sets=list(earlier_sets or []),
+                         favourite_artists=list(favourite_artists or []),
+                         recent=list(history_display or history) + list(queue_display or []))
     retry_note = ""
     for attempt in range(MAX_JSON_ATTEMPTS):  # ONE bounded retry when the JSON is past repair
         # 0.75: song picks should vary between runs (0.5 replayed the same set from
@@ -1495,7 +1506,7 @@ def suggest_next_tracks(
             data4 = _extract_json(chat_raw(system_msg, user_msg + (
                 f"\n\nREJECTED - too many songs by the same artist lately: {names}. "
                 "Suggest songs by OTHER artists that still fit the current song."),
-                temperature=0.6, max_tokens=mt, priority=prio))
+                temperature=0.6, max_tokens=mt, priority=prio, kind=kind))
             data4.setdefault("current_genre", data.get("current_genre"))
             data4.setdefault("current_era", data.get("current_era"))
             retry = _filter_suggestions(
