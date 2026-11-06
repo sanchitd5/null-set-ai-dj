@@ -40,6 +40,7 @@ are `sha256(file bytes)[:16]`, the same as the console and the phone.
 | `HEAD/GET /v1/tracks/{id}` | 404 when unknown; otherwise `{"id", "separated", "model"}`. The phone hashes locally and skips the upload when this returns 200 |
 | `POST /v1/tracks?id=<id>&ext=<ext>` | raw audio body (capped at `STEM_SERVER_MAX_UPLOAD_MB`, default 200). 422 when `sha256(body)[:16] != id` |
 | `POST /v1/separate {"id", "stems": 2\|4}` | returns a job. The whole song is split once, 4-way. A 2-stem request is served from that split (`no_vocals` = drums + bass + other), because htdemucs_ft runs all of its sources either way |
+| `GET /v1/tracks/{id}/analysis` | the console's analysis v6 of an uploaded track (`analyzer.analyze`, same disk cache as `/api/tracks/{id}/analysis`). The phone reads it instead of analysing on the device |
 | `GET /v1/jobs/{job}` | `status`: queued / running / done / error, plus `progress`, `error`, `device`, `note` |
 | `GET /v1/tracks/{id}/stems/{name}.m4a?start=S&end=E` | AAC-LC 256 kbps, 44.1 kHz stereo, covering that window only (at most 600 s). `name`: vocals, drums, bass, other, no_vocals. Returns 409 before the split, 416 past the end of the track |
 
