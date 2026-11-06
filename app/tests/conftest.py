@@ -15,6 +15,7 @@ _AUTH_DIR = Path(tempfile.mkdtemp(prefix="dj-auth-test-"))
 atexit.register(shutil.rmtree, _AUTH_DIR, True)
 os.environ["DJ_AUTH_FILE"] = str(_AUTH_DIR / "auth.json")
 os.environ["DJ_SESSION_SECRET"] = secrets.token_urlsafe(32)
+os.environ["DJ_PUBLIC_URL"] = ""   # an owner .env value must not leak in (load_dotenv never overrides)
 TEST_USER, TEST_PASSWORD = "owner", "pw-" + secrets.token_urlsafe(16)
 from app.ui.services import auth as _auth  # noqa: E402
 

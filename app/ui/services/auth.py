@@ -26,8 +26,11 @@ Secrets are never accepted in the query string. Cookie-authenticated unsafe requ
 carry a matching Origin / Referer (CSRF). Failed logins are limited per client IP and per
 username. X-Forwarded-For / -Proto are honoured only from a trusted proxy.
 
-Auth is ON once a password is set (localhost included). With no password the app serves
-loopback only, with a warning.
+Auth is ON once a password is set (localhost included). With no password the app runs
+auth-off ONLY on a loopback bind with no DJ_PUBLIC_URL and no forwarded request headers (plain
+local development); anything else answers 503 "auth not configured" except /health. Behind a
+reverse proxy the bind is loopback and every request looks local, so the forwarded headers and
+DJ_PUBLIC_URL are what mark a published deployment.
 
 Second factor seam: `user["totp"]` is stored (null today) and `_second_factor_ok()` is
 called on every password login; a TOTP check slots in there without touching the rest.
@@ -286,6 +289,8 @@ class AuthSettings:
     trusted_proxies: Tuple[str, ...] = ("127.0.0.1", "::1")
     # Extra origins allowed for cookie-authenticated unsafe requests (CSRF) and CORS.
     allowed_origins: Tuple[str, ...] = ()
+    # The address users reach (https://host[:port]); set = published, so never auth-off.
+    public_url: str = ""
     public_paths: Tuple[str, ...] = ("/health",)
     hidden_paths: Tuple[str, ...] = ("/docs", "/docs/oauth2-redirect", "/redoc", "/openapi.json")
     login_path: str = "/login"
@@ -314,6 +319,8 @@ class AuthSettings:
             kw["session_seconds"] = int(float(env[prefix + "SESSION_DAYS"]) * 86400)
         if (prefix + "TRUSTED_PROXIES") in env:
             kw["trusted_proxies"] = _split(env[prefix + "TRUSTED_PROXIES"])
+        if (env.get(prefix + "PUBLIC_URL") or "").strip():
+            kw["public_url"] = env[prefix + "PUBLIC_URL"].strip().rstrip("/")
         if env.get(prefix + "ALLOWED_ORIGINS"):
             kw["allowed_origins"] = tuple(o.rstrip("/") for o in _split(env[prefix + "ALLOWED_ORIGINS"]))
         kw.update(overrides)
@@ -381,6 +388,10 @@ def check_bind(settings: AuthSettings, argv: Optional[Sequence[str]] = None,
     if not _is_loopback(host):
         raise AuthConfigError(f"refusing to start: binding {host or 'an unknown address'} with no owner password. "
                               "Run: python -m app.ui.services.auth set-password   (or bind 127.0.0.1 only)")
+    if settings.public_url:
+        log.error("AUTH NOT CONFIGURED: DJ_PUBLIC_URL is set but no owner password exists - every request "
+                  "except /health answers 503. Run: python -m app.ui.services.auth set-password")
+        return
     log.warning("AUTH OFF: no owner password set - serving loopback only, with no login. "
                 "Run: python -m app.ui.services.auth set-password")
 
@@ -517,7 +528,7 @@ def origin_ok(settings: AuthSettings, headers: Dict[str, str]) -> bool:
         p = urlsplit(ref)
         origin = f"{p.scheme}://{p.netloc}"
     origin = origin.rstrip("/")
-    if origin in settings.allowed_origins:
+    if origin in settings.allowed_origins or (settings.public_url and origin.lower() == settings.public_url.lower()):
         return True
     host = headers.get("host", "").lower()
     return bool(host) and urlsplit(origin).netloc.lower() == host
@@ -534,6 +545,8 @@ form{{display:grid;gap:.6rem;min-width:18rem}}input,button{{font:inherit;padding
 <input type="password" name="password" autocomplete="current-password" placeholder="password" required>
 <button type="submit">Sign in</button></form></body></html>"""
 _JSON = (b"content-type", b"application/json")
+# Any of these on a request = it came through a reverse proxy (published), never a local browser.
+_FORWARDED = ("x-forwarded-for", "x-forwarded-proto", "x-forwarded-host", "x-real-ip", "forwarded")
 _UNAUTHORIZED = b'{"detail":"unauthorized"}'
 
 
@@ -569,9 +582,10 @@ class TokenAuthMiddleware:
         path = scope.get("path", "")
         method = scope.get("method", "GET") if scope["type"] == "http" else "GET"
         if not s.enabled:
-            server_host = (scope.get("server") or ("", 0))[0]
-            if not _is_loopback(server_host):          # fail closed: auth off is loopback only
-                return await self._deny(scope, send, 503, b'{"detail":"no owner password set"}')
+            if path in s.public_paths and method in ("GET", "HEAD"):
+                return await self.app(scope, receive, send)
+            if not self._auth_off_ok(scope):          # fail closed: auth off is plain local dev only
+                return await self._deny(scope, send, 503, b'{"detail":"auth not configured"}')
             return await self.app(scope, receive, send)
         if path in s.public_paths and method in ("GET", "HEAD"):
             return await self.app(scope, receive, send)
@@ -622,6 +636,16 @@ class TokenAuthMiddleware:
                 and "text/html" in headers.get("accept", "")):
             return await self._send(send, 303, b"", [(b"location", s.login_path.encode())])
         return await self._deny(scope, send, 401)
+
+    def _auth_off_ok(self, scope) -> bool:
+        """No login method: serve only a loopback bind, with no DJ_PUBLIC_URL and no forwarded
+        headers. Behind Caddy the bind is loopback too, but Caddy always adds X-Forwarded-*."""
+        if self.guard.settings.public_url:
+            return False
+        if not _is_loopback((scope.get("server") or ("", 0))[0]):
+            return False
+        headers = _headers(scope)
+        return not any(h in headers for h in _FORWARDED)
 
     # -- authenticated routes owned by this module --------------------------------------------
     async def _authed(self, scope, receive, send, path, method):
