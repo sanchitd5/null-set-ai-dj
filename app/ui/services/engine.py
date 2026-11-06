@@ -117,7 +117,10 @@ class Host:
 
     def separate(self, audio_path, **kw):
         from app.music_brain.audio import stem_service
+        from app.ui.services import stem_remote
 
+        if stem_remote.enabled():                  # the stem server owns the GPU: never a local model
+            return stem_remote.separate(audio_path, **kw)
         return stem_service.separate(audio_path, **kw)
 
     def vocals_stem(self, track_id):
