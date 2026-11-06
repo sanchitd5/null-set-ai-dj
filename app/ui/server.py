@@ -61,7 +61,31 @@ UPLOAD_DIR = CACHE_DIR / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
-app = FastAPI(title="AI Music Brain", version="1.1.0.1")
+from app.ui.services import auth as _auth  # noqa: E402 -- after load_dotenv: DJ_SESSION_SECRET may come from .env
+
+# Auth is ON once an owner password exists (docs/engineering/AUTH.md). A non-loopback bind
+# with no password stops the server here.
+AUTH_SETTINGS = _auth.AuthSettings.from_env(title="AI DJ console")   # store: <cache>/auth/auth.json
+_auth.check_bind(AUTH_SETTINGS)
+_MB = 1024 * 1024
+# Multipart bodies: the file cap plus 1 MB of form overhead.
+UPLOAD_LIMITS = {
+    ("POST", "/api/tracks"): _auth.env_bytes("DJ_MAX_TRACK_BYTES", 300 * _MB),
+    ("POST", "/api/samples"): _auth.env_bytes("DJ_MAX_SAMPLE_BYTES", 26 * _MB),
+    ("POST", "/api/recordings"): _auth.env_bytes("DJ_MAX_RECORDING_BYTES", 1024 * _MB),
+}
+MAX_BODY_BYTES = _auth.env_bytes("DJ_MAX_BODY_BYTES", 64 * _MB)   # every other request
+
+# /docs, /redoc, /openapi.json: also 404 from the auth middleware whenever auth is on.
+_docs = dict(docs_url=None, redoc_url=None, openapi_url=None) if AUTH_SETTINGS.enabled else {}
+app = FastAPI(title="AI Music Brain", version="1.1.0.1", **_docs)
+AUTH_GUARD = _auth.install(app, AUTH_SETTINGS, body_limits=UPLOAD_LIMITS, default_body_limit=MAX_BODY_BYTES)
+
+
+@app.get("/health")
+def health():
+    """Unauthenticated liveness probe: says nothing beyond ok."""
+    return {"ok": True}
 
 
 @app.on_event("startup")

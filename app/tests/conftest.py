@@ -1,6 +1,38 @@
+import atexit
+import os
+import secrets
+import shutil
+import tempfile
 from pathlib import Path
 
 import pytest
+
+# Auth stays ON in tests: a throwaway account store (owner password + one device token) and
+# session secret, set before app.ui.server is imported, so the owner's real store and .env
+# are never read. testclient_compat.TestClient sends DJ_API_TOKEN as a Bearer header;
+# test_auth.py covers logins, cookies and the rest.
+_AUTH_DIR = Path(tempfile.mkdtemp(prefix="dj-auth-test-"))
+atexit.register(shutil.rmtree, _AUTH_DIR, True)
+os.environ["DJ_AUTH_FILE"] = str(_AUTH_DIR / "auth.json")
+os.environ["DJ_SESSION_SECRET"] = secrets.token_urlsafe(32)
+TEST_USER, TEST_PASSWORD = "owner", "pw-" + secrets.token_urlsafe(16)
+from app.ui.services import auth as _auth  # noqa: E402
+
+_store = _auth.AuthStore(_AUTH_DIR / "auth.json")
+_store.set_password(TEST_USER, TEST_PASSWORD)
+os.environ["DJ_API_TOKEN"] = _store.new_token("pytest")[0]
+
+
+@pytest.fixture
+def api_token():
+    """The device token every TestClient sends."""
+    return os.environ["DJ_API_TOKEN"]
+
+
+@pytest.fixture
+def owner_login():
+    """(username, password) of the test owner account."""
+    return TEST_USER, TEST_PASSWORD
 
 
 @pytest.fixture(autouse=True)

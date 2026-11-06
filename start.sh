@@ -29,6 +29,17 @@
 set -uo pipefail
 
 cd "$(dirname "$0")"
+# Sign-in (docs/engineering/AUTH.md): the browser session cookie is signed with
+# DJ_SESSION_SECRET. Generated into .env once if missing; the value is never printed.
+touch .env && chmod 600 .env
+if [[ -z "${DJ_SESSION_SECRET:-}" ]] && ! grep -qE '^[[:space:]]*DJ_SESSION_SECRET=.{32,}' .env; then
+  SECRET="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))' 2>/dev/null || openssl rand -base64 48 | tr -d '\n/+=')"
+  if [[ ${#SECRET} -lt 32 ]]; then echo "could not generate DJ_SESSION_SECRET (needs python3 or openssl)" >&2; exit 1; fi
+  [[ -s .env && -n "$(tail -c1 .env)" ]] && echo >> .env
+  printf 'DJ_SESSION_SECRET=%s\n' "$SECRET" >> .env
+  unset SECRET
+  echo "session secret created in .env"
+fi
 # .env fills in settings the environment doesn't already set: a variable given
 # on the command line (LLM_BACKEND=ollama ./start.sh) always wins over .env.
 if [[ -f .env ]]; then
@@ -117,6 +128,8 @@ fi
 # API request lines are debug: LOG_LEVEL=debug brings them back (with uvicorn's debug).
 LOG_LEVEL="${LOG_LEVEL:-info}"
 if [[ "$LOG_LEVEL" == "debug" ]]; then UVICORN_ARGS=(--log-level debug); else UVICORN_ARGS=(--log-level info --no-access-log); fi
+# X-Forwarded-* are read by the app's auth layer, from DJ_TRUSTED_PROXIES only (default 127.0.0.1/::1).
+UVICORN_ARGS+=(--no-proxy-headers)
 LOG_APP="${LOG:-/tmp/ai-dj-server.log}"
 LOG_LLM="${MLX_LOG:-/tmp/ai-dj-mlx-server.log}"
 LOG_EAR="/tmp/ai-dj-omni-server.log"
@@ -257,11 +270,14 @@ start_app
 
 # ---- wait until usable, then open the console --------------------------------
 for _ in $(seq 1 60); do
-  curl -s --noproxy '*' -o /dev/null -w '%{http_code}' "http://localhost:$PORT/api/recipes" 2>/dev/null | grep -q 200 && break
+  curl -s --noproxy '*' -o /dev/null -w '%{http_code}' "http://localhost:$PORT/health" 2>/dev/null | grep -q 200 && break
   kill -0 "$PID_APP" 2>/dev/null || break
   sleep 1
 done
 say "console up: http://localhost:$PORT   (Ctrl+C here stops everything together)"
+if [[ ! -s "${DJ_AUTH_FILE:-${AIDJ_CACHE_DIR:-data/cache}/auth/auth.json}" ]]; then
+  say "sign-in is OFF (localhost only): set the owner password with  $PY -m app.ui.services.auth set-password"
+fi
 if (( OPEN )) && command -v open >/dev/null 2>&1; then open "http://localhost:$PORT"; fi
 
 # ---- supervise: a crashed service restarts, the others keep running ----------

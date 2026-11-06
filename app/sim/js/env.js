@@ -187,7 +187,10 @@ async function createEnv(opts) {
   g.Worker = class extends FakeWorker { constructor(url) { super(clock, staticDir, url); } };
 
   // ---- network ------------------------------------------------------------------------------------------------------------------
-  const net = new Net({ host: "127.0.0.1", port: opts.port, clock });
+  // The API wants a device token once the owner has set a password (docs/engineering/AUTH.md):
+  // DJ_API_TOKEN comes from the environment (the Python side loads .env before it starts node).
+  const apiToken = (process.env.DJ_API_TOKEN || "").trim();
+  const net = new Net({ host: "127.0.0.1", port: opts.port, clock, headers: apiToken ? { Authorization: `Bearer ${apiToken}` } : {} });
   g.fetch = (input, o) => net.fetch(input, o);
   g.XMLHttpRequest = class { open() {} send() {} setRequestHeader() {} };
   if (typeof g.crypto === "undefined" || !g.crypto.randomUUID) Object.defineProperty(g, "crypto", { value: { randomUUID: () => `sim-${Math.floor(Math.random() * 1e9).toString(16)}`, getRandomValues: (a) => a }, configurable: true, writable: true });
