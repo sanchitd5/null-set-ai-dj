@@ -1,0 +1,27 @@
+# Stem server (app/stem_server) for CT116, run from the app's own checkout and venv.
+# Install: see app/stem_server/README.md ("Install on CT116").
+[Unit]
+Description=null-set stem server (Demucs on the GPU, AAC stem windows)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# The account that runs the console and owns /opt/null-set-ai-dj and data/ (edit if it differs).
+User=nullset
+Group=nullset
+# The NVIDIA device nodes in CT116 belong to gid 44 (video).
+SupplementaryGroups=video
+WorkingDirectory=/opt/null-set-ai-dj
+# STEM_SERVER_TOKEN, STEM_SERVER_HOST, STEM_PORT, STEM_SERVER_VRAM_GB ... (chmod 600, owned by root)
+EnvironmentFile=/etc/null-set/stem-server.env
+ExecStart=/opt/null-set-ai-dj/.venv/bin/python -m app.stem_server
+Restart=on-failure
+RestartSec=5
+# no token = exit 2 (refuses to start): do not restart-loop on it
+RestartPreventExitStatus=2
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
