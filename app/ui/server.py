@@ -2899,6 +2899,18 @@ def get_set_log_markdown(set_log_id: str):
     return FileResponse(path, media_type="text/markdown; charset=utf-8")
 
 
+ANDROID_APK = Path(os.environ.get("DJ_ANDROID_APK") or (CACHE_DIR / "app" / "null-set-dj.apk"))
+
+
+@app.get("/api/app/android.apk")
+def get_android_apk():
+    """The current Android build, behind the console login (copied in by the deploy, never in git)."""
+    if not ANDROID_APK.is_file():
+        raise HTTPException(status_code=404, detail="no Android build on this server")
+    return FileResponse(ANDROID_APK, media_type="application/vnd.android.package-archive",
+                        filename="null-set-dj.apk")
+
+
 @app.get("/api/audio/tracks/{track_id}")
 def get_track_audio(track_id: str, q: str = ""):
     path = _track_path(track_id)

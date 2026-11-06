@@ -533,6 +533,11 @@
     ui.installTxt = el("span", { class: "lite-note" },
       ios ? "Add to the home screen: Share, then Add to Home Screen." : "Add to the home screen from the browser menu.");
     app.append(ui.install, ui.installTxt);
+    if (!ios) {
+      // the native Android app, served behind the same login (GET /api/app/android.apk)
+      const apk = el("a", { class: "lite-btn", href: "/api/app/android.apk", download: "null-set-dj.apk" }, "DOWNLOAD ANDROID APP");
+      app.append(apk, el("span", { class: "lite-note" }, "Open the file after download and allow the install."));
+    }
 
     const advSec = sec("ADVANCED");
     ui.adv = el("button", { type: "button", class: "lite-btn", "aria-pressed": String(adv) }, "FULL CONSOLE");
