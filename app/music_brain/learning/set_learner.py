@@ -737,8 +737,10 @@ def vocal_recuts(vrows: List[dict], songs: List[SongData], set_id: str, win_s: f
                 resequenced = any(_vocal_jump(songs[tr], p, q, win_s) for p, q in zip(passage, passage[1:]))
                 detail = {"set_span": [passage[0]["set_t0"], passage[-1]["set_t1"] + win_s], "source_lines": lines}
                 if songs[tr].lyrics:                  # the new lyric the DJ built, in the song's own words
-                    from app.music_brain.analysis.lyrics import words_between
+                    from app.music_brain.analysis.lyrics import transcribed, words_between
                     detail["words"] = [words_between(songs[tr].lyrics, a, b) for a, b in lines]
+                    if transcribed(songs[tr].lyrics):
+                        detail["words_transcribed"] = True
                 if repeats:
                     out.append(Observation("vocal_loop", set_id=set_id, at=passage[0]["set_t0"],
                                            track_a=songs[tr].title, detail=detail | {"repeats": repeats}))
@@ -779,10 +781,11 @@ def vocal_chops(crows: List[dict], songs: List[SongData], set_id: str, hop_s: fl
                         if abs(b["src0"] - (a["src1"] + (b["t0"] - a["t1"]))) > JUMP_S
                         and not same_material(songs[tr], b["src0"], a["src1"] + (b["t0"] - a["t1"]), CWIN_S))
             if jumps >= CHOP_MIN_JUMPS:
-                from app.music_brain.analysis.lyrics import words_between
+                from app.music_brain.analysis.lyrics import transcribed, words_between
                 lyr = songs[tr].lyrics
                 out.append(Observation("vocal_chop", set_id=set_id, at=burst[0]["t0"], track_a=songs[tr].title, detail={
                     "set_span": [burst[0]["t0"], burst[-1]["t1"] + CWIN_S], "jumps": jumps,
+                    **({"words_transcribed": True} if lyr and transcribed(lyr) else {}),
                     "fragments": [[round(x["src0"], 2), round(x["src1"] + CWIN_S, 2)] for x in burst],
                     "words": [words_between(lyr, x["src0"], x["src1"] + CWIN_S) for x in burst] if lyr else []}))
             burst = [f] if f is not None and (f["t1"] - f["t0"] + CWIN_S) <= CHOP_MAX_DWELL_S else []
@@ -795,7 +798,7 @@ def acapella_drops(rows: List[dict], songs: List[SongData], set_id: str, hop_s: 
     back: the DJ making a drop out of a sung line. Records the words held.
     Rows are win_s windows starting at t: the beat is gone by the first silent
     window's start and back only after the last silent window's end."""
-    from app.music_brain.analysis.lyrics import is_hook, words_between
+    from app.music_brain.analysis.lyrics import is_hook, transcribed, words_between
 
     grid: Dict[float, Dict[str, dict]] = {}
     for r in rows:
@@ -829,6 +832,7 @@ def acapella_drops(rows: List[dict], songs: List[SongData], set_id: str, hop_s: 
                                    track_b=songs[drop_by.track].title if drop_by and drop_by.track != v.track else "",
                                    detail={"held_s": round(held, 1), "src_span": [round(src0, 1), round(src1, 1)],
                                            "words": words, "hook": bool(words) and any(is_hook(w, s.lyrics) for w in words.split(" / ")),
+                                           **({"words_transcribed": True} if words and transcribed(s.lyrics) else {}),
                                            "drop_at": round(drop_at, 2)}))
         i = k
     return out
@@ -1119,12 +1123,13 @@ def _attach_lyrics(songs: List[SongData], entries: List[TrackEntry], verdict: Li
                 continue
             if (q, e.path) not in cache:
                 y = _load(vocal_paths[e.path])
-                cache[(q, e.path)] = ly.for_file(q, y, SR, duration=len(y) / SR, log=log)
+                cache[(q, e.path)] = ly.for_file(q, y, SR, duration=len(y) / SR, log=log, vocal_path=vocal_paths[e.path])
         except Exception as exc:
             log(f"{e.title}: lyrics failed ({exc}): learned without words")
             continue
         s.lyrics = cache[(q, e.path)]
-        v["lyrics"] = {"query": q, "lines": len(s.lyrics), "estimated": bool(s.lyrics and s.lyrics[0].get("estimated"))}
+        v["lyrics"] = {"query": q, "lines": len(s.lyrics), "estimated": bool(s.lyrics and s.lyrics[0].get("estimated")),
+                       "source": s.lyrics[0].get("source") if s.lyrics else None}
 
 
 WRONG_SONG_SHARE = 0.3       # heard in under 30 % of its own slot's windows: probably not the song

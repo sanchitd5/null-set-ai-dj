@@ -300,6 +300,54 @@ def list_recipes() -> dict:
     return {"recipes": [r.to_dict() for r in _get_knowledge().get_all()]}
 
 
+def transcribe_lyrics(args) -> dict:
+    """transcribe-lyrics: one song / stem -> {path, vocal, language, backend, model, stats, lines};
+    --all: a batch over the cached vocal stems (progress on stderr, or a log file with --background)."""
+    from app.music_brain.analysis import lyrics_asr as asr
+
+    log = lambda m: print(m, file=sys.stderr, flush=True)
+    if args.all:
+        if args.background:
+            import subprocess
+            import time as _time
+
+            from app.music_brain.config import CACHE_DIR
+
+            logf = CACHE_DIR / "logs" / f"lyrics_asr-{_time.strftime('%Y%m%d-%H%M%S')}.log"
+            logf.parent.mkdir(parents=True, exist_ok=True)
+            cmd = [sys.executable, "-m", "app.music_brain.agent_bridge", "transcribe-lyrics", "--all"]
+            cmd += ["--missing-only"] if args.missing_only else []
+            cmd += ["--limit", str(args.limit)] if args.limit else []
+            cmd += ["--model", args.model] if args.model else []
+            cmd += ["--backend", args.backend] if args.backend else []
+            with open(logf, "ab") as fh:
+                p = subprocess.Popen(cmd, stdout=fh, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                                     cwd=str(Path(__file__).resolve().parents[2]), start_new_session=True)
+            return {"started": True, "pid": p.pid, "log": str(logf)}
+        return asr.batch(missing_only=args.missing_only, limit=args.limit, backend=args.backend, model=args.model, log=log)
+    if not args.audio:
+        raise ValueError("give an audio path, or --all")
+    path = Path(args.audio).expanduser()
+    if not path.is_file():
+        raise FileNotFoundError(f"no such file: {path}")
+    vocal = str(path) if args.stem else asr.vocal_for_song(path)
+    if vocal is None:
+        if not args.separate:
+            raise ValueError("no cached vocal stem for this song: pass --separate, or --stem with a vocal stem")
+        vocal = separate(str(path), stems=2)["stems"]["vocals"]
+    if asr.pick_backend(args.backend) is None and asr.cached(vocal, args.model) is None:
+        raise ValueError("no ASR backend: pip install -r requirements-asr.txt (or LYRICS_ASR is off)")
+    try:
+        doc = asr.for_stem(vocal, force=args.force, backend=args.backend, model=args.model, log=log)
+    finally:
+        asr.release()
+    out = {"path": str(path), "vocal": vocal, **{k: doc.get(k) for k in ("language", "language_prob", "backend", "model", "stats")},
+           "lines": doc["lines"]}
+    if args.words:
+        out["words"] = doc.get("words") or []
+    return out
+
+
 # --- CLI ----------------------------------------------------------------------
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -391,6 +439,19 @@ def _build_parser() -> argparse.ArgumentParser:
     g2.add_argument("--lrc", help="LRC file to pin ([mm:ss.xx] words lines)")
     g2.add_argument("--lrclib", type=str, help="pin one LRCLIB entry: id or https://lrclib.net/tracks/<id>")
     g2.add_argument("--none", action="store_true", help="pin 'no lyrics' (online ones are for another song)")
+
+    p_tl = sub.add_parser("transcribe-lyrics", help="Lyrics by speech-to-text of a song's vocal stem (cached; needs requirements-asr.txt).")
+    p_tl.add_argument("audio", nargs="?", help="song file (its cached vocal stem is used) or, with --stem, a vocal stem")
+    p_tl.add_argument("--stem", action="store_true", help="AUDIO is already a vocal stem")
+    p_tl.add_argument("--separate", action="store_true", help="separate the song (2 stems) when no vocal stem is cached")
+    p_tl.add_argument("--force", action="store_true", help="transcribe again even when cached")
+    p_tl.add_argument("--words", action="store_true", help="include word timings in the output")
+    p_tl.add_argument("--all", action="store_true", help="batch: every cached vocal stem")
+    p_tl.add_argument("--missing-only", action="store_true", help="batch: only stems with no cached result for this model")
+    p_tl.add_argument("--limit", type=int, default=None, help="batch: at most N stems")
+    p_tl.add_argument("--background", action="store_true", help="batch: detach, progress in data/cache/logs/lyrics_asr-*.log")
+    p_tl.add_argument("--model", default=None, help="Whisper model (default $LYRICS_ASR_MODEL or large-v3-turbo)")
+    p_tl.add_argument("--backend", choices=["cuda", "mlx", "cpu"], default=None, help="default $LYRICS_ASR_BACKEND or auto")
 
     p_src = sub.add_parser("source", help="Recordings a song's vocal was sampled from, and how they were rebuilt.")
     ssub = p_src.add_subparsers(dest="source_cmd", required=True)
@@ -512,6 +573,8 @@ def main(argv: Optional[list[str]] = None) -> int:
             else:
                 lines = ly.fetch(args.title)
             payload = {"title": args.title, "manual": bool(args.none or args.lrc or args.lrclib), "sample": ly.sample_of(args.title), "lines": lines}
+        elif args.command == "transcribe-lyrics":
+            payload = transcribe_lyrics(args)
         elif args.command == "learn-feedback":
             from app.music_brain.learning.set_learner import add_user_rule
 

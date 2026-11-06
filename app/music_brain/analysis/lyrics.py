@@ -8,6 +8,9 @@ lyrics (set_manual) always win and are never overwritten.
 An LRC is timed against the original release, so the
 lines are re-aligned to the local file's own vocal stem before use (edits
 and remixes start at a different point).
+With no verified lyric, the vocal stem's own speech-to-text (lyrics_asr, cached,
+guarded against Whisper's invented text) is the third source, and its word timings
+place a known untimed lyric; for_file tags every line with its "source".
 
 Used by the set learner (which words a DJ re-cut into a new line, which line
 was left alone when the beat dropped out) and by the techniques that go
@@ -296,22 +299,129 @@ def time_plain(plain: Sequence[str], vocal: np.ndarray, sr: int, step: float = 0
 
 
 def for_file(title: str, vocal: Optional[np.ndarray], sr: int, duration: Optional[float] = None,
-             log=lambda m: None) -> List[dict]:
-    """Lines to use for this local file: verified online LRC aligned to its vocal, a
-    user pin as given, or a pinned plain lyric timed against the vocal. [] otherwise."""
+             log=lambda m: None, vocal_path=None, asr: Optional[callable] = None) -> List[dict]:
+    """Lines to use for this local file, each tagged with its "source", first that applies:
+    manual (a user pin) > lrclib (verified LRC aligned to the vocal) > asr (speech-to-text
+    of the vocal stem, lyrics_asr) > plain+asr (a known untimed lyric placed on the ASR
+    word timings) > plain (that lyric timed by vocal energy, every line "estimated").
+    [] otherwise, and always [] for a song pinned as having no lyrics or listed instrumental.
+    vocal_path: the vocal stem file, the key of its ASR result. asr(vocal_path) -> the
+    ASR doc ({lines, words}) or None; default: the cached result only (never transcribes
+    inside a request: run agent_bridge transcribe-lyrics for that)."""
     raw = fetch(title, duration=duration)
-    if not raw:
-        plain = load_plain(title)
-        return time_plain(plain, vocal, sr) if plain and vocal is not None else []
-    if vocal is None:
-        return raw
-    al = align(raw, vocal, sr)
-    if al["trusted"]:
-        return al["lines"]
-    if is_manual(title):
-        return raw                     # pinned by the user: their word beats the aligner's
-    log(f"lyrics for {title} don't sit on this file's vocal ({al['gain_db']} dB): not used")
-    return []
+    manual = is_manual(title)
+    if raw:
+        if vocal is None:
+            return _tagged(raw, "manual" if manual else "lrclib")
+        al = align(raw, vocal, sr)
+        if al["trusted"]:
+            return _tagged(al["lines"], "manual" if manual else "lrclib")
+        if manual:
+            return _tagged(raw, "manual")  # pinned by the user: their word beats the aligner's
+        log(f"lyrics for {title} don't sit on this file's vocal ({al['gain_db']} dB): not used")
+    plain = load_plain(title)
+    if not raw and not plain and (manual or _cache_flag(title, "instrumental")):
+        return []                      # pinned "no lyrics" / listed instrumental: never transcribed words
+    doc = _asr_doc(vocal_path, asr, log)
+    if plain:
+        placed = align_plain_to_words(plain, (doc or {}).get("words") or [])
+        if placed:
+            return placed
+        return _tagged(time_plain(plain, vocal, sr), "plain") if vocal is not None else []
+    return list((doc or {}).get("lines") or [])
+
+
+def _tagged(lines: Sequence[dict], source: str) -> List[dict]:
+    return [l if l.get("source") else l | {"source": source} for l in lines]
+
+
+def _cache_flag(title: str, key: str, cache_dir: Optional[Path] = None):
+    try:
+        return json.loads(_cache_path(title, cache_dir).read_text(encoding="utf-8")).get(key)
+    except (OSError, ValueError):
+        return None
+
+
+def _asr_doc(vocal_path, asr, log) -> Optional[dict]:
+    if asr is not None:
+        return asr(vocal_path)
+    if not vocal_path:
+        return None
+    try:
+        from app.music_brain.analysis import lyrics_asr
+
+        return lyrics_asr.cached(vocal_path)
+    except Exception as exc:           # unreadable stem / cache: no ASR lines, never a crash
+        log(f"ASR lyrics unreadable ({exc}): not used")
+        return None
+
+
+PLAIN_MIN_WORD_MATCH = 0.35    # share of the lyric's words the ASR must have heard to trust the placement
+PLAIN_MIN_LINE_MATCH = 0.5     # share of lines placed by their own heard words (the rest interpolated)
+
+
+def align_plain_to_words(plain: Sequence[str], words: Sequence[dict]) -> List[dict]:
+    """Known untimed lines placed on ASR word timings ({w, t, end}): the lyric's words are
+    matched in order to the heard words (exact, or a close spelling in a same-length
+    stretch); a line takes the times of its matched words. Lines with too few heard words
+    sit between their neighbours, marked "estimated"; one with no placed neighbour on a
+    side is dropped. [] when too little of the lyric was heard (time_plain then applies)."""
+    import difflib
+
+    toks, owner = [], []
+    for i, l in enumerate(plain):
+        for w in _fold(l).split():
+            toks.append(w)
+            owner.append(i)
+    heard, at = [], []
+    for w in words:
+        for x in _fold(w.get("w") or w.get("word") or "").split():
+            heard.append(x)
+            at.append((float(w["t"]), float(w["end"])))
+    if not toks or not heard:
+        return []
+    match: Dict[int, int] = {}
+    for op, i1, i2, j1, j2 in difflib.SequenceMatcher(None, toks, heard, autojunk=False).get_opcodes():
+        if op == "equal" or (op == "replace" and i2 - i1 == j2 - j1):
+            for k in range(i2 - i1):
+                if op == "equal" or difflib.SequenceMatcher(None, toks[i1 + k], heard[j1 + k]).ratio() >= 0.7:
+                    match[i1 + k] = j1 + k
+    if len(match) / len(toks) < PLAIN_MIN_WORD_MATCH:
+        return []
+    spans: List[Optional[tuple]] = []
+    last_t = -1.0
+    for i, line in enumerate(plain):
+        idx = [match[k] for k in range(len(toks)) if owner[k] == i and k in match]
+        n = sum(1 for o in owner if o == i)
+        if idx and len(idx) >= max(1, 0.4 * n) and at[idx[0]][0] >= last_t:
+            spans.append((at[idx[0]][0], at[idx[-1]][1]))
+            last_t = at[idx[0]][0]
+        else:
+            spans.append(None)
+    if sum(s is not None for s in spans) / len(plain) < PLAIN_MIN_LINE_MATCH:
+        return []
+    out = []
+    i = 0
+    while i < len(plain):
+        if spans[i] is not None:
+            nxt = next((s[0] for s in spans[i + 1:] if s is not None), None)
+            t, end = spans[i]
+            out.append({"t": round(t, 2), "end": round(min(end, nxt) if nxt is not None else end, 2),
+                        "text": plain[i], "source": "plain+asr"})
+            i += 1
+            continue
+        j = i
+        while j < len(plain) and spans[j] is None:
+            j += 1
+        if i > 0 and j < len(plain):             # a gap with placed lines on both sides: share it out
+            a, b = out[-1]["end"], spans[j][0]
+            step = (b - a) / (j - i) if b > a else 0.0
+            for k in range(i, j):
+                if step > 0:
+                    out.append({"t": round(a + (k - i) * step, 2), "end": round(a + (k - i + 1) * step, 2),
+                                "text": plain[k], "source": "plain+asr", "estimated": True})
+        i = j
+    return out
 
 
 def sample_of(title: str, cache_dir: Optional[Path] = None) -> Optional[dict]:
@@ -345,16 +455,31 @@ def _norm(s: str) -> str:
     return re.sub(r"[^\w]+", " ", s.lower()).strip()
 
 
+ASR_HOOK_MIN_CONF = 0.7       # a transcribed line must be heard this surely to be a hook / an acapella line
+
+
+def hook_lines(lines: Sequence[dict]) -> List[dict]:
+    """Lines a move may be built on: every looked-up line, transcribed ones only when sure."""
+    return [l for l in lines if l.get("source") != "asr" or float(l.get("conf") or 0.0) >= ASR_HOOK_MIN_CONF]
+
+
+def transcribed(lines: Sequence[dict]) -> bool:
+    """True when the words came from speech-to-text (they may be misheard): label them so."""
+    return any(l.get("source") == "asr" for l in lines)
+
+
 def hooks(lines: Sequence[dict], min_count: int = 2) -> List[dict]:
-    """Repeated lines, most repeated first: [{text, count, times[]}]. The top one
-    is the chorus / hook, the line a crowd sings back."""
+    """Repeated lines, most repeated first: [{text, count, times[], source}]. The top one
+    is the chorus / hook, the line a crowd sings back. Unsure ASR lines never count."""
+    lines = hook_lines(lines)
     c = Counter(_norm(l["text"]) for l in lines if _norm(l["text"]))
     out = []
     for key, n in c.most_common():
         if n < min_count:
             break
         first = next(l for l in lines if _norm(l["text"]) == key)
-        out.append({"text": first["text"], "count": n, "times": [l["t"] for l in lines if _norm(l["text"]) == key]})
+        out.append({"text": first["text"], "count": n, "times": [l["t"] for l in lines if _norm(l["text"]) == key],
+                    "source": first.get("source") or "lrclib"})
     return out
 
 
