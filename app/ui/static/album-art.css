@@ -1,0 +1,33 @@
+/* Album art (album-art.js). Only opacity / transform ever change at runtime; sizes are fixed so nothing reflows. */
+.aa {
+  position: relative; display: block; flex: none; overflow: hidden;
+  width: 40px; height: 40px; border-radius: var(--r-lg);
+  background: var(--s-high); box-shadow: inset 0 0 0 1px var(--outline-var);
+  --aa-c: var(--accent, var(--a));
+}
+.aa img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
+.aa[data-ph] img { visibility: hidden; }
+/* placeholder: the console's own look, a record in the deck colour */
+.aa-ph { display: none; position: absolute; inset: 0; }
+.aa[data-ph] .aa-ph {
+  display: block;
+  background:
+    radial-gradient(circle at 50% 50%, var(--aa-c) 0 7%, var(--s-lowest) 8% 14%, transparent 15%),
+    repeating-radial-gradient(circle at 50% 50%, transparent 0 3px, color-mix(in srgb, var(--aa-c) 22%, transparent) 3px 4px),
+    linear-gradient(135deg, var(--s-highest), var(--s-lowest));
+  opacity: 0.85;
+}
+.aa-deck { width: 48px; height: 48px; }
+.row-art { width: 28px; height: 28px; }
+.aa-a { --aa-c: var(--a); } .aa-b { --aa-c: var(--b); }
+.deck-b .aa-deck { --aa-c: var(--b); }
+
+/* crossfading stacks (NOW / NEXT / VIBE): both decks' art stacked, the mixer sets each layer's opacity */
+.aa-stack { position: relative; display: block; flex: none; width: 32px; height: 32px; margin-right: var(--sp-sm); }
+.aa-stack .aa-layer { position: absolute; inset: 0; width: 100%; height: 100%; will-change: opacity, transform; contain: strict; }
+.aa-stack .aa-b { opacity: 0; }
+.aa-next { opacity: 0.75; }
+.track-id { align-items: center; }
+.vb-art { padding: 0; display: flex; align-items: center; }
+.aa-vibe { width: 36px; height: 36px; margin: 0 var(--sp-xs); }
+@media (prefers-reduced-motion: reduce) { .aa-stack .aa-layer { will-change: auto; } }

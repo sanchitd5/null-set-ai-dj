@@ -1325,7 +1325,8 @@ button {
 .row-load .load-b { color: var(--b); }
 .row-load .load-b:hover { background: var(--b); color: var(--s-lowest); }
 
-.row-title { display: flex; flex-direction: column; min-width: 0; }
+.row-title { display: flex; flex-direction: row; align-items: center; gap: var(--sp-md); min-width: 0; }
+.row-txt { display: flex; flex-direction: column; min-width: 0; }
 .row-name { font-size: 12px; font-weight: 600; color: var(--on-surface); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row-id { font-family: var(--mono); font-size: 10px; color: var(--outline); }
 .key-chip {
