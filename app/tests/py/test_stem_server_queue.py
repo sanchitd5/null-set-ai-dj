@@ -139,10 +139,34 @@ class ScriptedWorker:
 OK = {"ok": True, "info": {"stems": {}, "frames": 1, "seconds": 1.0}, "peak_rss": 0}
 
 
-def test_ladder_gpu_oom_goes_to_cpu():
-    w = ScriptedWorker([{"ok": False, "oom": True, "error": "GPU out of memory"}, OK])
-    info, dev, note = gpu.split(w, "j", Path("x"), Path("o"), "htdemucs_ft", None, lambda *a: None)
-    assert w.calls == [(None, None), ("cpu", None)] and dev == "cpu" and "split on CPU" in note
+OOM = {"ok": False, "oom": True, "error": "GPU out of memory"}
+
+
+def test_ladder_gpu_oom_backs_off_and_retries_on_gpu_before_cpu():
+    waits = []
+    w = ScriptedWorker([OOM, OK])
+    _, dev, note = gpu.split(w, "j", Path("x"), Path("o"), "htdemucs_ft", "cuda", lambda *a: None, sleep=waits.append)
+    assert w.calls == [("cuda", None), ("cuda", 1)] and dev == "cuda" and "retried on the GPU" in note and len(waits) == 1
+
+
+def test_ladder_gpu_oom_twice_goes_to_cpu():
+    w = ScriptedWorker([OOM, OOM, OK])
+    info, dev, note = gpu.split(w, "j", Path("x"), Path("o"), "htdemucs_ft", None, lambda *a: None, sleep=lambda s: None)
+    assert w.calls == [(None, None), (None, 1), ("cpu", None)] and dev == "cpu" and "split on CPU" in note
+
+
+def test_ladder_oom_on_cpu_is_reported():
+    w = ScriptedWorker([OOM])
+    with pytest.raises(RuntimeError, match="out of memory"):
+        gpu.split(w, "j", Path("x"), Path("o"), "htdemucs_ft", "cpu", lambda *a: None, sleep=lambda s: None)
+
+
+def test_worker_classifies_torch_oom():
+    torch = pytest.importorskip("torch")
+    from app.stem_server.worker import _is_oom
+
+    assert _is_oom(torch.OutOfMemoryError("CUDA out of memory. Tried to allocate 20.00 MiB"))
+    assert not _is_oom(ValueError("bad file"))
 
 
 def test_ladder_memory_kill_retries_at_batch_one_then_gives_up():

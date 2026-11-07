@@ -24,6 +24,19 @@ import time
 from pathlib import Path
 
 
+def _is_oom(exc: BaseException) -> bool:
+    """torch.OutOfMemoryError (also raised while loading the model onto a full card) or GpuOutOfMemory."""
+    return "out of memory" in str(exc).lower() or type(exc).__name__ in ("OutOfMemoryError", "GpuOutOfMemory")
+
+
+def _free_gpu(torch) -> None:
+    import gc
+
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
 def _emit(obj: dict) -> None:
     sys.stdout.write(json.dumps(obj) + "\n")
     sys.stdout.flush()
@@ -71,9 +84,16 @@ def main() -> int:
             eng = engines.get(key)
             if eng is None:
                 engines.clear()                     # one model resident at a time
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-                eng = engines[key] = StemEngine(key[0], key[1], half=key[2])
+                _free_gpu(torch)
+                try:
+                    eng = StemEngine(key[0], key[1], half=key[2])
+                except Exception as exc:  # noqa: BLE001 -- model load on a shared, full card: free and retry once
+                    if not _is_oom(exc):
+                        raise
+                    _free_gpu(torch)
+                    time.sleep(float(os.environ.get("STEM_OOM_BACKOFF_S", "5")))
+                    eng = StemEngine(key[0], key[1], half=key[2])
+                engines[key] = eng
             last = [0.0]
 
             def progress(p: float) -> None:
@@ -87,10 +107,9 @@ def main() -> int:
         except GpuOutOfMemory as exc:
             _emit({"job": jid, "ok": False, "oom": True, "error": f"GPU out of memory: {exc}"[:300]})
         except Exception as exc:  # noqa: BLE001 -- reported to the server, the worker lives on
-            _emit({"job": jid, "ok": False, "oom": False, "error": f"{type(exc).__name__}: {exc}"[:300]})
+            _emit({"job": jid, "ok": False, "oom": _is_oom(exc), "error": f"{type(exc).__name__}: {exc}"[:300]})
         finally:
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+            _free_gpu(torch)
 
 
 if __name__ == "__main__":

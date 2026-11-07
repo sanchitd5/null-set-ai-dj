@@ -8,7 +8,9 @@ Memory guard (two layers, either is enough to keep the service alive):
 The streaming engine keeps a split's RAM flat in track length (~2-3 GB, mostly the CUDA runtime), so
 either limit firing means something is wrong; the job is retried once at batch 1 and reported.
 
-Retry ladder for one split: device as configured -> (GPU out of memory even at batch 1) the CPU;
+Retry ladder for one split: device as configured -> (GPU out of memory even at batch 1) back off
+STEM_OOM_BACKOFF_S (the card is shared; the other model may free VRAM) and retry once on the GPU at batch 1
+-> still out of memory: the CPU;
 worker killed for memory -> once more at batch 1; worker crashed -> once more on a fresh worker.
 """
 
@@ -21,6 +23,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -152,12 +155,13 @@ def _parse(ln: str) -> Optional[dict]:
 
 
 def split(worker: GpuWorker, job: str, path: Path, out_dir: Path, model: str, device: Optional[str],
-          on_progress: Callable[..., None], half: bool = False) -> tuple[dict, Optional[str], Optional[str]]:
+          on_progress: Callable[..., None], half: bool = False,
+          sleep: Callable[[float], None] = time.sleep) -> tuple[dict, Optional[str], Optional[str]]:
     """One split through the retry ladder (device None: the worker picks). on_progress(fraction, device).
     -> (engine info, device asked for, note or None)."""
     notes: list[str] = []
     batch: Optional[int] = None
-    crashed = memory = False
+    crashed = memory = gpu_retried = False
     for _ in range(5):
         on_progress(0.0)
         try:
@@ -178,6 +182,13 @@ def split(worker: GpuWorker, job: str, path: Path, out_dir: Path, model: str, de
             info = r["info"]
             info["peak_rss_mb"] = r.get("peak_rss", 0) >> 20
             return info, device, "; ".join(notes) or None
+        if r.get("oom") and device != "cpu" and not gpu_retried:
+            gpu_retried, batch = True, 1
+            wait = float(os.environ.get("STEM_OOM_BACKOFF_S", "5"))
+            notes.append(f"{r.get('error')}; retried on the GPU after {wait:g}s")
+            print(f"[stem-server] {job}: GPU out of memory; retrying on the GPU in {wait:g}s", file=sys.stderr, flush=True)
+            sleep(wait)
+            continue
         if r.get("oom") and device != "cpu":
             notes.append(f"{r.get('error')}; split on CPU")
             print(f"[stem-server] {job}: GPU out of memory at batch 1; retrying on CPU", file=sys.stderr, flush=True)
