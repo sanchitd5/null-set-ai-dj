@@ -49,7 +49,7 @@ def test_library_sorted_entries(lib, client):
     glue = r["tracks"][0]
     assert glue == {"track_id": "aaa1", "display_name": "Bicep - Glue", "artist": "Bicep", "title": "Glue",
                     "ext": ".mp3", "bytes": os.path.getsize(lib / "Bicep - Glue.mp3"), "genre": "electronica",
-                    "era": None, "not_a_song": False, "has_stems": True}
+                    "era": None, "not_a_song": False, "has_stems": True, "art_url": None}
     by = {t["track_id"]: t for t in r["tracks"]}
     assert by["bbb2"]["ext"] == ".wav" and by["bbb2"]["has_stems"] is False
     assert by["ccc3"]["artist"] == ""                    # "Unknown" artist -> ""
