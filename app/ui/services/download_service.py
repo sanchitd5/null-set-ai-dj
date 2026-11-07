@@ -1,5 +1,5 @@
 """
-URL download service: YouTube / YouTube Music -> FLAC (yt-dlp).
+URL download service: YouTube / YouTube Music -> audio kept as delivered, m4a preferred (yt-dlp).
 
 Autopilot suggestions use "ytmsearch:Artist - Title": YouTube Music's *songs*
 search (official audio, no videos/live uploads), falling back to a regular
@@ -34,7 +34,7 @@ _LIVE_RE = re.compile(
 )
 
 
-_AUDIO_GLOBS = ("*.flac", "*.mp3", "*.m4a", "*.opus", "*.ogg", "*.wav")
+_AUDIO_GLOBS = ("*.flac", "*.mp3", "*.m4a", "*.opus", "*.ogg", "*.wav", "*.webm")
 
 
 def _audio_files(directory: Path) -> set[Path]:
@@ -43,13 +43,11 @@ def _audio_files(directory: Path) -> set[Path]:
 
 def _duration_secs(path: Path) -> float | None:
     try:
-        import soundfile as sf
-
         from app.music_brain.audio import audio_io
 
-        return sf.info(str(audio_io.readable(path))).duration
+        return audio_io.audio_info(path)[3]
     except Exception:
-        return None  # unreadable by soundfile (e.g. m4a): rely on the pre-download filter
+        return None  # unreadable (no ffprobe, corrupt): rely on the pre-download filter
 
 
 # Event / venue recordings whose title never says "live": "Skrillex at the
@@ -78,14 +76,12 @@ EXCERPT_TAIL_DB = -6.0
 def _looks_like_excerpt(path: Path) -> bool:
     try:
         import numpy as np
-        import soundfile as sf
 
         from app.music_brain.audio import audio_io
 
-        y, sr = sf.read(str(audio_io.readable(path)), always_2d=True, dtype="float32")
+        mono, sr = audio_io.load_audio(path, mono=True)
     except Exception:
         return False
-    mono = y.mean(axis=1)
     hop = max(1, int(sr * 0.05))
     n = len(mono) // hop
     if n < 200:
@@ -374,7 +370,7 @@ def _noop_progress(stage: str, percent: Optional[float] = None) -> None:
 
 
 def download_to_dir(url: str, output_dir: Path, progress: Optional[Progress] = None) -> list[Path]:
-    """Download audio to output_dir. Returns list of new audio file paths (FLAC).
+    """Download audio to output_dir. Returns list of new audio file paths (as delivered).
 
     progress(stage, percent) is called from the download thread: percent is a
     real byte ratio while downloading, None (indeterminate) for search / convert steps.
@@ -451,7 +447,7 @@ def _ytdlp(url: str, output_dir: Path, progress: Optional[Progress] = None,
         url = _YTSEARCH_RE.sub(f"ytsearch{_SEARCH_POOL}:", url, count=1)
 
     opts = {
-        "format": "bestaudio/best",
+        "format": "bestaudio[ext=m4a]/bestaudio",     # kept as delivered: no transcode, decoded in memory when read
         "outtmpl": str(output_dir / "%(title)s.%(ext)s"),
         "windowsfilenames": True,
         # a search results page IS a playlist; only single direct links get noplaylist
@@ -462,16 +458,7 @@ def _ytdlp(url: str, output_dir: Path, progress: Optional[Progress] = None,
         "max_downloads": 1,
         "quiet": True,
         "no_warnings": True,
-        "postprocessors": [
-            # FLAC, not MP3: YouTube's best stream is already lossy (~128 kbps
-            # Opus/AAC); re-encoding it to MP3 stacked a second lossy pass.
-            # FLAC keeps exactly what YouTube delivered.
-            {"key": "FFmpegExtractAudio", "preferredcodec": "flac"},
-            {"key": "FFmpegMetadata", "add_metadata": True},
-        ],
-        # 16-bit: the lossy source has no more resolution than that; ffmpeg's
-        # default s32 FLAC doubled file size for nothing.
-        "postprocessor_args": {"extractaudio": ["-sample_fmt", "s16"]},
+        "postprocessors": [{"key": "FFmpegMetadata", "add_metadata": True}],
     }
     from app.music_brain import yt_guard
 

@@ -82,6 +82,8 @@ def measure(audio_path, bpm: float, use_cache: bool = True) -> dict:
     """{raw, onset_rate, low_share, brightness_hz, bpm} for one file (cached)."""
     import librosa
 
+    from app.music_brain.audio import audio_io
+
     audio_path = Path(audio_path)
     cp = _cache(audio_path)
     if use_cache and cp.exists():
@@ -92,7 +94,7 @@ def measure(audio_path, bpm: float, use_cache: bool = True) -> dict:
     from app.music_brain.analysis.vibe import analyze_vibe
 
     v = analyze_vibe(audio_path)
-    y, sr = librosa.load(str(audio_path), sr=11025, mono=True)
+    y, sr = audio_io.load_audio(audio_path, sr=11025, mono=True)
     S = np.abs(librosa.stft(y, n_fft=2048, hop_length=1024))
     freqs = librosa.fft_frequencies(sr=sr, n_fft=2048)
     low_share = float(S[freqs < 150].sum() / max(S.sum(), 1e-9))
