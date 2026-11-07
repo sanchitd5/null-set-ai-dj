@@ -51,8 +51,8 @@ assert.deepStrictEqual(td.restorePlan({ "ap-gone": true }, { "ap-merge-toggle": 
 assert.deepStrictEqual(td.parseSaved("{not json"), {});
 assert.deepStrictEqual(td.parseSaved(JSON.stringify({ a: "yes", b: true })), { b: true });
 // a toggle added later: same classify path, lands in its own group
-assert(td.groupItems(items.concat([{ id: "ap-show", label: "SHOW", title: "", group: td.classify("ap-show", "show").group }]))
-  .some((g) => g.name === "SHOW"));
+assert(td.groupItems(items.concat([{ id: "ap-fresh", label: "FRESH", title: "", group: td.classify("ap-fresh", "fresh").group }]))
+  .some((g) => g.name === "FRESH"));
 
 // MORE ACTIONS split: favourites stay on the bar
 assert.deepStrictEqual(td.splitActions(["mix", "strip", "merge_hold", "learned_vocal_chop", "riff", "mashup", "pads"]),
