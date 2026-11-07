@@ -145,3 +145,28 @@ def test_parallel_failures_in_one_episode_add_one_strike():
 def test_an_age_gate_is_not_a_bot_check():
     assert not g.is_bot_check(RuntimeError("ERROR: [youtube] x: Sign in to confirm your age. This video may be inappropriate"))
     assert g.is_bot_check(BOT) and g.is_bot_check(RuntimeError("HTTP Error 429: Too Many Requests"))
+
+
+def test_download_options_keep_audio_as_delivered(tmp_path, monkeypatch):
+    """No FFmpegExtractAudio/FLAC transcode: m4a preferred, metadata tagging only."""
+    from app.ui.services import download_service as ds
+    if ds._yt_dlp is None:
+        pytest.skip("yt-dlp not installed")
+    seen = {}
+
+    class FakeYDL:
+        def __init__(self, opts):
+            seen.update(opts)
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            return False
+        def download(self, urls):
+            (tmp_path / "Artist - Song.m4a").write_bytes(b"x")
+    monkeypatch.setattr(ds._yt_dlp, "YoutubeDL", FakeYDL)
+    monkeypatch.setattr(ds, "_reject_non_tracks", lambda files, check_live=True: files)
+    out = ds.download_to_dir("https://www.youtube.com/watch?v=aqu4ezLQEUA", tmp_path)
+    assert [p.name for p in out] == ["Artist - Song.m4a"]
+    assert seen["format"] == "bestaudio[ext=m4a]/bestaudio"
+    assert [p["key"] for p in seen["postprocessors"]] == ["FFmpegMetadata"]
+    assert "postprocessor_args" not in seen

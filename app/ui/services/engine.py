@@ -150,9 +150,11 @@ class Host:
         return keylock.stem_path(key, name)
 
     def load_audio(self, path, **kw):
-        import librosa
+        from app.music_brain.audio import audio_io
 
-        return librosa.load(path, **kw)
+        off, dur = kw.pop("offset", 0.0) or 0.0, kw.pop("duration", None)   # librosa.load's names
+        return audio_io.load_audio(path, start=off or None, stop=None if dur is None else off + dur,
+                                   sr=kw.get("sr", 22050), mono=kw.get("mono", True))   # librosa.load defaults
 
     def stem_map(self, audio, sr, phrases):
         from app.music_brain.matching import techniques
