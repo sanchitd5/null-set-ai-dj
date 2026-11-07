@@ -29,6 +29,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from app.music_brain.analysis.analyzer import analyze as analyze_track
+from app.music_brain.audio import audio_io
 from app.music_brain.config import (
     CACHE_DIR,
     RECORDINGS_CACHE_DIR,
@@ -432,6 +433,13 @@ async def upload_track(file: UploadFile):
     track_id = hashlib.sha256(contents).hexdigest()[:16]
     dest = UPLOAD_DIR / f"{track_id}{suffix}"
     dest.write_bytes(contents)
+    if suffix.lower() not in audio_io.NATIVE_EXTS:   # m4a etc.: librosa/libsndfile cannot read it
+        try:
+            flac = audio_io.transcode_flac(dest, UPLOAD_DIR / f"{track_id}.flac")
+            dest.unlink(missing_ok=True)
+            dest = flac
+        except OSError as exc:
+            print(f"[upload] {track_id}: kept raw {suffix} ({exc})", flush=True)
     _tracks[track_id] = dest
     if file.filename:
         _remember_track_name(track_id, Path(file.filename).stem)

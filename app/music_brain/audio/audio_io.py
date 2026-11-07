@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+import subprocess
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -79,6 +81,50 @@ def encode_file(src: Path | str, dest: Path | str, subtype: Optional[str] = None
     if subtype != "PCM_16":
         data = np.clip(data, -1.0, 1.0)            # 24-bit int cannot hold > 1.0 (study: keylock peaks <= 1.0)
     return write_flac(dest, data, sr, subtype)
+
+
+NATIVE_EXTS = (".wav", ".flac", ".mp3")      # libsndfile / librosa read these without ffmpeg
+FFMPEG_TIMEOUT_S = 600
+
+
+def transcode_flac(src: Path | str, dest: Path | str) -> Path:
+    """ffmpeg any audio file (m4a, aac, opus, ...) to a FLAC at `dest`, atomically. Raises OSError on failure."""
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        raise OSError("ffmpeg not found")
+    dest = Path(dest)
+    tmp = dest.with_name(f".{dest.name}.tmp{os.getpid()}")
+    try:
+        res = subprocess.run([ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-i", str(src),
+                              "-map", "0:a:0", "-vn", "-f", "flac", str(tmp)],
+                             capture_output=True, text=True, timeout=FFMPEG_TIMEOUT_S)
+        if res.returncode != 0 or not tmp.exists() or tmp.stat().st_size == 0:
+            raise OSError(f"ffmpeg failed on {Path(src).name}: {(res.stderr or '').strip()[-300:]}")
+        os.replace(tmp, dest)
+    except subprocess.SubprocessError as exc:
+        raise OSError(f"ffmpeg failed on {Path(src).name}: {exc}") from exc
+    finally:
+        tmp.unlink(missing_ok=True)
+    return dest
+
+
+def readable(path: Path | str, cache_dir: Optional[Path | str] = None) -> Path:
+    """`path` when libsndfile reads it (wav/flac/mp3), else a cached FLAC decode of it
+    (<cache>/decoded/<stem>.<size>.flac). Falls back to `path` itself when ffmpeg cannot decode it."""
+    path = Path(path)
+    if path.suffix.lower() in NATIVE_EXTS:
+        return path
+    if cache_dir is None:
+        from app.music_brain.config import CACHE_DIR
+        cache_dir = Path(CACHE_DIR) / "decoded"
+    try:
+        out = Path(cache_dir) / f"{path.stem}.{path.stat().st_size}.flac"
+        if not out.exists():
+            out.parent.mkdir(parents=True, exist_ok=True)
+            transcode_flac(path, out)
+        return out
+    except OSError:
+        return path
 
 
 def _channels(data: np.ndarray) -> int:
