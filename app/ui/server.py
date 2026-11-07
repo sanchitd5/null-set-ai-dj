@@ -2959,6 +2959,22 @@ def get_set_log_markdown(set_log_id: str):
 ANDROID_APK = Path(os.environ.get("DJ_ANDROID_APK") or (CACHE_DIR / "app" / "null-set-dj.apk"))
 
 
+ANDROID_META = ANDROID_APK.with_suffix(".json")   # null-set-dj.json, written by deploy/push_apk.sh
+_META_KEYS = ("version_name", "version_code", "sha256", "size", "notes", "published_at")
+
+
+@app.get("/api/app/android.json")
+def get_android_meta():
+    """Version info for the in-app updater, from the sidecar the push script writes next to the APK."""
+    if not (ANDROID_APK.is_file() and ANDROID_META.is_file()):
+        raise HTTPException(status_code=404, detail="no Android build on this server")
+    try:
+        meta = json.loads(ANDROID_META.read_text("utf-8"))
+        return {k: meta[k] for k in _META_KEYS}
+    except (ValueError, KeyError, TypeError, OSError):
+        raise HTTPException(status_code=404, detail="Android build info is unreadable")
+
+
 @app.get("/api/app/android.apk")
 def get_android_apk():
     """The current Android build, behind the console login (copied in by the deploy, never in git)."""
