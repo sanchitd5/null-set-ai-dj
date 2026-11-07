@@ -177,8 +177,9 @@
                  <button class="hw-btn load-b" data-load="b" data-track="${t.track_id}">B</button>`}
           </div>
           <div class="row-title">
-            <span class="row-name" title="${t.name}">${t.name}</span>
-            <span class="row-id">${t.track_id}</span>
+            <span class="aa row-art" data-track="${t.track_id}" data-ph="1" data-art="${t.art_url ? t.art_url.replace(/([?&]size=)\d+/, "$1160") : ""}"><img alt="" decoding="async" loading="lazy" draggable="false"><i class="aa-ph" aria-hidden="true"></i></span>
+            <span class="row-txt"><span class="row-name" title="${t.name}">${t.name}</span>
+            <span class="row-id">${t.track_id}</span></span>
           </div>
           <div class="num">${bpm}</div>
           <div>${camelot ? `<span class="key-chip" title="${keyName}">${camelot}</span>` : `<span class="row-status">--</span>`}</div>
@@ -189,7 +190,13 @@
           <div class="row-status right ${on ? "playing-" + on : ""}">${on ? "LOADED " + on.toUpperCase() : (ready ? "READY" : "ANALYSING")}</div>
         </div>`;
     }).join("");
+    if (window.AlbumArt) window.AlbumArt.fillRows(rowsEl);   // album-art.js: decode + show the 160 thumbs
   }
+
+  // late covers (the server backfills in the background): keep the list in step, album-art.js patches the rows
+  window.addEventListener("art-urls", (e) => {
+    for (const t of tracks) { const u = e.detail && e.detail.get(t.track_id); if (u) t.art_url = u; }
+  });
 
   async function loadToDeck(trackId, deckLetter) {
     const track = tracks.find((t) => t.track_id === trackId);
@@ -237,7 +244,7 @@
     try {
       const res = await fetch("/api/tracks");
       const data = await res.json();
-      tracks = (data.tracks || []).map((t) => ({ track_id: t.track_id, name: t.display_name || baseName(t.path) }));
+      tracks = (data.tracks || []).map((t) => ({ track_id: t.track_id, name: t.display_name || baseName(t.path), art_url: t.art_url || null }));
       render();
       if (phone()) warmVisible();
       else warmAnalyses(tracks.filter((t) => !analysisCache.has(t.track_id)));
