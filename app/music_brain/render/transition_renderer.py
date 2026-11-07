@@ -21,6 +21,7 @@ from typing import Callable, Dict, Optional
 import numpy as np
 import soundfile as sf
 
+from app.music_brain.audio import audio_io
 from app.music_brain.config import PREVIEWS_CACHE_DIR, SUB_BASS_CROSSOVER_HZ
 from app.music_brain.audio.dsp_rack import (
     bass_swap_mix,
@@ -45,9 +46,7 @@ class RenderResult:
 
 def _load_window(path: Path, start: float, duration: float, sr: int) -> np.ndarray:
     """Loads `duration` seconds starting at `start`, resampled to sr, mono."""
-    import librosa
-
-    y, _ = librosa.load(str(path), sr=sr, mono=True, offset=max(start, 0.0), duration=duration)
+    y, _ = audio_io.load_audio(path, sr=sr, mono=True, start=max(start, 0.0), stop=max(start, 0.0) + duration)
     if len(y) < int(sr * duration):
         y = np.pad(y, (0, int(sr * duration) - len(y)))
     return y.astype(np.float32)
@@ -176,15 +175,13 @@ def render_full_mix(
         raise ValueError("need exactly one TransitionCandidate per adjacent track pair")
 
     start_time = time.perf_counter()
-    import librosa
-
     segments = []
     for i, candidate in enumerate(candidates):
         track_a_path = Path(track_paths[i])
         track_b_path = Path(track_paths[i + 1])
 
         if i == 0:
-            head, _ = librosa.load(str(track_a_path), sr=sr, mono=True, duration=candidate.a_time)
+            head, _ = audio_io.load_audio(track_a_path, sr=sr, mono=True, stop=candidate.a_time)
             segments.append(head)
 
         window_seconds = DEFAULT_PREVIEW_SECONDS
@@ -194,7 +191,7 @@ def render_full_mix(
         segments.append(renderer(a_window, b_window, sr, bpm))
 
         if i == len(candidates) - 1:
-            tail, _ = librosa.load(str(track_b_path), sr=sr, mono=True, offset=candidate.b_time)
+            tail, _ = audio_io.load_audio(track_b_path, sr=sr, mono=True, start=candidate.b_time)
             segments.append(tail)
 
     full_mix = np.concatenate(segments) if segments else np.zeros(0, dtype=np.float32)

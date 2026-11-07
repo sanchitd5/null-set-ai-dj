@@ -21,6 +21,8 @@ from typing import List
 import librosa
 import numpy as np
 
+from app.music_brain.audio import audio_io
+
 from app.music_brain.analysis.analyzer import SAMPLE_RATE, _file_hash
 from app.music_brain.config import ANALYSIS_CACHE_DIR
 
@@ -63,7 +65,7 @@ def analyze_vibe(audio_path: str | Path, use_cache: bool = True) -> VibeFeatures
         if data.get("version") == VIBE_VERSION:
             return VibeFeatures(**data)
 
-    y, sr = librosa.load(str(audio_path), sr=SAMPLE_RATE, mono=True)
+    y, sr = audio_io.load_audio(audio_path, sr=SAMPLE_RATE, mono=True)
     duration = float(librosa.get_duration(y=y, sr=sr))
     if duration <= 0 or not len(y):
         raise ValueError(f"empty audio: {audio_path}")

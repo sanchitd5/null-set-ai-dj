@@ -433,13 +433,6 @@ async def upload_track(file: UploadFile):
     track_id = hashlib.sha256(contents).hexdigest()[:16]
     dest = UPLOAD_DIR / f"{track_id}{suffix}"
     dest.write_bytes(contents)
-    if suffix.lower() not in audio_io.NATIVE_EXTS:   # m4a etc.: librosa/libsndfile cannot read it
-        try:
-            flac = audio_io.transcode_flac(dest, UPLOAD_DIR / f"{track_id}.flac")
-            dest.unlink(missing_ok=True)
-            dest = flac
-        except OSError as exc:
-            print(f"[upload] {track_id}: kept raw {suffix} ({exc})", flush=True)
     _tracks[track_id] = dest
     if file.filename:
         _remember_track_name(track_id, Path(file.filename).stem)
@@ -907,8 +900,6 @@ def _backfill_stems() -> None:
     htdemucs_ft set (the console's old htdemucs backfill included) is queued for an ft split; its
     htdemucs set keeps serving until the ft set is verified, then it is pruned."""
     def scan():
-        import soundfile as _sf
-
         from app.ui.services import stem_remote
         from app.ui.services.download_service import _is_live, _is_mix
 
@@ -921,10 +912,10 @@ def _backfill_stems() -> None:
                 if _is_mix(name) or _is_live(name):
                     continue                             # not a song: the autopilot never plays it
                 try:
-                    if _sf.info(str(_tracks[tid])).duration > MAX_BACKFILL_S:
+                    if audio_io.audio_info(_tracks[tid])[3] > MAX_BACKFILL_S:
                         continue                         # an album / mix file, not a song
-                except Exception:
-                    pass
+                except OSError:
+                    pass                                 # unreadable track: still queue it, the stem job reports why
                 if (not _remote_has_ft(tid)) if want_ft else _cached_stems4(tid) is None:
                     missing.append(tid)
             except Exception:
@@ -2955,7 +2946,7 @@ def get_android_apk():
 @app.get("/api/audio/tracks/{track_id}")
 def get_track_audio(track_id: str, q: str = ""):
     path = _track_path(track_id)
-    return _audio_response(path, track_id, q)
+    return _audio_response(path, track_id, q, audio_io.MEDIA_TYPES.get(path.suffix.lower()))
 
 
 from app.ui.services.atlas_api import router as _atlas_router  # noqa: E402 -- pair atlas + macros (/api/atlas, /api/macros)
