@@ -294,7 +294,7 @@
       console.info(`artist move ${id}: ${plan.why}${fb}`);
       host.bus.emit("ai-activity", Object.assign({ kind: "artist_move", deck, label: `ARTIST MOVE · ${LABEL[id]}`,
         why: plan.why, move: id, fallbacks: plan.fallbacks || [] }, extra));
-      // NULL-BOT / SHOW (mascot.js): kick roll hits on its drop, throw on the last word, rewind on the line; the rest pop
+      // NULL-BOT (mascot.js): kick roll hits on its drop, throw on the last word, rewind on the line; the rest pop
       const sup = VIS_SUPER[id], at = sup ? extra[sup] : (Number.isFinite(extra.t0) ? extra.t0 : audioCtx.currentTime);
       if (Number.isFinite(at)) host.bus.emit("vis-moment", { at, name: id === "supermove_replay" ? "REWIND" : LABEL[id], tier: sup ? "super" : "accent", deck });
     }

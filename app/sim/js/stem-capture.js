@@ -50,7 +50,7 @@ function staticWith(cfg) {
   }
   return { dir, applied };
 }
-const PAINT = ["stem-wave.js", "visuals.js", "anyma-show.js", "anyma-ui.js", "marquee.js"];
+const PAINT = ["stem-wave.js", "visuals.js", "marquee.js"];
 const POS_HZ = 1000;                     // song position samples per second of each buffer source
 const GEN_MAX_S = 10;                    // generated buffers up to this long are written out sample by sample
 const GEN = {};                          // buffer id -> {sr, channels}

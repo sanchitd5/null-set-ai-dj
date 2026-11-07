@@ -14,8 +14,6 @@
 //
 // Pure presentation: reads globals / events / cheap GET status routes, never
 // touches audio or playback. Pure core is exported for node checks.
-// ANYMA theme (html.anyma-look, the ANYMA LOOK toggle): vibe.css restyles it;
-// this file only feeds the phrase-progress bar and the drop / supermove pulse.
 (function (root) {
   "use strict";
 
@@ -132,28 +130,6 @@
     return { bar: (((rel % 8) + 8) % 8) + 1, phrase, beat };
   }
 
-  // ANYMA theme: the slim bar that fills over each 8-bar phrase and snaps on the
-  // line. 0 exactly on a phrase line; past the last line, 8 bars of the local
-  // bar length; null before the first line or without data.
-  function phraseProgress(downbeats, phrases, pos) {
-    if (!Array.isArray(phrases) || !phrases.length || !Number.isFinite(pos)) return null;
-    const p = lastLE(phrases, pos);
-    if (p < 0) return null;
-    const start = phrases[p];
-    let len = p + 1 < phrases.length ? phrases[p + 1] - start : NaN;
-    if (!(len > 0)) {
-      const db = Array.isArray(downbeats) ? downbeats : [];
-      const i = db.length ? lastLE(db, pos) : -1;
-      const bar = i > 0 ? db[i] - db[i - 1] : i === 0 && db.length > 1 ? db[1] - db[0] : 2;
-      len = 8 * (bar > 0 ? bar : 2);
-    }
-    return Math.max(0, Math.min(1, (pos - start) / len));
-  }
-  // the bar went back (a new phrase, a seek, a loop): jump there, no fill animation
-  function progressSnaps(prev, next) {
-    return Number.isFinite(prev) && Number.isFinite(next) && next < prev - 1e-6;
-  }
-
   // camelot agreement of two decks; scoreFn = djMind.core.camelotScore
   function harmony(keyA, keyB, scoreFn) {
     if (!keyA || !keyB || typeof scoreFn !== "function") return null;
@@ -251,17 +227,8 @@
     return [{ ...e, key, t: now, count: 1, id: ++feedSeq }].concat(out).slice(0, FEED_MAX);
   }
 
-  // Pure: the ANYMA scene cell from the in-element look (anyma-ui.js `look`):
-  // {on, scene, drop}. Off when SHOW is off or the look has nothing to say.
-  function sceneCell(look) {
-    if (!look || look.on !== true) return { on: false, scene: "", drop: "" };
-    const scene = typeof look.scene === "string" ? look.scene : "";
-    const drop = typeof look.countdown === "string" ? look.countdown : "";
-    return { on: true, scene: scene || "--", drop };
-  }
-
   const core = {
-    STEMS, aiState, sceneCell, countdown, fmtSecs, mergeLanes, mergePlayhead, mergePhase, phraseAt, phraseProgress, progressSnaps,
+    STEMS, aiState, countdown, fmtSecs, mergeLanes, mergePlayhead, mergePhase, phraseAt,
     harmony, energyChips,
     trailPush, stemLevels, nextHook, nextCue, pruneCues, feedEntry, feedPush, feedPrune,
     FEED_TTL_MS, FEED_MAX, FEED_DEDUPE_MS,
@@ -295,7 +262,6 @@
         <span class="vb-k">BAR</span><span class="vb-num vb-barn">-/8</span>
         <span class="vb-beats" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
         <span class="vb-sub vb-phr">PHR -</span>
-        <i class="vb-pbar" aria-hidden="true"></i>
       </div>
       <div class="vb-cell vb-energy" title="Measured energy (1-10 vs the library)">
         <div class="vb-row"><span class="vb-k">NRG</span><span class="vb-chips vb-cur" aria-hidden="true">${"<i></i>".repeat(10)}</span><span class="vb-num vb-curn">-</span></div>
@@ -306,7 +272,6 @@
         <span class="vb-k">KEY</span><span class="vb-num vb-keys">-- · --</span><span class="vb-sub vb-harm"></span>
       </div>
       <div class="vb-cell vb-stemcell">${stemCol("a")}${stemCol("b")}</div>
-      <div class="vb-cell vb-scene" title="Anyma scene and the next anticipated moment (SHOW on, ANYMA LOOK)"><span class="vb-k">SCENE</span><span class="vb-num vb-scn">--</span><span class="vb-sub vb-dropcd"></span></div>
       <div class="vb-cell vb-hook" hidden><span class="vb-k">DROP</span><span class="vb-num vb-hookcd"></span><span class="vb-sub vb-hooktxt"></span></div>
       <div class="vb-cell vb-badges"></div>
       <ol class="vb-feed" aria-live="polite" aria-label="AI events"></ol>
@@ -316,12 +281,11 @@
     toggle: $(".vb-toggle"), orb: $(".vb-orb"), state: $(".vb-state"), detail: $(".vb-detail"), q: $(".vb-q"),
     cd: $(".vb-cd"), recipe: $(".vb-recipe"), planned: $(".vb-planned"), lanes: $(".vb-lanes"),
     track: $(".vb-track"), fill: $(".vb-fill"), head: $(".vb-head"), why: $(".vb-why"),
-    phrase: $(".vb-phrase"), pbar: $(".vb-pbar"), barn: $(".vb-barn"), beats: [...bar.querySelectorAll(".vb-beats i")], phr: $(".vb-phr"),
+    phrase: $(".vb-phrase"), barn: $(".vb-barn"), beats: [...bar.querySelectorAll(".vb-beats i")], phr: $(".vb-phr"),
     cur: [...bar.querySelectorAll(".vb-cur i")], nxt: [...bar.querySelectorAll(".vb-nxt i")],
     curn: $(".vb-curn"), nxtn: $(".vb-nxtn"), trail: $(".vb-trail"),
     keyCell: $(".vb-key"), keys: $(".vb-keys"), harm: $(".vb-harm"),
     stems: { a: $('.vb-stems[data-deck="a"]'), b: $('.vb-stems[data-deck="b"]') },
-    scene: $(".vb-scene"), scn: $(".vb-scn"), dropcd: $(".vb-dropcd"),
     hook: $(".vb-hook"), hookcd: $(".vb-hookcd"), hooktxt: $(".vb-hooktxt"),
     badges: $(".vb-badges"), feed: $(".vb-feed"),
   };
@@ -371,22 +335,6 @@
   }
   for (const t of ["ai-activity", "ai-cue", "ear-flush", "seek-refused", "glitch"]) root.addEventListener(t, onEvent(t));
 
-  // ANYMA theme: the drop / supermove flash mirrored as a one-frame border pulse
-  // (box-shadow only, no layout; never under reduced motion or the classic look)
-  function borderPulse(red) {
-    const de = document.documentElement;
-    if (reduced || hidden || !de || !de.classList || !de.classList.contains("anyma-look") || !bar.classList) return;
-    const cls = red ? "vb-hit-red" : "vb-hit";
-    bar.classList.add(cls);
-    requestAnimationFrame(() => requestAnimationFrame(() => bar.classList.remove(cls)));
-  }
-  root.addEventListener("ai-supermove", () => borderPulse(true));
-  root.addEventListener("ai-cue", (e) => {
-    const d = (e && e.detail) || {};
-    if (d.kind !== "drop") return;
-    const ms = Number.isFinite(d.at) ? (d.at - clock()) * 1000 : 0;
-    if (ms < 60000) setTimeout(() => borderPulse(false), Math.max(0, ms));
-  });
   root.addEventListener("ai-energy", (e) => {
     const d = (e && e.detail) || {};
     if (Number.isFinite(d.a)) {
@@ -510,19 +458,13 @@
     }
   }
 
-  let lastOne = -1, oneFlip = 0, lastPP = NaN;
+  let lastOne = -1, oneFlip = 0;
   function renderPhrase(d) {
     const a = d && d.analysis;
     const p = a ? phraseAt(a.downbeat_times, a.phrase_boundaries_8bar, posOf(d)) : null;
     put(el.barn, "text", p ? `${p.bar}/8` : "-/8");
     put(el.phr, "text", p ? `PHR ${p.phrase} · ${String(d.id).toUpperCase()}` : "PHR -");
     el.beats.forEach((b, i) => put(b, "class:on", !!p && i < p.beat));
-    // ANYMA theme's phrase bar (hidden by CSS in the classic look): fills over 8 bars, snaps on the line
-    const pp = a ? phraseProgress(a.downbeat_times, a.phrase_boundaries_8bar, posOf(d)) : null;
-    const f = pp == null ? 0 : pp;
-    put(el.pbar, "class:vb-snap", progressSnaps(lastPP, f));
-    put(el.pbar, "--vb-pp", f.toFixed(3));
-    lastPP = f;
     const one = p && p.bar === 1 ? p.phrase : -1;
     if (one !== lastOne) {
       lastOne = one;
@@ -594,15 +536,6 @@
       put(el.hooktxt, "text", `"${hook.text}"`);
     } else put(el.hook, "hidden", true);
   }
-
-  // shown only via CSS (html.anyma-look.anyma-el): a fixed-width cell, text only here
-  function renderScene() {
-    const c = sceneCell(root.anymaUi && root.anymaUi.look);
-    put(el.scn, "text", c.on ? c.scene : "--");
-    put(el.dropcd, "text", c.on ? c.drop : "");
-    put(el.scene, "class:vb-armed", c.on && !!c.drop);
-  }
-
   function renderBadges() {
     const b = [];
     const yt = sig.yt;
@@ -696,7 +629,6 @@
     renderKey();
     renderStems();
     renderHook(d, now);
-    renderScene();
     renderBadges();
     renderFeed(Date.now());
     dirty = false;
@@ -711,6 +643,5 @@
     requestAnimationFrame(frame);
   }, 100);
 
-  // pulse(red): the SHOW's in-element moments (an Anyma drop on the line) hit the strip too
-  root.vibeUi = { core, get hidden() { return hidden; }, pulse: (red) => borderPulse(!!red) };
+  root.vibeUi = { core, get hidden() { return hidden; } };
 })(typeof window !== "undefined" ? window : globalThis);
