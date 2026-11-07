@@ -45,7 +45,9 @@ def _duration_secs(path: Path) -> float | None:
     try:
         import soundfile as sf
 
-        return sf.info(str(path)).duration
+        from app.music_brain.audio import audio_io
+
+        return sf.info(str(audio_io.readable(path))).duration
     except Exception:
         return None  # unreadable by soundfile (e.g. m4a): rely on the pre-download filter
 
@@ -78,7 +80,9 @@ def _looks_like_excerpt(path: Path) -> bool:
         import numpy as np
         import soundfile as sf
 
-        y, sr = sf.read(str(path), always_2d=True, dtype="float32")
+        from app.music_brain.audio import audio_io
+
+        y, sr = sf.read(str(audio_io.readable(path)), always_2d=True, dtype="float32")
     except Exception:
         return False
     mono = y.mean(axis=1)

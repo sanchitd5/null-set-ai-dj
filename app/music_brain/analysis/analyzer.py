@@ -20,6 +20,8 @@ from typing import List, Optional, Tuple
 import librosa
 import numpy as np
 
+from app.music_brain.audio import audio_io
+
 from app.music_brain.config import (
     ANALYSIS_CACHE_DIR,
     BEATS_PER_BAR,
@@ -475,7 +477,7 @@ def upgrade_to_current(audio_path: Path) -> bool:
 
         with open(v4, "r", encoding="utf-8") as f:
             data = json.load(f)
-        y, sr = librosa.load(str(audio_path), sr=SAMPLE_RATE, mono=True)
+        y, sr = librosa.load(str(audio_io.readable(audio_path)), sr=SAMPLE_RATE, mono=True)
         data["bpm"] = float(loop_tempo(y, sr, float(data["bpm"]), data.get("beat_times") or []))
     else:
         return False
@@ -555,7 +557,7 @@ def analyze(
             with open(old, "r", encoding="utf-8") as f:
                 return _from_dict(_refine(json.load(f), digest))
 
-    y, sr = librosa.load(str(audio_path), sr=SAMPLE_RATE, mono=True)
+    y, sr = librosa.load(str(audio_io.readable(audio_path)), sr=SAMPLE_RATE, mono=True)
     duration = float(librosa.get_duration(y=y, sr=sr))
 
     bpm, beat_times = analyze_tempo_and_beats(y, sr)
