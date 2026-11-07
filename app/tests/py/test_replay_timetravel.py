@@ -203,3 +203,24 @@ def test_api(tmp_path, monkeypatch):
     assert c.delete("/api/liked", params={"a": NEVER, "b": NOCT}).json()["removed"] is True
     assert c.post("/api/liked", json={}).status_code == 400
     assert len(c.post("/api/liked/seed").json()["seeded"]) == 3
+
+
+def test_api_like_console_step(tmp_path, monkeypatch):
+    """The phone keeps a transition it played with POST /api/liked {step}: no session log needed."""
+    from fastapi import FastAPI
+    from app.tests.py.testclient_compat import TestClient
+    from app.ui.services import replay_api
+
+    monkeypatch.setattr(replay_api, "REPLAY_CACHE_DIR", tmp_path)
+    app = FastAPI()
+    app.include_router(replay_api.router)
+    c = TestClient(app)
+    step = {"a": NEVER, "b": NOCT, "a_name": "A - Never", "b_name": "B - Noct", "recipe": "Bass Swap",
+            "a_time": 125.0, "b_time": 8.0, "why": "liked on the phone"}
+    e = c.post("/api/liked", json={"step": step, "note": "from the phone"}).json()["liked"]
+    assert (e["a"], e["b"], e["source"], e["note"]) == (NEVER, NOCT, "console", "from the phone")
+    assert e["step"]["recipe"] == "Bass Swap" and e["step"]["a_time"] == 125.0
+    assert [x["b"] for x in c.get("/api/liked").json()["liked"]] == [NOCT]
+    assert c.delete("/api/liked", params={"a": NEVER, "b": NOCT}).json()["removed"] is True
+    assert c.get("/api/liked").json()["liked"] == []
+    assert c.post("/api/liked", json={"step": {"a": "x", "b": NOCT}}).status_code == 400
