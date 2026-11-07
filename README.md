@@ -152,9 +152,8 @@ API: `GET /api/sessions`, `GET /api/sessions/{id}/timeline`, `GET /api/sessions/
 
 ## 🤖 NULL, the mascot, and the visuals
 
-- **NULL-BOT** flies in for every supermove (merge drops, double drops, drop swaps, riff arrivals), pops in place for small moves, and dances on Anyma-style drops
+- **NULL-BOT** flies in for every supermove (merge drops, double drops, drop swaps, riff arrivals), pops in place for small moves
 - The **bass band** at the bottom of the screen breathes with the low end; during a crossfade the wave travels from the incoming deck's side
-- **ANYMA LOOK** (optional): ice-white and cyan light inside the platters, waveforms, meters and the VIBE strip, with a "DROP IN N BARS" countdown
 - **VIBE strip**: what the AI hears, plans and does, including the combo streak
 - **LEARNING** panel: live progress of set studies
 
@@ -314,7 +313,7 @@ app/
   ui/             FastAPI server, autopilot service, engine (Host port), LLM runtime + gate,
                   live ear, prerender, downloads, dedup
   ui/static/      the console: autopilot, dj-mind, stem / fx / artist / learned moves,
-                  macro mode, NULL-BOT, visuals, ANYMA look (vanilla JS, no build step)
+                  macro mode, NULL-BOT, visuals (vanilla JS, no build step)
   music_brain/knowledge/  tracked macros, learned observations, slim pair atlas
   legacy_pipeline/        the older end-to-end batch mixer (data/songs -> data/output/mix.mp3)
   sim/            the virtual set: fake decks, record / replay, scorer, suite

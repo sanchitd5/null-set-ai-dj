@@ -19,8 +19,6 @@
   <link rel="stylesheet" href="/style.css" />
   <link rel="stylesheet" href="/null-bot.css" />
   <link rel="stylesheet" href="/vibe.css" />
-  <link rel="stylesheet" href="/anyma-show.css" />
-<link rel="stylesheet" href="/anyma-ui.css" />
   <link rel="stylesheet" href="/toggle-drawer.css" />
   <!-- phone Lite layout (phone-ui.js sets html.phone-lite on PHONE_QUERY); every rule is scoped to it -->
   <link rel="stylesheet" href="/phone.css" />
@@ -103,8 +101,6 @@
 
   <button class="hw-btn vfx-btn" id="vfx-toggle" type="button" aria-pressed="true"
           title="Full-screen visuals: drops, transitions and kicks light up the screen">VFX</button>
-  <button class="hw-btn vfx-btn" id="show-stage" type="button" aria-pressed="false"
-          title="STAGE: the full-page Anyma show behind the console, manual only (IN CONSOLE or Esc closes it). SHOW alone never opens it">STAGE</button>
 
   <button class="hw-btn help-btn" id="help-toggle" aria-expanded="false" aria-controls="shortcut-overlay"
           title="Show / hide the keyboard shortcut map (` or ?)">?</button>
@@ -945,15 +941,6 @@
       <label class="hud-label" title="The AI programs the BEAT GRID per song (pattern from the genre, kick muted, low level) and plays it on the song's drop for 8 bars, once per song. Pressing RUN yourself takes the grid over.">
         <input type="checkbox" id="ap-grid-toggle" /> AI BEATS
       </label>
-      <label class="hud-label" data-group="VISUALS" title="Anyma elements on (with ANYMA LOOK): the platters get an android eye lit by the vocal and rings of light on the kick, the waveforms go ice / cyan with a scan line per bar, the VIBE strip shows the scene. No stage, no overlay (STAGE in the top bar opens the full show)">
-        <input type="checkbox" id="ap-show-toggle" /> SHOW
-      </label>
-      <label class="hud-label" data-group="VISUALS" title="With SHOW on: the director runs the moments inside the DJ elements: ring bursts on drops and supermoves, DROP IN N BARS in the VIBE strip, a small dancing figure in the waveform of the deck that makes an Anyma-style drop. It never opens the stage">
-        <input type="checkbox" id="ap-show-auto" checked /> SHOW AUTO
-      </label>
-      <label class="hud-label" data-group="VISUALS" title="VFX and VIBE strip in the Anyma look: black space, ice-white and cyan thin lines and particles, phrase-locked cuts, capped flashes. Off keeps the classic deck-colour look">
-        <input type="checkbox" id="vfx-anyma-toggle" /> ANYMA LOOK
-      </label>
       <input type="range" id="ap-drums-level" min="0" max="1" step="0.01" value="0.25" aria-label="Live drums level" />
       <label class="hud-label" data-group="ATLAS" title="Pair atlas COMBOS first: songs the atlas knows work with the playing one (merge-hold, riff x rap, mashup, double drop, drop swap) are tried before asking the LLM; the other deck's song first when it forms a combo. Off: taste only">
         <input type="checkbox" id="ap-atlas-combo" checked /> ATLAS COMBOS
@@ -1108,8 +1095,6 @@
 <script src="/ai-overlay.js"></script>
 <script src="/mascot.js"></script>
 <script src="/visuals.js"></script>
-<script src="/anyma-ui.js"></script>
-<script src="/anyma-show.js"></script>
 <script src="/tempo-rule.js"></script>
 <script src="/scene-profile.js"></script>
 <script src="/fx-budget.js"></script>

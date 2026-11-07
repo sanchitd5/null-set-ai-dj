@@ -118,14 +118,13 @@ Status legend:
 | Editable shortcuts | Working | `performance.js` | Persist in `localStorage`, reset to defaults |
 | Sampler pad keys | Working | `performance.js`, `sampler-deck.js` | Rebindable |
 
-## 8. Visuals and show
+## 8. Visuals
 
 | Feature | Status | Where | Notes |
 |---|---|---|---|
 | Waveforms, beat layer, stem waves | Working | `visuals.js`, `beat-layer.js`, `stem-wave.js` | |
 | VIBE strip and marquee | Working | `vibe-ui.js`, `marquee.js` | |
 | NULL-BOT mascot | Working | `mascot.js`, `null-bot.css` | |
-| ANYMA look and SHOW mode | Working | `anyma-show.js`, `anyma-ui.js` | WebGL stage, drop detector, SHOW AUTO |
 
 ## 9. Virtual set sim and CI
 

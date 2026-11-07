@@ -1,10 +1,8 @@
-// Node check: NULL-BOT reacts to every move and works hand in hand with the Anyma SHOW.
+// Node check: NULL-BOT reacts to every move.
 // Runs the real mascot.js browser block in a vm with a fake DOM on a virtual clock.
 //   - every move family emits a vis-moment (SUPER or ACCENT) with its hit time
 //   - SUPER: gate (AI driving + VFX on), the takeover hit lands on the moment's audio time, vis-moment re-announced
 //   - ACCENT: one pop per 2 bars
-//   - DANCE: the dock NULL dances on the drop's beat grid; the dock is up in full SHOW
-//   - z-order: NULL-BOT (.nul-super) above the SHOW stage
 const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
@@ -38,14 +36,12 @@ function boot(o = {}) {
   const addT = (fn, ms, every) => { timers.push({ fn, due: clock + Math.max(0, ms || 0), every, dead: false }); return timers.length; };
   const els = { "nul-mascot": new El("nul-mascot"), "nul-state": new El("nul-state"), "nul-super": new El("nul-super"), "vfx-toggle": new El("vfx-toggle") };
   els["vfx-toggle"].setAttribute("aria-pressed", "true");
-  const stage = new El("anyma-stage");
-  stage.rect = { left: 12, top: 500, right: 432, bottom: 788, width: 420, height: 288 };
   const body = new El("body");
   els["nul-super"].parentNode = body;
   const store = Object.assign({}, o.store || {});
   const et = new EventTarget();
   const ctx = {
-    document: { getElementById: (id) => els[id] || null, querySelector: (s) => (s === ".anyma-stage" && !o.noStage ? stage : null),
+    document: { getElementById: (id) => els[id] || null, querySelector: () => null,
       addEventListener() {}, body, documentElement: new El("html"), fullscreenElement: null },
     localStorage: { getItem: (k) => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); } },
     performance: { now: () => clock },
@@ -56,7 +52,6 @@ function boot(o = {}) {
     CustomEvent, innerWidth: 1000, innerHeight: 800, getComputedStyle: () => ({ getPropertyValue: () => "" }),
     autopilotState: { active: o.ai !== false },
     decks: { a: { playing: true, bpm: 128, _playbackRate: () => 1 }, b: { playing: false } },
-    anymaShow: o.show || { mode: "off" },
   };
   // audio clock = perf clock - 900 s offset (any fixed offset: hitPerfMs maps between them)
   ctx.audioCtx = { get currentTime() { return clock / 1000 - 0.9; }, outputLatency: 0 };
@@ -78,7 +73,7 @@ function boot(o = {}) {
   };
   const emit = (type, detail) => ctx.dispatchEvent(new CustomEvent(type, { detail }));
   const audioNow = () => ctx.audioCtx.currentTime;
-  return { ctx, els, stage, store, moments, advance, emit, audioNow, sup: els["nul-super"], bot: els["nul-mascot"], now: () => clock };
+  return { ctx, els, store, moments, advance, emit, audioNow, sup: els["nul-super"], bot: els["nul-mascot"], now: () => clock };
 }
 
 // ---- SUPER: gate passes, hit on the audio time, one vis-moment at the same `at` -------------------------------------
@@ -128,55 +123,8 @@ for (const o of [{ ai: false }, { store: { "nul.vfx": "off" } }]) {
   assert.ok(!B.sup.cls.has("nul-sm-on"), "an accent never flies in");
 }
 
-// ---- SHOW: dock in full, dance beside a window stage -------------------------------------------------------------------
+// ---- z-order: NULL-BOT above the VFX canvas ---------------------------------------------------------------------------
 {
-  const show = { mode: "full" };
-  const B = boot({ show });
-  B.advance(200);
-  assert.ok(B.sup.cls.has("nul-sm-dock"), "full SHOW: NULL stays visible, docked in front");
-  show.mode = "off"; B.advance(200);
-  assert.ok(!B.sup.cls.has("nul-sm-dock"));
-  show.mode = "embed"; B.advance(200);
-  assert.ok(!B.sup.cls.has("nul-sm-dock"), "embedded SHOW, no dance: NULL stays in the top bar");
-  const at = B.audioNow() + 1;
-  B.emit("vis-moment", { at, name: "ANYMA DROP", tier: "dance", bar: 1.875, until: at + 30 });
-  B.advance(1200);
-  assert.ok(B.sup.cls.has("nul-sm-dance") && B.sup.cls.has("nul-sm-dock"), "the dock NULL dances beside the stage");
-  // phase: a beat loop started now is at progress 0 on the drop (same beat grid as the figure)
-  const beat = parseFloat(B.sup.props["--sm-beat"]), ph = parseFloat(B.sup.props["--sm-phase"]);
-  near(beat, 468.75 * 1, 1);
-  B.advance(31000);
-  assert.ok(!B.sup.cls.has("nul-sm-dance"), "the dance ends at `until`");
-  assert.ok(Number.isFinite(ph) && ph <= 0);
-}
-// embedded stage not laid out (height 0) or no stage element at all: NULL still dances, from the top bar (no dock)
-for (const o of [{ noStage: true }, { flat: true }]) {
-  const B = boot(Object.assign({ show: { mode: "embed" } }, o));
-  if (o.flat) B.stage.rect = { left: 0, top: 0, right: 1000, bottom: 0, width: 1000, height: 0 };
-  const at = B.audioNow() + 1;
-  B.emit("vis-moment", { at, name: "ANYMA DROP", tier: "dance", bar: 1.875, until: at + 30 });
-  B.advance(1200);
-  assert.ok(B.sup.cls.has("nul-sm-dance") && !B.sup.cls.has("nul-sm-dock"), JSON.stringify(o));
-}
-// Anyma drops announced AHEAD from the SHOW's own detector, once per drop
-{
-  const show = { mode: "full", core: { prepTrack: (an) => ({ an }), anymaDrops: () => [{ at: 64 }], anymaHint: () => "" } };
-  const B = boot({ show });
-  let pos = 58;
-  Object.assign(B.ctx.decks.a, { analysis: {}, crossfaderGain: { gain: { value: 1 } }, _currentPosition: () => pos });
-  B.advance(600); assert.strictEqual(B.moments.filter((m) => m.tier === "dance").length, 0, "6 s out: not yet");
-  pos = 61; B.advance(600);
-  const d = B.moments.filter((m) => m.tier === "dance");
-  assert.strictEqual(d.length, 1, "3 s out: announced");
-  near(d[0].at, B.audioNow() + 3, 0.7);
-  B.advance(1500);
-  assert.strictEqual(B.moments.filter((m) => m.tier === "dance").length, 1, "once per drop");
-}
-
-// ---- z-order: NULL-BOT above the SHOW stage and the VFX canvas --------------------------------------------------------
-{
-  // every top-level z-index a rule sets for `test(selector)`; rules nested inside the stage (".anyma-stage x")
-  // live in the stage's own stacking context, so only the stage's own and any other page-level Anyma layer count
   const zs = (css, test) => {
     const out = [];
     for (const m of css.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{}]+)\{([^}]*)\}/g)) {
@@ -186,16 +134,8 @@ for (const o of [{ noStage: true }, { flat: true }]) {
     }
     return out;
   };
-  const top = (sel) => /anyma/.test(sel) && !/\.anyma-stage\s+\S/.test(sel);
-  const anyma = ["anyma-show.css", "style.css", "null-bot.css", "toggle-drawer.css"].flatMap((f) => zs(S(f), top));
   const [nb] = zs(S("null-bot.css"), (s) => s === ".nul-super"), [vfx] = zs(S("style.css"), (s) => s === ".vfx");
-  const maxAnyma = anyma.length ? Math.max(...anyma) : -Infinity;           // no stage / behind the console: below
-  assert.ok(Number.isFinite(nb) && nb > maxAnyma && nb > vfx, `nul-super ${nb} > anyma layers ${anyma} and vfx ${vfx}`);
-  // the parser sees the real stage rule (today z-index -1, behind the console)
-  assert.ok(zs(".anyma-stage { position: absolute; z-index: -1; }", top)[0] === -1);
-  assert.deepStrictEqual(zs(".anyma-stage canvas { z-index: 5; }", top), [], "inside the stage: its own stacking context");
-  assert.ok(/\.nul-super\.nul-sm-dock \{ visibility: visible; \}/.test(S("null-bot.css")));
-  assert.ok(/fullscreenchange/.test(S("mascot.js")), "browser full screen: NULL moves into the full-screen element");
+  assert.ok(Number.isFinite(nb) && nb > vfx, `nul-super ${nb} > vfx ${vfx}`);
 }
 
 // ---- every move family emits a vis-moment (SUPER or ACCENT) with its hit time ------------------------------------------

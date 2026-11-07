@@ -552,7 +552,7 @@
     }
     function say(d, label, why, extra = {}) {
       host.bus.emit("ai-activity", Object.assign({ kind: "learned_move", deck: d.id, label, why }, extra));
-      // NULL-BOT / SHOW (mascot.js): VOCAL SWAP on the swap, ACAPELLA BUILD when the beat is back (super); learned vocal moves pop
+      // NULL-BOT (mascot.js): VOCAL SWAP on the swap, ACAPELLA BUILD when the beat is back (super); learned vocal moves pop
       if (Number.isFinite(extra.t0)) host.bus.emit("vis-moment", extra.artist ? { at: extra.move === "acapella_build" && Number.isFinite(extra.t1) ? extra.t1 : extra.t0,
         name: extra.move === "vocal_swap" ? "VOCAL SWAP" : ARTIST_LABEL[extra.move] || "ARTIST MOVE", tier: "super", deck: d.id } : { at: extra.t0, name: LABEL[extra.move] || "LEARNED", tier: "accent", deck: d.id });
     }
