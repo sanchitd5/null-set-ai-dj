@@ -25,7 +25,6 @@ research/**/*.mp3
 research/**/*.flac
 # research notes are private; only these 5 are tracked on purpose
 research/notes/*
-!research/notes/anyma-visual-brief.md
 !research/notes/performance-pads-brief.md
 !research/notes/set-study-gfF8jzBVWvM.md
 !research/notes/set-study-mDtud5fLgFQ.md

@@ -791,7 +791,6 @@
   }
   function cancelMoves() {
     timers.forEach(clearTimeout); timers = [];
-    if (host.bus) host.bus.emit("ai-cancel", { deck: deckId || "" });   // SHOW AUTO drops the booked moments
     const lm = host.mod.learnedMoves, d = deck();
     if (lm && d) lm.stop(d);                      // a booked learned slice window / stem mode goes with the moves
     const am = host.mod.artistMoves;
@@ -968,7 +967,7 @@
       lastMoveAt = nowS();
     }
     const beat = bar / 4, end = st.phraseEnd;
-    // NULL-BOT / SHOW (mascot.js): the peak moves hit on the drop line (super); the drop-builders pop on it (accent)
+    // NULL-BOT (mascot.js): the peak moves hit on the drop line (super); the drop-builders pop on it (accent)
     const vis = VIS_MOVES[dec.action];
     if (vis) host.bus.emit("vis-moment", { at: audioCtx.currentTime + ((vis[2] ? pos : end) - pos) / rate, name: vis[0], tier: vis[1], deck: id, bar: bar / rate });
     if (dec.action === "hold") {
