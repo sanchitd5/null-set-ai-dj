@@ -1507,6 +1507,35 @@ def _preplan_fresh(now: Optional[float]):
     return check
 
 
+def _classic_merge_bars(vocal32, bars_left: float) -> int:
+    """autopilot.js mergeFits' M: 32 bars when B's voice carries 32 bars (vocal32 >= 0.7) and A has 44 left,
+    else 16 with 26 left, else 0 (no classic merge)."""
+    return 32 if (vocal32 or 0) >= 0.7 and bars_left >= 44 else 16 if bars_left >= 26 else 0
+
+
+def _preplan_merge_facts(plan: dict, ta, tb, sa: dict, sb: dict, key_score, b_rap: bool, b_id: str, now: float) -> None:
+    """Adds `merge_ranked` (stem-moves mergeRank on the stems of the planned window, the booked combo first) and
+    `merge_base` (the classic length, mergeFits' M at A's playhead `now`) to a preplan: what the phone needs to
+    re-check the merge at fire time and fall back to the classic length (dj-core mergeFacts). The web console
+    ignores both (it ranks on its own decks at the line)."""
+    from app.music_brain.render import merge, preplan
+
+    bar_a, bar_b = 240.0 / (ta.bpm or 120.0), 240.0 / (tb.bpm or 120.0)
+    n = plan["bars"]
+    ea = preplan.mean_over(preplan.energies(sa, bar_a), plan["a_in"], plan["a_in"] + n * bar_a, bar_a)
+    eb = preplan.mean_over(preplan.energies(sb, bar_b), plan["b_start"], plan["b_start"] + n * bar_b, bar_b)
+    ranked = merge.rank(ea, eb, key_score, b_rap=b_rap)
+    ranked.sort(key=lambda r: r["combo"] != plan["combo"])          # stable: the booked (ear-picked) combo leads
+    plan["merge_ranked"] = [{"combo": r["combo"], "label": r["label"]} for r in ranked]
+    try:
+        v32 = (get_vocal_entry(b_id) or {}).get("vocal32")
+        base = _classic_merge_bars(v32, (float(ta.duration) - now) / bar_a) if v32 is not None else 0
+    except Exception:
+        base = 0                                                       # entry unknown: no classic length
+    if base:
+        plan["merge_base"] = base
+
+
 def _run_preplan(req: PreplanRequest, sa: dict, sb: dict) -> dict:
     from app.music_brain.render import preplan
     from app.music_brain.matching import techniques as tq
@@ -1522,6 +1551,12 @@ def _run_preplan(req: PreplanRequest, sa: dict, sb: dict) -> dict:
                           req.lo, req.hi, req.now, tq.camelot_score(ka, kb) if ka and kb else None,
                           b_rap=any(r.get("rap") for r in (_voiced_cache.get((req.b_id, "style")) or [])), cache_key=f"{req.a_id}:{req.b_id}")
     p = res.get("plan") or {}
+    if res.get("ok") and p:
+        b_rap = any(r.get("rap") for r in (_voiced_cache.get((req.b_id, "style")) or []))
+        try:
+            _preplan_merge_facts(p, ta, tb, sa, sb, tq.camelot_score(ka, kb) if ka and kb else None, b_rap, req.b_id, req.now)
+        except Exception:
+            pass                                                       # the plan stands without the fire-time facts
     session_log.log("ear_preplan", elapsed=round(time.time() - t0, 2), ok=res["ok"], heard=res.get("ear"),
                     candidates=len(res.get("candidates") or []), a_in=p.get("a_in"), b_start=p.get("b_start"),
                     bars=p.get("bars"), label=p.get("label"), direction=p.get("direction"))
