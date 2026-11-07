@@ -98,3 +98,30 @@ def test_session_event_accepts_glitch_reports(tmp_path, monkeypatch):
     r = s.post_session_event(s.SessionEvent(kind="glitch", data={"kind": "silence", "where": "A x @ 1:00", "decks": [{"deck": "a"}]}))
     e = session_log.read()[-1]
     assert r["ok"] and e["kind"] == "glitch" and e["kind_"] == "silence" and e["where"] == "A x @ 1:00"
+
+
+def test_preplan_carries_the_classic_length_and_ranked_combos_for_the_phone(tmp_path, monkeypatch):
+    """merge_ranked (booked combo first) + merge_base (mergeFits' M) ride on the plan; the web ignores both."""
+    import types
+
+    from app.ui import server
+
+    lv = {"drums": 0.2, "bass": 0.2, "vocals": 0.1, "other": 0.1}
+    sa, sb = _stems(tmp_path, "a", 240, lv), _stems(tmp_path, "b", 240, lv)
+    a, b = _ana(240, 20.0), _ana(240, 32.0)
+    cands = preplan.candidates(a, b, BPM, BPM, lo=140, hi=200, now=60,
+                               eA=preplan.energies(sa, BAR), eB=preplan.energies(sb, BAR), key_score=1.0)
+    plan = dict(cands[-1])                                   # not necessarily the top-ranked combo
+    ta, tb = types.SimpleNamespace(bpm=BPM, duration=240.0), types.SimpleNamespace(bpm=BPM, duration=240.0)
+    for v32, now, base in ((0.9, 20.0, 32), (0.5, 20.0, 16), (0.9, 170.0, 16), (0.9, 200.0, None)):   # 110 / 110 / 35 / 20 bars of 2 s left
+        monkeypatch.setattr(server, "get_vocal_entry", lambda tid, v=v32: {"entry": 8.0, "vocal32": v})
+        p = dict(plan)
+        server._preplan_merge_facts(p, ta, tb, sa, sb, 1.0, False, "b", now)
+        assert p.get("merge_base") == base
+        assert p["merge_ranked"][0]["combo"] == plan["combo"] and p["merge_ranked"][0]["label"] == plan["label"]
+        assert set(p["merge_ranked"][0]) == {"combo", "label"}
+        assert len({tuple(sorted(r["combo"].items())) for r in p["merge_ranked"]}) == len(p["merge_ranked"]) > 1
+    monkeypatch.setattr(server, "get_vocal_entry", lambda tid: {"entry": None})     # no vocal entry: no classic length
+    p = dict(plan)
+    server._preplan_merge_facts(p, ta, tb, sa, sb, 1.0, False, "b", 20.0)
+    assert "merge_base" not in p and p["merge_ranked"]
