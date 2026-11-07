@@ -250,3 +250,10 @@ def test_art_url_in_track_list_analysis_and_mobile(client, lib, monkeypatch):
     a = client.get("/api/tracks/aaa1/analysis").json()
     assert a["bpm"] == 120.0 and a["art_url"] == rows["aaa1"]["art_url"]
     assert client.get(rows["aaa1"]["art_url"]).status_code == 200
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_album_art_ui_js():
+    res = subprocess.run([shutil.which("node"), str(Path(__file__).parents[1].joinpath("js", "album_art_check.js"))],
+                         capture_output=True, text=True, timeout=30)
+    assert res.returncode == 0, res.stderr or res.stdout
