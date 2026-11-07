@@ -9,7 +9,8 @@ GET  /api/mobile/recordings                    {recordings: [{recording_id, url,
 GET  /api/mobile/sync                          macros, studied sets, supermoves, vetoes, liked, sessions,
                                                samples, learned moves in one bundle (+ errors per failed part)
 
-entry = {track_id, display_name, artist, title, ext, bytes, genre, era, not_a_song, has_stems}
+entry = {track_id, display_name, artist, title, ext, bytes, genre, era, not_a_song, has_stems, art_url}
+art_url = "/api/tracks/{id}/art?size=600&v=.." once a cover is cached (size=160 for a thumb), else null
 """
 from __future__ import annotations
 
@@ -20,6 +21,8 @@ from typing import Dict, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
+
+from app.ui.services import album_art
 
 router = APIRouter()
 
@@ -80,7 +83,7 @@ def _base(track_id: str, path: Path) -> dict:
     return {"track_id": track_id, "display_name": name, "artist": "" if artist == "Unknown" else artist,
             "title": title, "ext": path.suffix.lower(), "bytes": size,
             "genre": vibe.get("genre"), "era": vibe.get("era"),
-            "not_a_song": bool(_is_live(name) or _is_mix(name))}
+            "not_a_song": bool(_is_live(name) or _is_mix(name)), "art_url": album_art.art_url(track_id)}
 
 
 def _entry(track_id: str, path: Path) -> dict:

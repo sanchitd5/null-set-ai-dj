@@ -41,7 +41,7 @@ from app.music_brain.matching.knowledge_parser import KnowledgeParser
 from app.music_brain.matching.recipe_matcher import RecipeMatcher
 from app.music_brain.render.transition_renderer import render_full_mix, render_preview
 from app.music_brain.learning.set_log import export_set_log_markdown, validate_set_log
-from app.ui.services import engine as _engine
+from app.ui.services import album_art, engine as _engine
 from app.ui.services.bg_jobs import DONE as _JOB_DONE, ERROR as _JOB_ERROR, EXPIRED as _JOB_EXPIRED, JobRunner
 from app.ui.services.library_service import scan_library
 
@@ -314,7 +314,7 @@ async def download_from_url(req: DownloadRequest):
                                     headers={"Retry-After": str(max(1, int(exc.until - time.time())))})
             raise HTTPException(status_code=500, detail=str(exc))
 
-        results = _register_downloaded(paths)
+        results = _register_downloaded(paths, source_url=req.url)
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -337,7 +337,7 @@ def _reuse_existing(url: str) -> Optional[List[dict]]:
 
 
 def _register_downloaded(paths: List[Path], names: Optional[List[str]] = None, move: bool = True,
-                         queue: bool = True) -> List[dict]:
+                         queue: bool = True, source_url: Optional[str] = None) -> List[dict]:
     """Move downloaded audio into UPLOAD_DIR under its content-hash id. names: display names
     (default the file stems); move=False copies (pair_atlas import-set keeps the study's file);
     queue=False leaves the separation to the console (import-set: stems cached by content)."""
@@ -356,6 +356,9 @@ def _register_downloaded(paths: List[Path], names: Optional[List[str]] = None, m
         _remember_track_name(track_id, original_name)
         if queue:
             _queue_stems(track_id)        # separate now, before a deck needs it
+        if source_url:
+            album_art.remember_source(track_id, source_url)   # YouTube video id, for the thumbnail step
+        album_art.enqueue(track_id)       # cover lookup, background
         results.append({"track_id": track_id, "filename": dest.name, "display_name": original_name})
     return results
 
@@ -401,7 +404,7 @@ def post_download_job(req: DownloadJobRequest):
     job_id = download_jobs.start_job(
         req.url, req.label[:120], UPLOAD_DIR,
         download_fn=_host().download_to_dir,
-        register_fn=_register_downloaded,
+        register_fn=lambda paths: _register_downloaded(paths, source_url=req.url),
         reuse_fn=_reuse_existing,
         analyze_fn=lambda tid: analyze_track(_track_path(tid)),
     )
@@ -437,6 +440,7 @@ async def upload_track(file: UploadFile):
     if file.filename:
         _remember_track_name(track_id, Path(file.filename).stem)
     _queue_stems(track_id)                # separate now, before a deck needs it
+    album_art.enqueue(track_id)           # cover lookup, background
     return {"track_id": track_id, "filename": file.filename}
 
 
@@ -469,7 +473,7 @@ def list_tracks():
         # not_a_song: live/event recordings and mixes already in the library
         # (downloaded before those filters existed); the autopilot skips them.
         return {"track_id": tid, "path": str(p), "display_name": name,
-                "not_a_song": bool(_is_live(name) or _is_mix(name))}
+                "not_a_song": bool(_is_live(name) or _is_mix(name)), "art_url": album_art.art_url(tid)}
 
     return {"tracks": [_entry(tid, p) for tid, p in _tracks.items()]}
 
@@ -494,7 +498,7 @@ def _register_library_tracks() -> list[dict[str, object]]:
 def list_library():
     """List allowlisted local tracks and make them available to deck endpoints."""
 
-    return {"tracks": _register_library_tracks()}
+    return {"tracks": [album_art.with_art(dict(t)) for t in _register_library_tracks()]}
 
 
 @app.post("/api/library/scan")
@@ -508,7 +512,7 @@ def scan_configured_library():
 @app.get("/api/tracks/{track_id}/analysis")
 def get_analysis(track_id: str):
     path = _track_path(track_id)
-    return analyze_track(path).to_dict()
+    return {**analyze_track(path).to_dict(), "art_url": album_art.art_url(track_id)}
 
 
 @app.post("/api/tracks/{track_id}/separate")
@@ -925,6 +929,27 @@ def _backfill_stems() -> None:
         print(f"[stems] library backfill: {len(missing)} of {len(_tracks)} tracks to separate", flush=True)
 
     threading.Thread(target=scan, daemon=True).start()
+
+
+def _art_identity(tid: str):
+    """(path, display name) of a track that should get a cover, or None (live recordings and mixes)."""
+    from app.ui.services.download_service import _is_live, _is_mix
+
+    p = _tracks.get(tid)
+    if p is None or not p.exists():
+        return None
+    name = _track_names.get(tid) or p.stem
+    return None if (_is_mix(name) or _is_live(name)) else (p, name)
+
+
+album_art.set_resolver(_art_identity)
+
+
+@app.on_event("startup")
+def _backfill_art() -> None:
+    """Cover art for every library track that has none, in the background, one lookup at a time
+    (album_art rate-limits each source). New uploads / downloads enqueue themselves."""
+    album_art.start_backfill(lambda: list(_tracks))
 
 
 _vocal_entry_cache: Dict[str, dict] = {}
@@ -2968,6 +2993,9 @@ app.include_router(_set_lease.router)      # /api/set/lease: one set at a time
 from app.ui.services.build_info import router as _build_router  # noqa: E402 -- GET /api/build (reload prompt)
 
 app.include_router(_build_router)
+from app.ui.services.art_api import router as _art_router  # noqa: E402 -- GET /api/tracks/{id}/art
+
+app.include_router(_art_router)
 
 class _RevalidatingStatic(StaticFiles):
     """The console's own JS/CSS/HTML: always revalidated (ETag -> cheap 304), never taken from the
