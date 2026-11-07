@@ -14,6 +14,7 @@ import pytest
 _AUTH_DIR = Path(tempfile.mkdtemp(prefix="dj-auth-test-"))
 atexit.register(shutil.rmtree, _AUTH_DIR, True)
 os.environ["DJ_AUTH_FILE"] = str(_AUTH_DIR / "auth.json")
+os.environ["DJ_ART_FETCH"] = "0"   # server never looks up covers (network) in tests; test_album_art drives the chain directly
 os.environ["DJ_SESSION_SECRET"] = secrets.token_urlsafe(32)
 # Google sign-in off in the shared server (an owner .env setting must not leak in: load_dotenv
 # never overrides a variable that is already set). test_auth_google.py builds its own app.
