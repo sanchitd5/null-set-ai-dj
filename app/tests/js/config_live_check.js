@@ -32,4 +32,19 @@ assert.strictEqual(out.ENERGY_MIN_RAW, cfg.ENERGY_MIN_RAW);
 
 // no / bad payload keeps the bundled object
 for (const bad of [null, undefined, "x", {}, { values: null }]) assert.strictEqual(applyLive(cfg, live, bad), cfg);
+// the server-served script: DJ_CONFIG_SERVER set, then the file runs and applies it (live keys only, clamped)
+{
+  const vm = require("vm"), fs = require("fs");
+  const g = { module: undefined };
+  g.window = g;
+  g.DJ_CONFIG = cfg; g.DJ_CONFIG_LIVE = live;
+  const src = `window.DJ_CONFIG_SERVER = ${JSON.stringify(body({ ...one("KEY_SAFE_MIN", 5), ...one("KEYLOCK_RANGE_PCT", 1) }))};\n` +
+    fs.readFileSync(require("path").join(__dirname, "../../ui/static/config-live.js"), "utf8");
+  vm.runInNewContext(src, g);
+  assert.strictEqual(g.DJ_CONFIG.KEY_SAFE_MIN, live.KEY_SAFE_MIN.max);
+  assert.strictEqual(g.DJ_CONFIG.KEYLOCK_RANGE_PCT, cfg.KEYLOCK_RANGE_PCT);
+  const g2 = { DJ_CONFIG: cfg, DJ_CONFIG_LIVE: live, DJ_CONFIG_SERVER: {} }; g2.window = g2;   // error case: {}
+  vm.runInNewContext(fs.readFileSync(require("path").join(__dirname, "../../ui/static/config-live.js"), "utf8"), g2);
+  assert.strictEqual(g2.DJ_CONFIG, cfg);
+}
 console.log("config_live_check: ok");
