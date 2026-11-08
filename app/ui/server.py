@@ -3047,6 +3047,9 @@ app.include_router(_build_router)
 from app.ui.services.art_api import router as _art_router  # noqa: E402 -- GET /api/tracks/{id}/art
 
 app.include_router(_art_router)
+from app.ui.services.config_live import router as _config_live_router  # noqa: E402 -- GET /api/config/live (dj-config live values)
+
+app.include_router(_config_live_router)
 
 class _RevalidatingStatic(StaticFiles):
     """The console's own JS/CSS/HTML: always revalidated (ETag -> cheap 304), never taken from the

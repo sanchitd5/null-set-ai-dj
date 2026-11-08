@@ -27,6 +27,7 @@ import statistics
 from typing import List, Optional
 
 from app.music_brain.analysis.analyzer import TrackAnalysis
+from app.music_brain.generated import dj_config as DJ
 from app.music_brain.render.blend import (
     ENTRY_SEARCH_FRACTION,
     Regions,
@@ -38,7 +39,7 @@ from app.music_brain.render.blend import (
 )
 from app.music_brain.matching.recipe_matcher import camelot_distance_score
 
-LAYER_MIN_KEY = 0.8            # same bar as the vocal mashup: below this the chords fight
+LAYER_MIN_KEY = DJ.LAYER_MIN_KEY            # same bar as the vocal mashup: below this the chords fight
 LAYER_HOLD_BARS = (16, 32, 48, 64)
 LAYER_UNWIND_BARS = (8, 16)
 LAYER_MAX_VOCAL_CLASH = 0.03   # share of the overlap where both songs sing
