@@ -25,6 +25,7 @@ load_dotenv()
 
 from fastapi import FastAPI, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
+from app.ui.services.ranged_file import RangedFileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -1885,19 +1886,19 @@ PHONE_AUDIO_DIR = CACHE_DIR / "phone_audio"
 
 def _audio_response(path: Path, label: str, q: str, media: Optional[str] = None) -> FileResponse:
     """The file, or with q=phone its cached AAC .m4a (app/ui/services/phone_audio.py; the
-    original when the transcode is impossible). FileResponse answers Range with 206."""
+    original when the transcode is impossible). RangedFileResponse answers Range with 206 on any starlette."""
     if q == "phone":
         from app.ui.services import phone_audio
 
         small = phone_audio.phone_variant(Path(path), label, PHONE_AUDIO_DIR)
         if small is not None:
             # the phone caches this copy: X-Content-SHA256 lets it verify the bytes it stored
-            return FileResponse(small, media_type=phone_audio.MEDIA_TYPE,
-                                headers={"X-Content-SHA256": phone_audio.sha256_of(small),
-                                         "X-Source-Id": label})
+            return RangedFileResponse(small, media_type=phone_audio.MEDIA_TYPE,
+                                      headers={"X-Content-SHA256": phone_audio.sha256_of(small),
+                                               "X-Source-Id": label})
     elif q:
         raise HTTPException(status_code=400, detail="q must be 'phone' or empty")
-    return FileResponse(path, media_type=media) if media else FileResponse(path)
+    return RangedFileResponse(path, media_type=media) if media else RangedFileResponse(path)
 
 
 @app.get("/api/riff/{key}/{name}")

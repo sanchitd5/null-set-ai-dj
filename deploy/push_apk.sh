@@ -44,8 +44,8 @@ else
 fi
 case "$CODE" in ''|*[!0-9]*) echo "build number must be an integer: $CODE" >&2; exit 1 ;; esac
 
-SHA=$(shasum -a 256 "$APK" | awk '{print $1}')
-SIZE=$(stat -f %z "$APK" 2>/dev/null || stat -c %s "$APK")
+if command -v sha256sum >/dev/null 2>&1; then SHA=$(sha256sum "$APK" | awk '{print $1}'); else SHA=$(shasum -a 256 "$APK" | awk '{print $1}'); fi
+SIZE=$(stat -c %s "$APK" 2>/dev/null || stat -f %z "$APK")
 OUT="${OUT:-$(mktemp -d)}"; JSON="$OUT/null-set-dj.json"
 NAME="$NAME" CODE="$CODE" SHA="$SHA" SIZE="$SIZE" NOTES="$NOTES" TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)" python3 - "$JSON" <<'PY'
 import json, os, sys

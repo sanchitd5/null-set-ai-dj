@@ -6,6 +6,7 @@ import wave
 import numpy as np
 import pytest
 
+from app.tests.py.ffmpeg_compat import apply_end_trim
 from app.tests.py.testclient_compat import TestClient
 from app.ui import server
 from app.ui.services import phone_audio
@@ -37,7 +38,7 @@ def _decoded_samples(path):
     """Samples ffmpeg decodes, edit list applied (what Chrome / Safari decodeAudioData return)."""
     raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-f", "s16le", "-ac", "1", "-"],
                          capture_output=True, check=True).stdout
-    return len(raw) // 2
+    return apply_end_trim(path, len(raw) // 2)
 
 
 @pytest.fixture
