@@ -27,6 +27,7 @@ import os
 import queue
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -42,17 +43,58 @@ OVERLAP = 0.25
 # Measured on the 3090 (docs/engineering/STEMS_PERF.md): the allocator's reserved peak grows ~500 MB per
 # 7.8 s segment in a batch (allocated ~385 MB + fragmentation), fp32 and fp16 autocast alike (the STFT and
 # attention stay fp32), htdemucs and each htdemucs_ft sub-model alike (they run one after another).
-SEG_MB = 500
-VRAM_RESERVE_MB = 400                     # allocator slack + cuFFT / cuDNN workspaces
+#
+# The segment length itself is the model's trained 7.8 s (the transformer's positional layers expect it, a
+# different length changes the output), so the knob that fits a job to the free VRAM is the batch: how many
+# segments go through one forward. Per batch: 1 -> ~0.9 GB, 2 -> 1.4, 4 -> 2.4, 8 -> 4.4 GB (+ the model's
+# weights while they sit on the GPU, ~1 GB for htdemucs_ft). All three numbers are env-tunable.
+SEG_MB = int(os.environ.get("STEM_SEG_MB", "500"))
+VRAM_RESERVE_MB = int(os.environ.get("STEM_VRAM_RESERVE_MB", "400"))   # allocator slack + cuFFT / cuDNN workspaces
+VRAM_MARGIN_MB = int(os.environ.get("STEM_VRAM_MARGIN_MB", "300"))     # left free for the other tenants' jitter
 MAX_BATCH = 8                             # past 8 the 3090 is saturated (8 -> 16: <5 % faster)
 
 
 class GpuOutOfMemory(RuntimeError):
-    """The device ran out of memory even at batch 1."""
+    """The device ran out of memory even at batch 1 (or the wait for free VRAM ran out: wait_expired)."""
+
+    wait_expired = False
 
 
 def _is_oom(exc: BaseException) -> bool:
     return "out of memory" in str(exc).lower()
+
+
+def usable_mb(torch) -> tuple[float, float]:
+    """(VRAM this process can still take, card total), MB: the card's free memory, held to the
+    STEM_SERVER_VRAM_GB cap minus what this process already reserves."""
+    free, total = torch.cuda.mem_get_info()
+    frac = torch.cuda.get_per_process_memory_fraction(0) if hasattr(torch.cuda, "get_per_process_memory_fraction") else 1.0
+    if frac < 1.0:
+        free = min(free, frac * total - torch.cuda.memory_reserved(0))
+    return free / 2**20, total / 2**20
+
+
+def wait_for_vram(torch, need_mb: float, wait_s: float, poll_s: float = 2.0,
+                  sleep: Callable[[float], None] = time.sleep, clock: Callable[[], float] = time.monotonic,
+                  log: Callable[[str], None] = lambda s: None) -> tuple[float, float, float]:
+    """Poll until `need_mb` is usable, at most `wait_s`. -> (seconds waited, MB usable when it started
+    waiting, card MB). Raises GpuOutOfMemory (wait_expired) when it never frees up."""
+    t0 = clock()
+    free, total = usable_mb(torch)
+    if free >= need_mb:
+        return 0.0, free, total
+    log(f"GPU has {free:.0f} MB free, a split needs {need_mb:.0f} MB: waiting up to {wait_s:g}s")
+    first = free
+    while clock() - t0 < wait_s:
+        sleep(poll_s)
+        free, total = usable_mb(torch)
+        if free >= need_mb:
+            waited = clock() - t0
+            log(f"GPU freed up after {waited:.0f}s ({free:.0f} MB free, needs {need_mb:.0f} MB)")
+            return waited, first, total
+    err = GpuOutOfMemory(f"GPU wait expired after {wait_s:g}s: {free:.0f} MB free, needs {need_mb:.0f} MB")
+    err.wait_expired = True
+    raise err
 
 
 def decode(src: Path | str, dest: Path | str, sr: int = SAMPLE_RATE) -> int:
@@ -112,7 +154,7 @@ class StemEngine:
     """One model (or bag) loaded once on one device; `separate()` runs any number of songs."""
 
     def __init__(self, model: str, device: str, half: bool = False, batch: Optional[int] = None,
-                 threads: Optional[int] = None, loaded=None):
+                 threads: Optional[int] = None, loaded=None, resident: bool = True):
         import torch
 
         self.torch = torch
@@ -134,27 +176,51 @@ class StemEngine:
         self.weight = triangle(self.seg)
         totals = np.sum(np.asarray(weights, dtype=np.float64), axis=0)
         self.mix_w = [torch.tensor((np.asarray(w, dtype=np.float64) / totals).astype(np.float32)) for w in weights]
-        self.models = [m.to(device).eval() for m in subs]
-        self.mix_w = [w.to(device).view(1, -1, 1, 1) for w in self.mix_w]
+        self.models = [m.eval() for m in subs]
+        self.mix_w = [w.view(1, -1, 1, 1) for w in self.mix_w]
+        self.model_mb = sum(p.numel() * p.element_size() for m in subs for p in m.parameters()) / 2**20
+        self.on_device = False
+        if resident:
+            self.acquire()
         self.half = bool(half and device == "cuda")
         # fixed batch (argument / STEM_BATCH), else picked per song from the VRAM free right then
         self.fixed_batch = int(batch or int(os.environ.get("STEM_BATCH", "0")) or 0) or None
         self.batch = self.fixed_batch or (MAX_BATCH if device == "cuda" else 1)
 
+    # ---- weights on / off the device ------------------------------------------------------------
+    def acquire(self) -> None:
+        """Weights onto the device (no-op when they are there). May raise the device's OOM."""
+        if self.on_device:
+            return
+        self.models = [m.to(self.device) for m in self.models]
+        self.mix_w = [w.to(self.device) for w in self.mix_w]
+        self.on_device = True
+
+    def release(self) -> None:
+        """Weights back to host RAM and the allocator's cache emptied, so an idle worker holds only the
+        CUDA context (~300 MB) instead of the model (~1 GB). No-op on the CPU."""
+        if self.device == "cpu" or not self.on_device:
+            return
+        self.models = [m.to("cpu") for m in self.models]
+        self.mix_w = [w.to("cpu") for w in self.mix_w]
+        self.on_device = False
+        if self.device == "cuda":
+            self.torch.cuda.empty_cache()
+
+    def min_need_mb(self) -> float:
+        """VRAM the smallest split (batch 1) needs: its segment, the allocator reserve, the jitter margin,
+        and the weights when they are not on the card yet."""
+        return SEG_MB + VRAM_RESERVE_MB + VRAM_MARGIN_MB + (0.0 if self.on_device else self.model_mb)
+
     def pick_batch(self) -> int:
-        """Segments per forward that fit the VRAM free now (the card is shared with the LLM, which
-        can hold all but ~3 GB of it): (free - reserve) / measured MB per segment, 1..MAX_BATCH.
+        """Segments per forward that fit the VRAM usable now (the card is shared with the LLM, which
+        can hold all but ~3 GB of it): (usable - reserve - margin) / measured MB per segment, 1..MAX_BATCH.
         A wrong guess costs nothing worse than the OOM backoff in _run_batch."""
         if self.fixed_batch:
             return self.fixed_batch
         if self.device != "cuda":
             return 1
-        torch = self.torch
-        free, _ = torch.cuda.mem_get_info()
-        cap = torch.cuda.get_per_process_memory_fraction(0) if hasattr(torch.cuda, "get_per_process_memory_fraction") else 1.0
-        if cap < 1.0:                                   # STEM_SERVER_VRAM_GB cap minus what we hold already
-            free = min(free, cap * torch.cuda.get_device_properties(0).total_memory - torch.cuda.memory_reserved(0))
-        n = int((free / 2**20 - VRAM_RESERVE_MB) // SEG_MB)
+        n = int((usable_mb(self.torch)[0] - VRAM_RESERVE_MB - VRAM_MARGIN_MB) // SEG_MB)
         return max(1, min(MAX_BATCH, n))
 
     # ---- one batch of segments ------------------------------------------------------------------
@@ -179,11 +245,18 @@ class StemEngine:
             except RuntimeError as exc:
                 if not _is_oom(exc):
                     raise
-                if self.device == "cuda":
-                    self.torch.cuda.empty_cache()
-                if self.batch <= 1:
-                    raise GpuOutOfMemory(str(exc)[:200]) from exc
-                self.batch = max(1, self.batch // 2)
+                oom_msg = str(exc)[:200]
+            # outside the except block: the failed forward's tensors are only freed once its traceback is gone
+            if self.device == "cuda":
+                import gc
+
+                gc.collect()
+                self.torch.cuda.empty_cache()
+            if self.batch <= 1:
+                raise GpuOutOfMemory(oom_msg)
+            nxt = max(1, self.batch // 2)
+            print(f"[stem-engine] out of memory at batch {self.batch}; retrying at batch {nxt}", file=sys.stderr, flush=True)
+            self.batch = nxt
 
     # ---- whole song -----------------------------------------------------------------------------
     def separate_array(self, x: np.ndarray, sink: Callable[[np.ndarray], None],

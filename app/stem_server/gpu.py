@@ -11,6 +11,8 @@ either limit firing means something is wrong; the job is retried once at batch 1
 Retry ladder for one split: device as configured -> (GPU out of memory even at batch 1) back off
 STEM_OOM_BACKOFF_S (the card is shared; the other model may free VRAM) and retry once on the GPU at batch 1
 -> still out of memory: the CPU;
+the worker itself waits up to STEM_GPU_WAIT_S for free VRAM before each GPU try (worker.run_job) and
+halves the batch on out-of-memory; when that wait expires the ladder goes straight to the CPU (no retry);
 worker killed for memory -> once more at batch 1; worker crashed -> once more on a fresh worker.
 """
 
@@ -160,6 +162,7 @@ def split(worker: GpuWorker, job: str, path: Path, out_dir: Path, model: str, de
     """One split through the retry ladder (device None: the worker picks). on_progress(fraction, device).
     -> (engine info, device asked for, note or None)."""
     notes: list[str] = []
+    fails: list[dict] = []                               # gpu stats of the attempts that ran out of memory
     batch: Optional[int] = None
     crashed = memory = gpu_retried = False
     for _ in range(5):
@@ -178,10 +181,25 @@ def split(worker: GpuWorker, job: str, path: Path, out_dir: Path, model: str, de
                 notes.append(f"{exc}; retried on a fresh worker")
                 continue
             raise RuntimeError("; ".join(notes + [str(exc)])) from exc
+        g = r.get("gpu") or {}
         if r.get("ok"):
             info = r["info"]
             info["peak_rss_mb"] = r.get("peak_rss", 0) >> 20
+            if fails:                                    # the GPU tries that came first: what the phone shows
+                gi = info.setdefault("gpu", {})
+                gi["wait_s"] = round((gi.get("wait_s") or 0) + sum(f.get("wait_s") or 0 for f in fails), 1)
+                for k in ("free_mb", "total_mb"):
+                    gi[k] = fails[0].get(k) if gi.get(k) is None else gi[k]
+                if gi.get("kind") == "cpu":
+                    gi["fallback"] = "GPU out of memory" if not fails[-1].get("expired") else "GPU wait expired"
             return info, device, "; ".join(notes) or None
+        if device != "cpu" and r.get("oom"):
+            fails.append({**g, "expired": bool(r.get("wait_expired"))})
+        if r.get("oom") and device != "cpu" and r.get("wait_expired"):
+            notes.append(f"{r.get('error')}; split on CPU")
+            print(f"[stem-server] {job}: {r.get('error')}; splitting on CPU", file=sys.stderr, flush=True)
+            device, batch = "cpu", None
+            continue
         if r.get("oom") and device != "cpu" and not gpu_retried:
             gpu_retried, batch = True, 1
             wait = float(os.environ.get("STEM_OOM_BACKOFF_S", "5"))
