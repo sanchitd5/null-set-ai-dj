@@ -6,6 +6,8 @@ session logs, absolute paths or e-mail addresses (export refuses to write any).
 
     python3 -m app.music_brain.matching.knowledge export [--cache-dir D] [--out K]   cache -> knowledge/
     python3 -m app.music_brain.matching.knowledge sync [--dry-run] [--cache-dir D] [--src K]   knowledge/ -> cache (import = sync)
+    python3 -m app.music_brain.matching.knowledge publish [--no-push] [--dry-run]   cache -> knowledge/ -> commit -> push to dj-atlas (knowledge_publish.py)
+    python3 -m app.music_brain.matching.knowledge update   git submodule update --remote, then sync;  version: {sha, rules_hash, files, bytes}
 
 Files: macros/<name>.json, learned_techniques.json, names.json (track id -> "Artist - Title"),
 genre_labels.json (track id -> {genre, era}, the model's labels; the server backfills by name),
@@ -379,9 +381,10 @@ def auto_seed(cache_dir: Optional[Path] = None, src: Optional[Path] = None) -> O
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     ap = argparse.ArgumentParser(prog="knowledge", description=__doc__.split("\n\n")[0])
-    ap.add_argument("cmd", choices=("export", "import", "sync", "conflicts", "take"))
+    ap.add_argument("cmd", choices=("export", "import", "sync", "conflicts", "take", "publish", "update", "version"))
     ap.add_argument("item", nargs="?", help="take: store:item from `conflicts`")
-    ap.add_argument("--dry-run", action="store_true", help="sync: report, write nothing")
+    ap.add_argument("--dry-run", action="store_true", help="sync / publish: report, write nothing")
+    ap.add_argument("--no-push", action="store_true", help="publish: commit only, even with DJ_ATLAS_PUSH=1")
     side = ap.add_mutually_exclusive_group()
     side.add_argument("--published", action="store_true", help="take: the published row wins")
     side.add_argument("--local", action="store_true", help="take: the local row wins")
@@ -393,6 +396,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     try:
         if a.cmd == "export":
             out = export(Path(a.cache_dir) if a.cache_dir else None, Path(a.out) if a.out else None, log)
+        elif a.cmd in ("publish", "update", "version"):
+            from app.music_brain.matching import knowledge_publish as kp
+            cache, src = (Path(a.cache_dir) if a.cache_dir else None), (Path(a.out or a.src) if (a.out or a.src) else None)
+            if a.cmd == "version":
+                out = kp.version(src)
+            elif a.cmd == "update":
+                out = kp.update(cache, src, log)
+            else:
+                out = kp.publish(cache, src, push=False if a.no_push else None, dry_run=a.dry_run, log=log)
         elif a.cmd in ("import", "sync"):
             out = seed(Path(a.cache_dir) if a.cache_dir else None, Path(a.src) if a.src else None, log,
                        dry_run=a.dry_run)

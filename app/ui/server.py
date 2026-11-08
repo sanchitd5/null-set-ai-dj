@@ -2543,6 +2543,15 @@ def _startup_labels() -> None:
         _load_labels()
     except Exception as exc:  # noqa: BLE001 -- a bad label file must not stop the server
         print(f"WARNING [labels] not loaded: {type(exc).__name__}: {exc}", flush=True)
+
+
+@app.on_event("startup")
+def _startup_atlas_publish() -> None:
+    # the daily dj-atlas publish thread: off unless DJ_ATLAS_AUTOPUBLISH=1 (knowledge_publish.py)
+    from app.music_brain.matching import knowledge_publish
+
+    knowledge_publish.start_timer(log=lambda m: print(m, flush=True))
+
 _set_memory = None  # app.ui.services.set_memory.SetMemory, created on first suggest
 
 
@@ -3131,6 +3140,10 @@ app.include_router(_art_router)
 from app.ui.services.config_live import router as _config_live_router  # noqa: E402 -- GET /api/config/live (dj-config live values)
 
 app.include_router(_config_live_router)
+from app.ui.services.knowledge_api import router as _knowledge_router  # noqa: E402 -- GET /api/knowledge/version, /snapshot (the phone pulls the dj-atlas knowledge)
+
+app.include_router(_knowledge_router)
+
 
 class _RevalidatingStatic(StaticFiles):
     """The console's own JS/CSS/HTML: always revalidated (ETag -> cheap 304), never taken from the
