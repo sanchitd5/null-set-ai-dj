@@ -145,3 +145,16 @@ def test_mashup_scene_gate_is_narrow(regions):
     assert no["ok"] is False and no["gate"] == "scene"
     assert mashup.plan_mashup(host, guest, lambda: "host.wav", lambda: "guest.wav", bars=8, genres=(None, None))["ok"]
     assert mashup.plan_mashup(host, guest, lambda: "host.wav", lambda: "guest.wav", bars=8)["ok"], "no genres: not gated"
+
+
+def test_set_scene_pins_the_opening_scene_on_every_path():
+    # owner 2026-10-11: a Punjabi / Bollywood set drifted to EDM / R&B; the set's scene holds for the whole set
+    r = bv.vet_one("Power", "Patient Zero", a_genre="punjabi hip hop", b_genre="pop", set_genre="punjabi", stored=False)
+    assert r and r["gate"] == "set_scene"
+    assert bv.vet_one("Melodia", "Love Parade", a_genre="pop", b_genre="melodic house", set_genre="punjabi")["gate"] == "set_scene"
+    assert bv.vet_one("Power", "Ainvayi Ainvayi", a_genre="punjabi", b_genre="bollywood", set_genre="punjabi") is None
+    # no label in a pinned set: refused (CC after Oh Ho Ho Ho, 2026-10-11_200026)
+    assert bv.vet_one("Oh Ho Ho Ho", "CC", a_genre="punjabi bhangra", b_genre=None, set_genre="punjabi")["gate"] == "set_scene"
+    # a known label in no family is off-scene: Beedi -> We Are The People ("indie"), 2026-10-11
+    assert bv.vet_one("Beedi", "We Are The People", a_genre="bollywood", b_genre="indie", set_genre="bollywood")["gate"] == "set_scene"
+    assert bv.vet_one("Power", "Patient Zero", a_genre="punjabi", b_genre="pop") is None                # no set scene: unchanged
