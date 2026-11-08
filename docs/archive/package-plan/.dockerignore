@@ -1,0 +1,42 @@
+# Keep the build context small and secret-free: only code + read-only knowledge go in the image.
+.git
+.gitignore
+.claude
+.venv*
+myenv
+**/__pycache__
+**/*.pyc
+.pytest_cache
+.pytest_tmp
+node_modules
+test-results
+playwright-report
+e2e
+extra
+
+# runtime data never ships: it lives on the /data volume
+data
+downloader/downloads
+
+# secrets and personal files
+.env
+.env.*
+*.pem
+*.key
+**/youtube-cookies.txt
+AI DJ Brief.pdf
+
+# dev-only parts (app/sim is dev-only; agent_bridge imports app.sim.stem_capture, so its .py stay)
+app/tests
+app/sim/out
+app/sim/fixtures
+docs
+research
+!research/notes/*.md
+!research/notes/*.py
+
+# audio anywhere in the tree
+**/*.wav
+**/*.mp3
+**/*.flac
+**/*.m4a
