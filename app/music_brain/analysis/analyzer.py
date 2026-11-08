@@ -104,11 +104,9 @@ def _file_hash(path: Path) -> str:
 
 
 def _file_hash_impl(path: Path) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
+    from app.music_brain import hash_index
+
+    return hash_index.sha256_file(path)
 
 
 def analyze_tempo_and_beats(y: np.ndarray, sr: int) -> Tuple[float, np.ndarray]:
@@ -496,6 +494,25 @@ def _upgrade_worker() -> None:
             upgrade_to_current(path)
         except Exception as exc:  # a bad file must not stop the rest of the library
             print(f"[analysis] tempo upgrade failed for {path.name}: {exc}", flush=True)
+
+
+def cached_analysis(audio_path: str | Path) -> Optional[TrackAnalysis]:
+    """The current-version record if one is already stored, else None. Never decodes audio or computes."""
+    audio_path = Path(audio_path)
+    try:
+        st = audio_path.stat()
+        mem_key = (str(audio_path), st.st_size, st.st_mtime_ns)
+        if mem_key in _mem_index:
+            return _mem_index[mem_key]
+        cp = _cache_path_for(audio_path)
+        if not cp.exists():
+            return None
+        with open(cp, "r", encoding="utf-8") as f:
+            res = _from_dict(json.load(f))
+    except (OSError, ValueError, TypeError):
+        return None
+    _mem_index[mem_key] = res
+    return res
 
 
 def queue_upgrade(paths) -> int:

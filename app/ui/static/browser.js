@@ -17,6 +17,21 @@
 //
 // Depends on `state` + `loadIntoDeck` (app.js) and `decks` (deck-controller.js).
 
+// Pure warm helpers (node-checked by app/tests/js/warm_visible_check.js).
+const BROWSER_WARM = {
+  NEAR: 24, BATCH: 50,
+  // Ids to warm: the decks first, then the rows on or near the screen (rects = [{id, top, bottom}]), at most `limit`.
+  pick(rects, viewH, priority, has, limit) {
+    const out = [];
+    const add = (id) => { if (id && !has(id) && !out.includes(id) && out.length < limit) out.push(id); };
+    for (const id of priority || []) add(id);
+    for (const r of rects) { if (r.bottom > -300 && r.top < viewH + 900) add(r.id); }
+    return out;
+  },
+  chunk(ids, n) { const o = []; for (let i = 0; i < ids.length; i += n) o.push(ids.slice(i, i + n)); return o; },
+};
+if (typeof module !== "undefined" && module.exports) module.exports = BROWSER_WARM;
+
 (function () {
   const rowsEl = document.getElementById("browser-rows");
   const searchEl = document.getElementById("browser-search");
@@ -61,7 +76,28 @@
 
   // Analyse a few at a time so a big library does not fire 50 parallel
   // librosa requests at the backend.
+  // One POST /api/tracks/analysis/batch per <=50 ids fills the stored analyses; only the ids it answers null for
+  // (not analysed yet) fall back to the one-at-a-time request, which is the one that computes.
   async function warmAnalyses(list) {
+    const ids = list.map((t) => t.track_id).filter((id) => !analysisCache.has(id));
+    const rest = [];
+    for (const part of BROWSER_WARM.chunk(ids, BROWSER_WARM.BATCH)) {
+      let got = null;
+      try {
+        const res = await fetch("/api/tracks/analysis/batch", {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids: part }),
+        });
+        if (res.ok) got = await res.json();
+      } catch (e) { /* fall back to single requests */ }
+      for (const id of part) {
+        if (got && got[id]) analysisCache.set(id, got[id]); else rest.push({ track_id: id });
+      }
+      if (phone()) renderSoon(); else render();
+    }
+    await warmSingles(rest);
+  }
+
+  async function warmSingles(list) {
     const queue = list.slice();
     const workers = new Array(2).fill(0).map(async () => {
       while (queue.length) {
@@ -79,7 +115,7 @@
   // opens), never while the page is hidden, and the list re-renders at most every 400 ms.
   const PHONE_QUERY = "(max-width: 600px), (max-height: 500px) and (pointer: coarse)";
   const phone = () => !!(window.matchMedia && window.matchMedia(PHONE_QUERY).matches);
-  const WARM_NEAR = 24;
+  const WARM_NEAR = BROWSER_WARM.NEAR;
   let renderTimer = null;
   function renderSoon() {
     if (renderTimer) return;
@@ -88,14 +124,16 @@
   let warming = false;
   async function warmVisible() {
     if (warming || document.hidden || !rowsEl.offsetParent) return;
-    const near = [];
+    const rects = [];
     for (const row of rowsEl.querySelectorAll(".browser-row")) {
       const id = row.dataset.track;
       if (!id || analysisCache.has(id)) continue;
       const r = row.getBoundingClientRect();
-      if (r.bottom > -300 && r.top < window.innerHeight + 900) near.push({ track_id: id });
-      if (near.length >= WARM_NEAR) break;
+      rects.push({ id, top: r.top, bottom: r.bottom });
     }
+    const decks = typeof state !== "undefined" && state ? [state.trackA, state.trackB] : [];   // trackB is NEXT
+    const near = BROWSER_WARM.pick(rects, window.innerHeight, decks, (id) => analysisCache.has(id), WARM_NEAR)
+      .map((id) => ({ track_id: id }));
     if (!near.length) return;
     warming = true;
     try { await warmAnalyses(near); } finally { warming = false; }
@@ -103,12 +141,10 @@
     setTimeout(warmVisible, 450);   // after the re-render: the next rows on screen, if any
   }
   let scrollTimer = null;
-  window.addEventListener("scroll", () => {
-    if (!phone()) return;
-    clearTimeout(scrollTimer);
-    scrollTimer = setTimeout(warmVisible, 400);
-  }, { passive: true });
-  document.addEventListener("visibilitychange", () => { if (phone() && !document.hidden) warmVisible(); });
+  const onScroll = () => { clearTimeout(scrollTimer); scrollTimer = setTimeout(warmVisible, 400); };
+  window.addEventListener("scroll", onScroll, { passive: true });
+  rowsEl.addEventListener("scroll", onScroll, { passive: true });   // desktop: the list scrolls inside its pane
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) warmVisible(); });
   window.trackBrowser = {
     warmVisible,
     nameOf: (id) => { const t = tracks.find((x) => x.track_id === id); return t ? t.name : ""; },   // phone-ui.js progress label
@@ -226,7 +262,7 @@
   let searchTimer = null;
   if (searchEl) searchEl.addEventListener("input", () => {
     render();
-    if (phone()) { clearTimeout(searchTimer); searchTimer = setTimeout(warmVisible, 300); }
+    clearTimeout(searchTimer); searchTimer = setTimeout(warmVisible, 300);
   });
 
   document.querySelectorAll(".sort-btn").forEach((btn) => {
@@ -236,7 +272,7 @@
       document.querySelectorAll(".sort-btn").forEach((b) => b.classList.toggle("is-on", b === btn));
       btn.textContent = `${btn.dataset.sort.toUpperCase()} ${sortDir > 0 ? "↑" : "↓"}`;
       render();
-      if (phone()) warmVisible();
+      warmVisible();
     });
   });
 
@@ -246,8 +282,7 @@
       const data = await res.json();
       tracks = (data.tracks || []).map((t) => ({ track_id: t.track_id, name: t.display_name || baseName(t.path), art_url: t.art_url || null }));
       render();
-      if (phone()) warmVisible();
-      else warmAnalyses(tracks.filter((t) => !analysisCache.has(t.track_id)));
+      warmVisible();
     } catch (e) {
       rowsEl.innerHTML = `<div class="browser-empty">Could not reach /api/tracks: ${e.message}</div>`;
     }
