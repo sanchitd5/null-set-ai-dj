@@ -5,6 +5,7 @@ console never separates locally, and the token can come from the server's env fi
 
 from __future__ import annotations
 
+import asyncio
 import threading
 
 import pytest
@@ -101,7 +102,7 @@ def test_server_down_then_forgetful(remote):
     srv._queue_stems_impl("u1")
     assert srv._remote_stem_step() == 5.0
     assert srv._stem_queue == ["u1"] and "down" in srv._stem_remote_err["error"]
-    st = srv.get_stems_status()
+    st = asyncio.run(srv.get_stems_status())
     assert st["line"].startswith("stem server:")
     fs.down = False
     srv._remote_stem_step()
@@ -120,7 +121,7 @@ def test_status_line_is_real_progress(remote):
     j = next(iter(fs.jobs.values()))
     j.update(status="running", progress=0.42, device="cuda", elapsed=4.2, eta=5.8)
     srv._remote_stem_step()
-    st = srv.get_stems_status()
+    st = asyncio.run(srv.get_stems_status())
     assert st["busy"] == "u1"
     assert st["line"] == "htdemucs_ft · cuda · 42% · 4 s, ~6 s left · 1 queued"
     assert st["remote"]["jobs"][0]["progress"] == 0.42
