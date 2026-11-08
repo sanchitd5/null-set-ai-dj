@@ -382,7 +382,7 @@ about 12.5 GB today.
 | Where | Absolute path? | Effect on the server |
 |---|---|---|
 | `app.db`, `user.db` | no: folders by leaf name, knowledge by relative key, marks by file name | copy as is |
-| `stems/*/manifest.json` | **yes**, e.g. `/Users/sanchitdang/dev/AI-DJ-Mixing-System/data/cache/stems/<id>/vocals.flac` | `read_manifest` returns None when any path is missing, so **every stem set would count as a cache miss and be separated again** (822 dirs). Must rewrite. |
+| `stems/*/manifest.json` | **yes**, e.g. `/Users/me/dev/AI-DJ-Mixing-System/data/cache/stems/<id>/vocals.flac` | `read_manifest` returns None when any path is missing, so **every stem set would count as a cache miss and be separated again** (822 dirs). Must rewrite. |
 | `sets/**/study.json` `study_path` | yes (`set_learner.py:1409`) | rewrite, or re-run the study |
 | `set_import` track `path` | yes (`set_import.py:315`) | rewrite |
 | sim `stem_capture` | yes, but in the sim cache | ignore |
@@ -393,7 +393,7 @@ Rewrite script (run on the server copy, dry run first):
 ```python
 # /srv/aidj/bin/rewrite_paths.py  (one-off migration helper, not app code)
 import json, pathlib, sys
-OLD = "/Users/sanchitdang/dev/AI-DJ-Mixing-System/data/cache"
+OLD = "/Users/me/dev/AI-DJ-Mixing-System/data/cache"
 NEW = sys.argv[1]            # e.g. /srv/aidj/cache
 apply = "--apply" in sys.argv
 n = 0

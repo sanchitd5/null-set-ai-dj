@@ -122,7 +122,7 @@ planned for v1.
 
 | Where | Count | Effect in the container |
 |---|---|---|
-| `analysis/*.json` field `path` | 1363 of 1612 files | points at `/Users/sanchitdang/...`, not found |
+| `analysis/*.json` field `path` | 1363 of 1612 files | points at `/Users/me/...`, not found |
 | `stems/*/manifest.json` (v2 stores absolute FLAC paths) | every stem set | `read_manifest` returns None when a path is missing, so **all 823 sets count as cache misses and are separated again** |
 | `user.db` `song_steps.data` | 667 rows | stale paths inside JSON |
 | `app.db` `atlas_meta.value` | 1 row | stale path |
@@ -130,7 +130,7 @@ planned for v1.
 
 Fix in two steps:
 1. **Now, zero code:** also bind the host folder at its old absolute path, so every old path resolves:
-   `- /Users/sanchitdang/dev/AI-DJ-Mixing-System/data:/Users/sanchitdang/dev/AI-DJ-Mixing-System/data` next to
+   `- /Users/me/dev/AI-DJ-Mixing-System/data:/Users/me/dev/AI-DJ-Mixing-System/data` next to
    the `/data` mount (both the same host folder). New files are still written as `/data/...`.
 2. **Proper:** store paths relative to `CACHE_DIR` (manifests, analysis JSON, the two DB columns) and resolve
    on read, accepting old absolute paths; plus a one-shot `python -m app.music_brain.migrate_paths --old
