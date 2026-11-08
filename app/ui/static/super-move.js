@@ -28,6 +28,7 @@
 // ISOLATION: nothing here runs unless a variant is saved (or a move / manual press is pending); the autopilot
 // asks takeOver() at each booking point and goes on exactly as before when it says false.
 // Pure core (node-testable: app/tests/js/super_move_check.js) + a runtime mounted on the Host port.
+if (typeof DJ_CONFIG === "undefined" && typeof require === "function") require("./generated/dj_config.js");   // node: browsers load it via index.html
 (function (root) {
   "use strict";
 
@@ -38,7 +39,7 @@
   const PRELOAD_S = 45;        // a song's lead-in stem is fetched this long before its lead-in starts
   const READY_S = 4;           // ... and it (and its deck) must be ready this long before its line
   const BUILD_SLOPE = 0.018;   // v5 fallback: energy_curve slope per second over 8 bars (90th pct of non-build windows)
-  const HP_HZ = 120;           // the plan's sub_hz: lead-in and exit stems never carry sub
+  const HP_HZ = DJ_CONFIG.SUB_BASS_HPF_HZ;           // the plan's sub_hz: lead-in and exit stems never carry sub
   const FRONT_CLASS = "nul-front";
   const FRONT_CAP = "data-front-cap";   // #nul-super attribute: the caption null-bot.css shows while it is in front
   const STEMS = ["drums", "bass", "other", "vocals"];

@@ -2,6 +2,7 @@
 
 import os
 from pathlib import Path
+from app.music_brain.generated import dj_config as DJ
 
 # Repository root (this file lives at <root>/app/music_brain/config.py)
 ROOT_DIR = Path(__file__).resolve().parent.parent.parent
@@ -29,8 +30,8 @@ SUB_BASS_CROSSOVER_HZ = 120
 VOCAL_PRESENCE_THRESHOLD_DBFS = -38.0
 
 # Phrase structure per DJ/02 - Music Theory/Phrasing & Structure.md
-BEATS_PER_BAR = 4
-BARS_PER_PHRASE = 8
+BEATS_PER_BAR = DJ.BEATS_PER_BAR
+BARS_PER_PHRASE = DJ.BARS_PER_PHRASE
 BEATS_PER_PHRASE = BEATS_PER_BAR * BARS_PER_PHRASE
 
 # BPM compatibility thresholds per recipe_matcher scoring rules

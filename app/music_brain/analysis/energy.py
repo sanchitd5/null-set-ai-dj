@@ -29,11 +29,12 @@ from typing import Dict, List, Optional
 import numpy as np
 
 from app.music_brain.config import ANALYSIS_CACHE_DIR
+from app.music_brain.generated import dj_config as DJ
 
 VERSION = 1
 LIBRARY_MIN = 20
-MAX_STEP = 2
-RELAXED_STEP = 1
+MAX_STEP = DJ.ENERGY_MAX_STEP
+RELAXED_STEP = DJ.ENERGY_RELAXED_STEP
 WEIGHTS = {"onset": 0.4, "low": 0.35, "tempo": 0.1, "bright": 0.15}   # tempo detection is the least reliable input
 RANGES = {"onset": (2.0, 9.0), "low": (0.05, 0.35), "tempo": (80.0, 150.0), "bright": (1000.0, 3500.0)}
 
@@ -144,15 +145,15 @@ def level(audio_path, bpm: float) -> dict:
     return {"level": level_from_raw(d["raw"], library_raws()), **d}
 
 
-ENERGY_MIN_RAW = 0.1       # raw 0-1: below this the two songs measure the same, whatever the levels say
-WARMUP_SONGS = 5           # the set builds over its first songs; open-ended after (no known end)
-LOW_ENERGY_SET_MAX = 4     # cur at or below this: already a low-energy set (sufi, relaxing) -- don't force "build"
+ENERGY_MIN_RAW = DJ.ENERGY_MIN_RAW       # raw 0-1: below this the two songs measure the same, whatever the levels say
+WARMUP_SONGS = DJ.WARMUP_SONGS           # the set builds over its first songs; open-ended after (no known end)
+LOW_ENERGY_SET_MAX = DJ.LOW_ENERGY_SET_MAX     # cur at or below this: already a low-energy set (sufi, relaxing) -- don't force "build"
 # Cumulative fall: per-step falls are capped, but 9 > 7 > 4 > 2 still drained a set. Set curves in
 # DJ/06 - Energy & Crowd/Energy Management & Dynamics.md hold a valley to ~3 below the peak and only as a
 # deliberate "Reset Valley" (8.5 -> 5-6, 60 min curve; house wave 8.5 -> 6). So without a reset context a
 # song may not land 3+ levels under the peak of the last PEAK_WINDOW songs.
-PEAK_WINDOW = 6
-MAX_BELOW_PEAK = 2
+PEAK_WINDOW = DJ.PEAK_WINDOW
+MAX_BELOW_PEAK = DJ.MAX_BELOW_PEAK
 
 
 def next_ok(cur: int, nxt: int, relaxed: bool = False, force: bool = False,
@@ -234,11 +235,11 @@ def allowed_window(cur: int, relaxed: bool = False, songs: Optional[int] = None,
 # ---- SET ENERGY (owner spec, energy-recipe-choice): twin of autopilot.js setEnergy /
 # energyRecipeChoice (parity: app/tests/py/test_set_energy_parity.py). The set's energy is the
 # planned arc target and the recent songs actually played, combined. GUESS numbers (DJ/06 curves).
-ARC_TARGET = {"warm-up": 4, "build": 6, "peak": 8, "cool-down": 5}
+ARC_TARGET = DJ.ARC_TARGET
 SET_RECENT = 4          # rolling window: the last 4 played levels, newest weighted most (4,3,2,1)
 SET_ARC_W = 0.5         # combined = 0.5 * arc target + 0.5 * rolling played level
 SET_RELAXED_MAX, SET_HIGH_MIN = 5, 7
-ENERGY_MATCH_TOL = 3    # an option whose window level is > 3 off the set level is vetoed
+ENERGY_MATCH_TOL = DJ.ENERGY_MATCH_TOL    # an option whose window level is > 3 off the set level is vetoed
 MASHUP, BASS, BLEND = "Mashup → Transition", "Bass Swap", "Long Blend"
 
 

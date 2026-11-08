@@ -44,6 +44,7 @@
 // Depends on (at runtime only): window.decks (deck-controller.js) and the
 // .eq-knob inputs. The pure core (decide & helpers) runs under node for tests.
 
+if (typeof DJ_CONFIG === "undefined" && typeof require === "function") require("./generated/dj_config.js");   // node: browsers load it via index.html
 (function (root) {
   "use strict";
 
@@ -54,7 +55,7 @@
   const PRECLEAR_RAMP_BARS = 4;
   const PRECLEAR_SLACK_BARS = 4;       // phrase lines rarely hit the exit exactly
   const SUBDROP_MIN_S = 10, SUBDROP_MAX_S = 20;  // rule 4: 10-20 s stretch
-  const SUBDROP_COOLDOWN_S = 240;      // set-wide gap between mind moves
+  const SUBDROP_COOLDOWN_S = DJ_CONFIG.SUBDROP_COOLDOWN_S;      // set-wide gap between mind moves
   const SUBDROP_VOCAL_SHARE = 0.6;     // vocal must cover most of the next phrase
   const SUBDROP_MAX_ENERGY = 0.75;     // not on a full-energy drop
   const MIN_BARS_ON_TRACK = 16;        // let a record settle before touching it
@@ -102,8 +103,8 @@
   const BIG_MOMENTS = ["double_drop", "fakeout", "drop_swap"];
   const BIG_MIN_BARS = 16;
   const BIG_WINDOW_SONGS = 3, BIG_MAX_PER_WINDOW = 2;
-  const BIG_COOLDOWN_S = 240;
-  const PEAK_KEY_MIN = 0.8;            // Double Drop: same / adjacent / relative key
+  const BIG_COOLDOWN_S = DJ_CONFIG.BIG_COOLDOWN_S;
+  const PEAK_KEY_MIN = DJ_CONFIG.PEAK_KEY_MIN;            // Double Drop: same / adjacent / relative key
   const DOUBLE_DROP_BARS = 8;
   const DOUBLE_DROP_MAX_VOCAL = 0.3;   // one record carries the vocal, not both
   const BACKSPIN_MAX = 2;              // per set, never on two drop swaps running
@@ -432,7 +433,7 @@
   // pattern (14 of 30 segments). Restraint: at most one LAYER every
   // LAYER_EVERY transitions; the rules veto whatever the AI proposes.
   const LAYER_EVERY = 3;
-  const LAYER_MIN_KEY = 0.8;
+  const LAYER_MIN_KEY = DJ_CONFIG.LAYER_MIN_KEY;
   const LAYER_MAX_CLASH = 0.03;
   // Hold / unwind bars by set mode: LONG the long end, QUICK 16 bars at most.
   function layerBars(setMode) {
@@ -721,7 +722,7 @@
   }
   // How long the client waits for the LLM plan. Measured plans take 4-13 s, so a
   // 3 s floor threw 13 of 19 away after the model time was already spent.
-  const PLAN_MIN_WAIT_MS = 12000, PLAN_MAX_WAIT_MS = 65000;   // server LLM timeout is 60 s
+  const PLAN_MIN_WAIT_MS = DJ_CONFIG.PLAN_MIN_WAIT_MS, PLAN_MAX_WAIT_MS = DJ_CONFIG.PLAN_MAX_WAIT_MS;   // server LLM timeout is 60 s
   const planWaitMs = (deadlineS) => Math.max(PLAN_MIN_WAIT_MS,
     Math.min(PLAN_MAX_WAIT_MS, (Number.isFinite(deadlineS) ? deadlineS : Infinity) * 1000));
   const core = { planWaitMs, PLAN_MIN_WAIT_MS, nextLoopStart, loopWrapped, decide, mergeSections, sectionAt, phraseAt, vocalShare, subdropBars, energyNote,

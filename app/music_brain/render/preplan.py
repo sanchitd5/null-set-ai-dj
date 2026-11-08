@@ -29,13 +29,14 @@ import numpy as np
 
 from app.music_brain.render import merge
 from app.music_brain.config import CACHE_DIR
+from app.music_brain.generated import dj_config as DJ
 
 PREPLAN_DIR = CACHE_DIR / "preplan"
 SR = 11025
 OVERLAPS = (16, 32)
 MAX_HANDOVERS = 6
 EAR_TOP = 4
-MIN_LEAD_S = 20.0          # B cannot start sooner than this from now: room to cue it
+MIN_LEAD_S = float(DJ.REPLAN_LEAD_S)          # B cannot start sooner than this from now: room to cue it
 SHORT_OVERLAPS = (8, 16, 32)   # QUICK-sized windows: a 16-bar overlap alone fits nowhere
 SHORT_WINDOW_S = 120.0     # window end (song s) at or under this uses SHORT_OVERLAPS
 PLAN_BUDGET_S = 20.0       # rendering + the ear on up to EAR_TOP clips; measured 0.5-16 s, so 40 was 2x too high

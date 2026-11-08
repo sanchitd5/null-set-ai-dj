@@ -13,6 +13,7 @@
 //  instrumental  Mute a deck's vocal (hold loops that cross a sung line).
 //
 // All times on the audio clock. Pure schedules are exported for node checks.
+if (typeof DJ_CONFIG === "undefined" && typeof require === "function") require("./generated/dj_config.js");   // node: browsers load it via index.html
 (function (root) {
   "use strict";
 
@@ -738,7 +739,7 @@
   // app/music_brain/render/merge.py rank() (golden vectors: app/tests/fixtures/rule_vectors.json);
   // the silent ear (/api/merge/audition) re-ranks.
   const TONAL = ["bass", "vocals", "other"];
-  const MERGE_KEY_OK = 0.8;
+  const MERGE_KEY_OK = DJ_CONFIG.MERGE_KEY_OK;
   function mergeCombos() {
     const out = [];
     for (let m = 1; m < 15; m++) {
@@ -837,7 +838,7 @@
   //   hold         2..M      both records playing together, tempo locked, key >= 0.8
   //   handover     M..M+8    kick + bass change hands on the line, A's tones fade, B full
   const HOLD_PHRASE_BARS = 8, HOLD_MAX_PHRASES = 6, HANDOVER_BARS = 8, MERGE_START_BARS = 2;
-  const HOLD_ROOM_BARS = 2, HOLD_TEMPO_CAP = 0.08, HOLD_KEY_MIN = 0.8, SUB_OVERLAP_MAX_BARS = 0.3;
+  const HOLD_ROOM_BARS = 2, HOLD_TEMPO_CAP = 0.08, HOLD_KEY_MIN = DJ_CONFIG.HOLD_KEY_MIN, SUB_OVERLAP_MAX_BARS = 0.3;
   // vocal regions [[s, e]] in song seconds -> bars from t0 (barSong = song seconds per bar)
   function regionsToBars(regions, t0, barSong) {
     return (regions || []).map(([s, e]) => [(s - t0) / barSong, (e - t0) / barSong]);

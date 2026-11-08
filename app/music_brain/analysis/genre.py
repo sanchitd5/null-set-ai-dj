@@ -12,23 +12,9 @@ from __future__ import annotations
 
 import re
 from typing import Optional
+from app.music_brain.generated import dj_config as DJ
 
-GENRE_FAMILIES = {
-    "south_asian": ("punjabi", "bhangra", "desi", "bollywood", "hindi", "urdu", "pakistani",
-                    "indian", "filmi", "sufi", "qawwali", "haryanvi", "tamil", "telugu"),
-    "electronic": ("house", "techno", "garage", "trance", "edm", "electronic", "electronica",
-                   "dubstep", "drum & bass", "drum and bass", "dnb", "bass music", "breakbeat",
-                   "downtempo", "ambient", "future bass", "electro", "idm", "jungle", "dance",
-                   "breaks", "trip hop", "chillout", "big room", "riddim"),
-    "hiphop": ("hip-hop", "hip hop", "rap", "trap", "drill", "grime"),
-    "rnb": ("r&b", "rnb", "soul"),
-    "latin": ("reggaeton", "latin", "dembow", "cumbia", "bachata", "salsa", "urbano"),
-    "afro": ("afrobeat", "afro", "amapiano", "afropop"),
-    "rock": ("rock", "punk", "metal", "grunge"),
-    "pop": ("pop",),
-    "country": ("country", "folk", "americana"),
-    "jazz": ("jazz", "funk", "disco"),
-}
+GENRE_FAMILIES = {fam: tuple(keys) for fam, keys in DJ.GENRE_FAMILIES.items()}
 
 
 # "electronic" is too broad to hold a set: it let The Sound of Goodbye (trance) hand over to
@@ -38,30 +24,7 @@ GENRE_FAMILIES = {
 # melodic, not techno, and "electro" never matches inside "electronic". A label in the family that
 # names no cluster ("electronic", "indie electronic", "dance pop") stays the generic "electronic",
 # which neighbours every cluster: too vague to refuse anything.
-ELECTRONIC_CLUSTERS = {
-    # four-to-the-floor house and its garage / disco / afro / latin offshoots
-    "house": ("house", "deep house", "tech house", "bass house", "synth house", "disco house",
-              "afro house", "latin house", "funky house", "uk garage", "garage", "speed garage"),
-    # the melodic / progressive floor: melodic techno + house, progressive, organic
-    "melodic": ("melodic", "melodic techno", "melodic house", "progressive house", "progressive",
-                "organic house"),
-    # trance, split from melodic (owner, 2026-09-30) so the chill <-> melodic bridge does not
-    # let trance hand over to downtempo; it keeps every other melodic neighbour
-    "trance": ("trance", "psytrance", "uplifting trance"),
-    # warehouse techno: straight, hard, minimal, industrial
-    "techno": ("techno", "hard techno", "minimal techno", "industrial techno", "acid techno"),
-    # bass music: dubstep, riddim, future bass, melodic dubstep
-    # (bass house sits in house AND bass: the bridge between the two floors)
-    "bass": ("dubstep", "melodic dubstep", "bass music", "bass house", "future bass", "riddim", "brostep"),
-    # 170+ BPM: drum and bass, jungle, liquid
-    "dnb": ("drum and bass", "drum & bass", "dnb", "jungle", "liquid", "neurofunk"),
-    # the low-energy listening end: downtempo, ambient, chillout, trip hop, idm, electronica
-    "chill": ("downtempo", "ambient", "chillout", "chill", "trip hop", "idm", "electronica"),
-    # festival / commercial dance: big room, edm, electro (house), eurodance, plain "dance"
-    "edm": ("edm", "big room", "electro", "electro house", "eurodance", "dance"),
-    # breakbeat, breaks, big beat
-    "breaks": ("breakbeat", "breaks", "big beat"),
-}
+ELECTRONIC_CLUSTERS = {fam: tuple(terms) for fam, terms in DJ.ELECTRONIC_CLUSTERS.items()}
 
 # Cluster pairs DJs really mix across (owner decisions, 2026-09-30). chill's only neighbour is
 # melodic (organic / melodic house <-> electronica, downtempo); trance <-> chill stays a jump.
@@ -114,7 +77,7 @@ def genre_families(label) -> set:
 
 # Families a set moves between freely (owner, 2026-09-30: hip-hop <-> R&B are neighbours, the
 # DJ Timeless set does it): a move between neighbours is not a family jump.
-NEIGHBOUR_FAMILIES = (frozenset({"hiphop", "rnb"}),) + ELECTRONIC_NEIGHBOURS
+NEIGHBOUR_FAMILIES = tuple(frozenset(p.split("|")) for p in DJ.NEIGHBOUR_FAMILIES)
 
 
 def scene_keys(label) -> list:
