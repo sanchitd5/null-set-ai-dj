@@ -33,7 +33,7 @@ Camelot table + `KEY_SAFE_MIN`, Echo Out only for key clash / tempo gap, 8% key-
 - **Done means:** `flutter analyze` clean for touched code, `flutter test` + `dart test` (dj-core) pass, new tests for
   the fix where testable, one commit per task on `fix/<task>`, short report back (what changed, file:line, tests,
   anything unverified). No push, no merge to `main`, no prod access from agents.
-- **Agent rules:** no example songs/artists in any LLM prompt text. Never `git push`, never touch `main`, never
+- **Agent rules:** BEFORE any work: `git fetch origin`, check origin/main and the owner's sibling worktrees (~/dev/<repo>-*) for existing work on the task, and branch only from an up-to-date origin/main. no example songs/artists in any LLM prompt text. Never `git push`, never touch `main`, never
   start/stop servers, no edits outside the task worktree.
 
 ## Tasks
@@ -180,7 +180,7 @@ H3 (3rd voice in C++, after H2) -> H4 (super-move runner) -> H9 (merge leftovers
 ## Handover prompt
 Paste this into a new Claude Code session started in ~/dev/AI-DJ-Mixing-System:
 
-> Continue the phone parity work. Read ~/dev/wt/PLAN.md fully (native Read): the plan, the task list, the Status section and the Known gaps. Then:
+> Continue the phone parity work. FIRST run `git fetch` in every repo and check origin/main + sibling worktrees for existing work (avoid duplicates). Read ~/dev/wt/PLAN.md fully (native Read): the plan, the task list, the Status section and the Known gaps. Then:
 > 1. Check what is merged: `git -C ~/dev/wt/integrate/null-set-dj-mobile log --oneline -25`, the same for `~/dev/wt/integrate/dj-core` and `~/dev/wt/integrate/AI-DJ-Mixing-System`, plus `ls ~/dev/wt` (any `<task>/` folder left over is unfinished or unmerged: inspect its `fix/<task>` branch, run its tests, then merge it or redo it).
 > 2. Continue the rolling parallel run: at most 3 agents at once (owner cap) (model: sonnet; haiku for plain file-finding), each in its own `~/dev/wt/<task>/` worktree pair branched from `parity/integrate`. Give each its prompt as a pointer to PLAN.md plus the task id, its file ownership, the test commands and "blocked → report, don't work around".
 > 3. After each agent finishes: check its worktree is clean, merge `--no-ff` into `parity/integrate` (dj-core first), run `dart test`, the full `NO_PROXY=127.0.0.1,localhost flutter test` and ne_test, revert analysis_options.yaml, then remove the worktree using `"${W:?}"`-guarded paths.
@@ -331,3 +331,50 @@ Open / next:
 - 2026-11-08 09:37 Merged X5 + X6; phone 802, dj-core 420, ne_test OK, analyze clean. HOT1 web art flood fixed and deployed (static). Plan + docs copy updated. No agents running.
 - 2026-11-08 09:39 APK parity.7 (build 9) published: X5 deck tools, X6 cleanup.
 - 2026-11-08 09:40 Started PERF-PROD (read-only prod slowness investigation, report → ~/dev/wt/PERF_PROD_REPORT.md), CFG2a (dj-config + web/server adoption + /api/config/live) and CFG2b (dj-core + phone adoption + live overrides). Running 3/3.
+- 2026-11-08 09:43 Created private GitHub repo sanchitd5/dj-config and pushed main. Pushed parity/integrate (dj-core, null-set-dj-mobile) and parity/server (null-set-ai-dj) to origin as new branches; main untouched. Plan doc committed to parity/server. CFG2a's dj-config commits get pushed when it finishes.
+- 2026-11-08 09:49 CFG2b done (dj-core 76fe31a, phone 846b765; 47 Dart + 4 phone + 33 C++ constants now generated; LiveConfig clamps live keys; dart 425, flutter 804, ne_test OK). Merge waits for CFG2a's final dj-config (checker patch, float values, live route shape sent to CFG2a). Killed an orphan flutter_tester left by the 02:36 run. Running: PERF-PROD, CFG2a.
+- PERF-PROD report: ~/dev/wt/PERF_PROD_REPORT.md. Fix tasks:
+  - PERFA: persisted content-hash index (no full re-hash after restart; stem_service.file_hash cached), warmAnalyses only for on-screen rows plus a batch analysis endpoint, in-memory art-mtime map for /api/tracks.
+  - PERFB: async def for trivial routes (build, stems/status, llm/status, youtube/status), a semaphore on heavy routes, set_lease fsync outside the lock, key-lock render concurrency cap plus a sweep of orphaned .tmp dirs, and find /api/sessions's 115 s.
+  - PERFC (owner decision): GPU contention. llama-server 19.5 GB + ctbrec-cleaner ~4.4 GB → stem-server falls back to CPU Demucs (387 s per 186 s of audio). Options: free VRAM, or Nice/CPUQuota/torch threads on stem-server.
+- 2026-11-08 09:49 PERF-PROD report done. Started PERFA (hash index, warm visible, art mtime map) and PERFB (async trivial routes, lease fsync, key-lock cap + tmp sweep, /api/sessions). PERFC (GPU) waits for owner. Running: CFG2a, PERFA, PERFB.
+- 2026-11-08 09:57 Merged CFG2b + CFG2a (dj-config phase 2: web, server, dj-core, phone and C++ read generated dj-config 8b2038c; /api/config/live + /config-live.js with no sync XHR; check_consumers 197/201 match, 0 drift, 0 unresolved; gen --check clean; pytest at the 22-failure baseline; flutter 804; dart 425). Note: RIFF_MAX_STRETCH 0.15 from the owner's uncommitted tree is now on parity/server. Merged PERFA (hash index ~85x faster after a restart, batch analysis, warm visible, art map). Pushed all parity branches and dj-config main. Running: PERFB.
+- 2026-11-08 10:05 Merged PERFB (async status routes, 6-slot heavy-route semaphore, lease write outside the lock, key-lock cap 2 + tmp sweep, /api/sessions cached by stats) plus my follow-up: analysis cache hits skip the heavy slot, misses take one (test added). Full pytest at the 22-failure baseline. parity/server pushed. No agents running.
+- 2026-11-08 10:10 DEPLOYED parity/server a02d1b3 to prod (owner OK): shared config + /api/config/live, PERFA, PERFB, the analysis-miss slot gate, RIFF 0.15. Rollback tag pre-parity-20261108-153735. stem-server drop-in cpu-limit.conf: Nice=10, CPUQuota=300%, OMP/MKL/TORCH threads=3 (owner OK). Routes verified; no errors; load 29 during the first-start hash-index build. APK parity.8 (build 10) published.
+- 2026-11-08 10:11 Owner: merge to main. null-set-ai-dj: origin/main fast-forwarded to parity/server a02d1b3 (= prod). Local main checkout left as is (32 behind plus the owner's 15 uncommitted files). Phone and dj-core held: origin/main has 30/18 newer commits that independently implement many of the same features → needs a reconcile decision.
+- 2026-11-08 13:40 Started REC: reconcile parity/integrate with origin/main (dj-core 8 conflicting files, phone 19), with the web as judge. Report → ~/dev/wt/REC_REPORT.md. main fast-forward after review.
+- Lesson (2026-11-08): local main in null-set-dj-mobile / dj-core was 30 / 18 commits behind origin/main (integrate3/4 from the parallel worktrees). This session branched from the stale local main, so several lanes duplicated features already on origin/main. Rule: always `git fetch` and compare with origin before branching from main.
+- 2026-11-08 15:48 Owner asked what origin/main had that we missed; answered. Logged the fetch-first rule.
+- 2026-11-08 15:49 Owner rule (permanent): always check origin/main and the sibling worktrees for existing work before branching, auditing or building. Added to memory, to the plan's Agent rules and to the handover prompt.
+
+## Owner rule (2026-11-08): origin/main is the source of truth
+Branch from and merge to origin/main, and push everything. Stable local work from ANY session or worktree goes to main. The parity/* branches retire once REC is merged into main.
+- LOCAL inventory (read-only) running → ~/dev/wt/LOCAL_REPORT.md. Merges come after REC lands.
+- APK tags apk/parity.1-8 pushed to origin.
+- 2026-11-08 15:52 Owner rule: main is the source of truth; all stable local work goes to main. Pushed the apk/* tags. Started LOCAL inventory (read-only). Running: REC, LOCAL.
+
+## CI/CD (owner, 2026-11-08)
+Decisions: a pull agent on CT116 (no inbound, no LAN runner; null-set-ai-dj is PUBLIC); auto deploy and APK publish on a green main (no approval gate); APK signed with the current debug keystore (keeps the update path); fix the 22 red tests (no quarantine).
+- FIX22: fix the 22 failing web tests so CI on main is green (branch off origin/main).
+- CI1: CI in all 4 repos (GitHub-hosted runners):
+  - web: pytest + JS checks
+  - dj-core: dart test
+  - phone: flutter test/analyze, ne_test, debug APK
+  - dj-config: pytest + gen --check against the sibling repos
+- CD1: on a green main, the phone/dj-core workflows build the arm64 release APK and attach it plus a version JSON to a GitHub Release; the web workflow marks a release for its commit.
+- CD2: a pull agent on CT116 (systemd timer) reads the latest green releases with read-only creds, fast-forwards /opt/null-set-ai-dj to the released web commit (keeping local edits), restarts, smoke-checks and rolls back automatically on failure; it installs the APK and its JSON into data/cache/app with a sha check.
+- The owner sets the secrets himself (keystore b64, keystore pass, a dj-core read token for phone CI, read-only creds for the pull agent). The main thread prepares a script for him to run; it never enters secrets itself.
+- 2026-11-08 15:55 Owner: set up CI/CD (pull agent, auto on green, debug key, fix the 22). Started FIX22 off origin/main. CI1/CD1/CD2 after REC lands. Running: REC, LOCAL, FIX22.
+- 2026-11-08 16:00 Cleanup (owner OK): deleted 33 local + 2 remote (feat/device-login, port/p3) branches fully in origin/main; 50 are checked out in sibling worktrees and were left. Dropped the web stash after verifying all 7 changed files are identical to 9e11a31 (on origin/main). swap-mix is still checked out in an old .claude/worktrees agent dir, so it's kept.
+
+## Owner decisions (2026-11-08, batch)
+- WEBWIP: the owner's uncommitted web work on local main (set-scene pin set_genre/setScene/pinScene, atlas combos per move + RIFF×RAP section, rap_at riff pairing, prerender guard, start.sh/model_runtime remote-omni URLs) → commit on a branch, rebase on origin/main, tests + sim suite, merge to main.
+- STASH-PORT (after REC): re-port the still-useful parts of the phone stash "paused-agents WIP 2026-10-09" (LiveTrack/deckLive/followLive/_abortMix, YtMusicSource musicGate, native OP_CANCEL) onto main, checking main's own ytmusic/yt_guard first.
+- Cleanup done: superseded branches deleted (33 local, 2 remote), web stash dropped (verified identical to 9e11a31). The deploy-plan and package-plan docs go to docs/archive on main (in WEBWIP). 50 merged branches are still checked out in sibling worktrees; removing those worktrees needs owner OK.
+- DJC2JS (after REC, once dj-core fully matches the web): the web console uses dj-core compiled to JS as its brain (owner's original plan). The sim suite compares old JS vs dj-core JS.
+- WORKBENCH: set up proxbench (CT 117) as the remote Claude Code workbench (repos from main, toolchains, gh, ssh to prod) so work goes on without the Mac. The owner logs in to Claude Code and gh there himself and adds the workbench SSH key to prod.
+- ATLAS1: a separate private repo dj-atlas holding app/music_brain/knowledge (atlas, macros, learned_techniques, labels), included as a git submodule. The server exports and commits+pushes what it learns (bot deploy key the owner adds); knowledge_sync keeps pulling with owner-wins conflicts; the phone snapshot is built from it.
+- 2026-11-08 16:00 Recorded owner decisions: WEBWIP, STASH-PORT, DJC2JS, WORKBENCH (proxbench 117), ATLAS1 (dj-atlas submodule, server contributes). Starting WEBWIP.
+- ATLAS2 (owner: "phone should be able to pull the db itself without requiring apk update"): the server serves a versioned atlas/knowledge snapshot (version = the dj-atlas commit + rules hash); the phone checks on start and every N h, downloads on change (C2 data policy + meter; delta if cheap, else full), and imports through the existing snapshot-import path (device pairs and played evidence kept, owner-wins). The shipped asset stays as the offline fallback. FIRST check origin/main's "first-run sync" (device-login commit 69af64c) and extend it rather than duplicating it.
+- WORKBENCH facts: proxbench CT 117 = Debian 13, 8 cores, 12 GB RAM, 48 GB disk (40 free), nesting on, vmbr1 10.0.0.117 (same subnet as CT116 10.0.0.116), node 24 + python 3.13 + git present, no claude/gh/flutter/dart. Flutter + Android SDK + torch venv + 4 repos need ~35-45 GB, so a resize is proposed.
+- 2026-11-08 16:01 Owner: the phone pulls atlas/db updates OTA → ATLAS2. Inspected proxbench (CT117).
