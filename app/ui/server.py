@@ -23,7 +23,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from fastapi import FastAPI, Form, HTTPException, UploadFile
+from fastapi import FastAPI, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 from app.ui.services.ranged_file import RangedFileResponse
 from fastapi.staticfiles import StaticFiles
@@ -3087,16 +3087,43 @@ ANDROID_META = ANDROID_APK.with_suffix(".json")   # null-set-dj.json, written by
 _META_KEYS = ("version_name", "version_code", "sha256", "size", "notes", "published_at")
 
 
+_PATCH_KEYS = ("from_version_code", "from_sha256", "sha256", "patch_sha256", "patch_size", "size")
+ANDROID_PATCH_DIR = None   # tests; default: <apk dir>/patches, written by deploy/apk_delta.py
+
+
+def _android_patch_dir() -> Path:
+    return ANDROID_PATCH_DIR or ANDROID_APK.parent / "patches"
+
+
 @app.get("/api/app/android.json")
-def get_android_meta():
-    """Version info for the in-app updater, from the sidecar the push script writes next to the APK."""
+def get_android_meta(from_: int | None = Query(None, alias="from", ge=0)):
+    """Version info for the in-app updater, from the sidecar the push script writes next to the APK.
+    `?from=<build number the phone runs>` adds `patch` (a delta from that build, see android.patch) when one exists."""
     if not (ANDROID_APK.is_file() and ANDROID_META.is_file()):
         raise HTTPException(status_code=404, detail="no Android build on this server")
     try:
         meta = json.loads(ANDROID_META.read_text("utf-8"))
-        return {k: meta[k] for k in _META_KEYS}
+        out = {k: meta[k] for k in _META_KEYS}
     except (ValueError, KeyError, TypeError, OSError):
         raise HTTPException(status_code=404, detail="Android build info is unreadable")
+    if from_ is not None:
+        for p in meta.get("patches") or []:
+            try:
+                if p["from_version_code"] == from_ and (_android_patch_dir() / f"{from_}.patch").is_file():
+                    out["patch"] = {k: p[k] for k in _PATCH_KEYS}
+                    break
+            except (KeyError, TypeError):
+                continue
+    return out
+
+
+@app.get("/api/app/android.patch")
+def get_android_patch(from_: int = Query(..., alias="from", ge=0)):
+    """Binary delta from build `from` to the current build (deploy/apk_delta.py); same login as the APK."""
+    path = _android_patch_dir() / f"{from_}.patch"   # `from_` is an int: no path traversal
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="no patch from that build")
+    return FileResponse(path, media_type="application/octet-stream", filename=f"{from_}.patch")
 
 
 @app.get("/api/app/android.apk")
