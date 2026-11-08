@@ -1,0 +1,64 @@
+# NULL::SET AI DJ, one container (backend + console). DRAFT, see docs/engineering/PACKAGING_PLAN.md.
+#
+#   docker compose --profile cpu up -d          # any host (Mac, Windows, Linux)
+#   docker compose --profile gpu up -d          # Linux + NVIDIA Container Toolkit, or Windows Docker Desktop (WSL2)
+#   docker compose --profile cpu --profile llm up -d   # plus an Ollama container for the decision LLM
+#
+# Open http://127.0.0.1:8000 . Settings (API keys, LLM_BACKEND, OLLAMA_MODEL, ...): an optional ./aidj.env, never committed (gitignored).
+# Data: named volume by default; set AIDJ_DATA=./data to use the repo's data/ folder instead.
+
+x-aidj: &aidj
+  image: ${AIDJ_IMAGE:-ghcr.io/OWNER/null-set-ai-dj}:${AIDJ_TAG:-cpu}
+  # Only 127.0.0.1: the API has no auth, never publish it on 0.0.0.0.
+  ports:
+    - "127.0.0.1:${AIDJ_PORT:-8000}:8000"
+  volumes:
+    - ${AIDJ_DATA:-aidj-data}:/data
+  env_file:
+    - path: ./aidj.env
+      required: false
+  environment:
+    # host Ollama (or the llm profile below: OLLAMA_URL=http://ollama:11434)
+    OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
+  extra_hosts:
+    - "host.docker.internal:host-gateway"   # Linux; Docker Desktop already provides it
+  restart: unless-stopped
+  stop_grace_period: 20s
+
+services:
+  aidj:
+    <<: *aidj
+    profiles: ["cpu"]
+    build:
+      context: .
+      args:
+        TORCH_INDEX: https://download.pytorch.org/whl/cpu
+
+  aidj-gpu:
+    <<: *aidj
+    profiles: ["gpu"]
+    image: ${AIDJ_IMAGE:-ghcr.io/OWNER/null-set-ai-dj}:${AIDJ_TAG:-cuda}
+    build:
+      context: .
+      args:
+        TORCH_INDEX: https://download.pytorch.org/whl/cu130
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  # Optional decision LLM. The app speaks Ollama natively (model_runtime.py: /api/generate).
+  # On a Mac run Ollama natively instead (Docker cannot use Metal) and skip this profile.
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["llm"]
+    volumes:
+      - ollama-models:/root/.ollama
+    restart: unless-stopped
+
+volumes:
+  aidj-data:
+  ollama-models:
