@@ -21,12 +21,28 @@ class _DropApp(httpx.Client):
         super().__init__(*args, **kwargs)
 
 
+class _PeerAddress:
+    """ASGI wrapper that sets scope["client"]. starlette < 0.29 hard-codes ("testclient", 50000) and its
+    TestClient has no `client=` argument; the auth tests need to choose the peer IP (loopback, a trusted
+    proxy, a fresh address per request)."""
+
+    def __init__(self, app, peer):
+        self.app, self.peer = app, list(peer)
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] in ("http", "websocket"):
+            scope = {**scope, "client": self.peer}
+        await self.app(scope, receive, send)
+
+
 class TestClient(_StarletteTestClient, _DropApp):
     """starlette.testclient.TestClient; MRO: TestClient -> starlette's -> _DropApp -> httpx.Client."""
     __test__ = False
 
-    def __init__(self, *args, auth: bool = True, **kwargs):
+    def __init__(self, *args, auth: bool = True, client=None, **kwargs):
         super().__init__(*args, **kwargs)
+        if client is not None:
+            self._transport.app = _PeerAddress(self._transport.app, client)
         token = os.environ.get("DJ_API_TOKEN")
         if auth and token:
             self.headers.setdefault("Authorization", f"Bearer {token}")
