@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-import torch
+torch = pytest.importorskip("torch")   # CI installs neither torch nor demucs (requirements-ci.txt)
 
 demucs_apply = pytest.importorskip("demucs.apply")
 
