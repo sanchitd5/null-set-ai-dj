@@ -214,6 +214,13 @@ def publish(d, keep):
     os.makedirs(hist, exist_ok=True)
     os.makedirs(patches_dir, exist_ok=True)
     code = int(meta["version_code"])
+    if "blocked_version_codes" not in meta:   # push_apk.sh without --block keeps the earlier force-update list
+        try:
+            old_block = json.load(open(meta_path + ".bak")).get("blocked_version_codes")
+            if isinstance(old_block, list) and old_block:
+                meta["blocked_version_codes"] = old_block
+        except (OSError, ValueError, AttributeError):
+            pass
     _archive(apk, os.path.join(hist, "%d.apk" % code))
     # first run after this feature: the APK the push just replaced (.bak) is the previous build; keep it too
     try:

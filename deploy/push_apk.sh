@@ -19,11 +19,14 @@
 # null-set-dj.json (from_version_code, from_sha256, sha256 of the result APK, patch_sha256, patch_size, size).
 # The phone then downloads a few MB instead of the whole APK. --no-patches skips this step.
 # Needs python3 in the CT and ~3x the APK size of free RAM for a few seconds.
+# Force update: --block 15,16 lists builds that must update ("blocked_version_codes" in android.json): a phone on one of
+# them skips its normal start and opens the update screen. Without --block the earlier list is kept (apk_delta.py
+# carries it over, so not with --no-patches); --block none clears it. Block only builds older than the one you publish.
 set -euo pipefail
 
 HOST_PORT="${HOST_PORT:-2298}" HOST="${HOST:-pve}" CT="${CT:-116}"   # pve = ssh alias (~/.ssh/config); override HOST/HOST_PORT/CT from env
 DEST=/opt/null-set-ai-dj/data/cache/app
-DRY=0 NAME="" CODE="" PUBSPEC="" OUT="" KEEP="${APK_KEEP:-3}" PATCHES=1
+DRY=0 NAME="" CODE="" PUBSPEC="" OUT="" KEEP="${APK_KEEP:-3}" PATCHES=1 BLOCK=""
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -34,6 +37,7 @@ while [ $# -gt 0 ]; do
     --build-number) CODE="${2:?}"; shift 2 ;;
     --pubspec) PUBSPEC="${2:?}"; shift 2 ;;
     --out-dir) OUT="${2:?}"; shift 2 ;;
+    --block) BLOCK="${2:?}"; shift 2 ;;
     --) shift; break ;;
     -*) echo "unknown option $1" >&2; exit 2 ;;
     *) break ;;
@@ -53,15 +57,18 @@ else
 fi
 case "$CODE" in ''|*[!0-9]*) echo "build number must be an integer: $CODE" >&2; exit 1 ;; esac
 case "$KEEP" in ''|*[!0-9]*|0) echo "--keep must be a positive integer: $KEEP" >&2; exit 1 ;; esac
+case "$BLOCK" in ''|none) ;; *[!0-9,]*|,*|*,|*,,*) echo "--block takes build numbers like 15,16 (or 'none'): $BLOCK" >&2; exit 1 ;; esac
 
 if command -v sha256sum >/dev/null 2>&1; then SHA=$(sha256sum "$APK" | awk '{print $1}'); else SHA=$(shasum -a 256 "$APK" | awk '{print $1}'); fi
 SIZE=$(stat -c %s "$APK" 2>/dev/null || stat -f %z "$APK")
 OUT="${OUT:-$(mktemp -d)}"; JSON="$OUT/null-set-dj.json"
-NAME="$NAME" CODE="$CODE" SHA="$SHA" SIZE="$SIZE" NOTES="$NOTES" TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)" python3 - "$JSON" <<'PY'
+NAME="$NAME" CODE="$CODE" SHA="$SHA" SIZE="$SIZE" NOTES="$NOTES" BLOCK="$BLOCK" TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)" python3 - "$JSON" <<'PY'
 import json, os, sys
-json.dump({"version_name": os.environ["NAME"], "version_code": int(os.environ["CODE"]), "sha256": os.environ["SHA"],
-           "size": int(os.environ["SIZE"]), "notes": os.environ["NOTES"], "published_at": os.environ["TS"]},
-          open(sys.argv[1], "w"), indent=2)
+meta = {"version_name": os.environ["NAME"], "version_code": int(os.environ["CODE"]), "sha256": os.environ["SHA"],
+        "size": int(os.environ["SIZE"]), "notes": os.environ["NOTES"], "published_at": os.environ["TS"]}
+if os.environ["BLOCK"]:   # --block: "none" = an empty list (clears the earlier list), else the codes
+    meta["blocked_version_codes"] = [] if os.environ["BLOCK"] == "none" else [int(c) for c in os.environ["BLOCK"].split(",")]
+json.dump(meta, open(sys.argv[1], "w"), indent=2)
 PY
 echo "wrote $JSON (sha256 $SHA, $SIZE bytes)"
 
