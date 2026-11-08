@@ -1,0 +1,15 @@
+# Pull-based deploy of the web server (see README.md). Runs as root: it restarts systemd units;
+# git and pip are run as the checkout's owner by the script itself.
+[Unit]
+Description=null-set pull deploy (fast-forward to the newest green main, restart, smoke, roll back)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# A copy, not the repo file: git rewrites the repo file during a deploy while bash is still reading it.
+ExecStart=/usr/local/sbin/nullset-cd.sh
+SyslogIdentifier=nullset-cd
+StateDirectory=nullset-cd
+TimeoutStartSec=15min
+Nice=10
