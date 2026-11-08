@@ -47,7 +47,7 @@ import subprocess
 import sys
 import time
 from collections import Counter
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
@@ -390,26 +390,18 @@ def node_run(tracks: dict, jobs: List[dict], chunk: int = 4000, procs: int = 4) 
     for c in chunks:
         ids = {j.get("a") for j in c} | {j.get("b") for j in c}
         need[id(c)] = {k: tracks[k] for k in ids if k in tracks}
-    out: List[Optional[List[dict]]] = [None] * len(chunks)
-    running: List[Tuple[int, subprocess.Popen]] = []
+    payloads = [json.dumps({"tracks": need[id(c)], "jobs": c}) for c in chunks]
 
-    def reap(i, p):
-        stdout, stderr = p.communicate()
-        if p.returncode != 0:
-            raise RuntimeError(f"pair_atlas_rules.js failed: {stderr[-500:]}")
-        out[i] = json.loads(stdout)["results"]
+    def run(payload: str) -> List[dict]:
+        # subprocess.run feeds stdin through communicate(); closing stdin by hand first makes
+        # communicate() flush a closed file (ValueError on Python < 3.12)
+        r = subprocess.run([node, str(RULES_JS)], input=payload, capture_output=True, text=True)
+        if r.returncode != 0:
+            raise RuntimeError(f"pair_atlas_rules.js failed: {r.stderr[-500:]}")
+        return json.loads(r.stdout)["results"]
 
-    for i, c in enumerate(chunks):
-        p = subprocess.Popen([node, str(RULES_JS)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                             stderr=subprocess.PIPE, text=True)
-        p.stdin.write(json.dumps({"tracks": need[id(c)], "jobs": c}))
-        p.stdin.close()
-        running.append((i, p))
-        if len(running) >= procs:
-            reap(*running.pop(0))
-    for i, p in running:
-        reap(i, p)
-    return [r for part in out for r in (part or [])]
+    with ThreadPoolExecutor(max_workers=procs) as ex:
+        return [r for part in ex.map(run, payloads) for r in part]
 
 
 # ---------------------------------------------------------------- pair scoring
