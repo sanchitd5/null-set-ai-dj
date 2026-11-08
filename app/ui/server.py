@@ -515,6 +515,32 @@ def get_analysis(track_id: str):
     return {**analyze_track(path).to_dict(), "art_url": album_art.art_url(track_id)}
 
 
+ANALYSIS_BATCH_MAX = 50
+
+
+class AnalysisBatchRequest(BaseModel):
+    ids: List[str]
+
+
+@app.post("/api/tracks/analysis/batch")
+def post_analysis_batch(req: AnalysisBatchRequest):
+    """{id: analysis | null} for up to 50 ids. Only stored analyses are returned (nothing is computed here):
+    null = unknown id or not analysed yet, so the console warms a screenful in one request."""
+    from app.music_brain.analysis import analyzer
+
+    if len(req.ids) > ANALYSIS_BATCH_MAX:
+        raise HTTPException(status_code=413, detail=f"At most {ANALYSIS_BATCH_MAX} ids per request")
+    out: Dict[str, Optional[dict]] = {}
+    for tid in dict.fromkeys(req.ids):
+        res = None
+        try:
+            res = analyzer.cached_analysis(_track_path(tid))
+        except HTTPException:
+            pass
+        out[tid] = {**res.to_dict(), "art_url": album_art.art_url(tid)} if res else None
+    return out
+
+
 @app.post("/api/tracks/{track_id}/separate")
 def post_separate(track_id: str, stems: int = 4):
     path = _track_path(track_id)

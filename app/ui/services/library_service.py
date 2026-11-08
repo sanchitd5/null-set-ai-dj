@@ -65,11 +65,9 @@ def configured_library_dirs(environ: Mapping[str, str] | None = None) -> list[Pa
 def file_hash(path: str | os.PathLike[str]) -> str:
     """Return the stable, short content ID used by the UI track API."""
 
-    digest = hashlib.sha256()
-    with Path(path).open("rb") as stream:
-        for chunk in iter(lambda: stream.read(_HASH_CHUNK_SIZE), b""):
-            digest.update(chunk)
-    return digest.hexdigest()[:CONTENT_ID_LENGTH]
+    from app.music_brain import hash_index
+
+    return hash_index.sha256_file(path)[:CONTENT_ID_LENGTH]
 
 
 def _is_within(path: Path, root: Path) -> bool:

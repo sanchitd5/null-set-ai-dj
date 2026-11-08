@@ -23,11 +23,9 @@ VERSION = 1
 
 
 def file_hash(path: Path) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()[:16]
+    from app.music_brain import hash_index
+
+    return hash_index.sha256_file(path)[:16]
 
 
 def lane(y, bins: int) -> Dict[str, list]:
