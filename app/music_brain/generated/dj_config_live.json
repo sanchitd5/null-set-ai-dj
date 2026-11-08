@@ -1,0 +1,102 @@
+{
+  "_generated": "GENERATED from dj-config 8b2038c - do not edit",
+  "config_hash": "a1b5b8989bc4",
+  "values": {
+    "BOOK_AFTER_LOAD_S": {
+      "value": 6,
+      "min": 0,
+      "max": 60,
+      "unit": "s"
+    },
+    "BYPASS_KEY_SCORE": {
+      "value": 0.4,
+      "min": 0,
+      "max": 1,
+      "unit": "score"
+    },
+    "ENERGY_MATCH_TOL": {
+      "value": 3,
+      "min": 0,
+      "max": 10,
+      "unit": "levels"
+    },
+    "ENERGY_MIN_RAW": {
+      "value": 0.1,
+      "min": 0,
+      "max": 1,
+      "unit": "ratio"
+    },
+    "FX_WET_DEFAULT": {
+      "value": 0.6,
+      "min": 0,
+      "max": 1,
+      "unit": "ratio"
+    },
+    "GLITCH_REPORT_GAP_S": {
+      "value": 8,
+      "min": 1,
+      "max": 60,
+      "unit": "s"
+    },
+    "KEY_CONFIDENCE_MIN": {
+      "value": 0.6,
+      "min": 0,
+      "max": 1,
+      "unit": "score"
+    },
+    "KEY_SAFE_MIN": {
+      "value": 0.6,
+      "min": 0,
+      "max": 1,
+      "unit": "score"
+    },
+    "MERGE_AUDITION_BUDGET_MS": {
+      "value": 90000,
+      "min": 10000,
+      "max": 300000,
+      "unit": "ms"
+    },
+    "PICK_TIMEOUT_MS": {
+      "value": 240000,
+      "min": 30000,
+      "max": 600000,
+      "unit": "ms"
+    },
+    "PLAN_MAX_WAIT_MS": {
+      "value": 65000,
+      "min": 5000,
+      "max": 120000,
+      "unit": "ms"
+    },
+    "PLAN_MIN_WAIT_MS": {
+      "value": 12000,
+      "min": 1000,
+      "max": 60000,
+      "unit": "ms"
+    },
+    "PREPLAN_WAIT_MS": {
+      "value": 35000,
+      "min": 5000,
+      "max": 120000,
+      "unit": "ms"
+    },
+    "UNCERTAIN_CLASH_SCORE": {
+      "value": 0.5,
+      "min": 0,
+      "max": 1,
+      "unit": "score"
+    },
+    "VOCAL_CLASH_CUTOFF": {
+      "value": 0.5,
+      "min": 0,
+      "max": 1,
+      "unit": "ratio"
+    },
+    "XF_CENTER_BOOST_DB": {
+      "value": 1.5,
+      "min": 0,
+      "max": 3,
+      "unit": "dB"
+    }
+  }
+}

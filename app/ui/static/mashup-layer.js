@@ -12,9 +12,10 @@
 // Depends on globals: audioCtx, masterGain, decks (deck-controller.js).
 // Public API: window.mashup.
 
+if (typeof DJ_CONFIG === "undefined" && typeof require === "function") require("./generated/dj_config.js");   // node: browsers load it via index.html
 (function () {
   const LEVEL = 0.9;          // used only when the server sent no measured gain (waveform_params.guest_level)
-  const HP_HZ = 120;          // the KB sub crossover: the floor of any measured corner
+  const HP_HZ = DJ_CONFIG.SUB_BASS_HPF_HZ;          // the KB sub crossover: the floor of any measured corner
 
   // Gain and high-pass corner of the guest vocal for the chosen host entry: measured by the server from the
   // two tracks' audio (level per host entry, corner from the host's own low end), the old constants otherwise.

@@ -11,13 +11,14 @@
 // this session's event log (POST /api/session/event, kind "glitch").
 // Silence is also RECOVERED: after RECOVER_S the on-air deck returns to its full
 // mix (stems back to the mix, EQ lows reopened) and that is logged too.
+if (typeof DJ_CONFIG === "undefined" && typeof require === "function") require("./generated/dj_config.js");   // node: browsers load it via index.html
 (function (root) {
   const SILENT_DB = -55;       // master RMS under this = silence (music never sits that low)
   const SILENT_S = 1.0;        // ... for this long while a deck is on air
   const RECOVER_S = 1.5;       // then put the on-air deck back to its full mix
   const DROP_DB = 30;          // a sudden fall this big in one 250 ms step
   const CLIP_RUN = 8;          // clipped samples in one chunk to call it clipping
-  const REPORT_GAP_S = 8;      // the same glitch kind is reported at most this often
+  const REPORT_GAP_S = DJ_CONFIG.GLITCH_REPORT_GAP_S;      // the same glitch kind is reported at most this often
 
   const dbOf = (rms) => 20 * Math.log10(Math.max(rms, 1e-9));
 

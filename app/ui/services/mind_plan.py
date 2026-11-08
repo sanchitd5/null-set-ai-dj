@@ -24,6 +24,7 @@ from functools import lru_cache
 from typing import Any, Optional
 
 from app.music_brain.render.blend import track_drop_lines
+from app.music_brain.generated import dj_config as DJ
 from app.ui.services import llm_capture, llm_gate
 from app.ui.services.autopilot_service import STRICT_RETRY, _extract_json, chat_raw, failure_reason, note_retry
 
@@ -40,7 +41,7 @@ SUBDROP_MAX_ENERGY = 0.75
 REMIX_MAX_PER_SONG = 4
 REMIX_GAP_PHRASES = 2        # remix phrases at least 2 apart: never two in a row
 BEAT_LAYER_MIN_SCORE = 65
-LAYER_MIN_KEY = 0.8          # LAYER transition (3-deck layering): key score floor
+LAYER_MIN_KEY = DJ.LAYER_MIN_KEY          # LAYER transition (3-deck layering): key score floor
 LAYER_MAX_TEMPO = 0.08       # ... and tempo-locked within the blend pitch range
 
 TRANSITION_MOVES = ("hold", "preclear", "subdrop")

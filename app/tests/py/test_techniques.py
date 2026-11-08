@@ -34,12 +34,10 @@ def test_stem_map_finds_the_groove_and_the_breakdown():
 
 
 def test_usb002_pair_fits_riff_over_rap_with_keylock():
-    # the original 13.9 % gap is past the 8 % key-lock cap now; a 5.8 % one still fits
-    assert not _by("riff_over_rap", tq.rank(_usb002()))["fits"]
-    r = _by("riff_over_rap", tq.rank(_usb002(bpm_b=130.0)))
+    # the original 13.9 % gap fits: riff_over_rap has its own 15 % cap, past the general 8 %
+    r = _by("riff_over_rap", tq.rank(_usb002()))
     assert r["fits"], r["reasons"]
     assert any("rap" in x for x in r["reasons"])                     # the key clash is excused, and says why
-
 
 def test_without_keylock_riff_over_rap_says_why_not():
     r = _by("riff_over_rap", tq.rank(_usb002(keylock=False)))
