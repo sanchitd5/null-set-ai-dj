@@ -45,6 +45,7 @@ def _code_prompts() -> dict:
         "suggest few-shot": ap._FEW_SHOT, "suggest user": ap._USER_TEMPLATE,
         "lead system": ap._LEAD_SYSTEM, "lead user": ap._LEAD_TEMPLATE,
         "knowledge": ap._KNOWLEDGE_TEMPLATE, "relaxed": ap.RELAXED_LINE,
+        "romance": ap.ROMANCE_LINE, "romance arc": " ".join(t for _u, t in ap.ROMANCE_ARC_PHASES),
         "favourite": ap._FAVOURITE_LINE, "earlier": ap._EARLIER_LINE,
         "tempo window": ap._TEMPO_WINDOW_LINE,
         "set modes": "\n".join(ap.SET_MODE_LINES.values()),

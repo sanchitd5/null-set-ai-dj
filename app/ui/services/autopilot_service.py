@@ -495,6 +495,39 @@ RELAXED_LINE = (
 )
 
 
+# Romance (bedtime vibes, mood "romance"): on top of RELAXED. Warm, slow, intimate; the energy only winds
+# down over the session. Mood description only: no example songs or artists (owner rule).
+ROMANCE_ARC_PHASES = (
+    (0.4, "ROMANCE, settling in (slow, warm, intimate; start low and already easing down)"),
+    (0.75, "ROMANCE, deepening (softer and slower again; the energy keeps falling gently)"),
+    (1.01, "ROMANCE, winding down toward sleep (the quietest, slowest, most tender songs)"),
+)
+ROMANCE_LINE = (
+    "\n\nROMANCE MODE (bedtime vibes; on top of the RELAXED rules): choose slow-to-mid tempo songs that feel "
+    "warm, sensual and intimate; vocals are welcome. Keep the energy low and let it fall gently over the "
+    "session toward the end: each pick's track_profile.energy at or one level below the current song's, never "
+    "higher, energy_delta \"maintain\" or \"down\". mood chill or bittersweet. Avoid hype, peak-time, "
+    "aggressive, comedic and party songs, and anything built around a big drop or a shouted hook."
+)
+
+
+def _romance_arc(set_position: float) -> str:
+    for upto, text in ROMANCE_ARC_PHASES:
+        if set_position < upto:
+            return text
+    return ROMANCE_ARC_PHASES[-1][1]
+
+
+def _romance_only(suggestions: list) -> list:
+    """Drop picks that do not fit bedtime: euphoric or dark mood, driving tempo. Never empty."""
+    def fits(s):
+        tp = s.get("track_profile") if isinstance(s.get("track_profile"), dict) else {}
+        return (str(tp.get("mood", "")).lower() not in ("euphoric", "dark")
+                and str(tp.get("tempo_feel", "")).lower() != "driving")
+    kept = [s for s in suggestions if fits(s)]
+    return kept or suggestions
+
+
 def _relaxed_only(suggestions: list, cur_profile) -> list:
     """Drop picks that would lift a relaxed set. Never empty: if every pick lifts,
     keep the calmest one."""
@@ -1211,6 +1244,7 @@ def suggest_next_tracks(
     n: int = 3,
     set_mode: str = "hybrid",
     relaxed: bool = False,
+    mood: str = "",                # "romance": bedtime vibes (implies relaxed; the energy only winds down)
     meta: dict | None = None,
     genre: str = "",
     history_display: list[str] | None = None,
@@ -1261,12 +1295,14 @@ def suggest_next_tracks(
     # The energy window the set rule allows next (not just +-2 of the playing song):
     # the same next_ok the console gate runs, fed the played levels, so the prompt and
     # the gate agree and a set that has slid down is asked to climb back.
+    romance = mood == "romance"
+    relaxed = relaxed or romance
     energy_window = None
     if measured_energy is not None:
         from app.music_brain.analysis import energy as _en
         energy_window = _en.allowed_window(
             measured_energy, relaxed=relaxed, songs=len(history_display or history), recent=energy_history,
-            reset=energy_reset, set_pos=set_position)
+            reset=energy_reset, set_pos=set_position, romance=romance)
     energy_lo = energy_window[0] if energy_window else None
     tempo_line = (
         tempo_bridge_line(target, str(tempo_note or "").strip()) if target > 0
@@ -1292,7 +1328,7 @@ def suggest_next_tracks(
         # the prompt shows only the newest PROMPT_LIMIT; the filter below checks ALL remembered songs
         earlier_line=_EARLIER_LINE.format(earlier_sets=", ".join(earlier_sets[:PROMPT_LIMIT])) if earlier_sets else "",
         set_pos_pct=round(set_position * 100),
-        arc_phase=RELAXED_ARC if relaxed else _set_arc_phase(set_position),
+        arc_phase=_romance_arc(set_position) if romance else RELAXED_ARC if relaxed else _set_arc_phase(set_position),
         n=n + EXTRA_CANDIDATES,  # spares: invented / off-tempo picks are dropped below
     )
 
@@ -1306,6 +1342,8 @@ def suggest_next_tracks(
     user_msg += scene_line(genre, scene_anchor)
     if relaxed:
         user_msg += RELAXED_LINE
+    if romance:
+        user_msg += ROMANCE_LINE
 
     system_msg = _SYSTEM if (occasion or "").strip() else _SYSTEM_PLAIN
     if lead_to and lead_steps:
@@ -1337,7 +1375,7 @@ def suggest_next_tracks(
         llm_capture.note(kind, n=n, title=title, artist=artist, bpm=bpm, camelot=camelot, history=list(history),
                          occasion=occasion, lead_to=lead_to, measured_energy=measured_energy, energy_lo=energy_lo,
                          punjabi_profile=punjabi_profile, scene_genre=scene_genre, tempo_target=tempo_target,
-                         relaxed=relaxed, earlier_sets=list(earlier_sets or []),
+                         relaxed=relaxed, mood=mood, earlier_sets=list(earlier_sets or []),
                          favourite_artists=list(favourite_artists or []),
                          recent=list(history_display or history) + list(queue_display or []))
     retry_note = ""
@@ -1498,6 +1536,8 @@ def suggest_next_tracks(
         return bool(fav) and any(artist_key(n) in fav for n in names if n)
     if relaxed:
         suggestions = _relaxed_only(suggestions, data.get("current_profile"))
+        if romance:
+            suggestions = _romance_only(suggestions)
     heard = {_bare_title(str(x).split(" - ", 1)[-1]) for x in (earlier_sets or [])}
     fresh = [x for x in suggestions if _is_fav(x) or _bare_title(x.get("title", "")) not in heard]
     # Every pick was an earlier-set song: falling back to them replayed the same

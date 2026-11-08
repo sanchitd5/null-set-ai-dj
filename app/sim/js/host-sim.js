@@ -20,7 +20,7 @@ function createSimHost(env) {
     get audio() { return env.audio || g.audioCtx; },
     get decks() { return g.decks; },
     get state() { return g.state; },
-    get session() { return g.djSession || (g.djSession = { relaxed: false }); },
+    get session() { return g.djSession || (g.djSession = { relaxed: false, romance: false }); },
     mod: new Proxy(mod, { get: (t, k) => (k in t ? t[k] : g[k]), set: (t, k, v) => { t[k] = v; g[k] = v; return true; } }),
     api: { fetch: (url, opts) => g.fetch(url, opts) },     // late lookup: the console wraps window.fetch (mascot "thinking")
     bus: {
