@@ -368,4 +368,8 @@ async def post_beat(lease_id: str):            # no pool thread: the state moves
 @router.delete("/api/set/lease/{lease_id}")
 @router.post("/api/set/lease/{lease_id}/release")
 def delete_lease(lease_id: str):
-    return {"ok": True, "released": store().release(lease_id)}
+    released = store().release(lease_id)
+    if released:                                # the set ended: publish what it taught the server (opt-in, background)
+        from app.music_brain.matching import knowledge_publish
+        knowledge_publish.on_set_end(log=lambda m: print(m, flush=True))
+    return {"ok": True, "released": released}
