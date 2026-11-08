@@ -19,6 +19,11 @@ stored=True (a macro step, a FOLLOW SET song, a studied combo: a move replayed f
                is a jump, refused
 Every candidate (stored or not):
   veto         the owner vetoed the pair, or the song in this scene (atlas/vetoes.py)
+  set_scene    set_genre given (the set's opening scene, pinned for the whole set): B's label is a
+               family jump from it, maps to no family, or is missing (genre.family_jump; Punjabi profile pairs
+               excepted) -> refused, by every
+               path (owner 2026-10-11: "should not do a genre shift for the whole set", a Punjabi /
+               Bollywood set drifted to EDM / R&B through atlas combos, FOLLOW SET and library fallback)
   scene_anchor while the console recovers from an off-scene mistake (anchor_genre given: the set's
                scene before a fallback / BAD PAIR brought A in from outside it), a candidate that
                continues A's mistaken genre (shares A's family, none of the anchor's) is refused:
@@ -47,11 +52,18 @@ def _k(name: str) -> str:
 def vet_one(a_name: str, b_name: str, *, a_genre: Optional[str] = None, a_era: Optional[str] = None,
             b_genre: Optional[str] = None, b_era: Optional[str] = None, history: Iterable[str] = (),
             earlier: Iterable[str] = (), vetoes: Iterable[dict] = (), stored: bool = False,
-            punjabi_profile: str = "off", anchor_genre: Optional[str] = None) -> Optional[dict]:
+            punjabi_profile: str = "off", anchor_genre: Optional[str] = None,
+            set_genre: Optional[str] = None) -> Optional[dict]:
     """None when B may follow A, else {gate, why}."""
     why = vt.blocked(vetoes, a_name, b_name, a_genre)
     if why:
         return {"gate": "veto", "why": why}
+    # a label that maps to no family ("indie": Beedi -> We Are The People) or no label at all ("CC" after
+    # Oh Ho Ho Ho, session 2026-10-11_200026) is off-scene too: a pinned set books only songs known to fit
+    off_set = not genre_families(b_genre) or family_jump(set_genre, b_genre)
+    if set_genre and genre_families(set_genre) and off_set \
+            and not (sp.selection_active(punjabi_profile, set_genre) and sp.in_scene_pair(set_genre, b_genre)):
+        return {"gate": "set_scene", "why": f"leaves the set's {set_genre} scene ({b_genre})"}
     if anchor_genre and family_jump(anchor_genre, b_genre) and not family_jump(a_genre, b_genre) \
             and genre_families(a_genre):
         return {"gate": "scene_anchor", "why": f"continues the off-scene {a_genre} instead of going back to "

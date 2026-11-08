@@ -2542,6 +2542,9 @@ function createAutopilotEngine({ host, ai }) {
   // off-scene mistake, the scene the next selection goes back to (every path: suggest, FOLLOW SET /
   // combos, pool, atlas backup, library, booking vet).
   let sceneState = { anchor: null, prev: null, recover: null };
+  // SET SCENE (owner 2026-10-11: "should not do a genre shift for the whole set"): the set's first scene,
+  // pinned until the set resets. Every candidate is vetted against it (booking_vet set_scene gate).
+  let setScene = null;
   let badPairPending = null;     // BAD PAIR pressed while the transition runs: the landing is a vetoed pair
   const recoverGenre = () => (sceneState.recover && sceneState.recover.anchor && sceneState.recover.anchor.genre) || "";
   let currentEra = "";     // model's release decade for the playing song ("1990s"): library fallback holds it
@@ -2869,7 +2872,7 @@ function createAutopilotEngine({ host, ai }) {
       const res = await fetch("/api/autopilot/vet", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ a_id: currentId, a_name: history[history.length - 1] || "", history: history.slice(-400), set_id: setId || "",
-          punjabi_profile: punjabiMode(), anchor_genre: recoverGenre(),
+          punjabi_profile: punjabiMode(), anchor_genre: recoverGenre(), set_genre: (setScene && setScene.genre) || "", pin_set: !setScene,
           cands: [{ track_id: cand.track_id || null, name: cand.name || "", stored: autopilotCore.storedMove(cand) }] }),
       });
       if (!res.ok) { console.warn("vet: HTTP", res.status); return null; }
@@ -2880,6 +2883,7 @@ function createAutopilotEngine({ host, ai }) {
       if (j && j.a_genre && currentTrackId === currentId) {
         currentGenre = j.a_genre;   // the playing song's STORED label wins
         // the set's first scene: the playing song's, before any landing moved it
+        if (!setScene && (j.a_families || []).length) setScene = { genre: j.a_genre, families: j.a_families.slice().sort() };
         if (!sceneState.anchor && (j.a_families || []).length) sceneState = Object.assign({}, sceneState, { anchor: { genre: j.a_genre, families: j.a_families.slice().sort() } });
       }
       return autopilotCore.vetRefusal(j);
@@ -4554,7 +4558,7 @@ function createAutopilotEngine({ host, ai }) {
     leadTo = null;
     leadStatus("");
     genreLog = [];
-    currentGenre = ""; sceneState = { anchor: null, prev: null, recover: null }; badPairPending = null;
+    currentGenre = ""; sceneState = { anchor: null, prev: null, recover: null }; setScene = null; badPairPending = null;
     currentEra = "";
     songsSinceJump = 0;
     jumpPending = false;
@@ -4610,7 +4614,7 @@ function createAutopilotEngine({ host, ai }) {
     leadTo = null;
     leadStatus("");
     genreLog = [];
-    currentGenre = ""; sceneState = { anchor: null, prev: null, recover: null }; badPairPending = null;
+    currentGenre = ""; sceneState = { anchor: null, prev: null, recover: null }; setScene = null; badPairPending = null;
     currentEra = "";
     songsSinceJump = 0;
     jumpPending = false;
@@ -4920,6 +4924,19 @@ function createAutopilotEngine({ host, ai }) {
       return { ok: true, why: "" };
     },
   };
-  return { core: autopilotCore, mergeNow, performNow, superMove };
+  // PLAY MACRO (owner 2026-10-11: "starting macros should use the first track as genre"): the set scene
+  // is re-pinned from the macro's first song's stored label. Unlabelled -> the next booking pins as usual.
+  async function pinScene(trackId) {
+    try {
+      const res = await fetch("/api/autopilot/vet", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ a_id: trackId, cands: [] }) });
+      const j = res.ok ? await res.json() : null;
+      setScene = j && j.a_genre && (j.a_families || []).length ? { genre: j.a_genre, families: j.a_families.slice().sort() } : null;
+      host.log.step("scene_recover", { phase: "selection", decision: "set scene pinned",
+        why: setScene ? `macro's first song: ${setScene.genre}` : "macro's first song has no genre label" });
+    } catch (e) { console.warn("pin scene:", e && e.message); }
+    return setScene;
+  }
+  return { core: autopilotCore, mergeNow, performNow, superMove, pinScene };
 }
 if (typeof Engine !== "undefined") Engine.mount("autopilot", createAutopilotEngine);

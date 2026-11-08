@@ -2646,6 +2646,8 @@ class VetRequest(BaseModel):
     set_id: str = Field(default="", max_length=64)
     punjabi_profile: str = "off"
     anchor_genre: str = Field(default="", max_length=80)   # the set's scene while recovering from a mistake
+    set_genre: str = Field(default="", max_length=80)      # the set's opening scene, pinned for the whole set
+    pin_set: bool = False                                  # no set scene yet: A's own genre is it (first booking)
     cands: List[VetCand] = Field(default_factory=list, max_length=60)
 
 
@@ -2673,7 +2675,8 @@ def autopilot_vet(req: VetRequest):
             v = _vibe_by_name(name)
         rows.append({"track_id": c.track_id, "name": name, "genre": v["genre"], "era": v["era"], "stored": c.stored})
     res = bv.vet(a_name, rows, a_genre=av["genre"], a_era=av["era"], history=req.history, earlier=earlier,
-                 vetoes=_vetoes(), punjabi_profile=req.punjabi_profile, anchor_genre=req.anchor_genre or None)
+                 vetoes=_vetoes(), punjabi_profile=req.punjabi_profile, anchor_genre=req.anchor_genre or None,
+                 set_genre=req.set_genre or (av["genre"] if req.pin_set else None))
     for r, row in zip(res, rows):
         r["genre"], r["era"] = row["genre"], row["era"]
     from app.music_brain.analysis.genre import scene_keys
