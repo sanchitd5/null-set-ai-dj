@@ -108,7 +108,10 @@ class Job:
                 "progress": round(self.progress, 3), "error": self.error, "device": self.device,
                 "model": self.model, "note": self.note, "eta": self.eta(),
                 "elapsed": round((self.finished or time.time()) - (self.started or self.created), 1),
-                "seconds": self.info.get("seconds")}
+                "seconds": self.info.get("seconds"),
+                # GPU decisions of the finished split: kind gpu|cpu, free_mb / total_mb at start, wait_s,
+                # segment_s, batch (null until the job is done, or for a stem set that was already cached)
+                "gpu": self.info.get("gpu")}
 
 
 def separate_once(path: Path, model: str, device: Optional[str], stems_dir: Path) -> tuple[Dict[str, str], str, Optional[str]]:
@@ -144,6 +147,7 @@ class StemServer:
         self.encode_lock = threading.Lock()   # window encode + integrity repair
         self._hash: Dict[str, tuple] = {}     # track id -> (mtime, size, full sha256)
         self.gpu = None
+        self.last_gpu: Optional[dict] = None  # the GPU decisions of the last split (also on each job)
         self.current: Optional[Job] = None
         self._restoring = False
         for d in (self.s.uploads, self.s.windows):
@@ -347,6 +351,7 @@ class StemServer:
         # device None: the worker picks cuda -> mps -> cpu (torch is never imported in this process)
         info, _, j.note = gpu.split(self.gpu, j.job, j.path, out, self.s.model, self.s.device, progress, self.s.half)
         j.info, j.device = info, info.get("device")
+        self.last_gpu = info.get("gpu")
         stems = info["stems"]
         if sorted(stems) != sorted(FOUR):
             raise RuntimeError(f"split returned {sorted(stems)}")
@@ -497,7 +502,7 @@ def create_app(settings: Optional[Settings] = None, separate_fn=None) -> FastAPI
         act = srv.active()
         w = srv.gpu
         return {"jobs": [j.to_dict() for j in act], "queued": sum(j.status == "queued" for j in act),
-                "model": s.model, "device": s.device or "auto",
+                "model": s.model, "device": s.device or "auto", "gpu": srv.last_gpu,
                 "worker": {"alive": bool(w and w.alive), "pid": w.pid if w else None}}
 
     @app.get("/v1/jobs/{job}", dependencies=[Depends(auth)])
