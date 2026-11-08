@@ -57,3 +57,27 @@ def test_requires_the_same_auth_as_other_routes(overrides):
     anon = TestClient(server.app, auth=False)
     r = anon.get("/api/config/live")
     assert r.status_code == 401 and r.json() == {"detail": "unauthorized"}
+
+
+def test_config_live_js_is_a_script_with_clamped_values(overrides):
+    overrides.write_text(json.dumps({"KEY_SAFE_MIN": 9}))
+    r = TestClient(server.app).get("/config-live.js")
+    assert r.status_code == 200 and "javascript" in r.headers["content-type"]
+    assert r.headers["cache-control"] == "no-store"
+    head, _, rest = r.text.partition(";\n")
+    assert head.startswith("window.DJ_CONFIG_SERVER = ")
+    payload = json.loads(head.removeprefix("window.DJ_CONFIG_SERVER = "))
+    assert payload["values"]["KEY_SAFE_MIN"]["value"] == DJ.LIVE["KEY_SAFE_MIN"]["max"]
+    assert "applyLive" in rest
+
+
+def test_config_live_js_error_gives_empty_object(overrides, monkeypatch):
+    def boom():
+        raise RuntimeError("x")
+    monkeypatch.setattr(config_live, "live_config", boom)
+    r = TestClient(server.app).get("/config-live.js")
+    assert r.status_code == 200 and r.text.startswith("window.DJ_CONFIG_SERVER = {};\n")
+
+
+def test_config_live_js_requires_auth(overrides):
+    assert TestClient(server.app, auth=False).get("/config-live.js").status_code == 401
