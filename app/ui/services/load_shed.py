@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import inspect
 import threading
 import time
 import weakref
@@ -55,6 +56,13 @@ def bounded(fn: Callable) -> Callable:
                 with _stats_lock:
                     stats["active"] -= 1
 
+    # FastAPI resolves string annotations (server.py has `from __future__ import annotations`) with the
+    # WRAPPER's globals, i.e. this module, where e.g. RiffRequest doesn't exist: the pydantic body was taken
+    # for a query param and POST /api/riff/plan + /api/prerender answered 422. Hand it the resolved signature.
+    try:
+        wrapper.__signature__ = inspect.signature(fn, eval_str=True)
+    except NameError:   # a name defined later in the module: leave it to FastAPI as before
+        pass
     return wrapper
 
 
