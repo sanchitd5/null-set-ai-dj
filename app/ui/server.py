@@ -78,6 +78,7 @@ UPLOAD_LIMITS = {
     ("POST", "/api/recordings"): _auth.env_bytes("DJ_MAX_RECORDING_BYTES", 1024 * _MB),
     # live ear: one few-second 16 kHz clip (live_ear.MAX_AUDIO_BYTES 1.5 MB) + metrics; phones post it too
     ("POST", "/api/live/ear"): _auth.env_bytes("DJ_MAX_EAR_BYTES", 2 * _MB + _MB // 2),
+    ("POST", "/api/app/crash"): 64 * 1024,   # the phone's start-up crash report (app_crash_api.py)
 }
 MAX_BODY_BYTES = _auth.env_bytes("DJ_MAX_BODY_BYTES", 64 * _MB)   # every other request
 
@@ -3111,6 +3112,10 @@ def get_android_meta(from_: int | None = Query(None, alias="from", ge=0)):
         out = {k: meta[k] for k in _META_KEYS}
     except (ValueError, KeyError, TypeError, OSError):
         raise HTTPException(status_code=404, detail="Android build info is unreadable")
+    # optional force-update list (push_apk.sh --block): builds in it go straight to the phone's update screen
+    blocked = meta.get("blocked_version_codes")
+    if isinstance(blocked, list) and blocked and all(isinstance(c, int) and not isinstance(c, bool) and c >= 0 for c in blocked):
+        out["blocked_version_codes"] = blocked
     if from_ is not None:
         for p in meta.get("patches") or []:
             try:
@@ -3175,6 +3180,9 @@ app.include_router(_config_live_router)
 from app.ui.services.knowledge_api import router as _knowledge_router  # noqa: E402 -- GET /api/knowledge/version, /snapshot (the phone pulls the dj-atlas knowledge)
 
 app.include_router(_knowledge_router)
+from app.ui.services.app_crash_api import router as _app_crash_router  # noqa: E402 -- POST /api/app/crash (phone start-up crash report)
+
+app.include_router(_app_crash_router)
 
 
 class _RevalidatingStatic(StaticFiles):
