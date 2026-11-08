@@ -17,7 +17,10 @@ def git(repo, *args):
 
 
 def run(*args, **kw):
-    env = dict(os.environ, GIT_CONFIG_COUNT="1", GIT_CONFIG_KEY_0="protocol.file.allow", GIT_CONFIG_VALUE_0="always")
+    # CI runners have no git identity; the real mode commits the submodule swap
+    env = dict(os.environ, GIT_CONFIG_COUNT="1", GIT_CONFIG_KEY_0="protocol.file.allow", GIT_CONFIG_VALUE_0="always",
+               GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.invalid",
+               GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.invalid")
     return subprocess.run(["bash", str(SCRIPT), *args], capture_output=True, text=True, timeout=120, env=env, **kw)
 
 
