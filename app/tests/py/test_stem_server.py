@@ -25,6 +25,7 @@ import pytest
 import soundfile as sf
 
 from app.music_brain.audio.audio_io import write_flac, write_manifest
+from app.tests.py.ffmpeg_compat import apply_end_trim
 from app.stem_server import windows
 from app.stem_server.server import Settings, create_app
 
@@ -320,7 +321,8 @@ def _decode(path: Path, raw) -> np.ndarray:
         args += ["-flags2", "skip_manual", "-ignore_editlist", "1"]
     args += ["-i", str(path), "-f", "f32le", "-ac", "2", "-ar", str(SR), "-"]
     pcm = subprocess.run(args, check=True, capture_output=True).stdout
-    return np.frombuffer(pcm, dtype="<f4").reshape(-1, 2)
+    x = np.frombuffer(pcm, dtype="<f4").reshape(-1, 2)
+    return x[:apply_end_trim(path, len(x))] if raw is False else x   # see ffmpeg_compat.apply_end_trim
 
 
 @pytest.mark.parametrize("raw", [False, True, "no-elst"], ids=["edit-list-decoder", "raw-decoder", "no-edit-list"])
