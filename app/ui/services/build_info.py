@@ -40,5 +40,5 @@ STARTED = time.time()
 
 
 @router.get("/api/build")
-def get_build():
+async def get_build():
     return {"build": BUILD_ID, "started": int(STARTED)}

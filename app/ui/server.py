@@ -44,6 +44,7 @@ from app.music_brain.learning.set_log import export_set_log_markdown, validate_s
 from app.ui.services import album_art, engine as _engine
 from app.ui.services.bg_jobs import DONE as _JOB_DONE, ERROR as _JOB_ERROR, EXPIRED as _JOB_EXPIRED, JobRunner
 from app.ui.services.library_service import scan_library
+from app.ui.services.load_shed import Snapshot as _Snapshot, bounded as _bounded
 
 
 def _host():
@@ -116,11 +117,11 @@ def _migrate_analyses() -> None:
 def _cap_keylock_cache() -> None:
     from app.music_brain.audio import keylock_cache
 
-    keylock_cache.run_async("startup")
+    keylock_cache.start_periodic()           # sweeps orphaned *.tmp render dirs now and every 30 min
 
 
 @app.get("/api/llm/status")
-def get_llm_status():
+async def get_llm_status():              # in-memory only: async keeps it off the 40-thread pool
     from app.ui.services import model_runtime
     from app.ui.services.llm_gate import gate
 
@@ -385,12 +386,26 @@ def get_youtube_search(q: str, limit: int = 8):
         raise HTTPException(status_code=502, detail=f"search failed: {exc}") from exc
 
 
-@app.get("/api/youtube/status")
-def get_youtube_status():
-    """{cooling, until, strikes, last_error}: app.music_brain.yt_guard's bot-check backoff."""
+def _yt_status() -> dict:
     from app.music_brain import yt_guard
 
-    return yt_guard.status()
+    return yt_guard.status()                 # reads yt_guard.json (cache disk): blocking
+
+
+_yt_snapshot = _Snapshot(_yt_status, ttl=2.0, fallback={"cooling": False, "until": None, "strikes": 0,
+                                                       "last_error": None, "disabled": False})
+
+
+@app.on_event("startup")
+def _prime_status_snapshots() -> None:
+    _yt_snapshot.refresh()
+
+
+@app.get("/api/youtube/status")
+async def get_youtube_status():
+    """{cooling, until, strikes, last_error}: app.music_brain.yt_guard's bot-check backoff.
+    Async: serves a snapshot at most 2 s old that a background thread refreshes."""
+    return _yt_snapshot.get()
 
 
 @app.post("/api/download/jobs")
@@ -516,6 +531,7 @@ def get_analysis(track_id: str):
 
 
 @app.post("/api/tracks/{track_id}/separate")
+@_bounded
 def post_separate(track_id: str, stems: int = 4):
     path = _track_path(track_id)
     two_stems = "vocals" if stems == 2 else None
@@ -874,6 +890,7 @@ def _start_prerender_worker() -> None:
 
 
 @app.post("/api/prerender")
+@_bounded
 def post_prerender(req: PrerenderRequest):
     """The ranked next-song candidates (best first) and the tempi they may have to play at. The server
     makes their stems and key-locked tempo sets ahead of the booking, one heavy job at a time, and
@@ -889,6 +906,7 @@ def post_prerender(req: PrerenderRequest):
 
 
 @app.get("/api/prerender")
+@_bounded
 def get_prerender():
     from app.ui.services import prerender
 
@@ -1107,22 +1125,37 @@ def get_library_lockable(bpm: float, key: str = "", exclude: str = "", limit: in
     return {"tracks": out[:lim], "outside": outside[:lim], "ref_genre": genre}
 
 
+_stems_status_last: dict = {"busy": None, "urgent": [], "backlog": 0, "llm_busy": False, "wait_note": ""}
+
+
 @app.get("/api/stems/status")
-def get_stems_status():
+async def get_stems_status():
     """The stem queue. Stem server mode adds `remote` (the console's jobs there: priority, position,
-    device, model, real progress, elapsed, eta) and `line`, the one-line status the STEMS badge shows."""
+    device, model, real progress, elapsed, eta) and `line`, the one-line status the STEMS badge shows.
+    Async (event loop, no pool thread): if the stem worker holds the queue lock (it submits to Demucs
+    under it) the last answer is served instead of waiting for it."""
+    global _stems_status_last
+    if not _stem_cv.acquire(blocking=False):
+        return _stems_status_last
+    try:
+        _stems_status_last = _stems_status_locked()
+        return _stems_status_last
+    finally:
+        _stem_cv.release()
+
+
+def _stems_status_locked() -> dict:
     from app.ui.services import stem_remote
 
-    with _stem_cv:
-        out = {"busy": _stem_busy, "urgent": list(_stem_queue), "backlog": len(_stem_backlog),
-               "llm_busy": _llm_busy(), "wait_note": _stem_wait_note(), **_stem_done}
-        if stem_remote.enabled():
-            jobs = sorted(_stem_remote.values(), key=lambda j: (j.get("status") != "running", j.get("position") or 0))
-            head = jobs[0] if jobs else None
-            out["remote"] = {"jobs": [dict(j) for j in jobs], "error": _stem_remote_err["error"]}
-            out["line"] = stem_remote.status_line(head, max(0, len(jobs) - 1) + len(_stem_queue) + len(_stem_backlog),
-                                                  _stem_remote_err["error"])
-        return out
+    out = {"busy": _stem_busy, "urgent": list(_stem_queue), "backlog": len(_stem_backlog),
+           "llm_busy": _llm_busy(), "wait_note": _stem_wait_note(), **_stem_done}
+    if stem_remote.enabled():
+        jobs = sorted(_stem_remote.values(), key=lambda j: (j.get("status") != "running", j.get("position") or 0))
+        head = jobs[0] if jobs else None
+        out["remote"] = {"jobs": [dict(j) for j in jobs], "error": _stem_remote_err["error"]}
+        out["line"] = stem_remote.status_line(head, max(0, len(jobs) - 1) + len(_stem_queue) + len(_stem_backlog),
+                                              _stem_remote_err["error"])
+    return out
 
 
 @app.get("/api/tracks/{track_id}/vocals")
@@ -1139,6 +1172,7 @@ def get_track_vocals(track_id: str, separate: bool = False):
 
 
 @app.get("/api/tracks/{track_id}/stems")
+@_bounded
 def get_track_stems(track_id: str, separate: bool = False, bpm: Optional[float] = None):
     """4 live stems for a deck: {stems: {name: url}} when separated, else
     pending (separate=1 queues it). bpm=X: the same stems key-locked at X BPM
@@ -1724,6 +1758,7 @@ class RiffRequest(BaseModel):
 
 
 @app.post("/api/riff/plan")
+@_bounded
 def post_riff_plan(req: RiffRequest):
     """Riff over rap, live: pick A's groove + breakdown and B's rap entry, and
     start the key-locked render of A's stems at B's tempo (cached). Always
@@ -1828,6 +1863,7 @@ def _audio_response(path: Path, label: str, q: str, media: Optional[str] = None)
 
 
 @app.get("/api/riff/{key}/{name}")
+@_bounded
 def get_riff_stem(key: str, name: str, q: str = ""):
     from app.music_brain.audio import keylock
 
@@ -1839,6 +1875,7 @@ def get_riff_stem(key: str, name: str, q: str = ""):
 
 
 @app.get("/api/tracks/{track_id}/stems/{name}")
+@_bounded
 def get_track_stem_audio(track_id: str, name: str, q: str = ""):
     if name not in STEM_NAMES:
         raise HTTPException(status_code=404, detail="unknown stem")
@@ -2178,6 +2215,7 @@ def post_bridge_plan(req: BridgeRequest):
 
 
 @app.get("/api/audio/stems/{track_id}/vocals")
+@_bounded
 def get_vocal_clip(track_id: str, start: float = 0.0, dur: float = 30.0):
     """A trimmed slice of a track's separated vocal stem (small WAV for the browser)."""
     import soundfile as sf
@@ -3020,6 +3058,7 @@ def get_android_apk():
 
 
 @app.get("/api/audio/tracks/{track_id}")
+@_bounded
 def get_track_audio(track_id: str, q: str = ""):
     path = _track_path(track_id)
     return _audio_response(path, track_id, q, audio_io.MEDIA_TYPES.get(path.suffix.lower()))

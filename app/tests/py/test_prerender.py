@@ -1,4 +1,6 @@
 """Pre-render scheduler: order, one heavy job at a time, cancellation, cache hits. Stub io, no Demucs."""
+import asyncio
+
 from app.ui.services.prerender import STEMS_WAIT_S, Prerender
 
 
@@ -36,7 +38,7 @@ def test_server_dequeue_and_endpoint(monkeypatch, tmp_path):
     monkeypatch.setattr(srv, "_start_prerender_worker", lambda: None)
     prerender.reset()
     monkeypatch.setattr(prerender, "ServerIO", FakeIO)
-    body = srv.post_prerender(srv.PrerenderRequest(items=[{"track_id": "t1", "bpms": [120]}, {"track_id": "unknown"}]))
+    body = asyncio.run(srv.post_prerender(srv.PrerenderRequest(items=[{"track_id": "t1", "bpms": [120]}, {"track_id": "unknown"}])))
     assert [i["track_id"] for i in body["items"]] == ["t1"] and body["items"][0]["stems"] is False
     prerender.reset()
 
