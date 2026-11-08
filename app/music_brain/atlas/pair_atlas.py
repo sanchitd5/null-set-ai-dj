@@ -305,6 +305,20 @@ def _bar_rms(ch: np.ndarray, sr: int, anchor: float, bar: float, n: int) -> List
     return out
 
 
+def _rap_at(vocals: np.ndarray, sr: int, vox: List[list]) -> List[float]:
+    """server.py _pair_features' style scan: up to 8 chunks of 20 s of voice, the starts that rap."""
+    import librosa
+    from app.music_brain.matching import techniques
+
+    chunks = [(s, min(e, s + 20)) for s, e in vox if e - s >= 12]
+    out = []
+    for s, e in chunks[::max(1, len(chunks) // 8)][:8]:
+        y = librosa.resample(vocals[int(s * sr):int(e * sr)], orig_sr=sr, target_sr=16000)
+        if techniques.vocal_style(y, 16000)["rap"]:
+            out.append(round(s, 1))
+    return out
+
+
 def track_features(t: dict) -> dict:
     """The expensive per-track part (audio reads), cached in the atlas by track_sig."""
     from app.music_brain.matching import techniques
@@ -347,6 +361,8 @@ def track_features(t: dict) -> dict:
         bars[name] = _bar_rms(y[:, 0], sr, anchor, bar, n)
         step = max(1, int(round(sr / 11025)))
         low[name] = y.mean(axis=1)[::step]
+        if name == "vocals":
+            f["rap_at"] = _rap_at(y.mean(axis=1), sr, f["vox"])
     f["bars"] = bars
     smap = techniques.stem_map(low, 11025, phrases)
     f["grooves"] = [list(x) for x in techniques.full_groove_runs(smap)]
@@ -491,12 +507,13 @@ def _score_a(a: str) -> Tuple[str, Dict[str, dict], List[dict]]:
         entry_t = bl["entry"] if bl and bl.get("ok") else (tb.phrase_boundaries_8bar[0] if tb.phrase_boundaries_8bar else 0.0)
         # techniques: riff over rap, full mashup, learned moves; learned_pick for the recipe
         xlo, xhi = max(0.0, fa["duration"] - 90), fa["duration"] - 10
+        rap_at = fb.get("rap_at") or []
         pf = techniques.PairFeatures(
             bpm_a=fa["bpm"], bpm_b=fb["bpm"], key_a=fa["key"], key_b=fb["key"],
             stems_a=stems[0], stems_b=stems[1], famous_a=bool(_W["fame"].get(a, {}).get("famous")),
             vocal_a_exit=share(va, xlo, xhi),
-            vocal_b_entry=share(vb, 0, min(fb["duration"], 60)),
-            b_rap=None, a_grooves=[tuple(x) for x in fa["grooves"]],
+            vocal_b_entry=max([share(vb, t, t + 30) for t in rap_at] or [share(vb, 0, min(fb["duration"], 60))]),
+            b_rap=bool(rap_at) if stems[1] else None, b_rap_at=rap_at, a_grooves=[tuple(x) for x in fa["grooves"]],
             a_breakdowns=[tuple(x) for x in fa["breakdowns"]], keylock=_W["keylock"], exit_window=(xlo, xhi))
         ranked = techniques.rank(pf, learned)
         # /api/learned/pick's own key score (server side: techniques.camelot_score), as the console gets it
@@ -895,7 +912,7 @@ def _build(cache_dir: Path, out: Optional[Path], full: bool, workers: Optional[i
     feats, redo = {}, []
     for t in tracks:
         f = old_tracks.get(t["id"])
-        if f and f.get("sig") == track_sig(t) and "bars" in f:
+        if f and f.get("sig") == track_sig(t) and "bars" in f and (f["bars"] is None or "rap_at" in f):
             feats[t["id"]] = f
         else:
             redo.append(t)
