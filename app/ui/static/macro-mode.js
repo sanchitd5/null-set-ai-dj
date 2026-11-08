@@ -371,9 +371,16 @@
       combo: (x, y) => title(x).localeCompare(title(y)),
       yours: (x, y) => (y.created || 0) - (x.created || 0),
     };
-    return MACRO_GROUPS.map(([kind, label]) => ({
-      kind, label, items: (list || []).filter((m) => m && m.name && macroKind(m) === kind).sort(order[kind]),
-    })).filter((g) => g.items.length);
+    const rows = (list || []).filter((m) => m && m.name);
+    // atlas combos: one section per move (owner 2026-10-11: "separate RIFF x RAP section, all AI mixes atlas sections")
+    const moves = ["merge", "riff", "mashup", "double_drop", "drop_swap"];
+    const moveOf = (m) => (moves.includes(m.move) ? m.move : null);
+    return MACRO_GROUPS.flatMap(([kind, label]) => {
+      const items = rows.filter((m) => macroKind(m) === kind).sort(order[kind]);
+      if (kind !== "combo") return [{ kind, label, items }];
+      return moves.map((mv) => ({ kind, move: mv, label: `AI MIX · ${COMBO_LABEL[mv]}`, items: items.filter((m) => moveOf(m) === mv) }))
+        .concat([{ kind, label, items: items.filter((m) => !moveOf(m)) }]);
+    }).filter((g) => g.items.length);
   }
 
   // $Up3R-M@SS!V3-M0v3 (super-move.js) in the MACRO list itself (owner 2026-10-01: "should be a macro button itself"):
@@ -708,6 +715,9 @@
         const start = ui.el("ap-start-btn");
         if (start) start.click();
       }
+      // the set's genre is the macro's first song's (after the start click: a fresh start resets the scene)
+      const pin = host.mod.autopilot && host.mod.autopilot.pinScene;
+      if (pin && loaded.steps[0]) await pin(loaded.steps[0].a);
       say(`PLAY MACRO: ${loaded.name}, step ${loaded.steps[cursor].n} of ${loaded.steps.length} next`);
     }
     // AUTO MIX / Shift+M with a macro selected: load the step's B on the other deck (normal load

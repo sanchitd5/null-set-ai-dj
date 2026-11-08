@@ -249,6 +249,11 @@ function mulberry(seed) { return () => { seed = (seed + 0x6D2B79F5) >>> 0; let t
     assert.deepStrictEqual(groups[0].items.map((m) => m.name), ["studied-set-a", "studied-a-3"], "whole sets first");
     assert.deepStrictEqual(groups[1].items.map((m) => m.name), ["chain-2-x", "chain-10-x"], "chains numeric");
     assert.deepStrictEqual(groups[2].items.map((m) => m.title), ["A", "B"], "combos by title");
+    // atlas combos split by move, RIFF x RAP its own section; move-less combos stay in COMBOS
+    const byMove = mm.macroGroups([{ name: "combo-m", title: "M", kind: "combo", move: "merge" },
+      { name: "combo-r", title: "R", kind: "combo", move: "riff" }, { name: "combo-seed-x", title: "S", kind: "combo" }]);
+    assert.deepStrictEqual(byMove.map((g) => g.label), ["AI MIX · MERGE", "AI MIX · RIFF x RAP", "COMBOS"]);
+    assert.deepStrictEqual(byMove[1].items.map((m) => m.name), ["combo-r"]);
     assert.strictEqual(mm.setToMacro("x", [{ a: SEVEN, b: LANE8 }], "My Set").title, "My Set");
     assert.ok(!("title" in mm.setToMacro("x", [{ a: SEVEN, b: LANE8 }])));
   }

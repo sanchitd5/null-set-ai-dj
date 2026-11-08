@@ -1036,8 +1036,8 @@ def _short(name: str, n: int = 18) -> str:
 
 def seed_macros(doc: dict, cache_dir: Path, top: int = 20, n_chains: int = 4) -> List[dict]:
     """Ready-made macros from the atlas (owner): the seed combos (combo-seed-*, merge -> hold with
-    their holdPlan answer, or the refusing gate noted), the top `top` combo pairs by works
-    (combo-<A>-<B>, best move each) and `n_chains` chain macros (5-8 songs, chain-<k>).
+    their holdPlan answer, or the refusing gate noted), the top `top` combo pairs by works for
+    each combo move (combo-<A>-<B>) and `n_chains` chain macros (5-8 songs, chain-<k>).
     Only macros this function wrote before (source atlas*) are overwritten."""
     from app.music_brain.atlas import macros as mc
 
@@ -1067,7 +1067,11 @@ def seed_macros(doc: dict, cache_dir: Path, top: int = 20, n_chains: int = 4) ->
     # studied combos get their own macros (studied_combos.write_macros)
     combos = sorted((p for p in doc["pairs"].values() if p.get("combo") and p["combo"] != "studied"),
                     key=lambda p: (-p["works"], p["a"], p["b"]))
-    for p in combos[:top]:
+    per_move: Counter = Counter()      # top `top` per combo move: one MACRO section each (owner, 2026-10-11)
+    for p in combos:
+        per_move[p["combo"]] += 1
+        if per_move[p["combo"]] > top:
+            continue
         lab = COMBO_LABEL.get(p["combo"], p["combo"])
         write({"name": f"combo-{_short(tr[p['a']]['name'])}-{_short(tr[p['b']]['name'])}", "source": "atlas:combo",
                "steps": [step_of(p, f"atlas combo {lab} (works {p['works']})")]})

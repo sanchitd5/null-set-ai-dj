@@ -129,6 +129,13 @@ def kind_of(m: dict) -> str:
     return "yours"
 
 
+def move_of(m: dict) -> Optional[str]:
+    """An atlas combo macro's move (merge | riff | mashup | double_drop | drop_swap), from its steps."""
+    if kind_of(m) != "combo":
+        return None
+    return next((s.get("combo") for s in m.get("steps") or [] if isinstance(s, dict) and s.get("combo")), None)
+
+
 def song_label(name: str) -> str:
     """'Artist - Title' without upload noise ('(Official Audio)', '[Odd One Out]', lyric tags)."""
     from app.ui.services.track_identity import clean_identity
@@ -240,7 +247,7 @@ def list_macros(cache_dir: Optional[Path] = None) -> List[dict]:
                     title = normalize(m)["title"]
                 except ValueError:
                     title = m.get("name")
-            out.append({"name": m.get("name"), "title": title, "kind": kind_of(m), "version": m.get("version"),
+            out.append({"name": m.get("name"), "title": title, "kind": kind_of(m), "move": move_of(m), "version": m.get("version"),
                         "parent": m.get("parent"),
                         "source": m.get("source"), "created": m.get("created"), "songs": len(m.get("tracks") or []),
                         "steps": len(m.get("steps") or []), "tracks": m.get("tracks") or []})
