@@ -201,15 +201,45 @@
     pollTimer = root.setTimeout(poll, pollMs);
   }
 
-  // library rows: browser.js renders `<span class="aa row-art" data-ph="1" data-art="url|''">`; fill the visible ones
+  // library rows: browser.js renders `<span class="aa row-art" data-ph="1" data-art="url|''">`; fill the VISIBLE ones only.
+  // browser.js re-renders the whole list often (every analysis that lands), so: covers already decoded are set straight
+  // from `shown` (browser cache, no request); new ones load only when their row nears the viewport, at most ROW_FETCHES
+  // at a time, so 700 rows never become 700 parallel requests that starve the deck's audio fetch.
+  const ROW_FETCHES = 4;
+  const shown = new Set();                                      // urls decoded once (served from the HTTP cache after)
+  const queue = [];
+  let inFlight = 0;
+  function show(el, url) {
+    if (el.dataset.art !== url) return;                         // the row moved on to another url
+    el.querySelector("img").src = url;
+    delete el.dataset.ph;
+  }
+  function pump() {
+    while (inFlight < ROW_FETCHES && queue.length) {
+      const { el, url } = queue.shift();
+      if (!el.isConnected || el.dataset.art !== url) continue;  // re-rendered away before its turn
+      if (shown.has(url)) { show(el, url); continue; }
+      inFlight++;
+      decode(url).then(() => { shown.add(url); show(el, url); }, () => {})
+        .finally(() => { inFlight--; pump(); });
+    }
+  }
+  const seen = root.IntersectionObserver ? new root.IntersectionObserver((entries) => {
+    for (const e of entries) {
+      if (!e.isIntersecting) continue;
+      seen.unobserve(e.target);
+      const url = e.target.dataset.art;
+      if (url) queue.push({ el: e.target, url });
+    }
+    pump();
+  }, { rootMargin: "300px 0px" }) : null;
   function fillRows(rowsEl) {
-    const rows = rowsEl.querySelectorAll(".row-art[data-art]");
-    for (const el of rows) {
+    for (const el of rowsEl.querySelectorAll(".row-art[data-art]")) {
       const url = el.dataset.art;
       if (!url || el.dataset.done === url) continue;
       el.dataset.done = url;
-      const img = el.querySelector("img");
-      decode(url).then(() => { if (el.dataset.done === url) { img.src = url; delete el.dataset.ph; } }, () => {});
+      if (shown.has(url)) show(el, url);
+      else if (seen) seen.observe(el);
     }
   }
   root.AlbumArt.fillRows = fillRows;
