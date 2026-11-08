@@ -90,13 +90,43 @@ def has_art(track_id: str) -> bool:
     return _ID_RE.fullmatch(track_id or "") is not None and art_path(track_id).is_file()
 
 
+# {track_id: mtime ms of the 600 px cover}: one scandir of art/ on first use, then kept in step by _store,
+# so /api/tracks does zero syscalls per track (a stat per track on mergerfs was the slow part).
+_mt_lock = threading.Lock()
+_mt: Optional[dict] = None
+_mt_dir: Optional[Path] = None
+
+
+def invalidate_art_index() -> None:
+    global _mt
+    with _mt_lock:
+        _mt = None
+
+
+def _art_mtimes() -> dict:
+    global _mt, _mt_dir
+    d = art_dir()
+    with _mt_lock:
+        if _mt is None or _mt_dir != d:
+            m = {}
+            try:
+                with os.scandir(d) as it:
+                    for e in it:
+                        n = e.name
+                        if n.endswith(".jpg") and n.count(".") == 1 and e.is_file():
+                            m[n[:-4]] = e.stat().st_mtime_ns // 1_000_000
+            except OSError:
+                pass
+            _mt, _mt_dir = m, d
+        return _mt
+
+
 def art_url(track_id: str) -> Optional[str]:
     """Where a client fetches the cover, or None (keep the gradient). ?v= changes when the file does."""
-    if not has_art(track_id):
+    if _ID_RE.fullmatch(track_id or "") is None:
         return None
-    try:
-        v = art_path(track_id).stat().st_mtime_ns // 1_000_000
-    except OSError:
+    v = _art_mtimes().get(track_id)
+    if v is None:
         return None
     return f"/api/tracks/{track_id}/art?size=600&v={v:x}"
 
@@ -412,6 +442,13 @@ def _store(track_id: str, raw: bytes, meta: dict) -> None:
     _atomic(art_path(track_id, 160), small)
     _atomic(_meta_path(track_id), json.dumps(meta).encode())
     _atomic(art_path(track_id, 600), big)         # last: art_url appears only when everything is in place
+    try:
+        mt = art_path(track_id).stat().st_mtime_ns // 1_000_000
+    except OSError:
+        mt = None
+    with _mt_lock:
+        if _mt is not None and mt is not None:
+            _mt[track_id] = mt
 
 
 def _store_negative(track_id: str, want: Ident, retry_s: float) -> None:
