@@ -524,10 +524,22 @@ def scan_configured_library():
     return {"tracks": tracks, "count": len(tracks)}
 
 
-@app.get("/api/tracks/{track_id}/analysis")
-def get_analysis(track_id: str):
-    path = _track_path(track_id)
+@_bounded
+def _analysis_miss(track_id: str, path) -> dict:
+    """Full analysis (decode + compute): holds one HEAVY_SLOTS seat so a burst of misses can't starve the pool."""
     return {**analyze_track(path).to_dict(), "art_url": album_art.art_url(track_id)}
+
+
+@app.get("/api/tracks/{track_id}/analysis")
+async def get_analysis(track_id: str):
+    from starlette.concurrency import run_in_threadpool
+    from app.music_brain.analysis import analyzer
+
+    path = await run_in_threadpool(_track_path, track_id)
+    hit = await run_in_threadpool(analyzer.cached_analysis, path)   # stored record: ~ms, no heavy slot
+    if hit is not None:
+        return {**hit.to_dict(), "art_url": album_art.art_url(track_id)}
+    return await _analysis_miss(track_id, path)
 
 
 ANALYSIS_BATCH_MAX = 50
