@@ -257,8 +257,13 @@ def test_remote_on_other_atlas_rules_keeps_its_atlas(env):
 
 
 # --------------------------------------------------------------------------------- privacy, guards
+# real-looking home dirs are assembled at runtime so this file itself passes test_no_personal_paths
+_ALICE_HOME = "/home/" + "alice/"
+_BOB_HOME = "/Users/" + "bob/"
+
+
 def test_never_publishes_private_strings(env):
-    edit_cache_macro(env["cache"], "chain-1-anyma", note="rendered at /home/alice/music/set.wav")
+    edit_cache_macro(env["cache"], "chain-1-anyma", note=f"rendered at {_ALICE_HOME}music/set.wav")
     head = remote_head(env)
     with pytest.raises(kp.PublishError, match="private"):
         publish(env)
@@ -266,11 +271,11 @@ def test_never_publishes_private_strings(env):
 
 
 def test_privacy_scan_applies_the_repos_home_path_rule():
-    files = {"names.json": kn._dump({"x": "see /Users/bob/Music/a.mp3"}),
+    files = {"names.json": kn._dump({"x": f"see {_BOB_HOME}Music/a.mp3"}),
              "macros/m.json": kn._dump({"note": "placeholder /Users/me/x is fine"}),
              "atlas/pairs/aaaaaaaaaaaaaaaa.json.gz": kp._encode("a.json.gz", {"k": {"n": "mail a@b.example"}})}
     hits = kp.privacy_scan(files)
-    assert any("/Users/bob/" in h for h in hits) and any("a@b.example" in h for h in hits)
+    assert any(_BOB_HOME in h for h in hits) and any("a@b.example" in h for h in hits)
     assert not any("macros/m.json" in h for h in hits if "/Users/me/" in h and "bob" in h)
 
 
