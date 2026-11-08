@@ -318,12 +318,14 @@ var autopilotCore = (function () {
   // but 9 > 7 > 4 > 2 still drained a set. DJ/06 Energy Management & Dynamics holds a valley to ~3
   // below the peak, and only as a deliberate reset, so landing 3+ under the last 6 songs' peak is refused.
   const PEAK_WINDOW = DJ_CONFIG.PEAK_WINDOW, MAX_BELOW_PEAK = DJ_CONFIG.MAX_BELOW_PEAK;
-  // o: {relaxed, force, songs (played so far), rawDelta (raw_b - raw_a), recent (measured levels played, playing last), reset (a dip was asked for)}
+  // o: {relaxed, romance (bedtime mode: implies relaxed, never a rise, not even on force), force, songs (played so far), rawDelta (raw_b - raw_a), recent (measured levels played, playing last), reset (a dip was asked for)}
   function energyStepOk(cur, nxt, o = {}) {
-    const step = nxt - cur, lim = (o.relaxed ? 1 : 2) + (o.force && step > 0 ? 1 : 0); // force widens rises only, never falls
+    const relaxed = !!(o.relaxed || o.romance);
+    const step = nxt - cur, lim = (relaxed ? 1 : 2) + (o.force && step > 0 ? 1 : 0); // force widens rises only, never falls
     if (o.rawDelta != null && Math.abs(o.rawDelta) < ENERGY_MIN_RAW) {
       return { ok: true, step, why: `energy ${cur} -> ${nxt} (measured almost the same)` };
     }
+    if (o.romance && step > 0) return { ok: false, step, why: `energy rises ${cur} -> ${nxt} in a romance set (it only winds down)` };
     let arc = o.songs != null ? (o.songs < WARMUP_SONGS ? "build" : "")
       : o.setPos != null && o.setPos < 0.3 ? "build" : o.setPos != null && o.setPos > 0.85 ? "cool" : "";
     // A set already playing low energy (sufi, relaxing) isn't "building" just
@@ -335,11 +337,24 @@ var autopilotCore = (function () {
     if (Math.abs(step) > lim) return { ok: false, step, why: `energy ${step > 0 ? "jump" : "drop"} ${cur} -> ${nxt} (max ${lim} a song)` };
     if (!o.force && arc === "build" && step < -1) return { ok: false, step, why: `energy falls ${cur} -> ${nxt} while the set is building` };
     if (!o.force && arc === "cool" && step > 1) return { ok: false, step, why: `energy rises ${cur} -> ${nxt} while the set is cooling down` };
-    if (step < 0 && o.recent && o.recent.length && !o.reset && !o.relaxed && arc !== "cool") {
+    if (step < 0 && o.recent && o.recent.length && !o.reset && !relaxed && arc !== "cool") {
       const peak = Math.max(cur, ...o.recent.slice(-PEAK_WINDOW).filter((v) => v != null && Number.isFinite(v)));
       if (peak > LOW_ENERGY_SET_MAX && peak - nxt > MAX_BELOW_PEAK) return { ok: false, step, why: `energy ${cur} -> ${nxt} drains the set: ${peak - nxt} below its recent peak ${peak}` };
     }
     return { ok: true, step, why: `energy ${cur} -> ${nxt}` };
+  }
+  // ROMANCE sleep timer (bedtime). Pure: o {minutes (0 = off), elapsedS (since the timer was set), remainingS (of the
+  // playing song), fadeS} -> {phase "off"|"running"|"final", leftS, fadeInS (final: wait this long, then fade), fadeS
+  // (the fade length: SLEEP_FADE_S, or what is left of the song when that is shorter)}. While running, the set goes on;
+  // in final no next song is booked, the playing song plays out and its last fadeS seconds fade to silence.
+  const SLEEP_FADE_S = DJ_CONFIG.SLEEP_FADE_S;
+  function sleepPlan(o) {
+    const lim = (o.minutes || 0) * 60;
+    if (!(lim > 0)) return { phase: "off", leftS: null, fadeInS: null, fadeS: 0 };
+    const leftS = Math.max(0, lim - o.elapsedS);
+    if (leftS > 0) return { phase: "running", leftS, fadeInS: null, fadeS: 0 };
+    const rem = Math.max(0, o.remainingS || 0), fadeS = Math.min(o.fadeS == null ? SLEEP_FADE_S : o.fadeS, rem);
+    return { phase: "final", leftS: 0, fadeInS: rem - fadeS, fadeS };
   }
   // "Let the song finish" gate (research/notes/dj-hidden-practices.md item 10); the same rule as
   // app/music_brain/energy.at_target (golden vectors): out of the warm-up (or a low set), the last
@@ -497,7 +512,7 @@ var autopilotCore = (function () {
       if (!why && o.rejected) { const k = o.rejected(r.b); if (k) { why = k.why || String(k); measured = true; } }
       let fit = 0;
       if (!why && Number.isFinite(o.energyA) && Number.isFinite(r.b_level)) {
-        const v = energyStepOk(o.energyA, r.b_level, { songs: o.songs, relaxed: o.relaxed, recent: o.recentLevels });
+        const v = energyStepOk(o.energyA, r.b_level, { songs: o.songs, relaxed: o.relaxed, romance: o.romance, recent: o.recentLevels });
         if (v.ok) fit = 1; else { why = v.why; measured = true; }
       }
       const row = { track_id: r.b, name, bpm: r.b_bpm, duration: r.b_duration, works: r.works || 0, plan: r.plan || null,
@@ -734,8 +749,20 @@ var autopilotCore = (function () {
     // Never a hard cut (user): a cut the matcher or the AI plan proposed is a 4-bar Bass Swap.
     let cutRewrite = false;
     if (!keepCut && /\bcut\b/i.test(String(recipe || ""))) { recipe = "Bass Swap"; vocalShort = true; cutRewrite = true; }
-    // Mashup -> transition beats every other move when the pair fits (user)
-    const mashupOk = lockS.beat && stemsBoth && !!o.mashupFits && !!o.mashupFits();
+    // ROMANCE (bedtime): only the gentle recipes play. Any other recipe (mashup, drops, cuts, rolls, stutters,
+    // beat jumps, backspin, punchline snaps) becomes a long blend when the blend plan is clean (else a Bass Swap),
+    // key-safe like any other.
+    let romanceRewrite = null;
+    const romanceOk = new Set(["Long Blend", "Basic Blend", "Blend", "EQ Blend", "Filter Transition", "Echo Out",
+      "Reverb Transition", "Breakdown Transition", "Bass Swap", "Stem Bridge", "Tempo Bridge", "Genre Bridge"]);
+    if (o.romance && !romanceOk.has(String(recipe || ""))) {
+      const want = lockS.beat && blend && blendClean !== false && !vocalRule ? "Long Blend" : "Bass Swap";
+      const safe = keySafeRecipe(want, o.keyScore);
+      romanceRewrite = { from: recipe, to: safe };
+      recipe = safe; vocalShort = safe === "Bass Swap";
+    }
+    // Mashup -> transition beats every other move when the pair fits (user); never in romance
+    const mashupOk = !o.romance && lockS.beat && stemsBoth && !!o.mashupFits && !!o.mashupFits();
     // SET ENERGY (owner, energy-recipe-choice): o.energy = {band, setLevel, mashupKind, cleanBoth, levels}
     // re-orders Mashup / Bass Swap / Long Blend by the set's energy. Only when the console passes it
     // (never for a forced / stored / liked step, never under the Punjabi profile at its full level);
@@ -744,7 +771,7 @@ var autopilotCore = (function () {
     const eOn = !!o.energy && !o.layer && lockS.beat && !(o.profile && o.profile.level === "full");
     if (!eOn) { if (mashupOk) recipe = "Mashup → Transition"; }
     else {
-      const blendOpen = (recipe === "Bass Swap" || recipe === "Long Blend") && !vocalRule && !keyRewrite && !cutRewrite && !oneSong;
+      const blendOpen = (recipe === "Bass Swap" || recipe === "Long Blend") && !vocalRule && !keyRewrite && !cutRewrite && !romanceRewrite && !oneSong;
       // clean instrumental overlap: the blend plan measured no sung vocal on EITHER side (unknown is not clean)
       const cov = (v) => v != null && Number.isFinite(v) && v <= 0.15;
       const cleanBoth = !!blend && (blend.instrumental === true || (cov(blend.a_vocal_coverage) && cov(blend.b_vocal_coverage)));
@@ -754,6 +781,7 @@ var autopilotCore = (function () {
     }
     const out = { recipe, blend, dropLayer, blendClean, vocalShort, vocalCut, vocalRule, oneSong, stemsBoth, lockS, keyRewrite, cutRewrite };
     if (energyPick) out.energyPick = energyPick;
+    if (romanceRewrite) out.romanceRewrite = romanceRewrite;
     if (o.profile) { out.profileCut = profileCut; out.quickCut = recipe === "Quick Cut"; }
     return out;
   }
@@ -1158,7 +1186,7 @@ var autopilotCore = (function () {
     tempoLockableAt, recipeKind, decideRecipe, planSkipReason, WINDOWS, playWindowFor, exitBounds, exitPick, exitTiming, exitHighPush, audibleEnd, entryClamp, SILENT_FLOOR,
     breakdownSpans, exitOutOfBreakdown, exitBreakdownPush, energyAtTarget, FINISH_MAX_S, forcedExit, forcedRecipe, forcedLine, forcedBooking,
     storedMove, vetRefusal, vetStep, badPairOf, pairKey, mashupGate, mashupBars,
-    setEnergy, arcAt, windowLevel, energyRecipeChoice, pickEntryByEnergy, ARC_TARGET, SET_RECENT, SET_ARC_W, SET_RELAXED_MAX, SET_HIGH_MIN, ENERGY_MATCH_TOL,
+    sleepPlan, SLEEP_FADE_S, setEnergy, arcAt, windowLevel, energyRecipeChoice, pickEntryByEnergy, ARC_TARGET, SET_RECENT, SET_ARC_W, SET_RELAXED_MAX, SET_HIGH_MIN, ENERGY_MATCH_TOL,
     entryLines, entryRoomS, fireDelayMs, mainDropOf, pickEntryLine, seededRng, hashSeed, introRecipe, INTRO_RECIPES, ENTRY_QUIET_FRAC, ENTRY_DRUMS_MIN, ENTRY_OVERLAP_BARS,
     lowBandBars, lowLevelAt, ENTRY_LOW_MIN, ENTRY_HANDOVER_BARS, LOW_BAND_HZ };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
@@ -2329,7 +2357,7 @@ function createAutopilotEngine({ host, ai }) {
     const energyNote = hint ? hint.note : null;
     const energyHook = hint ? hint.hook : null;
     if (energyNote === "dip") dipAsked = true;
-    const data = await ai.suggest({ set_id: setId, track_id: trackId, occasion: occasionWithBridge(opts), ...leadFields(opts), history: history.slice(-30), avoid: avoid.slice(-6), queue: queueNames(), set_position: setPos, set_mode: setMode(), relaxed: !!host.session.relaxed, energy_note: energyNote, energy_hook: energyHook, energy_history: playedEnergies(), lookahead: !!opts.lookAhead,
+    const data = await ai.suggest({ set_id: setId, track_id: trackId, occasion: occasionWithBridge(opts), ...leadFields(opts), history: history.slice(-30), avoid: avoid.slice(-6), queue: queueNames(), set_position: setPos, set_mode: setMode(), relaxed: !!host.session.relaxed, mood: romanceOn() ? "romance" : "", energy_note: energyNote, energy_hook: energyHook, energy_history: playedEnergies(), lookahead: !!opts.lookAhead,
         variety_run: varietyRun().run, variety_genre: varietyRun().genre,
         tempo_target: bridgeTarget(opts.lookAhead), tempo_note: bridgeNote(opts.lookAhead) || null,
         elapsed_seconds: setStartedAt ? (host.clock.now() - setStartedAt) / 1000 : null, punjabi_profile: punjabiMode(),
@@ -2565,12 +2593,19 @@ function createAutopilotEngine({ host, ai }) {
   const RELAXED_OCCASION = /\b(relax(ed|ing)?|chill(ed|out|ing)?|calm|lounge|dinner|study(ing)?|focus|sleep(y|ing)?|sunday|morning|coffee|caf[eé]|spa|yoga|meditat\w*|ambient|wind(ing)?\s*down|background|mellow|sunset|laid[\s-]*back|easy\s*listening|low[\s-]*key|unwind\w*)\b/i;
   function isRelaxedOccasion(o) { return !!o && RELAXED_OCCASION.test(o) && !HIGH_ENERGY_OCCASION.test(o); }
   // host.session ({relaxed}) is owned by the host
+  // ROMANCE (bedtime vibes, ap-romance-toggle): a mood the brain reads on top of relaxed. It implies relaxed
+  // (everything relaxed does), the energy only winds down, long blends only, no mashup / drums / FX budget beyond
+  // soft filter + reverb, and the suggest / plan calls carry mood "romance".
+  function romanceOn() { return !!(host.session && host.session.romance); }
   function applySessionMood() {
-    const relaxed = isRelaxedOccasion(occasion);
+    const romance = ui.flag("ap-romance-toggle", false);
+    host.session.romance = romance;
+    const relaxed = romance || isRelaxedOccasion(occasion);
     host.session.relaxed = relaxed;
     const modeEl = ui.el("ap-mode");
     if (relaxed && modeEl && modeEl.value === "hybrid") modeEl.value = "long";
-    if (relaxed) apStatus(`"${occasion}" is a relaxed session → LONG mode, energy held, no sampler / fills / peak moves`);
+    if (romance) apStatus("ROMANCE: LONG mode, slow warm songs winding down, long smooth blends only, no sampler / fills / peak moves");
+    else if (relaxed) apStatus(`"${occasion}" is a relaxed session → LONG mode, energy held, no sampler / fills / peak moves`);
     return relaxed;
   }
   const HIGH_ENERGY_OCCASION = /\b(wedding|shaadi|sangeet|baraat|mehndi|reception|party|club\s*night|peak|festival|rave|birthday|bachelor(ette)?|new\s*year)\b/i;
@@ -3001,7 +3036,7 @@ function createAutopilotEngine({ host, ai }) {
     if (ev && Number.isFinite(ev.energy_a) && Number.isFinite(ev.energy_b)) {
       measuredById[currentId] = ev.energy_a; measuredById[nextId] = ev.energy_b;
       const verdict = autopilotCore.energyStepOk(ev.energy_a, ev.energy_b, {
-        relaxed: !!(host.session && host.session.relaxed), songs: history.length, force: forceJump, recent: playedEnergies(), reset: dipAsked,
+        relaxed: !!(host.session && host.session.relaxed), romance: romanceOn(), songs: history.length, force: forceJump, recent: playedEnergies(), reset: dipAsked,
         rawDelta: Number.isFinite(ev.energy_raw_a) && Number.isFinite(ev.energy_raw_b) ? ev.energy_raw_b - ev.energy_raw_a : null });
       if (!verdict.ok && waived) waive("energy gate", verdict.why);
       else if (!verdict.ok) {
@@ -3029,7 +3064,7 @@ function createAutopilotEngine({ host, ai }) {
     // while the next track loads. Rules-only if it fails or times out.
     // Stems on A and no peak moves: the plan may turn out skippable once B's stems and
     // the tempo lock are known (planSkipReason), so it is asked after the load below.
-    const peakElP = ui.el("ap-peak-toggle"), peakOnP = !peakElP || peakElP.checked;
+    const peakElP = ui.el("ap-peak-toggle"), peakOnP = !romanceOn() && (!peakElP || peakElP.checked);
     const deferPlan = !!(host.decks && host.decks[activeDeck] && host.decks[activeDeck].stems) && !peakOnP;
     // a forced plan (macro step / studied combo / FOLLOW SET) is the plan: no LLM re-pick
     let aiPlan = deferPlan || candidate.forced ? null : requestMindPlan(currentId, nextId, candidate);
@@ -3214,7 +3249,7 @@ function createAutopilotEngine({ host, ai }) {
       // PEAK MOVES: on top of the tempo-locked plan, an entry on B's first long
       // drop for DOUBLE DROP / DROP SWAP. The DJ mind decides whether to use it.
       const peakEl = ui.el("ap-peak-toggle");
-      if (host.mod.djMind && host.mod.djMind.planPeak && (!peakEl || peakEl.checked)) {
+      if (host.mod.djMind && host.mod.djMind.planPeak && !romanceOn() && (!peakEl || peakEl.checked)) {
         try {
           const r2 = await fetch("/api/blend/plan", {
             method: "POST",
@@ -3434,7 +3469,7 @@ function createAutopilotEngine({ host, ai }) {
       const energyA = Number.isFinite(measuredById[currentId]) ? measuredById[currentId] : data.a_level;
       const r = autopilotCore.rankAtlasBackups(data.partners || [], {
         aId: currentId, played: playedIds, recent: history, energyA, songs: history.length,
-        relaxed: !!(host.session && host.session.relaxed), recentLevels: playedEnergies(),
+        relaxed: !!(host.session && host.session.relaxed), romance: romanceOn(), recentLevels: playedEnergies(),
         spacing: (n) => (host.mod.artistSpacing ? host.mod.artistSpacing.spacingBlock(n, history, false) : null),
         rejected: (b) => autopilotCore.pairRejected(pairRejects, currentId, b, false, pendingCleared) });
       atlasBackup = { for: currentId, played: playedIds.length, energyA: measuredById[currentId], list: r.list, skipped: r.skipped,
@@ -3885,7 +3920,7 @@ function createAutopilotEngine({ host, ai }) {
     const decIn = {
       recipe, blend, layer: !!layer, aStems, bStems, aEff: aEffS, bBpm: sdS && sdS.bpm,
       tempoStemsBpm: sdS && sdS.tempoStems && sdS.tempoStems.bpm, keyScore: keyScoreS,
-      mashupFits: () => !!(odS && sdS && mashupFits(odS, sdS)),
+      mashupFits: () => !!(odS && sdS && mashupFits(odS, sdS)), romance: romanceOn(),
     };
     if (profLvl) decIn.profile = { level: profLvl, fallback: sceneProfile().PUNJABI_PROFILE.fallback_recipe };
     let setEn = null;
@@ -4452,6 +4487,7 @@ function createAutopilotEngine({ host, ai }) {
   }
 
   function mashupsOn() {
+    if (romanceOn()) return false;     // romance: no mashup chaos
     const t = ui.el("ap-mashup-toggle");
     return !t || t.checked;
   }
@@ -4575,6 +4611,7 @@ function createAutopilotEngine({ host, ai }) {
     if (!cur) { apStatus("Nothing loaded: load or play a song, or paste a seed URL."); return; }
     occasion = occasionInput ? occasionInput.value.trim() : "";
     applySessionMood();
+    sleepRestoreMaster(); sleepReset();
     resetSetState();
     active = true;
     activeDeck = cur.deck;
@@ -4601,6 +4638,7 @@ function createAutopilotEngine({ host, ai }) {
     if (!url) return startFromCurrent();              // no seed: continue from what's playing
     occasion = occasionInput ? occasionInput.value.trim() : "";
     applySessionMood();
+    sleepRestoreMaster(); sleepReset();
     // High-energy occasions run in QUICK mode unless the user picked a mode.
     const modeEl = ui.el("ap-mode");
     if (modeEl && modeEl.value === "hybrid" && HIGH_ENERGY_OCCASION.test(occasion)) {
@@ -4685,8 +4723,68 @@ function createAutopilotEngine({ host, ai }) {
     }, 10000);
   }
 
+  // ── ROMANCE sleep timer (bedtime) ────────────────────────────────────────
+  // ap-sleep-timer: Off / 15 / 30 / 45 / 60 / 90 min, counted from the moment it is set (or the set starts). When it
+  // runs out (and no blend is running) the autopilot stops booking (stop() cancels a booked next song), the playing
+  // song plays out and its last SLEEP_FADE_S seconds fade the master to silence (sleepPlan); then the deck stops.
+  const sleepSel = ui.el("ap-sleep-timer"), sleepLeftEl = ui.el("ap-sleep-left");
+  let sleepSetAt = 0, sleepFade = null;      // sleepFade: {deck, gain0} while the last song fades out
+  const sleepMinutes = () => (sleepSel ? Number(sleepSel.value) || 0 : 0);
+  const sleepShow = (txt) => { if (sleepLeftEl) sleepLeftEl.textContent = txt; };
+  function sleepReset() { sleepSetAt = host.clock.now(); }
+  function sleepRestoreMaster() {
+    const m = host.mod.masterOut;
+    if (sleepFade && m && m.gain && host.audio) {
+      m.gain.cancelScheduledValues(host.audio.currentTime);
+      m.gain.setValueAtTime(sleepFade.gain0, host.audio.currentTime);
+    }
+    sleepFade = null;
+  }
+  function sleepEnterFinal(plan) {
+    const keep = activeDeck, d = host.decks && host.decks[keep], m = host.mod.masterOut, ac = host.audio;
+    stop();                                   // no next booking; the song on the master plays on
+    apStatus(`Sleep timer: last song, fading out over ${Math.round(plan.fadeS)} s`);
+    sleepFade = { deck: keep, gain0: m && m.gain ? m.gain.value : 1 };
+    if (m && m.gain && ac && d) {
+      const t0 = ac.currentTime + plan.fadeInS;
+      m.gain.cancelScheduledValues(ac.currentTime);
+      m.gain.setValueAtTime(sleepFade.gain0, t0);
+      m.gain.linearRampToValueAtTime(0, t0 + plan.fadeS);
+    }
+  }
+  function sleepTick() {
+    const mins = sleepMinutes();
+    if (sleepFade) {
+      const d = host.decks && host.decks[sleepFade.deck];
+      const rem = d && d.buffer ? (d.buffer.duration - d._currentPosition()) / d._playbackRate() : 0;
+      sleepShow("fading out");
+      if (!d || !d.playing || rem <= 0.15) {
+        if (d && d.stopNow) d.stopNow();
+        sleepRestoreMaster();
+        sleepShow("");
+        apStatus("Sleep timer: the set has ended. Good night.");
+      }
+      return;
+    }
+    if (!active || !mins) { sleepShow(""); return; }
+    const d = host.decks && host.decks[activeDeck];
+    const rem = d && d.buffer ? (d.buffer.duration - d._currentPosition()) / d._playbackRate() : 0;
+    const plan = autopilotCore.sleepPlan({ minutes: mins, elapsedS: (host.clock.now() - sleepSetAt) / 1000, remainingS: rem });
+    if (plan.phase === "running") {
+      const s = Math.ceil(plan.leftS);
+      sleepShow(`${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")} left`);
+      return;
+    }
+    const other = host.decks && host.decks[stagingDeck()];
+    if (other && other.playing) { sleepShow("waiting for the blend"); return; }   // never cut a blend in half
+    sleepEnterFinal(plan);
+  }
+  if (sleepSel) sleepSel.addEventListener("change", sleepReset);
+  setInterval(sleepTick, 1000);
+  { const rt = ui.el("ap-romance-toggle"); if (rt) rt.addEventListener("change", () => { if (active) applySessionMood(); }); }
+
   function stop() {
-    if (host.session) host.session.relaxed = false;   // manual play: sampler etc. back
+    if (host.session) { host.session.relaxed = false; host.session.romance = false; }   // manual play: sampler etc. back
     if (watchdog) { clearInterval(watchdog); watchdog = null; }
     active = false;
     ready.length = 0;

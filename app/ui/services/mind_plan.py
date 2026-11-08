@@ -88,6 +88,13 @@ _MOVE_SOURCES = (
 # (move, recipe, step index): the step that says what the move does on the drop
 _REMIX_RECIPES = (("echo_freeze", "Echo Out", 3), ("filter_build", "Filter Transition", 3))
 
+# Romance (bedtime, mood "romance"): only gentle recipes and the two smooth moves. The recipe set twins
+# autopilot.js decideRecipe's romanceOk (the console rewrites anything else to a long blend).
+ROMANCE_RECIPES = frozenset({"Long Blend", "Basic Blend", "Blend", "EQ Blend", "Filter Transition", "Echo Out",
+                             "Reverb Transition", "Breakdown Transition", "Bass Swap", "Stem Bridge",
+                             "Tempo Bridge", "Genre Bridge"})
+ROMANCE_MOVES = ("hold", "preclear")
+
 
 def _one_line(text: str, n: int) -> str:
     from app.music_brain.matching.dj_knowledge import strip_examples
@@ -238,6 +245,12 @@ def _vocal_share(regions, t0: float, t1: float) -> float:
     return min(1.0, covered / (t1 - t0))
 
 
+def _gentle(candidates: list[dict]) -> list[dict]:
+    """Romance: the gentle-recipe candidates; if the matcher offered none, the list as is (never empty)."""
+    kept = [c for c in candidates if c.get("recipe") in ROMANCE_RECIPES]
+    return kept or candidates
+
+
 def build_facts(a: dict, b: dict, candidates: list[dict], ctx: dict) -> dict:
     """Compact, validated facts for one plan. `a`/`b` are analysis dicts.
 
@@ -289,8 +302,9 @@ def build_facts(a: dict, b: dict, candidates: list[dict], ctx: dict) -> dict:
             {"recipe": c["recipe"], "score": c["score"], "a_time": c["a_time"],
              "b_time": c["b_time"], "overlap_style": c.get("overlap_style", "standard"),
              "pre_clear_bars": c.get("pre_clear_bars", 8)}
-            for c in candidates[:3]
+            for c in (_gentle(candidates) if ctx.get("mood") == "romance" else candidates)[:3]
         ],
+        "mood": "romance" if ctx.get("mood") == "romance" else "",
         "now": round(now, 2),
         "entry": round(entry, 2),
         "window": [round(lo, 2), round(hi, 2)],
@@ -302,7 +316,7 @@ def build_facts(a: dict, b: dict, candidates: list[dict], ctx: dict) -> dict:
         "remix_used": [m for m in ctx.get("remix_used") or [] if m in REMIX_MOVES],
         "peak_moves": bool(ctx.get("peak_moves")),
         "big_moment_ok": bool(ctx.get("big_moment_ok")),
-        "layer_possible": layer_possible(a, b, ctx),
+        "layer_possible": layer_possible(a, b, ctx) and ctx.get("mood") != "romance",
     }
 
 
@@ -398,6 +412,9 @@ def validate_plan(raw: Any, facts: dict) -> dict:
             continue
         if kind in PEAK_MOVES and not facts.get("peak_moves"):
             drop(m, "peak moves are off")
+            continue
+        if facts.get("mood") == "romance" and kind not in ROMANCE_MOVES:
+            drop(m, "romance: only hold and preclear")
             continue
         try:
             at = _nearest(phrase_ts, float(m.get("at")), bar)
@@ -600,10 +617,16 @@ def build_prompt(facts: dict) -> str:
             continue
         if k == "fakeout" and not facts.get("big_moment_ok"):
             continue
+        if facts.get("mood") == "romance" and k not in ROMANCE_MOVES:
+            continue
         lines.append(f"  {k}: {v}")
     brief = grounding([c["recipe"] for c in facts["candidates"]])
     if brief:
         lines += ["", "DJ KNOWLEDGE (from the ./DJ wiki, follow it):", brief]
+    if facts.get("mood") == "romance":
+        lines += ["", "ROMANCE MODE (bedtime vibes): the listener wants it slow, warm and smooth. Prefer the longest, "
+                      "gentlest blend candidate; no drops, hype or effects. Use at most the moves listed, or none "
+                      "(an empty moves list is fine)."]
     lines += ["", "Pick 2-4 moves total. Reply with the JSON object only."]
     return "\n".join(lines)
 
