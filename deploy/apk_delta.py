@@ -26,7 +26,6 @@ import json
 import os
 import struct
 import sys
-import tempfile
 import zipfile
 
 MAGIC = b"NSDP1\0\0\0"
@@ -241,10 +240,12 @@ def publish(d, keep):
         out.append({"from_version_code": c, "from_sha256": sha256_file(old), "sha256": meta["sha256"],
                     "patch_sha256": sha256_file(pp), "patch_size": size, "size": meta["size"]})
     meta["patches"] = out
-    with tempfile.NamedTemporaryFile("w", dir=d, delete=False, suffix=".tmp") as t:
+    # plain open (umask mode, readable by the server): CT116's app dir maps new files to nobody, so root may not
+    # chmod a 0600 tempfile there
+    tmp = meta_path + ".tmp"
+    with open(tmp, "w") as t:
         json.dump(meta, t, indent=2)
-    os.chmod(t.name, 0o644)
-    os.replace(t.name, meta_path)
+    os.replace(tmp, meta_path)
     return out
 
 
