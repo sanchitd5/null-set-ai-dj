@@ -469,8 +469,14 @@ if (typeof DJ_CONFIG === "undefined" && typeof require === "function") require("
   // the smooth moves survive. Peak transitions, sub drops and remix moves all
   // lift or jolt the energy, so they turn into a ride.
   const RELAXED_MOVES = new Set(["ride", "hold", "preclear", "layer", "instant"]);
+  // Romance (bedtime): smoother still. No layer (two grooves at once) and no instant swap on a drop.
+  const ROMANCE_MOVES = new Set(["ride", "hold", "preclear"]);
   function decide(s) {
     const dec = decideAny(s);
+    if (s.romance && dec && !ROMANCE_MOVES.has(dec.action)) {
+      return { action: "ride", rule: "R", source: dec.source || "RULE",
+               why: `romance: no ${dec.action} - the record rides` };
+    }
     if (s.relaxed && dec && !RELAXED_MOVES.has(dec.action)) {
       return { action: "ride", rule: "R", source: dec.source || "RULE",
                why: `relaxed session: no ${dec.action} - the record rides` };
@@ -941,6 +947,7 @@ if (typeof DJ_CONFIG === "undefined" && typeof require === "function") require("
       remixUsed, remixCount: remixUsed.length, lastRemixPhrase,
       onAir: !!(d._onAir && d._onAir()),
       relaxed: !!(host.session && host.session.relaxed),
+      romance: !!(host.session && host.session.romance),
       aiMove,
       rate,
       // PEAK mode
@@ -1408,7 +1415,7 @@ if (typeof DJ_CONFIG === "undefined" && typeof require === "function") require("
   const toggleOn = (id) => { const el = ui.el(id); return !el || el.checked; };
   const mindOn = () => toggleOn("ap-mind-toggle");
   const aiOn = () => mindOn() && toggleOn("ap-ai-toggle");
-  const peakOn = () => mindOn() && toggleOn("ap-peak-toggle");
+  const peakOn = () => mindOn() && toggleOn("ap-peak-toggle") && !(host.session && host.session.romance);
   const esc = (t) => String(t == null ? "" : t).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   const clock = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, "0")}`;
 
@@ -1453,6 +1460,7 @@ if (typeof DJ_CONFIG === "undefined" && typeof require === "function") require("
           mashup_possible: !!win.mashupPossible,
           subdrop_last_track: subdropTrackIdx === trackIdx - 1,
           peak_moves: peakOn(),
+          mood: host.session && host.session.romance ? "romance" : "",
           big_moment_ok: !(plan && plan.style === "peak") &&
             !bigMomentBlock("fakeout", trackIdx, bigLog, BIG_MIN_BARS, nowS() + 60),
       }, { signal: ctrl.signal });

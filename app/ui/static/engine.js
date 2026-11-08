@@ -119,7 +119,7 @@
       get audio() { return getAudio(); },
       get decks() { return win.decks; },
       get state() { return win.state; },
-      get session() { return win.djSession || (win.djSession = { relaxed: false }); },
+      get session() { return win.djSession || (win.djSession = { relaxed: false, romance: false }); },
       mod: new Proxy({}, { get: (t, k) => (k in t ? t[k] : win[k]), set: (t, k, v) => { t[k] = v; win[k] = v; return true; } }),
       api: { fetch: (url, opts) => win.fetch(url, opts) },
       bus: {

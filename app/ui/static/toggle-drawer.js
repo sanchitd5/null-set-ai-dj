@@ -25,7 +25,7 @@
   };
   const LEARNED_PARENT = "ap-learned-toggle";
   // multi-way settings (a <select> in a label) the drawer moves and persists like a checkbox
-  const SELECT_IDS = ["ap-punjabi-profile"];
+  const SELECT_IDS = ["ap-punjabi-profile", "ap-sleep-timer"];
   // AI ACTIONS: the ones kept on the bar; the rest go under MORE ACTIONS
   const FAV_ACTIONS = ["mix", "merge_hold", "mashup", "riff"];
   const ACTION_GROUP = { mix: "TRANSITIONS", merge_hold: "TRANSITIONS", mashup: "TRANSITIONS", riff: "TRANSITIONS",
@@ -71,15 +71,16 @@
     try {
       const o = JSON.parse(raw), out = {};
       if (o && typeof o === "object") for (const [k, v] of Object.entries(o))
-        if (typeof v === "boolean" || (typeof v === "string" && SELECT_IDS.includes(k) && v.length <= 40)) out[k] = v;
+        if (k === "ap-sleep-timer") continue;   // never restored: a reload must not re-arm a sleep timer (the phone clears it at launch too)
+        else if (typeof v === "boolean" || (typeof v === "string" && SELECT_IDS.includes(k) && v.length <= 40)) out[k] = v;
       return out;
     } catch (e) { return {}; }
   }
   // a known multi-way setting keeps its string value; every other toggle is a boolean
   const withSaved = (saved, id, checked) => Object.assign({}, saved,
     { [id]: SELECT_IDS.includes(id) && typeof checked === "string" ? checked : !!checked });
-  // "on" for the group counts: a select is on unless it reads "off"
-  const isOn = (id, v) => (SELECT_IDS.includes(id) ? v != null && v !== "off" : !!v);
+  // "on" for the group counts: a select is on unless it reads "off" (the sleep timer's off is "0")
+  const isOn = (id, v) => (SELECT_IDS.includes(id) ? v != null && v !== "off" && v !== "0" : !!v);
   // which toggles to flip on restore: only saved ids that exist and differ -> [[id, checked]]
   function restorePlan(saved, current) {
     return Object.keys(saved).filter((id) => id in current && current[id] !== saved[id]).map((id) => [id, saved[id]]);

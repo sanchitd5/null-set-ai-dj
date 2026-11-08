@@ -1,5 +1,5 @@
-// GENERATED from dj-config 8b2038c - do not edit
-// config-hash: a1b5b8989bc4
+// GENERATED from dj-config 8b2038c-dirty - do not edit
+// config-hash: c5aff7e62acd
 (function (root) {
   "use strict";
   const values = {
@@ -90,6 +90,7 @@
     "PRE_CLEAR_BARS": {"instant": 0, "standard": 8, "slow": 16},
     "REPLAN_LEAD_S": 20.0,
     "RIFF_MAX_STRETCH": 0.15,
+    "SLEEP_FADE_S": 60.0,
     "STEM_BOOKING_WINDOW_S": 45,
     "STEM_FILL_CHUNK_S": 240,
     "STEM_HOLD_EDGE_S": 0.02,
@@ -124,6 +125,6 @@
   };
   root.DJ_CONFIG = Object.freeze(values);
   root.DJ_CONFIG_LIVE = Object.freeze(live);
-  root.DJ_CONFIG_META = Object.freeze({ sha: "8b2038c", hash: "a1b5b8989bc4" });
+  root.DJ_CONFIG_META = Object.freeze({ sha: "8b2038c-dirty", hash: "c5aff7e62acd" });
   if (typeof module !== "undefined" && module.exports) module.exports = root.DJ_CONFIG;
 })(typeof window !== "undefined" ? window : globalThis);
