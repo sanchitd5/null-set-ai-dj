@@ -152,7 +152,7 @@ class Prerender:
                         self._running = None                    # dropped candidate: let the render finish, then move on
                 elif st == "done":
                     it.tempo_at[b] = now
-                    self.tempo_rendered.append({"tid": tid, "bpm": b, "seconds": round(now - it.tempo_started[b], 1)})
+                    self.tempo_rendered.append({"tid": tid, "bpm": b, "seconds": round(now - it.tempo_started.get(b, now), 1)})   # item re-created mid-render: no start
                     self._running = None
                 elif st.startswith("error"):
                     it.tempo_err[b] = st
