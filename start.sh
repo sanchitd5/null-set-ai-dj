@@ -26,6 +26,8 @@
 # Settings live in .env (LLM_BACKEND, MLX_MODEL, MLX_PORT, OLLAMA_MODEL,
 # OMNI_MODEL, OMNI_PORT, OMNI_MAX_SEQS). The ear is optional: without its venv the
 # hold loop uses the DSP rules. Without mlx (not Apple Silicon) the app falls back to Ollama.
+# Linux / CUDA: set OMNI_SERVER_URL (and OMNI_MODEL) to a running llama-server that serves
+# the Qwen3-Omni GGUF; this script then starts only the app and points both roles at it.
 set -uo pipefail
 
 cd "$(dirname "$0")"
@@ -157,7 +159,14 @@ if [[ "${LLM_BACKEND:-auto}" != "ollama" && "$(uname -m)" == "arm64" ]] && "$PY"
 fi
 RUN_EAR=0
 [[ -x "$OMNI_PY" ]] && RUN_EAR=1
-if (( SINGLE_OMNI && ! RUN_EAR )); then
+# OMNI_SERVER_URL: an OpenAI-compatible omni server that already runs elsewhere
+# (llama-server with the Qwen3-Omni GGUF on CUDA). Nothing is spawned here: the
+# app attaches to it for the picks and the ear, the same shape as --single-omni.
+REMOTE="${OMNI_SERVER_URL:-}"; REMOTE="${REMOTE%/}"; REMOTE="${REMOTE%/v1}"
+if [[ -n "$REMOTE" ]]; then
+  RUN_LLM=0; RUN_EAR=0; SINGLE_OMNI=0
+fi
+if [[ -z "$REMOTE" ]] && (( SINGLE_OMNI && ! RUN_EAR )); then
   if (( SINGLE_OMNI_ASKED )); then
     echo "--single-omni needs the mlx-vlm venv at $OMNI_PY (or set OMNI_PY)" >&2
     exit 1
@@ -204,7 +213,11 @@ start_ear() {
 start_app() {
   # The ear always follows this script's omni server. With --single-omni the
   # app's decision LLM points at that same server and model.
-  if (( SINGLE_OMNI )); then
+  if [[ -n "$REMOTE" ]]; then
+    MLX_SUPERVISED=1 MLX_URL="$REMOTE" MLX_MODEL="$OMNI_MODEL" \
+      OMNI_BASE_URL="$REMOTE/v1" OMNI_MODEL="$OMNI_MODEL" \
+      "$PY" -m uvicorn app.ui.server:app --port "$PORT" "${UVICORN_ARGS[@]}" >>"$LOG_APP" 2>&1 &
+  elif (( SINGLE_OMNI )); then
     MLX_SUPERVISED=1 MLX_PORT="$OMNI_PORT" MLX_MODEL="$OMNI_MODEL" \
       OMNI_BASE_URL="http://127.0.0.1:$OMNI_PORT/v1" OMNI_MODEL="$OMNI_MODEL" \
       "$PY" -m uvicorn app.ui.server:app --port "$PORT" "${UVICORN_ARGS[@]}" >>"$LOG_APP" 2>&1 &
@@ -260,12 +273,16 @@ stream app "$LOG_APP" "32"
 (( RUN_LLM )) && stream llm "$LOG_LLM" "36"
 (( RUN_EAR )) && stream ear "$LOG_EAR" "35"
 
-if (( SINGLE_OMNI )); then
+if [[ -n "$REMOTE" ]]; then
+  say "remote model: $OMNI_MODEL at $REMOTE makes the decisions AND runs the live ear (nothing started here)"
+elif (( SINGLE_OMNI )); then
   say "single model: $OMNI_MODEL makes the decisions AND runs the live ear (no separate text model)"
 else
   (( RUN_LLM )) && start_llm || say "llm: not started (not Apple Silicon / no mlx_lm / LLM_BACKEND=ollama) - the app falls back to Ollama"
 fi
-(( RUN_EAR )) && start_ear || say "ear: not started (no $OMNI_PY) - the hold loop uses the DSP rules"
+if [[ -z "$REMOTE" ]]; then
+  (( RUN_EAR )) && start_ear || say "ear: not started (no $OMNI_PY) - the hold loop uses the DSP rules"
+fi
 start_app
 
 # ---- wait until usable, then open the console --------------------------------

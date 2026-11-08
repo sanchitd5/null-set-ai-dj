@@ -19,6 +19,7 @@ Env:
   MLX_SUPERVISED 1 = start.sh runs mlx_lm.server as a coupled child: wait and attach, never spawn
   MLX_MODEL     mlx-community/Qwen3-30B-A3B-Instruct-2507-4bit
   MLX_PORT      8081
+  MLX_URL       http://127.0.0.1:MLX_PORT  (with MLX_SUPERVISED=1: a remote llama-server)
   OLLAMA_MODEL  gemma3:27b      (fallback model)
   OLLAMA_URL    http://localhost:11434
 """
@@ -39,7 +40,8 @@ from typing import Optional
 
 MLX_MODEL = os.environ.get("MLX_MODEL", "mlx-community/Qwen3-30B-A3B-Instruct-2507-4bit")
 MLX_PORT = int(os.environ.get("MLX_PORT", "8081"))
-MLX_URL = f"http://127.0.0.1:{MLX_PORT}"
+# MLX_URL: with MLX_SUPERVISED=1, any OpenAI-compatible server (llama-server on CUDA).
+MLX_URL = os.environ.get("MLX_URL", f"http://127.0.0.1:{MLX_PORT}").rstrip("/")
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "gemma3:27b")
 OLLAMA_KEEP_ALIVE = "2h"
