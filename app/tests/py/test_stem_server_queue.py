@@ -99,7 +99,8 @@ def test_queue_survives_a_restart(tmp_path):
     assert split2.order[0] == c                                 # deck first; the interrupted one starts over
     assert sorted(split2.order) == sorted([a, b, c])
     assert _wait(lambda: srv2.jobs.get(jc.job) is not None and srv2.jobs[jc.job].status == "done")
-    assert srv2.jobs[ja.job].status == "done" and srv2.jobs[jb.job].status == "done"   # same job ids
+    # same job ids; the last of the three may still be running when jc is done, so wait for it too
+    assert _wait(lambda: all(srv2.jobs.get(j.job) is not None and srv2.jobs[j.job].status == "done" for j in (ja, jb)))
     assert _wait(lambda: json.loads(s.state.read_text())["jobs"] == [])
     split.gate.set()
 
