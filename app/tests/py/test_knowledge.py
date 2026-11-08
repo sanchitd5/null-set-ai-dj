@@ -120,13 +120,13 @@ def test_old_macros_folder_migrates_once(tmp_path):
     assert set(mc.stored(cache)) == {"fri"}
 
 
-# sha256[:16] of each file the JSON-era code (main at b81c005, stores as JSON files) exported from
+# sha256[:16] of each file (.gz shards: of the decompressed payload) the JSON-era code (main at b81c005, stores as JSON files) exported from
 # the cache _json_era_cache builds; meta.json with its rules hash normalised (pair_atlas.py is a
 # rule file, so the hash moves with any edit to it).
 JSON_ERA_EXPORT = {
     "atlas/meta.json": "614bf8f0fb67d664",
-    "atlas/pairs/aaaaaaaaaaaaaaaa.json.gz": "199f19308bf92d60",
-    "atlas/pairs/bbbbbbbbbbbbbbbb.json.gz": "67e3296d89799a5f",
+    "atlas/pairs/aaaaaaaaaaaaaaaa.json.gz": "ecee9857c744f38a",
+    "atlas/pairs/bbbbbbbbbbbbbbbb.json.gz": "df65d44af8a38ad7",
     "genre_labels.json": "014eb9c7742e5ea0",
     "learned_techniques.json": "3d2265e1e21392a6",
     "macros/chain-1-anyma.json": "8048dd7b7e59b23f",
@@ -162,6 +162,7 @@ def _json_era_cache(root):
 
 
 def test_export_from_the_db_is_byte_identical_to_the_json_era(tmp_path):
+    import gzip
     import hashlib
     import re
     cache = _json_era_cache(tmp_path / "home")
@@ -171,6 +172,10 @@ def test_export_from_the_db_is_byte_identical_to_the_json_era(tmp_path):
     for p in sorted(out.rglob("*")):
         if p.is_file():
             b = p.read_bytes()
+            if p.name.endswith(".gz"):
+                # gzip framing depends on the zlib build (zlib vs zlib-ng, Python version); the payload
+                # is what the JSON era exported byte for byte, so that is what is hashed
+                b = gzip.decompress(b)
             if p.name == "meta.json":
                 b = re.sub(rb'"rules": "[0-9a-f]+"', b'"rules": "RULES"', b)
             got[str(p.relative_to(out))] = hashlib.sha256(b).hexdigest()[:16]
