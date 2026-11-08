@@ -85,6 +85,37 @@ def evict_tempo_sets(cache_dir: Path, max_bytes: Optional[int], protect: Iterabl
     return {"before": before, "after": total, "removed": removed}
 
 
+TMP_MAX_AGE_S = 3600.0
+SWEEP_EVERY_S = 1800.0
+
+
+def sweep_tmp(cache_dir: Path, running: Iterable[str] = (), max_age_s: float = TMP_MAX_AGE_S,
+              now: Optional[float] = None) -> dict:
+    """Delete `*.tmp` render dirs (orphans of a render that died with the process) whose mtime is older
+    than max_age_s. A dir whose key is in `running` (a live or queued render) is never touched, and the
+    mtime test also spares a render that wrote to it recently."""
+    now = time.time() if now is None else now
+    running = set(running)
+    removed = []
+    try:
+        entries = list(Path(cache_dir).iterdir())
+    except OSError:
+        entries = []
+    for d in entries:
+        if d.suffix != ".tmp" or d.stem in running:
+            continue
+        try:
+            if not d.is_dir() or now - d.stat().st_mtime < max_age_s:
+                continue
+            size = _size(d)
+        except OSError:
+            continue
+        shutil.rmtree(d, ignore_errors=True)
+        if not d.exists():
+            removed.append({"key": d.stem, "bytes": size})
+    return {"removed": removed}
+
+
 _run_lock = threading.Lock()
 _last_run = 0.0
 
@@ -100,11 +131,25 @@ def run_async(reason: str = "render") -> None:
     threading.Thread(target=_run, args=(reason,), daemon=True, name="keylock-evict").start()
 
 
+def start_periodic(every_s: float = SWEEP_EVERY_S) -> threading.Thread:
+    """Sweep + evict now and every `every_s` (otherwise a long-lived server only sweeps after a render)."""
+    def loop():
+        while True:
+            _run("periodic")
+            time.sleep(every_s)
+
+    t = threading.Thread(target=loop, daemon=True, name="keylock-sweep")
+    t.start()
+    return t
+
+
 def _run(reason: str) -> None:
     try:
         cap = max_bytes_from_env()
         with keylock._lock:
             busy = [k for k, v in keylock._jobs.items() if v == "running"]
+        for r in sweep_tmp(keylock.KEYLOCK_DIR, running=busy)["removed"]:
+            log.info("tmp_sweep key=%s bytes=%d reason=%s", r["key"], r["bytes"], reason)
         res = evict_tempo_sets(keylock.KEYLOCK_DIR, cap, protect=busy)
         for r in res["removed"]:
             log.info("cache_evict key=%s bytes=%d age_s=%d reason=%s", r["key"], r["bytes"], r["age_s"], reason)

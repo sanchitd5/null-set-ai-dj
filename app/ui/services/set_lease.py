@@ -70,7 +70,10 @@ class LeaseStore:
         self.path = Path(path)
         self.clock = clock
         self.log = log or _session_log
-        self._lock = threading.Lock()
+        self._lock = threading.Lock()            # state only: never held across I/O
+        self._io_lock = threading.Lock()         # one file writer at a time
+        self._ver = 0
+        self._written = 0
         self._data = self._load()
 
     # -- io
@@ -87,12 +90,33 @@ class LeaseStore:
         return {"current": cur if isinstance(cur, dict) and cur.get("id") else None,
                 "taken_over": [t for t in data.get("taken_over") or [] if isinstance(t, dict)][-MAX_TAKEN:]}
 
-    def _save(self) -> None:
+    def _snap(self):
+        """(version, json text) of the state. Caller holds self._lock; memory only, no I/O."""
+        self._ver += 1
+        return self._ver, json.dumps(self._data, indent=1)
+
+    def _flush(self, snap, defer: bool = False) -> None:
+        """Write a `_snap()` to disk, NEVER under self._lock (Gate.allows runs on the event loop for every
+        /api request and takes that lock; an fsync on mergerfs took up to 1 s). Writers serialise on
+        _io_lock and a snapshot older than the last one written is dropped, so the file only moves forward.
+        defer: write from a short thread, for a caller that must not wait for the disk (the 15 s beat)."""
+        if defer:
+            threading.Thread(target=self._flush, args=(snap,), daemon=True, name="lease-write").start()
+            return
+        ver, text = snap
+        with self._io_lock:
+            if ver <= self._written:
+                return
+            self._save(text)
+            self._written = ver
+
+    def _save(self, text: str) -> None:
+        """Atomic: temp file + fsync + rename."""
         self.path.parent.mkdir(parents=True, exist_ok=True)
         fd, tmp = tempfile.mkstemp(prefix=".set_lease-", dir=str(self.path.parent))
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
-                json.dump(self._data, f, indent=1)
+                f.write(text)
                 f.flush()
                 os.fsync(f.fileno())
             os.replace(tmp, self.path)
@@ -146,7 +170,8 @@ class LeaseStore:
                 return None, self.conflict(cur, holder)
             old = self._data["current"]
             lease = self._data["current"] = self._new(client, device_name, holder, now)
-            self._save()
+            snap = self._snap()
+        self._flush(snap)
         if old:
             self.log("set_lease", action="lapsed", client=old.get("client"), device=old.get("device_name"),
                      since=old.get("started"))
@@ -162,20 +187,22 @@ class LeaseStore:
             if old:
                 self._data["taken_over"] = (self._data["taken_over"] + [{"id": old["id"], "at": round(now, 3)}])[-MAX_TAKEN:]
             lease = self._data["current"] = self._new(client, device_name, holder, now)
-            self._save()
+            snap = self._snap()
+        self._flush(snap)
         self.log("set_lease", action="takeover", client=client, device=device_name, holder=holder.get("kind"),
                  previous=(prev or {}).get("device_name"), previous_client=(prev or {}).get("client"))
         return lease, prev
 
-    def beat(self, lease_id: str):
-        """(lease, None) renewed, or (None, 409 body). A lapsed lease nobody else took is revived."""
+    def beat(self, lease_id: str, defer: bool = False):
+        """(lease, None) renewed, or (None, 409 body). A lapsed lease nobody else took is revived.
+        defer: the file write goes to a thread, so an async route can call this without touching the disk."""
         with self._lock:
             now = self.clock()
             cur = self._data["current"]
             if cur and secrets.compare_digest(str(cur["id"]), str(lease_id)):
                 revived = now >= float(cur["deadline"])
                 cur["deadline"] = round(now + TTL_S, 3)
-                self._save()
+                snap = self._snap()
                 lease = dict(cur)
             else:
                 taken = any(secrets.compare_digest(str(t.get("id")), str(lease_id)) for t in self._data["taken_over"])
@@ -184,6 +211,7 @@ class LeaseStore:
                 if active:
                     body.update(holder=self.public(active), since=active.get("started"))
                 return None, body
+        self._flush(snap, defer)
         if revived:
             self.log("set_lease", action="revived", client=lease["client"], device=lease["device_name"])
         return lease, None
@@ -194,7 +222,8 @@ class LeaseStore:
             if not cur or not secrets.compare_digest(str(cur["id"]), str(lease_id)):
                 return False
             self._data["current"] = None
-            self._save()
+            snap = self._snap()
+        self._flush(snap)
         self.log("set_lease", action="release", client=cur.get("client"), device=cur.get("device_name"))
         return True
 
@@ -306,7 +335,7 @@ def _clean(req: LeaseRequest, holder: dict):
 
 
 @router.get("/api/set/lease")
-def get_lease():
+async def get_lease():                         # memory only (the lock is never held across I/O)
     return store().status()
 
 
@@ -329,8 +358,8 @@ def post_takeover(req: LeaseRequest, request: Request):
 
 
 @router.post("/api/set/lease/{lease_id}/beat")
-def post_beat(lease_id: str):
-    lease, refusal = store().beat(lease_id)
+async def post_beat(lease_id: str):            # no pool thread: the state moves in memory, the write is deferred
+    lease, refusal = store().beat(lease_id, defer=True)
     if refusal:
         return JSONResponse(refusal, status_code=409)
     return {"lease": LeaseStore.owned(lease)}

@@ -31,6 +31,7 @@ state_at(session, t), pair_plays(a, b), sessions_with(song).
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
 from pathlib import Path
@@ -290,19 +291,55 @@ def sync_session(session: str, cache_dir=None, labels=None, _conn_=None) -> dict
     return rep
 
 
+_synced: Dict[tuple, tuple] = {}        # (cache, db inode, session) -> _sync_sig at its last full sync
+
+
+def _sync_sig(sdir: Path) -> tuple:
+    """What sync_session reads, as stats only: events.jsonl, and each song folder's meta.json / steps.jsonl."""
+    def st(p: Path):
+        try:
+            s = p.stat()
+            return (s.st_mtime_ns, s.st_size)
+        except OSError:
+            return None
+
+    parts = [st(sdir / "events.jsonl")]
+    try:
+        with os.scandir(sdir / "songs") as it:
+            for e in sorted(it, key=lambda e: e.name):
+                if e.is_dir():
+                    f = Path(e.path)
+                    parts.append((e.name, st(f / "meta.json"), st(f / "steps.jsonl")))
+    except OSError:
+        parts.append(None)
+    return tuple(parts)
+
+
 def ingest_all(cache_dir=None) -> dict:
     """Index every session and set log under `cache_dir` (incremental: only what is new)."""
+    from app.music_brain import db
     from app.music_brain.analysis import genre_labels as gl
 
     cache = _cache(cache_dir)
     conn = _conn(cache, ingest=False)
     t0 = time.time()
     labels = gl.load(gl.path(cache))
-    rep = {"sessions": 0, "events": 0, "plays": 0, "set_logs": 0}
+    rep = {"sessions": 0, "events": 0, "plays": 0, "set_logs": 0, "skipped": 0}
+    try:
+        db_id = os.stat(cache / db.USER_DB).st_ino       # a replaced DB file forgets what was synced
+    except OSError:
+        db_id = None
     sroot = cache / "sessions"
     for d in sorted(sroot.iterdir()) if sroot.is_dir() else []:
         if (d / "events.jsonl").exists() or (d / "songs").is_dir():
+            # Unchanged since the last pass -> skip. Without this every GET /api/sessions re-read and
+            # re-upserted every meta.json / steps.jsonl of every set in one write transaction (115 s on prod).
+            sig, key = _sync_sig(d), (str(cache), db_id, d.name)
+            if _synced.get(key) == sig:
+                rep["skipped"] += 1
+                continue
             r = sync_session(d.name, cache, labels, conn)
+            _synced[key] = sig
             rep["sessions"] += 1
             rep["events"] += r["events"]
             rep["plays"] += r["plays"]
@@ -319,8 +356,10 @@ def rebuild(cache_dir=None) -> dict:
 
     cache = _cache(cache_dir)
     conn = _conn(cache, ingest=False)
+    for k in [k for k in _synced if k[0] == str(cache)]:
+        del _synced[k]
     sroot = cache / "sessions"
-    live = [d.name for d in sroot.iterdir()] if sroot.is_dir() else []
+    live =[d.name for d in sroot.iterdir()] if sroot.is_dir() else []
     with db.tx(conn):
         for s in live:
             for tbl in ("plays", "transitions", "moves", "events", "song_meta", "song_steps"):

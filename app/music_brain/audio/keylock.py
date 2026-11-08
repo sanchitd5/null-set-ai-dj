@@ -257,6 +257,11 @@ def _key(audio_hash: str, plan: dict) -> str:
 
 _jobs: Dict[str, str] = {}          # key -> "running" | "done" | "error: ..."
 _lock = threading.Lock()
+# rubberband is one core per stem at ~13x realtime and the box's 8 cores are shared with Demucs and the
+# request pool, so at most RENDER_SLOTS sets render at once; the rest queue (their job stays "running",
+# which is what callers poll). Uncapped, one tempo ramp started 7-9 renders per track.
+RENDER_SLOTS = 2
+_render_slots = threading.BoundedSemaphore(RENDER_SLOTS)
 
 
 def render(key: str, stems: Dict[str, str], plan: dict) -> None:
@@ -306,7 +311,8 @@ def ensure(audio_hash: str, stems: Dict[str, str], plan: dict) -> Tuple[str, str
 
     def work():
         try:
-            render(key, stems, plan)
+            with _render_slots:
+                render(key, stems, plan)
             state = "done"
         except Exception as exc:  # reported to the client; the normal transition runs instead
             state = f"error: {type(exc).__name__}: {str(exc)[:160]}"
@@ -390,7 +396,8 @@ def ensure_tempo(audio_hash: str, stems: Dict[str, str], native_bpm: float, targ
 
     def work():
         try:
-            render_tempo(key, stems, ratio)
+            with _render_slots:
+                render_tempo(key, stems, ratio)
             st = "done"
         except Exception as exc:
             st = f"error: {type(exc).__name__}: {str(exc)[:160]}"
