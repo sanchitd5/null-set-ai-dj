@@ -840,6 +840,7 @@
     </div>
     <span class="hud-label" id="ap-status">Paste a seed URL and an occasion to start.</span>
     <span class="hud-label" id="ap-punjabi-state"></span>
+    <span class="hud-label" id="ap-sleep-left" title="Sleep timer: time left"></span>
     <button type="button" class="chip" id="ap-bad-pair" title="Owner veto: the pair playing now is a vibe killer, never again (Shift+B)">BAD PAIR</button>
   </div>
 
@@ -890,6 +891,12 @@
       </label>
       <label class="hud-label" data-group="SCENE" title="Punjabi scene profile (research/notes/punjabi-original-sets.md, values GUESS): punjabi / bhangra / desi one scene with bollywood next door, era gate 4 decades, 45-90 s plays, a Quick Cut instead of an Echo Out, BPM folded x2 before the tempo gate. AUTO: both songs Punjabi -> full profile, one side -> cut handover only. ON: every transition. OFF: today's rules">
         PUNJABI <select id="ap-punjabi-profile" aria-label="Punjabi scene profile"><option value="auto" selected>auto</option><option value="on">on</option><option value="off">off</option></select>
+      </label>
+      <label class="hud-label" data-group="ROMANCE" title="Bedtime vibes: slow warm intimate songs, the energy only winds down, long smooth blends only (no mashups, drops, cuts, sampler or hype moves), minimal FX. Implies a relaxed session">
+        <input type="checkbox" id="ap-romance-toggle" /> ROMANCE
+      </label>
+      <label class="hud-label" data-group="ROMANCE" title="Sleep timer: when it runs out the playing song is the last one, it fades to silence over its tail, then the set stops. Counts from the moment you set it">
+        SLEEP <select id="ap-sleep-timer" aria-label="Sleep timer"><option value="0" selected>off</option><option value="15">15 min</option><option value="30">30 min</option><option value="45">45 min</option><option value="60">60 min</option><option value="90">90 min</option></select>
       </label>
       <label class="hud-label" title="Moves learned from studied DJ sets (the transition picks and the in-song moves below). Off: none of them play">
         <input type="checkbox" id="ap-learned-toggle" checked /> LEARNED

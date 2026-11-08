@@ -50,6 +50,10 @@ assert.deepStrictEqual(td.restorePlan(back, { "ap-merge-toggle": false }), [], "
 assert.deepStrictEqual(td.restorePlan({ "ap-gone": true }, { "ap-merge-toggle": true }), [], "a saved id not on the page is skipped");
 assert.deepStrictEqual(td.parseSaved("{not json"), {});
 assert.deepStrictEqual(td.parseSaved(JSON.stringify({ a: "yes", b: true })), { b: true });
+// the sleep timer is a known select (drawer + counts) but never restored: a reload must not re-arm it
+assert.deepStrictEqual(td.parseSaved(JSON.stringify({ "ap-sleep-timer": "30", "ap-punjabi-profile": "on" })), { "ap-punjabi-profile": "on" });
+assert.strictEqual(td.isOn("ap-sleep-timer", "0"), false, "sleep off reads off");
+assert.strictEqual(td.isOn("ap-sleep-timer", "30"), true);
 // a toggle added later: same classify path, lands in its own group
 assert(td.groupItems(items.concat([{ id: "ap-fresh", label: "FRESH", title: "", group: td.classify("ap-fresh", "fresh").group }]))
   .some((g) => g.name === "FRESH"));

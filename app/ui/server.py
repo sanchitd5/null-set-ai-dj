@@ -2386,6 +2386,9 @@ class AutopilotSuggestRequest(BaseModel):
     scene_anchor: str = Field(default="", max_length=80)
     # Relaxed session (autopilot.js RELAXED_OCCASION): picks never lift the energy.
     relaxed: bool = False
+    # Session mood: "romance" (bedtime vibes, autopilot.js ap-romance-toggle) or "" (none). Romance implies
+    # relaxed and also winds the energy down; any other value is ignored.
+    mood: str = Field(default="", max_length=20)
     # "dip": the set has sat near its loudness peak for a while, so ask for a
     # track that lets energy fall back before building again (set study rule 9).
     energy_note: Optional[str] = None
@@ -2853,7 +2856,8 @@ def _autopilot_suggest_impl(req: AutopilotSuggestRequest):
             history=req.history + req.avoid + req.queue[:6],
             set_position=set_position,
             set_mode=req.set_mode if req.set_mode in SET_MODES else "hybrid",
-            relaxed=bool(req.relaxed),
+            relaxed=bool(req.relaxed) or req.mood == "romance",
+            mood="romance" if req.mood == "romance" else "",
             meta=meta,
             genre=genre,
             history_display=history_display,
@@ -2914,6 +2918,7 @@ class MindPlanRequest(BaseModel):
     mashup_possible: bool = False
     subdrop_last_track: bool = False
     peak_moves: bool = False        # PEAK MOVES toggle: allow fakeout / peak_roll / beat_boost
+    mood: str = Field(default="", max_length=20)   # "romance": gentle recipes and moves only (mind_plan.py)
     big_moment_ok: bool = False     # browser's set-wide big-moment ledger allows one on A
 
 

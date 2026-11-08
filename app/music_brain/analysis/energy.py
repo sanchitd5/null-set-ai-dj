@@ -159,7 +159,7 @@ MAX_BELOW_PEAK = DJ.MAX_BELOW_PEAK
 def next_ok(cur: int, nxt: int, relaxed: bool = False, force: bool = False,
             songs: Optional[int] = None, set_pos: Optional[float] = None,
             raw_delta: Optional[float] = None, recent: Optional[list] = None,
-            reset: bool = False) -> dict:
+            reset: bool = False, romance: bool = False) -> dict:
     """May `nxt` follow `cur`? {ok, step, why}. The live rule is the console's
     autopilot.js energyStepOk(); this mirrors it exactly (golden vectors in
     app/tests/fixtures/rule_vectors.json check both).
@@ -171,13 +171,18 @@ def next_ok(cur: int, nxt: int, relaxed: bool = False, force: bool = False,
     the same, whatever the levels say. recent: measured levels of the songs played so
     far, playing one last; a fall that lands MAX_BELOW_PEAK+1 or more under their peak
     (last PEAK_WINDOW) is refused unless reset (a deliberate dip was asked for), the
-    session is relaxed, the set is in its cool-down or the peak is itself low."""
+    session is relaxed, the set is in its cool-down or the peak is itself low.
+    romance (bedtime mode): implies relaxed and the set never climbs, not even on the last-round
+    force: any rise is refused, a fall stays within RELAXED_STEP."""
     step = nxt - cur
+    relaxed = relaxed or romance
     base = RELAXED_STEP if relaxed else MAX_STEP
     # the last-round force only widens RISES: widening falls let 9 > 7 > 4 > 2 slide through
     lim = base + (1 if force and step > 0 else 0)
     if raw_delta is not None and abs(raw_delta) < ENERGY_MIN_RAW:
         return {"ok": True, "step": step, "why": f"energy {cur} -> {nxt} (measured almost the same)"}
+    if romance and step > 0:
+        return {"ok": False, "step": step, "why": f"energy rises {cur} -> {nxt} in a romance set (it only winds down)"}
     if songs is not None:
         arc = "build" if songs < WARMUP_SONGS else ""
     else:
@@ -225,10 +230,11 @@ def at_target(recent: Optional[list], songs: int) -> dict:
 
 def allowed_window(cur: int, relaxed: bool = False, songs: Optional[int] = None,
                    set_pos: Optional[float] = None, recent: Optional[list] = None,
-                   reset: bool = False) -> tuple:
+                   reset: bool = False, romance: bool = False) -> tuple:
     """(lo, hi): the levels next_ok accepts after `cur`, for the suggest prompt and filter."""
     ok = [n for n in range(1, 11)
-          if next_ok(cur, n, relaxed=relaxed, songs=songs, set_pos=set_pos, recent=recent, reset=reset)["ok"]]
+          if next_ok(cur, n, relaxed=relaxed, songs=songs, set_pos=set_pos, recent=recent, reset=reset,
+                     romance=romance)["ok"]]
     return (min(ok), max(ok)) if ok else (cur, cur)
 
 
