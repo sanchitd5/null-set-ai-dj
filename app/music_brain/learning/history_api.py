@@ -122,19 +122,44 @@ def sessions(cache_dir: Optional[Path] = None) -> List[dict]:
     else:
         ids = [d.name for d in sorted(root.iterdir(), reverse=True) if d.is_dir()] if root.is_dir() else []
     out = []
+    cache = str(_cache(cache_dir))
     for sid in ids:
         if not SESSION_RE.match(sid):
             continue
+        # A summary only changes when the session's log or song list does: reuse it by file stats
+        # (loading every event and song of every set per request was the rest of the 115 s).
+        sig = _summary_sig(root / sid)
+        hit = _summaries.get((cache, sid))
+        if hit and hit[0] == sig:
+            if hit[1]:
+                out.append(hit[1])
+            continue
         events = _events(sid, cache_dir, sync=False)
         songs = _metas(sid, cache_dir, sync=False)
-        if not events and not songs:
-            continue
-        ts = [e["t"] for e in events if _num(e.get("t")) is not None]
-        out.append({"id": sid, "songs": len(songs),
-                    "transitions": sum(1 for e in events if e.get("kind") == "track" and e.get("event") == "transition_start"),
-                    "start_t": min(ts) if ts else None, "end_t": max(ts) if ts else None,
-                    "first": songs[0].get("name") if songs else None})
+        row = None
+        if events or songs:
+            ts = [e["t"] for e in events if _num(e.get("t")) is not None]
+            row = {"id": sid, "songs": len(songs),
+                   "transitions": sum(1 for e in events if e.get("kind") == "track" and e.get("event") == "transition_start"),
+                   "start_t": min(ts) if ts else None, "end_t": max(ts) if ts else None,
+                   "first": songs[0].get("name") if songs else None}
+            out.append(row)
+        _summaries[(cache, sid)] = (sig, row)
     return out
+
+
+_summaries: Dict[tuple, tuple] = {}      # (cache, session) -> (_summary_sig, summary row | None)
+
+
+def _summary_sig(sdir: Path) -> tuple:
+    def st(p: Path):
+        try:
+            s = p.stat()
+            return (s.st_mtime_ns, s.st_size)
+        except OSError:
+            return None
+
+    return (st(sdir / "events.jsonl"), st(sdir / "songs"))
 
 
 def _move_of(x: dict, t0: float) -> dict:
