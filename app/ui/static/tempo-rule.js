@@ -14,12 +14,13 @@
 //    tempo are attached. Otherwise the transition is beatless (Stem Bridge /
 //    Echo Out): [[Beatmatching & Tempo]], [[Genre Bridge Playbook]].
 // Pure functions, node-testable (module.exports), browser global `tempoRule`.
+if (typeof DJ_CONFIG === "undefined" && typeof require === "function") require("./generated/dj_config.js");   // node: browsers load it via index.html
 (function (root) {
   "use strict";
 
-  const MAX_TEMPO_PCT_PER_BAR = 0.25;   // 1 % per 4 bars
-  const PITCH_RANGE_PCT = 8;            // console pitch fader (+-8 %)
-  const KEYLOCK_RANGE_PCT = 8;          // key-locked stems: past ~8 % the stretch smears; bigger gaps go Echo Out / Stem Bridge
+  const MAX_TEMPO_PCT_PER_BAR = DJ_CONFIG.MAX_TEMPO_PCT_PER_BAR;   // 1 % per 4 bars
+  const PITCH_RANGE_PCT = DJ_CONFIG.PITCH_RANGE_PCT;            // console pitch fader (+-8 %)
+  const KEYLOCK_RANGE_PCT = DJ_CONFIG.KEYLOCK_RANGE_PCT;          // key-locked stems: past ~8 % the stretch smears; bigger gaps go Echo Out / Stem Bridge
   const AUDIBLE_MIN = 0.05;             // crossfader side / volume gain floor
   const STILL_PCT = 0.05;               // below this a tempo change is no change
   const MIN_LEVEL_RAMP_BEATS = 1;       // EQ / volume / filter / crossfader

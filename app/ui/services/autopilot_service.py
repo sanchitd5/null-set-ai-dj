@@ -682,6 +682,7 @@ from app.music_brain.analysis.genre import family_jump as _family_jump  # noqa: 
 from app.music_brain.analysis.genre import MAX_ERA_GAP, era_gap  # noqa: E402
 from app.music_brain.analysis import scene_profile as _scene_profile  # noqa: E402
 from app.music_brain.analysis.genre import genre_scenes as _genre_scenes  # noqa: E402
+from app.music_brain.generated import dj_config as DJ  # noqa: E402
 
 # Scene continuity (owner: Anyma "Atoma" went to "EVIL x YOU (bjork X Melanie
 # Martinez MashMIX)"). A mashup / bootleg / "A x B" title inside a coherent
@@ -917,7 +918,7 @@ def _loads_repaired(body: str, max_fixes: int = 20) -> dict:
     return json.loads(body)
 
 
-GATE_WAIT_S = 240.0  # suggest / look-ahead give up after this long in the queue
+GATE_WAIT_S = DJ.PICK_TIMEOUT_MS / 1000  # suggest / look-ahead give up after this long in the queue
 
 
 def chat_raw(

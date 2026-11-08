@@ -21,6 +21,7 @@ from typing import List, Optional, Tuple
 
 from app.music_brain.analysis.analyzer import TrackAnalysis
 from app.music_brain.config import BARS_PER_PHRASE, BEATS_PER_BAR
+from app.music_brain.generated import dj_config as DJ
 from app.music_brain.analysis.genre import vibe_score
 from app.music_brain.analysis import scene_profile as _scene_profile
 from app.music_brain.matching.knowledge_parser import KnowledgeParser, TransitionRecipe
@@ -58,7 +59,7 @@ _SLOW_RECIPES = {
     "Reverb Transition", "Genre Bridge", "Tempo Bridge", "3-Deck Layering",
     "Stems Transition", "Instrumental Overlay", "Acapella Overlay",
 }
-PRE_CLEAR_BARS = {"instant": 0, "standard": 8, "slow": 16}
+PRE_CLEAR_BARS = DJ.PRE_CLEAR_BARS
 
 _CUT_RE = re.compile(r"\bcut\b", re.IGNORECASE)
 
@@ -148,9 +149,9 @@ def _parse_camelot(camelot: str) -> Tuple[int, str]:
 
 
 # Confidence below this on either key softens a clash (KeyEstimate.confidence).
-KEY_CONFIDENCE_MIN = 0.6
-UNCERTAIN_CLASH_SCORE = 0.5
-BYPASS_KEY_SCORE = 0.4  # key-agnostic recipes on a clashing pair: a penalty, never neutral (0.7 scored clashes 83-91)
+KEY_CONFIDENCE_MIN = DJ.KEY_CONFIDENCE_MIN
+UNCERTAIN_CLASH_SCORE = DJ.UNCERTAIN_CLASH_SCORE
+BYPASS_KEY_SCORE = DJ.BYPASS_KEY_SCORE  # key-agnostic recipes on a clashing pair: a penalty, never neutral (0.7 scored clashes 83-91)
 
 
 def is_key_clash(camelot_a: str, camelot_b: str) -> bool:
@@ -313,9 +314,9 @@ def _phrase_transition_window(track: TrackAnalysis, bars: int = 16) -> float:
 
 # How long both records actually play together, per overlap style: the vocal
 # collision window (instant swaps barely overlap, slow blends ride 4 phrases).
-OVERLAP_BARS = {"instant": 4, "standard": 2 * BARS_PER_PHRASE, "slow": 4 * BARS_PER_PHRASE}
+OVERLAP_BARS = DJ.OVERLAP_BARS
 # A non-stems recipe whose vocals collide this much is halved (decisive, not a nudge).
-VOCAL_CLASH_CUTOFF = 0.5
+VOCAL_CLASH_CUTOFF = DJ.VOCAL_CLASH_CUTOFF
 
 
 def vocal_overlap_penalty(

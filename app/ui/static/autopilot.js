@@ -7,6 +7,7 @@
 // Requires: window.decks, window.loadIntoDeck, setStatus (app.js + deck-controller.js).
 
 // Pure transition maths, no DOM / audio (node-checked: app/tests/js/autopilot_check.js).
+if (typeof DJ_CONFIG === "undefined" && typeof require === "function") require("./generated/dj_config.js");   // node: browsers load it via index.html
 var autopilotCore = (function () {
   const MASHUP_KINDS = new Set(["blend", "filter", "loop"]);
   // Stem blend length in real bars. barS = seconds per bar at A's live tempo,
@@ -123,7 +124,7 @@ var autopilotCore = (function () {
   // Clashing keys (Camelot < 0.8, CLAUDE.md s4): a tonal blend layers two harmonic
   // records for 16-32 bars. Only Echo Out / Breakdown / Stem Bridge route around it;
   // a Long Blend or Bass Swap becomes an Echo Out. keyScore null (unknown key): unchanged.
-  const KEY_SAFE_MIN = 0.6;      // below the KB's worst legal move (-2 hours, 0.6): only 2 hours with the letter flipped (0.3) and clashes (0) are rewritten
+  const KEY_SAFE_MIN = DJ_CONFIG.KEY_SAFE_MIN;      // below the KB's worst legal move (-2 hours, 0.6): only 2 hours with the letter flipped (0.3) and clashes (0) are rewritten
   function keySafeRecipe(recipe, keyScore) {
     if (keyScore == null || keyScore >= KEY_SAFE_MIN) return recipe;
     return /long blend|bass swap|drop swap/i.test(String(recipe || "")) ? "Echo Out" : recipe;
@@ -310,13 +311,13 @@ var autopilotCore = (function () {
   // app/tests/fixtures/rule_vectors.json): at most 2 levels a song (1 relaxed,
   // +1 on the last-round fallback); early in the set (< 30 %) it may not fall more
   // than 1, near the end (> 85 %) not rise more than 1. -> {ok, step, why}
-  const ENERGY_MIN_RAW = 0.1;      // raw 0-1: below this the two songs measure the same, whatever the levels say
-  const WARMUP_SONGS = 5;          // the set builds over its first songs; open-ended after (no known end)
-  const LOW_ENERGY_SET_MAX = 4;    // cur at or below this: the set is already playing low (sufi, relaxing) -- warmup's "build" assumption doesn't apply, don't force it up
+  const ENERGY_MIN_RAW = DJ_CONFIG.ENERGY_MIN_RAW;      // raw 0-1: below this the two songs measure the same, whatever the levels say
+  const WARMUP_SONGS = DJ_CONFIG.WARMUP_SONGS;          // the set builds over its first songs; open-ended after (no known end)
+  const LOW_ENERGY_SET_MAX = DJ_CONFIG.LOW_ENERGY_SET_MAX;    // cur at or below this: the set is already playing low (sufi, relaxing) -- warmup's "build" assumption doesn't apply, don't force it up
   // Cumulative fall (mirrors energy.py PEAK_WINDOW / MAX_BELOW_PEAK): per-step falls are capped
   // but 9 > 7 > 4 > 2 still drained a set. DJ/06 Energy Management & Dynamics holds a valley to ~3
   // below the peak, and only as a deliberate reset, so landing 3+ under the last 6 songs' peak is refused.
-  const PEAK_WINDOW = 6, MAX_BELOW_PEAK = 2;
+  const PEAK_WINDOW = DJ_CONFIG.PEAK_WINDOW, MAX_BELOW_PEAK = DJ_CONFIG.MAX_BELOW_PEAK;
   // o: {relaxed, force, songs (played so far), rawDelta (raw_b - raw_a), recent (measured levels played, playing last), reset (a dip was asked for)}
   function energyStepOk(cur, nxt, o = {}) {
     const step = nxt - cur, lim = (o.relaxed ? 1 : 2) + (o.force && step > 0 ? 1 : 0); // force widens rises only, never falls
@@ -762,11 +763,11 @@ var autopilotCore = (function () {
   // Arc by set position (the console's setPos = songs played / 10, capped at 1): warm-up < 0.1,
   // build < 0.3, peak <= 0.85, cool-down after (the same 0.3 / 0.85 lines as energyStepOk).
   // Targets on the 1-10 energy.py scale: GUESS numbers (DJ/06 set curves: warm-up low, peak high).
-  const ARC_TARGET = { "warm-up": 4, build: 6, peak: 8, "cool-down": 5 };
+  const ARC_TARGET = DJ_CONFIG.ARC_TARGET;
   const SET_RECENT = 4;                 // rolling window: the last 4 played levels, newest weighted most (4,3,2,1)
   const SET_ARC_W = 0.5;                // combined = 0.5 * arc target + 0.5 * rolling played level
   const SET_RELAXED_MAX = 5, SET_HIGH_MIN = 7;   // bands (owner): relaxed <= 5, high >= 7, middle = 6
-  const ENERGY_MATCH_TOL = 3;           // an option whose window level is > 3 off the set level is vetoed (GUESS)
+  const ENERGY_MATCH_TOL = DJ_CONFIG.ENERGY_MATCH_TOL;           // an option whose window level is > 3 off the set level is vetoed (GUESS)
   function arcAt(setPos) {
     if (setPos == null || !Number.isFinite(setPos)) return null;
     return setPos < 0.1 ? "warm-up" : setPos < 0.3 ? "build" : setPos <= 0.85 ? "peak" : "cool-down";
@@ -1081,7 +1082,7 @@ var autopilotCore = (function () {
   // have been fine 1-2 minutes on. The merge gate therefore WAITS (bounded) instead of deciding at once.
   const READY_MIN_GAP = 0.02;          // below 2 % the pitched mix locks; above it key-locked stems are needed
   const DEFER_MAX_S = 100;             // never hold a booking longer (the search watchdog fires at 150 s)
-  const DEFER_MIN_LEAD_S = 45;         // the booking needs this long before the earliest exit (preplan, plan, 15 s floor)
+  const DEFER_MIN_LEAD_S = DJ_CONFIG.DEFER_MIN_LEAD_S;         // the booking needs this long before the earliest exit (preplan, plan, 15 s floor)
   const PREFER_READY_JUMP = 1;         // a ready candidate may pass at most this many not-ready ones (taste still wins)
   const roundBpm = (b) => Math.round(b / 0.5) * 0.5;
   // Tempi a candidate may have to play at, so its key-locked sets are rendered ahead: the tempo A has
@@ -1324,8 +1325,8 @@ function createAutopilotEngine({ host, ai }) {
   //    lamps in sync and reuses the deck's own BiquadFilter nodes, so this
   //    module needs no direct AudioContext access.
   //
-  const LOW_KILL = -26;          // slider minimum, treated as -inf
-  const HIGH_SWEEP = -18;        // outgoing high shelf at the end of a blend
+  const LOW_KILL = DJ_CONFIG.EQ_KILL_DB;          // slider minimum, treated as -inf
+  const HIGH_SWEEP = DJ_CONFIG.EQ_HIGH_SWEEP_DB;        // outgoing high shelf at the end of a blend
   const runTimers = [];          // setTimeout / setInterval ids for this run
 
   function later(ms, fn) {
@@ -1346,7 +1347,7 @@ function createAutopilotEngine({ host, ai }) {
   // animate the knobs. Timer jitter used to move the bass swap off the beat
   // (crossfade analysis, fix 6).
   const XF_LOOKAHEAD_MS = 150;   // timers fire this early; audio lands exactly
-  const XF_CENTER_BOOST_DB = 1.5; // AI crossfader curve: fills the mid-blend dip (analysis fix 5)
+  const XF_CENTER_BOOST_DB = DJ_CONFIG.XF_CENTER_BOOST_DB; // AI crossfader curve: fills the mid-blend dip (analysis fix 5)
   let xT0 = null;                // audio time of the transition downbeat (null = timer mode)
   let xOffsetMs = 0;             // bar offset of the automation step being scheduled
 
@@ -4426,7 +4427,7 @@ function createAutopilotEngine({ host, ai }) {
     } catch (e) { return null; }
   }
 
-  const PREPLAN_WAIT_MS = 35000;
+  const PREPLAN_WAIT_MS = DJ_CONFIG.PREPLAN_WAIT_MS;
 
   function mergesOn() {
     if (host.session && host.session.relaxed) return false;

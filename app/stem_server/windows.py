@@ -21,12 +21,13 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 import numpy as np
+from app.music_brain.generated import dj_config as DJ
 
 SAMPLE_RATE = 44100
 ENCODER_DELAY = 1024        # ffmpeg native aac: initial_padding (verified by app/tests/py/test_stem_server.py)
 AAC_FRAME = 1024
 BITRATE = "256k"
-MAX_WINDOW_S = 600.0        # one request never encodes more than 10 min
+MAX_WINDOW_S = float(DJ.STEM_WINDOW_MAX_S)        # one request never encodes more than 10 min
 
 
 def sha256_file(path: Path | str) -> str:
