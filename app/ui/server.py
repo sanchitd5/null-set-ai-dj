@@ -3210,6 +3210,9 @@ app.include_router(_knowledge_router)
 from app.ui.services.app_crash_api import router as _app_crash_router  # noqa: E402 -- POST /api/app/crash (phone start-up crash report)
 
 app.include_router(_app_crash_router)
+from app.ui.services.learn_ingest_api import router as _learn_ingest_router  # noqa: E402 -- POST /api/mobile/learn (the phone's learn outbox)
+
+app.include_router(_learn_ingest_router)
 
 
 class _RevalidatingStatic(StaticFiles):

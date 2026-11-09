@@ -626,6 +626,12 @@ def publish(cache_dir: Optional[Path] = None, out: Optional[Path] = None, push: 
     branch = _branch()
     _ensure_remote(out, remote_url)
     gitdir = Path(_git(out, "rev-parse", "--absolute-git-dir"))
+    if not dry_run:
+        try:                        # what the phone learned rides on the atlas pairs; a build drops it, so put it back
+            from app.music_brain.learning import phone_learn
+            phone_learn.overlay(cache, log)
+        except Exception as exc:  # noqa: BLE001 -- the publish goes on without it
+            log(f"knowledge publish: phone evidence not applied: {type(exc).__name__}: {exc}")
     attempts = max(1, int(os.environ.get("DJ_ATLAS_ATTEMPTS", "3") or 3))
     if not _lock.acquire(blocking=False):
         raise PublishError("another publish is running")
