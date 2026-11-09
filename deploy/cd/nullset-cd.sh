@@ -169,6 +169,21 @@ if ! ff_out="$(g merge --ff-only "$target" 2>&1)"; then
 fi
 say "fast-forwarded ${head:0:9} -> $SHORT_SHA (rollback tag $tag)"
 
+# The knowledge folder is the private dj-atlas submodule (docs/engineering/ATLAS_REPO.md). Create it when it is
+# missing (first deploy after the split, a fresh checkout); NEVER `submodule update` an existing one: the server's
+# own publishes move it ahead of the pin, and an update would roll its learnings back.
+ATLAS_PATH="app/music_brain/knowledge"
+if [ -f "$APP_DIR/.gitmodules" ] && grep -q "path = $ATLAS_PATH" "$APP_DIR/.gitmodules" && [ ! -e "$APP_DIR/$ATLAS_PATH/.git" ]; then
+  atlas_url="${DJ_ATLAS_REMOTE_URL:-git@github.com:sanchitd5/dj-atlas.git}"
+  atlas_key="${DJ_ATLAS_SSH_KEY:-/root/.ssh/dj-atlas-deploy}"
+  g config "submodule.$ATLAS_PATH.url" "$atlas_url"
+  if GIT_SSH_COMMAND="ssh -i $atlas_key -o IdentitiesOnly=yes -o BatchMode=yes" run_owner git -C "$APP_DIR" submodule update --init -- "$ATLAS_PATH" >/dev/null 2>&1; then
+    say "knowledge submodule created from $atlas_url"
+  else
+    say "knowledge submodule could not be created from $atlas_url"; deploy_fail_atlas=1
+  fi
+fi
+
 smoke() {                                                             # $1 = epoch of the restart; checks the given services
   local since="$1" svc waited=0 code
   shift
@@ -194,6 +209,7 @@ smoke() {                                                             # $1 = epo
 restart_all() { local svc; for svc in "${services[@]}"; do systemctl restart "$svc" || return 1; done; }
 
 deploy_fail=""
+[ -n "${deploy_fail_atlas:-}" ] && deploy_fail="knowledge submodule missing"
 if [ "$need_pip" = 1 ]; then
   say "requirements.txt changed: pip install"
   run_owner "$VENV/bin/pip" install -r "$APP_DIR/requirements.txt" 2>&1 | tail -n 5 || deploy_fail="pip install failed"   # pipefail: pip's status wins
