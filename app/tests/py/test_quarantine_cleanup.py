@@ -50,10 +50,10 @@ def test_no_thread_of_its_own_and_runs_as_a_registered_job(tmp_path, monkeypatch
     reg = job_registry.Registry(tmp_path, lambda: now[0], spawn=lambda name, fn: fn(), environ={})
     jobs_builtin.register_builtin(reg)
     spec = reg._jobs["quarantine_cleanup"].spec
-    assert spec.kind == "periodic" and spec.interval_s == qc.INTERVAL_S and spec.run_at_start and not spec.idle_only
-    reg.tick()                                         # the startup run: no wait for a first interval, no thread
+    assert spec.schedule == "15 4 * * *" and not spec.idle_only
+    reg.tick()                                         # cron: nothing before the first fire, no thread
+    assert seen == []
+    now[0] = reg.view("quarantine_cleanup")["next_run"]
+    reg.tick()
     assert seen == [1] and reg.view("quarantine_cleanup")["last"]["status"] == "ok"
     assert {t.name for t in threading.enumerate()} == before
-    now[0] += qc.INTERVAL_S
-    reg.tick()
-    assert seen == [1, 1]

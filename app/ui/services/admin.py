@@ -12,6 +12,7 @@ leaves no trace. A device bearer token never reaches an admin route (403), nor d
     GET  /admin/jobs                    background jobs (job_registry.py): state, progress, controls
     GET  /api/admin/jobs, /api/admin/jobs/{name}, /api/admin/jobs/{name}/log?tail=n, /api/admin/idle
     POST /api/admin/jobs/{name}/pause|resume|cancel|run     (409 + code when refused)
+    PUT  /api/admin/jobs/{name}/schedule                    cron schedule, enabled, max_runtime_s, idle_only (422 bad_schedule)
     PUT  /api/admin/jobs/{name}/settings                    typed, validated (422 on a bad key or value)
 
 Every admin write is stored (actor, action, target, time) in the private user.db and the session log.
@@ -248,16 +249,47 @@ def _fmt_state(v) -> str:
     return "" if v is None else str(v)
 
 
+def _rel(ts, now: float) -> str:
+    """'in 5 min' / '3 h ago' for an epoch time."""
+    d = float(ts) - now
+    n, fut = abs(d), d >= 0
+    txt = f"{int(n)} s" if n < 90 else f"{int(n // 60)} min" if n < 5400 else f"{n / 3600:.1f} h" if n < 172800 else f"{int(n // 86400)} d"
+    return f"in {txt}" if fut else f"{txt} ago"
+
+
+def _hist_row(h: dict) -> str:
+    e = html.escape
+    dur = f" {_dur((h['ended'] or h['started']) - h['started'])}" if h.get("started") and h.get("status") != "skipped" else ""
+    return f"<li>{e(_t(h.get('started')))} {e(str(h.get('status') or ''))}{e(dur)} <span class=\"muted\">{e(str(h.get('summary') or '')[:120])}</span></li>"
+
+
+def _sched_form(v: dict) -> str:
+    e = html.escape
+    s = v["schedule"]
+    if not s["editable"]:
+        return ""
+    chk = lambda b: " checked" if b else ""   # noqa: E731
+    return (f'<form class="sched" data-job="{e(v["name"])}"><label>Cron (min hour day month weekday, server local time)'
+            f'<input type="text" name="schedule" value="{e(s["expr"] or "")}" placeholder="none" autocomplete="off" spellcheck="false"></label>'
+            f'<label>Max runtime, minutes (0 = no limit)<input type="number" name="max_min" min="0" max="10080" step="1" '
+            f'value="{int((s["max_runtime_s"] or 0) // 60)}"></label>'
+            f'<label class="chk"><input type="checkbox" name="enabled"{chk(s["enabled"])}> Enabled</label>'
+            f'<label class="chk"><input type="checkbox" name="idle_only"{chk(s["idle_only"])}> Only when idle</label>'
+            f'<button type="submit">Save schedule</button> <span class="msg muted" role="status"></span></form>')
+
+
 def _jobs_body() -> str:
     e = html.escape
     reg = _reg()
     idle = reg.idle()
+    now = reg.clock()
     reason = {"set_live": "a set is live", "grace": "a set just ended", "idle": "idle"}.get(idle.reason, idle.reason)
-    body = (f'<p>Server: <b>{e(reason)}</b> <span class="muted">(idle after {int(reg.grace_s)} s without a set)</span>'
+    body = (f'<p>Server: <b>{e(reason)}</b> <span class="muted">(idle after {int(reg.grace_s)} s without a set; '
+            f'cron times are server local time)</span>'
             + ("" if reg.enabled else ' <span class="muted">job runner off (DJ_JOBS=0)</span>') + "</p>")
     rows = []
     for v in reg.views():
-        n, c, last, p = e(v["name"]), v["controls"], v["last"], v["progress"]
+        n, c, last, p, sc = e(v["name"]), v["controls"], v["last"], v["progress"], v["schedule"]
         total = float(p.get("total") or 0)
         bar = f'<progress max="{total}" value="{float(p.get("done") or 0)}"></progress> ' if total > 0 else ""
         btns = "".join(
@@ -265,18 +297,33 @@ def _jobs_body() -> str:
             for act, label in (("run", "Run now"), ("pause", "Pause"), ("resume", "Resume"), ("cancel", "Cancel")) if c.get(act))
         sets = "<br>".join(f"{e(k)} = {e(str(x['value']))}" for k, x in v["settings"].items())
         err = f'<br><span class="muted">{e(str(last["error"]))}</span>' if last.get("error") else ""
+        dur = f" in {_dur(last['ended'] - last['started'])}" if last.get("ended") and last.get("started") else ""
+        nxt = (f'{e(_t(v["next_run"]))}<br><span class="muted">{e(_rel(v["next_run"], now))}</span>' if v["next_run"] else
+               '<span class="muted">not scheduled</span>' if not sc["expr"] else '<span class="muted">off</span>')
+        cr = f'<br><span class="muted">cron {e(sc["expr"])}</span>' if sc["expr"] else ""
+        hist = "".join(_hist_row(h) for h in v["history"])
+        hist = f"<details><summary>History ({len(v['history'])})</summary><ul>{hist}</ul></details>" if hist else ""
         rows.append(
-            f'<tr><td data-label="Job">{e(v["title"])}<br><span class="muted">{n} - {e(v["kind"])}{" - idle only" if v["idle_only"] else ""}</span></td>'
+            f'<tr><td data-label="Job">{e(v["title"])}<br><span class="muted">{n} - {e(v["kind"])}{" - idle only" if v["idle_only"] else ""}</span>{cr}</td>'
             f'<td data-label="State">{e(v["state"])}</td><td data-label="Progress">{bar}{e(str(p.get("note") or ""))}</td>'
-            f'<td data-label="Last run">{e(_fmt_state(last.get("status")))} {e(_t(last.get("ended")))}{err}</td><td data-label="Next run">{e(_t(v["next_run"]))}</td>'
-            f'<td data-label="Settings">{sets}</td><td>{btns}<a href="/api/admin/jobs/{n}/log?tail=100">log</a></td></tr>')
+            f'<td data-label="Last run">{e(_fmt_state(last.get("status")))} {e(_t(last.get("ended")))}{e(dur)}{err}{hist}</td>'
+            f'<td data-label="Next run">{nxt}</td>'
+            f'<td data-label="Settings">{sets}</td><td data-label="Actions">{btns}<a href="/api/admin/jobs/{n}/log?tail=100">log</a>'
+            f'{_sched_form(v)}</td></tr>')
     return body + ("<table><tr><th>Job</th><th>State</th><th>Progress</th><th>Last run</th><th>Next run</th>"
                    f"<th>Settings</th><th></th></tr>{''.join(rows)}</table>")
 
 
+_JOBS_CSP = "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'"
+_JOBS_HEAD = ('<style>form.sched{margin-top:8px}form.sched label{display:block;margin:6px 0}form.sched label.chk{display:flex;'
+              'align-items:center;gap:8px;min-height:44px}form.sched input[type=text],form.sched input[type=number]{width:100%;'
+              'max-width:24em}form.sched input[type=checkbox]{width:22px;height:22px;min-height:0}details ul{padding-left:18px;'
+              'margin:4px 0;font-size:13px}</style><script src="/admin-jobs.js" defer></script>')
+
+
 @router.get("/admin/jobs", response_class=HTMLResponse)
 def admin_jobs_page(email: str = Depends(require_admin)):
-    return _page("Jobs", _jobs_body(), email, refresh=3)
+    return _page("Jobs", _jobs_body(), email, refresh=0, head=_JOBS_HEAD, csp=_JOBS_CSP)
 
 
 @router.get("/api/admin/idle")
@@ -330,6 +377,21 @@ def admin_job_control(name: str, action: str, request: Request, email: str = Dep
     if "text/html" in request.headers.get("accept", ""):
         from fastapi.responses import RedirectResponse
         return RedirectResponse("/admin/jobs", status_code=303)
+    return view
+
+
+@router.put("/api/admin/jobs/{name}/schedule")
+def admin_job_schedule(name: str, values: dict, email: str = Depends(require_admin)):
+    """schedule (5-field cron, server local time; null = none), enabled, max_runtime_s, idle_only. 422 on a bad value."""
+    import json
+    from app.ui.services.job_registry import JobError
+    try:
+        view = _reg().set_schedule(name, values)
+    except JobError as exc:
+        return _job_err(exc)
+    except ValueError as exc:
+        return JSONResponse({"detail": str(exc), "code": "bad_schedule"}, status_code=422)
+    audit().add(email, "job_schedule", name, json.dumps(values, default=str)[:300])
     return view
 
 

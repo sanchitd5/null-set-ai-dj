@@ -1,10 +1,10 @@
 """The jobs that exist today, registered with the job runner (job_registry.py) at server startup.
 
-    sync_compact         periodic, 24 h: folds old op-log entries away (DJ_SYNC_KEEP_DAYS)
-    quarantine_cleanup   periodic, 24 h, also at start (it replaced its own thread)
+    sync_compact         cron "30 3 * * *": folds old op-log entries away (DJ_SYNC_KEEP_DAYS)
+    quarantine_cleanup   cron "15 4 * * *" (server local time); a fire missed while down runs once at startup
     lang_id              external: lang_service keeps its own worker; the page shows status and can pause / resume it
     knowledge_publish    external, observe only: the daily dj-atlas publish timer
-    graph_rebuild        manual: rebuilds graph.db from the atlas (run now from /admin/jobs); never automatic
+    graph_rebuild        manual: rebuilds graph.db from the atlas (run now from /admin/jobs); schedulable in the UI, off by default
     (private jobs)       whatever the builder registers through atlas_bridge.register_jobs
 """
 from __future__ import annotations
@@ -40,11 +40,12 @@ def _publish_status() -> dict:
 
 def register_builtin(reg: Registry) -> None:
     from app.music_brain import atlas_bridge
-    from app.ui.services import lang_service, quarantine_cleanup
+    from app.ui.services import lang_service
 
-    reg.register(JobSpec("quarantine_cleanup", "Quarantine cleanup", fn=_quarantine, kind="periodic",
-                         interval_s=quarantine_cleanup.INTERVAL_S, run_at_start=True))
-    reg.register(JobSpec("sync_compact", "Op-log compaction", fn=_sync_compact, kind="periodic", interval_s=86400))
+    reg.register(JobSpec("quarantine_cleanup", "Quarantine cleanup", fn=_quarantine, kind="manual",
+                         schedule="15 4 * * *"))
+    reg.register(JobSpec("sync_compact", "Op-log compaction", fn=_sync_compact, kind="manual",
+                         schedule="30 3 * * *"))
     reg.register(JobSpec("lang_id", "Language id backfill", kind="external", status_fn=lang_service.status,
                          pause_fn=lambda: lang_service.set_paused(True), resume_fn=lambda: lang_service.set_paused(False)))
     reg.register(JobSpec("knowledge_publish", "Knowledge publish timer", kind="external", status_fn=_publish_status))
