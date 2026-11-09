@@ -72,7 +72,10 @@ class Net {
     const signal = opts.signal;
     if (signal && signal.aborted) return Promise.reject(abortError());
     const headers = {};
-    for (const [k, v] of Object.entries(opts.headers || {})) headers[k.toLowerCase()] = v;
+    // a Headers instance (set-lease.js wraps fetch with one) has no own enumerable entries: iterate it
+    const hs = opts.headers || {};
+    const hEntries = typeof hs.forEach === "function" && typeof hs.entries === "function" ? [...hs.entries()] : Object.entries(hs);
+    for (const [k, v] of hEntries) headers[k.toLowerCase()] = v;
     let body = opts.body;
     let multipart = null;                 // a FormData body (the live ear's clip): encoded like the browser does
     if (body && typeof body !== "string" && !Buffer.isBuffer(body)) {
