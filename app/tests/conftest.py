@@ -159,14 +159,23 @@ def _private_library(tmp_path_factory, monkeypatch):
 
 # ---- needs_atlas: tests of the private atlas builder skip when the dj-atlas submodule is absent ----
 
+# test modules that read the DJ wiki (cookbook recipes, playbooks); with no wiki they skip as a whole
+_NEEDS_KB_WIKI = {"test_key_scoring.py", "test_knowledge_parser.py", "test_matcher_review.py", "test_match_genre.py",
+                  "test_mind_plan.py", "test_prompt_no_examples.py", "test_recipe_matcher.py", "test_scene_profile.py",
+                  "test_track_identity_and_knowledge.py"}
+
+
 def pytest_collection_modifyitems(config, items):
     """Tests marked needs_atlas skip, with the reason, when the dj-atlas builder is absent."""
     if atlas_bridge.AVAILABLE:
         return
     skip = pytest.mark.skip(reason=atlas_bridge.SKIP_REASON)
+    skip_kb = pytest.mark.skip(reason="needs_atlas: the DJ knowledge wiki (dj-atlas builder/kb/DJ) is not checked out")
     for item in items:
         if "needs_atlas" in item.keywords:
             item.add_marker(skip)
+        elif item.path.name in _NEEDS_KB_WIKI:
+            item.add_marker(skip_kb)
 
 
 @pytest.hookimpl(hookwrapper=True)
