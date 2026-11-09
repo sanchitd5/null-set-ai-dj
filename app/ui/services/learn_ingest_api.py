@@ -2,7 +2,7 @@
 middleware like every /api route).
 
     {"v": 1, "device_id", "device_name", "set_id", "items": [{"id", "kind", "at", "data"}]}     <= 100 items, <= 1 MB
-    kind: set_log | transition | bad_pair | like        (what each becomes: music_brain/learning/phone_learn.py)
+    kind: set_log | transition | bad_pair | like | yt_edges      (what each becomes: music_brain/learning/phone_learn.py)
     -> {"ok": true, "accepted": [ids], "duplicate": [ids], "rejected": [{"id", "why"}], "publish": bool}
 
 Idempotent: an item id seen before is "duplicate" and changes nothing, so the phone may resend freely.

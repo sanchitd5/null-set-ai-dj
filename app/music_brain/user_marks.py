@@ -64,6 +64,18 @@ def is_marked(kind: str, subject: str, cache_dir: Optional[Path] = None) -> bool
                                     (kind, subject)).fetchone() is not None
 
 
+def marks_of(kind: str, subjects: List[str], cache_dir: Optional[Path] = None) -> Dict[str, dict]:
+    """{subject: {data, t}} of the named subjects only (point lookups)."""
+    conn = _conn(cache_dir)
+    out: Dict[str, dict] = {}
+    for s in subjects:
+        _check(kind, s)
+        r = conn.execute("SELECT data, t FROM marks WHERE kind = ? AND subject = ?", (kind, s)).fetchone()
+        if r:
+            out[s] = {"data": json.loads(r[0]) if r[0] else {}, "t": r[1]}
+    return out
+
+
 def marks(kind: str, cache_dir: Optional[Path] = None) -> Dict[str, dict]:
     """{subject: {data, t}} of one kind, newest first."""
     return {s: {"data": json.loads(d) if d else {}, "t": t} for s, d, t in _conn(cache_dir).execute(

@@ -10,6 +10,9 @@ after each set, in small batches. Every item has an idempotent id (set id + item
     transition  one A -> B the phone played (landed / skipped): a private row (user DB, mark "phone_pair") that
                 `overlay` adds to the pair's `played` evidence in the atlas right away, and again after every
                 atlas build and before every publish (a build recomputes `played` without it)
+    yt_edges    YouTube's related / up-next list for one seed song: one private mark per edge seed -> related
+                (user DB, mark "yt_edge", subject "<seed yt id>><related yt id>") with a count, first / last time
+                and the best rank. The private graph builder reads these marks; nothing here is exported.
 
 Provenance (device id, name, set id, kind, time) of every item is its own mark ("learn_item"): private, in the
 user DB, never exported. Nothing here is a pair_atlas RULE_FILE, so the scored pairs stay valid. Items holding
@@ -26,13 +29,16 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 MARK_ITEM = "learn_item"
 MARK_PAIR = "phone_pair"
-KINDS = ("set_log", "transition", "bad_pair", "like")
+MARK_YT = "yt_edge"
+KINDS = ("set_log", "transition", "bad_pair", "like", "yt_edges")
 OUTCOMES = ("landed", "skipped")
 MAX_ITEMS = 100                         # per request
 KEEP_ITEMS = 50000                      # newest provenance marks kept
 KEEP_PAIRS = 50000
 ITEM_ID = re.compile(r"[A-Za-z0-9_.:-]{1,120}")
 SAFE_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
+YT_ID = re.compile(r"[A-Za-z0-9_-]{11}")
+MAX_YT_EDGES = 25
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 NAME_MAX = 300
 _lock = threading.Lock()
@@ -113,7 +119,63 @@ def _set_log(item: dict, d: dict, dev: dict, cache_dir: Path, save_set_log: Opti
     return {"ref": save_set_log(d)["set_log_id"]}
 
 
-_APPLY = {"transition": _transition, "bad_pair": _bad_pair, "like": _like, "set_log": _set_log}
+def _yt_edges(item: dict, d: dict, dev: dict, cache_dir: Path, **_) -> dict:
+    from app.music_brain import user_marks as um
+    from app.ui.services import pick_pool
+
+    seed, rel = d.get("seed"), d.get("related")
+    if not isinstance(seed, dict) or not isinstance(rel, list):
+        raise ValueError("yt_edges: seed must be an object and related a list")
+    if len(rel) > MAX_YT_EDGES:
+        raise ValueError(f"yt_edges: at most {MAX_YT_EDGES} related songs")
+    a_yt = seed.get("yt")
+    if not isinstance(a_yt, str) or not YT_ID.fullmatch(a_yt):
+        raise ValueError("yt_edges: seed.yt must be an 11 character video id")
+    a_id = _text(seed.get("id"), 64)
+    if a_id and not SAFE_ID.fullmatch(a_id):
+        raise ValueError("track id: letters, digits, - and _ only")
+    a_art, a_title = _text(seed.get("artist"), NAME_MAX), _text(seed.get("title"), NAME_MAX)
+    if not a_title:
+        raise ValueError("yt_edges: seed.title is required")
+    a_name = f"{a_art} - {a_title}" if a_art else a_title
+    a_key = pick_pool.key_of(a_art, a_title)
+    edges = []
+    for r in rel:
+        if not isinstance(r, dict):
+            raise ValueError("yt_edges: each related entry must be an object")
+        b_yt = r.get("yt")
+        if not isinstance(b_yt, str) or not YT_ID.fullmatch(b_yt):
+            raise ValueError("yt_edges: related.yt must be an 11 character video id")
+        rank = r.get("rank")
+        if not isinstance(rank, int) or isinstance(rank, bool) or not 0 <= rank <= 99:
+            raise ValueError("yt_edges: related.rank must be an integer 0..99")
+        b_art, b_title = _text(r.get("artist"), NAME_MAX), _text(r.get("title"), NAME_MAX)
+        if b_yt == a_yt or not b_title:
+            continue                                            # a self edge or an untitled entry says nothing
+        b_key = pick_pool.key_of(b_art, b_title)
+        if b_key == a_key:
+            continue
+        edges.append((b_yt, rank, f"{b_art} - {b_title}" if b_art else b_title, b_key))
+    now = item["at"]
+    done = 0
+    with _lock:
+        for b_yt, rank, b_name, b_key in edges:
+            subject = f"{a_yt}>{b_yt}"
+            old = (um.marks_of(MARK_YT, [subject], cache_dir).get(subject) or {}).get("data") or {}
+            devices = list(old.get("devices") or [])
+            if dev["device_id"] not in devices:
+                devices.append(dev["device_id"])
+            row = {"a_yt": a_yt, "b_yt": b_yt, "a_key": a_key, "b_key": b_key, "a_name": a_name, "b_name": b_name,
+                   "a_id": a_id or old.get("a_id") or "", "rank": min(rank, old.get("rank", rank)),
+                   "n": int(old.get("n") or 0) + 1, "first": old.get("first") or now, "last": now,
+                   "devices": devices[-20:]}
+            um.mark(MARK_YT, subject, row, cache_dir)
+            done += 1
+    return {"edges": done}
+
+
+_APPLY = {"transition": _transition, "bad_pair": _bad_pair, "like": _like, "set_log": _set_log,
+          "yt_edges": _yt_edges}
 
 
 def ingest(body: dict, cache_dir: Optional[Path] = None, *, liked_dir: Optional[Path] = None,
