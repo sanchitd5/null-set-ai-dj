@@ -1,5 +1,5 @@
-// GENERATED from dj-config c56fa33 - do not edit
-// config-hash: 0ea7eccf825e
+// GENERATED from dj-config 767068d-dirty - do not edit
+// config-hash: 9e24dd04bd4a
 (function (root) {
   "use strict";
   const values = {
@@ -56,6 +56,7 @@
     "GENRE_FAMILIES": {"south_asian": ["punjabi", "bhangra", "desi", "bollywood", "hindi", "urdu", "pakistani", "indian", "filmi", "sufi", "qawwali", "haryanvi", "tamil", "telugu"], "electronic": ["house", "techno", "garage", "trance", "edm", "electronic", "electronica", "dubstep", "drum & bass", "drum and bass", "dnb", "bass music", "breakbeat", "downtempo", "ambient", "future bass", "electro", "idm", "jungle", "dance", "breaks", "trip hop", "chillout", "big room", "riddim"], "hiphop": ["hip-hop", "hip hop", "rap", "trap", "drill", "grime"], "rnb": ["r&b", "rnb", "soul"], "latin": ["reggaeton", "latin", "dembow", "cumbia", "bachata", "salsa", "urbano"], "afro": ["afrobeat", "afro", "amapiano", "afropop"], "rock": ["rock", "punk", "metal", "grunge"], "pop": ["pop"], "country": ["country", "folk", "americana"], "jazz": ["jazz", "funk", "disco"]},
     "GLITCH_COUNTER_EVERY_S": 1.0,
     "GLITCH_REPORT_GAP_S": 8,
+    "GRAPH_PARAMS": {"kind_weight": {"measured": 1.0, "played_ok": 0.8, "coplay": 0.5, "yt_upnext": 0.5, "yt_related": 0.4, "similar": 0.5, "predicted": 0.3, "skipped": -0.8}, "per_kind": 30, "hops": 2, "hop2_seeds": 8, "hop2_decay": 0.5, "conf_n": 5, "artist_weight": 0.3, "lang_penalty": -0.4, "cooldown_penalty": -0.5, "cooldown_n": 4, "novelty_bonus": 0.1, "min_score": 0.2, "min_good": 5},
     "HOLD_KEY_MIN": 0.8,
     "KEYLOCK_RANGE_PCT": 8.0,
     "KEY_CONFIDENCE_MIN": 0.6,
@@ -127,6 +128,6 @@
   };
   root.DJ_CONFIG = Object.freeze(values);
   root.DJ_CONFIG_LIVE = Object.freeze(live);
-  root.DJ_CONFIG_META = Object.freeze({ sha: "c56fa33", hash: "0ea7eccf825e" });
+  root.DJ_CONFIG_META = Object.freeze({ sha: "767068d-dirty", hash: "9e24dd04bd4a" });
   if (typeof module !== "undefined" && module.exports) module.exports = root.DJ_CONFIG;
 })(typeof window !== "undefined" ? window : globalThis);
