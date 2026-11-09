@@ -112,6 +112,61 @@ def test_set_log_goes_through_the_set_log_store_and_asks_for_a_publish(src):
         == "set logs are not stored on this server"
 
 
+# ------------------------------------------------------------------------------------- yt_edges
+def yt(n, seed="AAAAAAAAAAA", rel=(("BBBBBBBBBBB", 0), ("CCCCCCCCCCC", 3)), **kw):
+    data = {"seed": {"yt": seed, "id": "", "artist": "Artist A", "title": "Song A"},
+            "related": [{"yt": y, "title": f"Song {y[0]}", "artist": f"Artist {y[0]}", "d": 200.0, "rank": r}
+                        for y, r in rel], "fetched_at": "2026-11-09T14:00:00Z", **kw}
+    return item(n, "yt_edges", data)
+
+
+def test_yt_edges_become_one_mark_per_edge_and_repeat_counts(tmp_path):
+    c = tmp_path
+    r = pl.ingest(body([yt(1)]), c)
+    assert r["accepted"] == ["dev1-1000:y1"] and r["rejected"] == []
+    m = um.marks(pl.MARK_YT, c)
+    assert set(m) == {"AAAAAAAAAAA>BBBBBBBBBBB", "AAAAAAAAAAA>CCCCCCCCCCC"}
+    d = m["AAAAAAAAAAA>BBBBBBBBBBB"]["data"]
+    assert d["n"] == 1 and d["rank"] == 0 and d["a_yt"] == "AAAAAAAAAAA" and d["b_yt"] == "BBBBBBBBBBB"
+    assert d["a_name"] == "Artist A - Song A" and d["b_name"] == "Artist B - Song B"
+    assert d["a_key"] and d["b_key"] and d["a_key"] != d["b_key"] and d["devices"] == ["dev1"]
+    first = d["first"]
+    again = yt(2, rel=(("BBBBBBBBBBB", 5),))
+    again["at"] = "2026-11-10T09:00:00Z"
+    assert pl.ingest(body([again], device="dev2"), c)["accepted"] == ["dev1-1000:y2"]
+    d = um.marks(pl.MARK_YT, c)["AAAAAAAAAAA>BBBBBBBBBBB"]["data"]
+    assert d["n"] == 2 and d["rank"] == 0 and d["first"] == first and d["last"] == "2026-11-10T09:00:00Z"
+    assert d["devices"] == ["dev1", "dev2"]
+    assert um.marks(pl.MARK_YT, c)["AAAAAAAAAAA>CCCCCCCCCCC"]["data"]["n"] == 1
+    assert pl.ingest(body([yt(1)]), c)["duplicate"] == ["dev1-1000:y1"]
+    assert um.marks(pl.MARK_YT, c)["AAAAAAAAAAA>BBBBBBBBBBB"]["data"]["n"] == 2
+
+
+def test_yt_edges_bad_items_rejected_with_a_reason(tmp_path):
+    c = tmp_path
+    many = tuple((f"{i:011d}", i % 99) for i in range(26))
+    r = pl.ingest(body([yt(1, seed="short"), yt(2, rel=(("bad id!bad!",  0),)), yt(3, rel=many),
+                        yt(4, rel=(("BBBBBBBBBBB", 100),)), yt(5, rel=(("BBBBBBBBBBB", True),)),
+                        item(6, "yt_edges", {"seed": "x", "related": []}), yt(7, rel=(("CCCCCCCCCCC", 1),))]), c)
+    assert r["accepted"] == ["dev1-1000:y7"] and len(r["rejected"]) == 6
+    assert all(x["why"].startswith("yt_edges") for x in r["rejected"])
+
+
+def test_yt_edges_self_edges_are_skipped(tmp_path):
+    c = tmp_path
+    r = pl.ingest(body([yt(1, rel=(("AAAAAAAAAAA", 0), ("BBBBBBBBBBB", 1)))]), c)
+    assert r["accepted"] == ["dev1-1000:y1"]
+    assert list(um.marks(pl.MARK_YT, c)) == ["AAAAAAAAAAA>BBBBBBBBBBB"]
+
+
+def test_yt_edges_private_strings_are_refused(tmp_path):
+    d = yt(1)
+    d["data"]["related"][0]["title"] = "me@example.com"
+    r = pl.ingest(body([d]), tmp_path)
+    assert r["accepted"] == [] and "private" in r["rejected"][0]["why"]
+    assert um.marks(pl.MARK_YT, tmp_path) == {}
+
+
 # ------------------------------------------------------------------------------------- overlay
 def test_overlay_adds_phone_evidence_idempotently(src):
     c = src["cache"]
