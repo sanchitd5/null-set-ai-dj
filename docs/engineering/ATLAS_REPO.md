@@ -35,6 +35,16 @@ learn-set / maintain  -> cache (app.db)  -> knowledge export -> dj-atlas checkou
 dj-atlas main  -> knowledge update (submodule update --remote) -> knowledge sync -> cache
 ```
 
+* **Phone leg**: after each set (and every 10 transitions, on launch, on resume/pause) the phone posts its
+  on-disk outbox to `POST /api/mobile/learn` (`learn_ingest_api.py`, `learning/phone_learn.py`). Items have
+  idempotent ids (`<set id>:<kind><n>`), a repeat is `duplicate`. Kinds: `set_log` (stored like
+  `/api/set-logs`), `bad_pair` (owner veto, source `phone`), `like` (liked transition), `transition`
+  (landed/skipped A -> B, a private `phone_pair` mark). Provenance (device, set) is a private `learn_item`
+  mark, never exported. Transition evidence is overlaid onto the atlas pair's `played` (`played.phone`,
+  works re-scored) right away, again before every publish (an atlas build drops it) and is idempotent.
+  A batch holding a set log schedules the publish: one commit per set. Vetoes and likes reach the atlas
+  at the next atlas build, as console ones do. Skipped picks count as one bad play, not a veto.
+  No pair_atlas RULE_FILE is touched, so no rescore.
 * **Pull (unchanged)**: `knowledge sync` / `auto_seed` read the checkout. Per-file version stamps are the
   newest git commit touching the file (inside the submodule, `git -C knowledge log` works as before).
 * **Update**: `python -m app.music_brain.matching.knowledge update` runs
@@ -135,7 +145,9 @@ State the publish keeps: `CACHE_DIR/knowledge_publish.json` (rows left as the re
    credentials there.
 5. **CI**: the tests use a temp knowledge dir, so CI needs no submodule. Add `submodules: true` and a token
    to `actions/checkout` only if a job reads the real folder.
-6. Check: `python -m app.music_brain.matching.knowledge publish --dry-run`, then a real `publish`.
+6. Phone leg needs nothing extra: it rides on the same env vars (step 4) and the APK that carries the outbox.
+   Without `DJ_ATLAS_AUTOPUBLISH=1` the server still ingests and overlays; only the commit is skipped.
+7. Check: `python -m app.music_brain.matching.knowledge publish --dry-run`, then a real `publish`.
 
 ## Not done here
 
