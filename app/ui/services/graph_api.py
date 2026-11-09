@@ -2,7 +2,7 @@
 auth middleware like every /api route. The server only proxies: the file is built and read by the private dj-atlas
 builder, reached through app.music_brain.atlas_bridge (nothing about the graph is in this repo).
 
-GET /api/graph/version    {rev, seq, schema, built_at, nodes, edges}   what the server holds; cheap, poll it
+GET /api/graph/version    {rev, seq, schema, built_at, nodes, edges, bytes}   what the server holds; cheap, poll it
 GET /api/graph/snapshot   application/gzip of one consistent SQLite file; ETag = "<rev>";
                           If-None-Match answers 304 with no body.
 
@@ -36,9 +36,16 @@ def _matches(request: Request, etag: str) -> bool:
 
 @router.get("/api/graph/version")
 def get_version():
-    v = _store().version()
+    store = _store()
+    v = store.version()
     if v is None:
         raise HTTPException(status_code=404, detail="no graph")
+    try:
+        rev, body = store.snapshot_gz()       # cached per rev; the phone gates mobile data on the size
+        if rev == v["rev"]:
+            v["bytes"] = len(body)
+    except (FileNotFoundError, OSError):
+        pass
     return v
 
 

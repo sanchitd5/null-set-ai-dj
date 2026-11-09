@@ -67,6 +67,7 @@ def test_version_shape(client, graph):
     v = client.get("/api/graph/version").json()
     assert v["rev"] == 7 and v["seq"] == 1 and v["nodes"] == 2 and v["edges"] == 1
     assert {"schema", "built_at"} <= set(v)
+    assert v["bytes"] == len(client.get("/api/graph/snapshot").content)
 
 
 @needs_builder
