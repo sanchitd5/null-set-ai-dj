@@ -24,7 +24,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
-from app.music_brain.sync import identity
+from app.music_brain.sync import identity, oplog
 from app.music_brain.sync.oplog import MAX_BATCH, OpLog
 
 router = APIRouter()
@@ -95,6 +95,8 @@ def _device(v, required: bool) -> str:
         return ""
     if not isinstance(v, str) or not SAFE_ID.fullmatch(v):
         raise HTTPException(422, "device_id: 1-64 letters, digits, - or _")
+    if oplog.is_reserved_device(v):
+        raise HTTPException(422, "device_id is reserved")
     return v
 
 
