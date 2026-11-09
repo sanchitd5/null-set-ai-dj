@@ -41,6 +41,10 @@ BEAT_S = 15.0
 HEADER = "x-set-lease"
 CLIENTS = ("console", "phone")
 MAX_TAKEN = 20
+try:                                             # one value for Dart, Python and JS (dj-config SESSION_PAUSE_CLOSE_MIN)
+    from app.music_brain.generated.dj_config import SESSION_PAUSE_CLOSE_MIN as SESSION_CLOSE_MIN
+except ImportError:                              # pragma: no cover - generated file missing: the documented default
+    SESSION_CLOSE_MIN = 15
 
 # (method, path regex): the routes that act on the running set's server state.
 SET_SCOPED = [(m, re.compile(p)) for m, p in (
@@ -227,6 +231,21 @@ class LeaseStore:
         self.log("set_lease", action="release", client=cur.get("client"), device=cur.get("device_name"))
         return True
 
+    def sweep(self, now: Optional[float] = None) -> bool:
+        """Close a set whose holder sent no beat for SESSION_CLOSE_MIN minutes (a dead or long-paused phone):
+        the lease is removed, so its next beat answers 409 "lease ended". True when one was closed."""
+        with self._lock:
+            now = self.clock() if now is None else now
+            cur = self._data["current"]
+            if not cur or now - float(cur.get("deadline", 0)) < SESSION_CLOSE_MIN * 60 - TTL_S:
+                return False
+            self._data["current"] = None
+            snap = self._snap()
+        self._flush(snap)
+        self.log("set_lease", action="closed", client=cur.get("client"), device=cur.get("device_name"),
+                 since=cur.get("started"), idle_min=SESSION_CLOSE_MIN)
+        return True
+
     def allows(self, lease_id: Optional[str]):
         """None when a set-scoped request may go ahead, else the 409 body."""
         with self._lock:
@@ -332,6 +351,32 @@ def _clean(req: LeaseRequest, holder: dict):
         raise HTTPException(status_code=422, detail=f"client: one of {', '.join(CLIENTS)}")
     name = " ".join((req.device_name or "").split())[:64] or str(holder.get("name") or client)[:64]
     return client, name
+
+
+SWEEP_EVERY_S = 60.0
+
+
+def sweep_once() -> bool:
+    """One sweep of the process store; a closed set publishes what it taught the server, like a release."""
+    closed = store().sweep()
+    if closed:
+        from app.music_brain.matching import knowledge_publish
+        knowledge_publish.on_set_end(log=lambda m: print(m, flush=True))
+    return closed
+
+
+def start_sweeper(every_s: float = SWEEP_EVERY_S) -> threading.Thread:
+    """Daemon thread: sweep_once() every [every_s] seconds, never dies on an error."""
+    def run() -> None:
+        while True:
+            time.sleep(every_s)
+            try:
+                sweep_once()
+            except Exception as e:               # keep sweeping
+                print(f"[set_lease] sweep failed: {e}", flush=True)
+    t = threading.Thread(target=run, daemon=True, name="lease-sweep")
+    t.start()
+    return t
 
 
 @router.get("/api/set/lease")

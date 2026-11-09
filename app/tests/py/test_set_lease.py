@@ -75,6 +75,49 @@ def test_release(tmp_path):
     assert s.acquire("phone", "pixel", PHONE)[1] is None
 
 
+def test_sweep_closes_a_set_without_beats(tmp_path):
+    clock, log = Clock(), []
+    s = _store(tmp_path, clock, log)
+    lease, _ = s.acquire("phone", "pixel", PHONE)
+    clock.t += 14 * 60
+    assert s.sweep() is False and s.beat(lease["id"])[0] is not None          # 14 min: no-op; the beat renews
+    clock.t += set_lease.SESSION_CLOSE_MIN * 60 - 1
+    assert s.sweep() is False                                                  # one second short
+    clock.t += 1
+    assert s.sweep() is True
+    assert s.status() == {"active": False, "lease": None}
+    assert [f["action"] for _, f in log][-1] == "closed"
+    lease2, refusal = s.beat(lease["id"])
+    assert lease2 is None and refusal["detail"] == "lease ended" and "holder" not in refusal
+    assert s.sweep() is False                                                  # nothing left to close
+    assert s.acquire("console", "studio", CONSOLE)[1] is None
+
+
+def test_sweep_does_not_touch_a_live_lease(tmp_path):
+    clock = Clock()
+    s = _store(tmp_path, clock)
+    s.acquire("phone", "pixel", PHONE)
+    clock.t += 60 * 60 * 5
+    s.beat(s._data["current"]["id"])
+    assert s.sweep() is False
+
+
+def test_sweep_once_publishes_once(tmp_path, monkeypatch):
+    from app.music_brain.matching import knowledge_publish
+    clock, calls = Clock(), []
+    s = _store(tmp_path, clock)
+    set_lease.use(s)
+    monkeypatch.setattr(knowledge_publish, "on_set_end", lambda **k: calls.append(1))
+    try:
+        s.acquire("phone", "pixel", PHONE)
+        assert set_lease.sweep_once() is False and calls == []
+        clock.t += set_lease.SESSION_CLOSE_MIN * 60 + set_lease.TTL_S
+        assert set_lease.sweep_once() is True and set_lease.sweep_once() is False
+        assert calls == [1]
+    finally:
+        set_lease.use(None)
+
+
 def test_restart_keeps_the_holder(tmp_path):
     clock = Clock()
     lease, _ = _store(tmp_path, clock).acquire("phone", "pixel", PHONE)

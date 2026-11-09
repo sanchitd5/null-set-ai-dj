@@ -123,6 +123,11 @@ def _cap_keylock_cache() -> None:
     keylock_cache.start_periodic()           # sweeps orphaned *.tmp render dirs now and every 30 min
 
 
+@app.on_event("startup")
+def _sweep_set_lease() -> None:
+    _set_lease.start_sweeper()               # closes a set with no beat for SESSION_PAUSE_CLOSE_MIN (docs/engineering/SET_LEASE.md)
+
+
 @app.get("/api/llm/status")
 async def get_llm_status():              # in-memory only: async keeps it off the 40-thread pool
     from app.ui.services import model_runtime

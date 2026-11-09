@@ -1,9 +1,9 @@
-# GENERATED from dj-config 8b2038c-dirty - do not edit
-# config-hash: c5aff7e62acd
+# GENERATED from dj-config c56fa33 - do not edit
+# config-hash: 0ea7eccf825e
 """Generated from dj-config/config/*.json. Do not edit; run dj-config/tool/gen.py."""
 
-SHA = "8b2038c-dirty"
-CONFIG_HASH = "c5aff7e62acd"
+SHA = "c56fa33"
+CONFIG_HASH = "0ea7eccf825e"
 
 ARC_TARGET = {"warm-up": 4, "build": 6, "peak": 8, "cool-down": 5}  # level
 BARS_PER_PHRASE = 8  # bars
@@ -92,6 +92,7 @@ PREPLAN_WAIT_MS = 35000  # ms
 PRE_CLEAR_BARS = {"instant": 0, "standard": 8, "slow": 16}  # bars
 REPLAN_LEAD_S = 20.0  # s
 RIFF_MAX_STRETCH = 0.15  # fraction
+SESSION_PAUSE_CLOSE_MIN = 15  # min
 SLEEP_FADE_S = 60.0  # s
 STEM_BOOKING_WINDOW_S = 45  # s
 STEM_FILL_CHUNK_S = 240  # s
@@ -122,6 +123,7 @@ LIVE = {
     "PLAN_MAX_WAIT_MS": {"min": 5000, "max": 120000, "unit": "ms"},
     "PLAN_MIN_WAIT_MS": {"min": 1000, "max": 60000, "unit": "ms"},
     "PREPLAN_WAIT_MS": {"min": 5000, "max": 120000, "unit": "ms"},
+    "SESSION_PAUSE_CLOSE_MIN": {"min": 1, "max": 240, "unit": "min"},
     "UNCERTAIN_CLASH_SCORE": {"min": 0, "max": 1, "unit": "score"},
     "VOCAL_CLASH_CUTOFF": {"min": 0, "max": 1, "unit": "ratio"},
     "XF_CENTER_BOOST_DB": {"min": 0, "max": 3, "unit": "dB"},

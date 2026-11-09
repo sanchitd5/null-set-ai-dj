@@ -1,6 +1,6 @@
 {
-  "_generated": "GENERATED from dj-config 8b2038c-dirty - do not edit",
-  "config_hash": "c5aff7e62acd",
+  "_generated": "GENERATED from dj-config c56fa33 - do not edit",
+  "config_hash": "0ea7eccf825e",
   "values": {
     "BOOK_AFTER_LOAD_S": {
       "value": 6,
@@ -79,6 +79,12 @@
       "min": 5000,
       "max": 120000,
       "unit": "ms"
+    },
+    "SESSION_PAUSE_CLOSE_MIN": {
+      "value": 15,
+      "min": 1,
+      "max": 240,
+      "unit": "min"
     },
     "UNCERTAIN_CLASH_SCORE": {
       "value": 0.5,

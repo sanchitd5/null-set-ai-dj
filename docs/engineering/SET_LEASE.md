@@ -28,7 +28,12 @@ All behind the owner auth (cookie or device token, `AUTH.md`), so every caller i
   (a stale lease of its own, another tab).
 * The id is the capability. It is returned only to the client that got the lease.
 * State: `<cache>/set_lease.json` (atomic write), so a restart keeps the holder. A corrupt file = no lease.
-* Session log: kind `set_lease`, action `grant` / `release` / `takeover` / `lapsed` / `revived`.
+* **Closed** (idle backstop): a lease with no beat for `SESSION_PAUSE_CLOSE_MIN` minutes (dj-config, 15) is removed
+  by a sweep that runs every 60 s (`LeaseStore.sweep`). The set counts as over: `knowledge_publish.on_set_end()` runs
+  once, the session log gets action `closed`. A later beat from that lease answers 409 `lease ended` with no `holder`
+  (unless another set holds the lease now). The phone treats that as "set closed" (idle, a new lease on the next play),
+  not as "server busy".
+* Session log: kind `set_lease`, action `grant` / `release` / `takeover` / `lapsed` / `revived` / `closed`.
 
 ## Gate
 
@@ -58,7 +63,9 @@ With no active lease every route is open (plain local use, the sim, tests).
   that is down or has no lease route lets the set start (nothing to share). The phone web Lite view
   is the same page and runs the same code.
 * **Phone app**: the set is AI Mix playback. Start takes the lease, 409 asks TAKE OVER / CANCEL
-  (CANCEL plays on in offline mode), beats every 15 s, releases on AI Mix off and app termination.
+  (CANCEL plays on in offline mode), beats every 15 s, releases on AI Mix off and app termination. A set
+  paused for `SESSION_PAUSE_CLOSE_MIN` minutes (AI Mix on, a song loaded, signed in) is closed by the phone: set log
+  queued and flushed, lease released; the next play starts a new set and lease.
   Losing the lease mid-set keeps the music playing on dj_core rules, shows "server busy - offline
   mode", and makes no set-scoped call until the next start (mobile `docs/THIN_CLIENT.md`).
 

@@ -1,5 +1,5 @@
-// GENERATED from dj-config 8b2038c-dirty - do not edit
-// config-hash: c5aff7e62acd
+// GENERATED from dj-config c56fa33 - do not edit
+// config-hash: 0ea7eccf825e
 (function (root) {
   "use strict";
   const values = {
@@ -90,6 +90,7 @@
     "PRE_CLEAR_BARS": {"instant": 0, "standard": 8, "slow": 16},
     "REPLAN_LEAD_S": 20.0,
     "RIFF_MAX_STRETCH": 0.15,
+    "SESSION_PAUSE_CLOSE_MIN": 15,
     "SLEEP_FADE_S": 60.0,
     "STEM_BOOKING_WINDOW_S": 45,
     "STEM_FILL_CHUNK_S": 240,
@@ -119,12 +120,13 @@
     "PLAN_MAX_WAIT_MS": { min: 5000, max: 120000, unit: "ms" },
     "PLAN_MIN_WAIT_MS": { min: 1000, max: 60000, unit: "ms" },
     "PREPLAN_WAIT_MS": { min: 5000, max: 120000, unit: "ms" },
+    "SESSION_PAUSE_CLOSE_MIN": { min: 1, max: 240, unit: "min" },
     "UNCERTAIN_CLASH_SCORE": { min: 0, max: 1, unit: "score" },
     "VOCAL_CLASH_CUTOFF": { min: 0, max: 1, unit: "ratio" },
     "XF_CENTER_BOOST_DB": { min: 0, max: 3, unit: "dB" }
   };
   root.DJ_CONFIG = Object.freeze(values);
   root.DJ_CONFIG_LIVE = Object.freeze(live);
-  root.DJ_CONFIG_META = Object.freeze({ sha: "8b2038c-dirty", hash: "c5aff7e62acd" });
+  root.DJ_CONFIG_META = Object.freeze({ sha: "c56fa33", hash: "0ea7eccf825e" });
   if (typeof module !== "undefined" && module.exports) module.exports = root.DJ_CONFIG;
 })(typeof window !== "undefined" ? window : globalThis);
