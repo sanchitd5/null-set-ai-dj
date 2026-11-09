@@ -1,6 +1,6 @@
-// Replay of the real case (session 2026-09-30_225021, fixture copied from its songs/*/steps.jsonl, the
-// real macro studied-set-n_gfh09ip9c and the real analysis): Martin Roth - Simplicite playing, PLAY MACRO
-// step 1 -> Alex Wann (Stem Bridge), the vibe gate refused the pair (811 -> 2203 Hz, energy 0.23 -> 0.41),
+// Replay of a real case (an owner session kept in the private dj-atlas repo, builder/tests/js_fixtures; the
+// real macro and analysis): the playing song, PLAY MACRO step 1 -> the macro's next song (Stem Bridge), the
+// vibe gate refused the pair (811 -> 2203 Hz, energy 0.23 -> 0.41),
 // the pair reject was remembered, every model suggest failed, and each deadline logged "hold".
 //
 // What runs for real: macro-mode.js createRuntime with the real macro (loadMacro + playMacro), the real
@@ -18,7 +18,13 @@ const STATIC = process.env.REPLAY_STATIC_DIR || path.join(__dirname, "..", "..",
 const apFile = path.join(STATIC, "autopilot.js"), mmFile = path.join(STATIC, "macro-mode.js");
 const core = require(apFile);
 const mm = require(mmFile);
-const fx = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "session_2026-09-30_225021.json"), "utf8"));
+// the session fixture is owner data: it lives in the private knowledge submodule; a public clone skips this check
+const FIXTURE = path.join(__dirname, "..", "..", "music_brain", "knowledge", "builder", "tests", "js_fixtures", "session_2026-09-30_225021.json");
+if (!fs.existsSync(FIXTURE)) {
+  console.log("macro_fallback_replay_check: SKIP (needs the private dj-atlas submodule)");
+  process.exit(0);
+}
+const fx = JSON.parse(fs.readFileSync(FIXTURE, "utf8"));
 const MARTIN = fx.playing.track_id, WANN = fx.next.track_id;
 const src = fs.readFileSync(apFile, "utf8");
 const hasMacroFallback = typeof core.macroFallback === "function";
