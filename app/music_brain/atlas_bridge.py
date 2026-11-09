@@ -15,7 +15,7 @@ SKIP_REASON. Nothing about how the atlas is built is in this repo.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import List
+from typing import Callable, List
 
 KNOWLEDGE_DIR = Path(__file__).resolve().parent / "knowledge"
 BUILDER_DIR = KNOWLEDGE_DIR / "builder"
@@ -41,3 +41,37 @@ def is_atlas_import_error(exc: BaseException) -> bool:
         return True
     return (not AVAILABLE and isinstance(exc, ModuleNotFoundError)
             and (name == "app.music_brain.atlas" or name.startswith("app.music_brain.atlas.")))
+
+
+def register_jobs(register: Callable) -> bool:
+    """Let the private builder register its background jobs (the job runner passes its `register`). The builder's
+    own module, builder/atlas/jobs.py, is optional: without it, or without the submodule, nothing is registered.
+    Any failure is logged and swallowed, so the server always starts. True when the module registered jobs."""
+    if not AVAILABLE:
+        return False
+    try:
+        import importlib
+        mod = importlib.import_module("app.music_brain.atlas.jobs")
+    except ModuleNotFoundError as exc:
+        if (exc.name or "").startswith("app.music_brain.atlas"):
+            return False                           # this builder has no jobs module yet
+        print(f"[atlas] jobs module failed to import: {exc}", flush=True)
+        return False
+    except Exception as exc:                       # noqa: BLE001 -- the server must start
+        print(f"[atlas] jobs module failed to import: {type(exc).__name__}: {exc}", flush=True)
+        return False
+    try:
+        mod.register(register)
+    except Exception as exc:                       # noqa: BLE001
+        print(f"[atlas] job registration failed: {type(exc).__name__}: {exc}", flush=True)
+        return False
+    return True
+
+
+def build_graph(cache_dir=None, log: Callable[[str], None] = print) -> dict:
+    """Rebuild graph.db through the builder's build_graph(cache_dir, log). ValueError when there is no atlas,
+    ImportError when the builder does not have the graph module (an older dj-atlas pin)."""
+    if not AVAILABLE:
+        raise ImportError(SKIP_REASON)
+    from app.music_brain.atlas import graph_build
+    return graph_build.build_graph(cache_dir, log)
