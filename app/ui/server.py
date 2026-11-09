@@ -24,7 +24,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from fastapi import FastAPI, Form, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from app.ui.services.ranged_file import RangedFileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -3125,6 +3125,33 @@ def get_android_meta(from_: int | None = Query(None, alias="from", ge=0)):
             except (KeyError, TypeError):
                 continue
     return out
+
+
+ANDROID_CHANGELOG = None   # tests; default: <apk dir>/changelog.json, written by deploy/changelog.py
+_CHANGELOG_KEYS = ("version_name", "version_code", "published_at", "notes")
+
+
+@app.get("/api/app/changelog")
+def get_android_changelog():
+    """Release notes of every published Android build, newest first (the app's "What's new" page)."""
+    path = ANDROID_CHANGELOG or ANDROID_APK.parent / "changelog.json"
+    try:
+        data = json.loads(path.read_text("utf-8"))
+    except (ValueError, OSError):
+        raise HTTPException(status_code=404, detail="no release notes on this server")
+    entries = []
+    for e in data if isinstance(data, list) else []:
+        try:
+            if isinstance(e["version_code"], bool) or not isinstance(e["version_code"], int):
+                continue
+            row = {k: e[k] for k in _CHANGELOG_KEYS}
+        except (KeyError, TypeError):
+            continue
+        if e.get("withdrawn") is True:
+            row["withdrawn"] = True
+        entries.append(row)
+    entries.sort(key=lambda r: -r["version_code"])
+    return JSONResponse({"entries": entries}, headers={"Cache-Control": "private, max-age=300"})
 
 
 @app.get("/api/app/android.patch")
