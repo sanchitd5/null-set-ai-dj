@@ -23,7 +23,9 @@
 thread; status plus optional pause/resume). Built-in jobs are registered by `jobs_builtin.py` at startup:
 `quarantine_cleanup` (periodic 24 h, also at start), `lang_id` (pause/resume + status), `knowledge_publish`
 (observe only) and `graph_rebuild` (manual, only when the private builder is present; never automatic). Private jobs
-arrive through `atlas_bridge.register_jobs`.
+arrive through `atlas_bridge.register_jobs`: `graph_expand` (idle-only, off until `DJ_GRAPH_EXPAND=1` or its
+`enabled` setting) downloads, analyses and pairs the best YouTube-related songs the library lacks; its candidates
+queued / done / failed and the measured-pair count are in the job's last result. Downloaded songs join the library.
 
 * Idle = no active set lease for `DJ_IDLE_GRACE_S` (30 s). A lease change calls a `set_lease` listener, so a running
   `idle_only` job sees `ctx.should_stop()` true at once. Stopping is cooperative; a run that ignores it for
@@ -34,3 +36,13 @@ arrive through `atlas_bridge.register_jobs`.
 * State persists in `user.db` (`job_state`, `job_run`, newest 200 runs per job): a pause survives a restart; a job's
   checkpoint (`ctx.checkpoint`, `ctx.save_checkpoint()`) is handed to its next run.
 * `DJ_JOBS=0` turns the scheduler off (built-in external jobs are still listed), `DJ_JOBS_TICK_S` (2 s) is the tick.
+
+## Graph view (/admin/graph)
+
+Search a song by name or YouTube id; it is drawn with its top-k neighbours per edge kind (cytoscape, vendored in
+`app/ui/static/vendor/` with its licence, no CDN). Tap a node to expand one hop and open its details (artist, title,
+bpm, key, energy, language, scene, source, library, edges grouped by kind); long-press also opens the details.
+Filters: edge kinds, minimum weight, language. Read-only JSON: `GET /api/admin/graph/stats`, `/node?q=|id=`,
+`/neighbours?id=&k=&kinds=&min_weight=&lang=`. Data is read from graph.db through `atlas_bridge.graph_view` (the
+`graph_store` views in the private dj-atlas); without a graph.db the page says so and the API answers empty/404.
+The admin pages use one responsive stylesheet: readable at 360 px, 44 px tap targets, tables turn into cards.
