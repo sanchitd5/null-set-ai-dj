@@ -9,6 +9,10 @@ leaves no trace. A device bearer token never reaches an admin route (403), nor d
     GET  /api/admin/sessions            {live, closed}: the live set (no lease id) and the last 20 closed sets
     POST /api/admin/sessions/close      end the live set (the holder's next beat answers 409 "closed by admin")
     GET  /api/admin/audit               the newest 100 admin writes
+    GET  /admin/jobs                    background jobs (job_registry.py): state, progress, controls
+    GET  /api/admin/jobs, /api/admin/jobs/{name}, /api/admin/jobs/{name}/log?tail=n, /api/admin/idle
+    POST /api/admin/jobs/{name}/pause|resume|cancel|run     (409 + code when refused)
+    PUT  /api/admin/jobs/{name}/settings                    typed, validated (422 on a bad key or value)
 
 Every admin write is stored (actor, action, target, time) in the private user.db and the session log.
 """
@@ -27,7 +31,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from app.ui.services import set_lease
 
 MAX_AUDIT = 5000
-NAV = [("Sessions", "/admin/sessions")]             # later admin pages append here (jobs: G5)
+NAV = [("Sessions", "/admin/sessions"), ("Jobs", "/admin/jobs")]   # later admin pages append here
 _PAGE_CSP = "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'"
 STEPS = (
     """CREATE TABLE admin_audit (id INTEGER PRIMARY KEY, at REAL NOT NULL, actor TEXT NOT NULL,
@@ -140,12 +144,12 @@ def _dur(sec) -> str:
     return f"{sec // 3600}:{sec % 3600 // 60:02d}:{sec % 60:02d}"
 
 
-def _page(title: str, body: str, email: str) -> HTMLResponse:
+def _page(title: str, body: str, email: str, refresh: int = 5) -> HTMLResponse:
     e = html.escape
     nav = "".join(f'<a href="{e(u)}">{e(n)}</a>' for n, u in NAV)
     doc = (f'<!doctype html><html lang="en"><head><meta charset="utf-8"><title>{e(title)}</title>'
            f'<meta name="viewport" content="width=device-width,initial-scale=1">'
-           f'<meta http-equiv="refresh" content="5"><style>{_CSS}</style></head><body>'
+           f'<meta http-equiv="refresh" content="{int(refresh)}"><style>{_CSS}</style></head><body>'
            f'<nav>{nav}<span class="muted">{e(email)}</span></nav><main><h1>{e(title)}</h1>{body}</main></body></html>')
     return HTMLResponse(doc, headers={"content-security-policy": _PAGE_CSP, "cache-control": "no-store"})
 
@@ -214,3 +218,117 @@ def admin_close(request: Request, email: str = Depends(require_admin)):
 @router.get("/api/admin/audit")
 def admin_audit(email: str = Depends(require_admin)) -> dict:
     return {"audit": audit().recent(100)}
+
+
+# ---- jobs (job_registry.py) ---------------------------------------------------------------------
+
+def _reg():
+    from app.ui.services import job_registry
+    return job_registry.registry
+
+
+def _job_err(exc) -> JSONResponse:
+    return JSONResponse({"detail": exc.detail, "code": exc.code}, status_code=exc.status)
+
+
+def _fmt_state(v) -> str:
+    return "" if v is None else str(v)
+
+
+def _jobs_body() -> str:
+    e = html.escape
+    reg = _reg()
+    idle = reg.idle()
+    reason = {"set_live": "a set is live", "grace": "a set just ended", "idle": "idle"}.get(idle.reason, idle.reason)
+    body = (f'<p>Server: <b>{e(reason)}</b> <span class="muted">(idle after {int(reg.grace_s)} s without a set)</span>'
+            + ("" if reg.enabled else ' <span class="muted">job runner off (DJ_JOBS=0)</span>') + "</p>")
+    rows = []
+    for v in reg.views():
+        n, c, last, p = e(v["name"]), v["controls"], v["last"], v["progress"]
+        total = float(p.get("total") or 0)
+        bar = f'<progress max="{total}" value="{float(p.get("done") or 0)}"></progress> ' if total > 0 else ""
+        btns = "".join(
+            f'<form method="post" action="/api/admin/jobs/{n}/{act}" style="display:inline"><button type="submit">{label}</button></form> '
+            for act, label in (("run", "Run now"), ("pause", "Pause"), ("resume", "Resume"), ("cancel", "Cancel")) if c.get(act))
+        sets = "<br>".join(f"{e(k)} = {e(str(x['value']))}" for k, x in v["settings"].items())
+        err = f'<br><span class="muted">{e(str(last["error"]))}</span>' if last.get("error") else ""
+        rows.append(
+            f'<tr><td>{e(v["title"])}<br><span class="muted">{n} - {e(v["kind"])}{" - idle only" if v["idle_only"] else ""}</span></td>'
+            f'<td>{e(v["state"])}</td><td>{bar}{e(str(p.get("note") or ""))}</td>'
+            f'<td>{e(_fmt_state(last.get("status")))} {e(_t(last.get("ended")))}{err}</td><td>{e(_t(v["next_run"]))}</td>'
+            f'<td>{sets}</td><td>{btns}<a href="/api/admin/jobs/{n}/log?tail=100">log</a></td></tr>')
+    return body + ("<table><tr><th>Job</th><th>State</th><th>Progress</th><th>Last run</th><th>Next run</th>"
+                   f"<th>Settings</th><th></th></tr>{''.join(rows)}</table>")
+
+
+@router.get("/admin/jobs", response_class=HTMLResponse)
+def admin_jobs_page(email: str = Depends(require_admin)):
+    return _page("Jobs", _jobs_body(), email, refresh=3)
+
+
+@router.get("/api/admin/idle")
+def admin_idle(email: str = Depends(require_admin)) -> dict:
+    reg = _reg()
+    st = reg.idle()
+    return {"idle": st.idle, "since": st.since, "reason": st.reason, "grace_s": reg.grace_s}
+
+
+@router.get("/api/admin/jobs")
+def admin_jobs(email: str = Depends(require_admin)) -> dict:
+    reg = _reg()
+    st = reg.idle()
+    return {"idle": {"idle": st.idle, "since": st.since, "reason": st.reason, "grace_s": reg.grace_s},
+            "jobs": reg.views()}
+
+
+@router.get("/api/admin/jobs/{name}")
+def admin_job(name: str, email: str = Depends(require_admin)):
+    from app.ui.services.job_registry import JobError
+    try:
+        return _reg().view(name)
+    except JobError as exc:
+        return _job_err(exc)
+
+
+@router.get("/api/admin/jobs/{name}/log")
+def admin_job_log(name: str, tail: int = 100, email: str = Depends(require_admin)):
+    from app.ui.services.job_registry import JobError
+    try:
+        return {"log": _reg().log_tail(name, max(0, min(tail, 200)))}
+    except JobError as exc:
+        return _job_err(exc)
+
+
+@router.post("/api/admin/jobs/{name}/{action}")
+def admin_job_control(name: str, action: str, request: Request, email: str = Depends(require_admin)):
+    from app.ui.services.job_registry import JobError
+    reg = _reg()
+    fn = {"pause": reg.pause, "resume": reg.resume, "cancel": reg.cancel, "run": reg.run_now}.get(action)
+    if fn is None:
+        raise HTTPException(404, "Not Found")
+    try:
+        view = fn(name)
+    except JobError as exc:
+        if "text/html" in request.headers.get("accept", ""):          # a form post: back to the page
+            from fastapi.responses import RedirectResponse
+            return RedirectResponse("/admin/jobs", status_code=303)
+        return _job_err(exc)
+    audit().add(email, f"job_{action}", name)
+    if "text/html" in request.headers.get("accept", ""):
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse("/admin/jobs", status_code=303)
+    return view
+
+
+@router.put("/api/admin/jobs/{name}/settings")
+def admin_job_settings(name: str, values: dict, email: str = Depends(require_admin)):
+    import json
+    from app.ui.services.job_registry import JobError
+    try:
+        view = _reg().set_settings(name, values)
+    except JobError as exc:
+        return _job_err(exc)
+    except ValueError as exc:
+        return JSONResponse({"detail": str(exc), "code": "bad_setting"}, status_code=422)
+    audit().add(email, "job_settings", name, json.dumps(values, default=str)[:300])
+    return view

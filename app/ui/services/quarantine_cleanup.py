@@ -1,10 +1,10 @@
 """Retention for <cache>/_pick_quarantine/ (download_service._quarantine): wrong-song audio waits
 AUDIO_DAYS for a look, its small JSON note NOTE_DAYS, and the audio never takes more than CAP_BYTES
-(oldest first). Runs at startup and then daily; GET /api/admin/quarantine reports the counts
+(oldest first). Runs at startup and then daily as the `quarantine_cleanup` job (job_registry, see
+jobs_builtin.py); GET /api/admin/quarantine reports the counts
 (behind the same auth middleware as every /api route)."""
 from __future__ import annotations
 
-import threading
 import time
 from pathlib import Path
 
@@ -15,7 +15,7 @@ from app.ui.services import admin
 AUDIO_DAYS = 7
 NOTE_DAYS = 30
 CAP_BYTES = 2 * 1024**3
-INTERVAL_S = 24 * 3600
+INTERVAL_S = 24 * 3600                          # the job's period
 DAY = 86400.0
 
 router = APIRouter()
@@ -90,21 +90,6 @@ def cleanup(qdir: Path | None = None, now: float | None = None) -> dict:
         if now - ts > NOTE_DAYS * DAY:
             rm(p, size, "notes")
     return gone
-
-
-def _loop() -> None:
-    while True:
-        try:
-            r = cleanup()
-            if r["audio"] or r["notes"]:
-                print(f"[pick] quarantine cleanup: {r}", flush=True)
-        except Exception as e:                     # never let the janitor die
-            print(f"[pick] quarantine cleanup failed: {e}", flush=True)
-        time.sleep(INTERVAL_S)
-
-
-def start() -> None:
-    threading.Thread(target=_loop, daemon=True, name="quarantine-cleanup").start()
 
 
 @router.get("/api/admin/quarantine", dependencies=[Depends(admin.require_admin)])   # admin gate: DJ_ADMIN_EMAILS

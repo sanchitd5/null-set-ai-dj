@@ -2997,6 +2997,17 @@ def _autopilot_suggest_impl(req: AutopilotSuggestRequest):
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"LLM suggest error: {exc}") from exc
+    try:      # graph picks, shadow only: logged next to the LLM's, never changes them (GRAPHDB G6)
+        from app.ui.services import graph_pick
+
+        if graph_pick.mode() != "off":
+            graph_pick.shadow(
+                req.track_id,
+                graph_pick.state_from_request(req, history_display, avoid_display, queue_display, earlier,
+                                              _track_names, lang_check, analysis.bpm),
+                suggestions, lang_check, seed_key=graph_pick.name_key(f"{artist_part} - {title_part}"))
+    except Exception:
+        pass
     for s in suggestions:
         if s.get("title") and s.get("genre"):
             _set_label(_suggested_genres, _genre_key(s["title"]), s["genre"])
@@ -3316,8 +3327,20 @@ app.include_router(_admin.router)             # /admin, /api/admin/*: before the
 
 
 @app.on_event("startup")
-def _startup_quarantine_cleanup() -> None:
-    _quarantine_cleanup.start()                  # now, then daily
+def _start_jobs() -> None:
+    """The job runner: registers the built-in jobs (quarantine cleanup now and daily, lang id, publish timer), then
+    starts the scheduler. DJ_JOBS=0 turns the scheduler off (app/ui/services/job_registry.py)."""
+    from app.ui.services import job_registry, jobs_builtin
+
+    jobs_builtin.register_builtin(job_registry.registry)
+    job_registry.registry.start()
+
+
+@app.on_event("shutdown")
+def _stop_jobs() -> None:
+    from app.ui.services import job_registry
+
+    job_registry.registry.shutdown()
 app.include_router(_set_lease.router)      # /api/set/lease: one set at a time
 from app.ui.services.build_info import router as _build_router  # noqa: E402 -- GET /api/build (reload prompt)
 

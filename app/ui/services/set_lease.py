@@ -191,6 +191,7 @@ class LeaseStore:
             lease = self._data["current"] = self._new(client, device_name, holder, now)
             snap = self._snap()
         self._flush(snap)
+        _notify()
         if old:
             self.log("set_lease", action="lapsed", client=old.get("client"), device=old.get("device_name"),
                      since=old.get("started"))
@@ -209,6 +210,7 @@ class LeaseStore:
             lease = self._data["current"] = self._new(client, device_name, holder, now)
             snap = self._snap()
         self._flush(snap)
+        _notify()
         self.log("set_lease", action="takeover", client=client, device=device_name, holder=holder.get("kind"),
                  previous=(prev or {}).get("device_name"), previous_client=(prev or {}).get("client"))
         return lease, prev
@@ -247,6 +249,7 @@ class LeaseStore:
             self._data["current"] = None
             snap = self._snap()
         self._flush(snap)
+        _notify()
         self.log("set_lease", action="release", client=cur.get("client"), device=cur.get("device_name"))
         return True
 
@@ -262,6 +265,7 @@ class LeaseStore:
             self._data["current"] = None
             snap = self._snap()
         self._flush(snap)
+        _notify()
         self.log("set_lease", action="closed", client=cur.get("client"), device=cur.get("device_name"),
                  since=cur.get("started"), idle_min=SESSION_CLOSE_MIN)
         return True
@@ -280,6 +284,7 @@ class LeaseStore:
             self._data["current"] = None
             snap = self._snap()
         self._flush(snap)
+        _notify()
         self.log("set_lease", action="force_close", client=cur.get("client"), device=cur.get("device_name"), reason=reason)
         return view
 
@@ -317,6 +322,29 @@ def _session_log(kind: str, **fields) -> None:
         session_log.log(kind, **fields)
     except Exception:                                # the log never blocks the lease
         pass
+
+
+_listeners: list = []
+
+
+def add_listener(fn: Callable[[], None]) -> None:
+    """Call fn() after the lease changes hands (acquire, takeover, release, sweep, force close). Runs outside the
+    store lock, on the caller's thread; an exception is logged and swallowed. Process-wide: it follows use()."""
+    if fn not in _listeners:
+        _listeners.append(fn)
+
+
+def remove_listener(fn: Callable[[], None]) -> None:
+    if fn in _listeners:
+        _listeners.remove(fn)
+
+
+def _notify() -> None:
+    for fn in list(_listeners):
+        try:
+            fn()
+        except Exception as e:                   # a listener never breaks a lease change
+            print(f"[set_lease] listener failed: {type(e).__name__}: {e}", flush=True)
 
 
 _store: Optional[LeaseStore] = None
