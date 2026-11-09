@@ -369,3 +369,69 @@ def test_hand_edits_in_the_checkout_are_kept_in_a_stash(env):
     (env["server"] / "README.md").write_text("notes by hand")
     rep = publish(env)
     assert rep["stashed"] is True and "dj-atlas publish" in git(env["server"], "stash", "list")
+
+
+# ------------------------------------------------------------- guard: no regression of the atlas (ATLASFIX)
+def drop_cache_track(cache, tid, **doc_fields):
+    """The server's atlas without track `tid` (its library lacks it), optionally on other rules / built_at."""
+    atlas = pa.load(cache)
+    atlas["tracks"].pop(tid)
+    atlas["pairs"] = {k: v for k, v in atlas["pairs"].items() if tid not in k.split(">")}
+    atlas.update(doc_fields)
+    pa.write_atlas(atlas, pa.atlas_path(cache))
+    return atlas
+
+
+def test_guard_server_atlas_on_other_rules_but_older_does_not_replace_the_published_one(env):
+    published = json.loads(remote_files(env)["atlas/meta.json"])
+    atlas = pa.load(env["cache"])
+    atlas.update(rules="0ldrules0ldrules0", built_at=published["built_at"] - 1000)
+    pa.write_atlas(atlas, pa.atlas_path(env["cache"]))
+    edit_cache_macro(env["cache"], "chain-1-anyma", note="x")
+    logs = []
+    rep = publish(env, log=logs.append)
+    meta = json.loads(remote_files(env)["atlas/meta.json"])
+    assert meta["rules"] == published["rules"] and meta["built_at"] == published["built_at"]
+    assert "guard" in rep["atlas"] and any("older" in m for m in logs)
+    assert rep["counts"]["macros"] == 1, "the rest of the knowledge still publishes"
+
+
+def test_guard_server_atlas_on_new_rules_and_newer_still_replaces_it(env):
+    published = json.loads(remote_files(env)["atlas/meta.json"])
+    atlas = pa.load(env["cache"])
+    atlas.update(rules="n3wrules" * 2, built_at=published["built_at"] + 1000)
+    pa.write_atlas(atlas, pa.atlas_path(env["cache"]))
+    publish(env)
+    meta = json.loads(remote_files(env)["atlas/meta.json"])
+    assert meta["rules"] == "n3wrules" * 2 and meta["built_at"] == published["built_at"] + 1000
+
+
+@pytest.mark.parametrize("fields", [{}, {"rules": "n3wrules" * 2, "built_at_plus": 1000}])
+def test_guard_pair_shard_of_a_track_the_server_lacks_is_kept(env, fields):
+    before = remote_files(env)
+    pm = json.loads(before["atlas/meta.json"])
+    extra = {"rules": fields["rules"], "built_at": pm["built_at"] + fields["built_at_plus"]} if fields else {}
+    drop_cache_track(env["cache"], B, **extra)
+    edit_cache_pair(env["cache"], f"{A}>{C}", works=88)
+    logs = []
+    rep = publish(env, log=logs.append)
+    files = remote_files(env)
+    assert rep["status"] == "pushed" and any("kept 1 tracks" in m for m in logs)
+    assert files[f"atlas/pairs/{B}.json.gz"] == before[f"atlas/pairs/{B}.json.gz"]
+    meta = json.loads(files["atlas/meta.json"])
+    assert B in meta["tracks"] and B in meta["shards"] and meta["stats"]["tracks"] == len(meta["tracks"])
+    rows_a = shard(files, A)                                # pairs INTO the absent track stay too
+    assert {k for k in shard(before, A) if k.endswith(f">{B}")} <= set(rows_a)
+    assert rows_a[f"{A}>{C}"]["works"] == 88, "what the server does hold still publishes"
+
+
+def test_guard_built_at_never_moves_backwards_on_a_same_rules_merge(env):
+    published = json.loads(remote_files(env)["atlas/meta.json"])
+    atlas = pa.load(env["cache"])
+    atlas["built_at"] = published["built_at"] - 5000
+    atlas["pairs"][f"{B}>{C}"]["works"] = 71
+    pa.write_atlas(atlas, pa.atlas_path(env["cache"]))
+    publish(env)
+    files = remote_files(env)
+    assert json.loads(files["atlas/meta.json"])["built_at"] == published["built_at"]
+    assert shard(files, B)[f"{B}>{C}"]["works"] == 71
