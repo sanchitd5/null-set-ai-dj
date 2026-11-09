@@ -34,5 +34,7 @@ def extend_package(path: List[str]) -> bool:
 def is_atlas_import_error(exc: BaseException) -> bool:
     """True for the ModuleNotFoundError raised by importing an atlas module without the builder."""
     name = getattr(exc, "name", None) or ""
+    if not AVAILABLE and isinstance(exc, ImportError) and "app.music_brain.atlas" in str(exc):
+        return True
     return (not AVAILABLE and isinstance(exc, ModuleNotFoundError)
             and (name == "app.music_brain.atlas" or name.startswith("app.music_brain.atlas.")))
