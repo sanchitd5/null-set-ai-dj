@@ -80,6 +80,7 @@ UPLOAD_LIMITS = {
     # live ear: one few-second 16 kHz clip (live_ear.MAX_AUDIO_BYTES 1.5 MB) + metrics; phones post it too
     ("POST", "/api/live/ear"): _auth.env_bytes("DJ_MAX_EAR_BYTES", 2 * _MB + _MB // 2),
     ("POST", "/api/app/crash"): 64 * 1024,   # the phone's start-up crash report (app_crash_api.py)
+    ("POST", "/api/sync/ops"): 1_000_000,    # op-log batch (sync_api.py)
 }
 MAX_BODY_BYTES = _auth.env_bytes("DJ_MAX_BODY_BYTES", 64 * _MB)   # every other request
 
@@ -3363,6 +3364,9 @@ app.include_router(_app_crash_router)
 from app.ui.services.learn_ingest_api import router as _learn_ingest_router  # noqa: E402 -- POST /api/mobile/learn (the phone's learn outbox)
 
 app.include_router(_learn_ingest_router)
+from app.ui.services.sync_api import router as _sync_router  # noqa: E402 -- /api/sync/*: op-log sync (G9)
+
+app.include_router(_sync_router)
 
 
 class _RevalidatingStatic(StaticFiles):

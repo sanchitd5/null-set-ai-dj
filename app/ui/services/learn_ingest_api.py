@@ -2,7 +2,7 @@
 middleware like every /api route).
 
     {"v": 1, "device_id", "device_name", "set_id", "items": [{"id", "kind", "at", "data"}]}     <= 100 items, <= 1 MB
-    kind: set_log | transition | bad_pair | like | yt_edges      (what each becomes: music_brain/learning/phone_learn.py)
+    kind: set_log | transition | bad_pair | like | yt_edges | op     (what each becomes: music_brain/learning/phone_learn.py)
     -> {"ok": true, "accepted": [ids], "duplicate": [ids], "rejected": [{"id", "why"}], "publish": bool}
 
 Idempotent: an item id seen before is "duplicate" and changes nothing, so the phone may resend freely.
@@ -15,6 +15,8 @@ import json
 
 from fastapi import APIRouter, HTTPException, Request
 from starlette.concurrency import run_in_threadpool
+
+from app.music_brain.sync import identity
 
 router = APIRouter()
 MAX_BODY = 1_000_000              # a long set's log is the biggest item (<= 5000 control events)
@@ -35,7 +37,7 @@ async def post_learn(request: Request):
     except ValueError:
         raise HTTPException(status_code=422, detail="body must be JSON") from None
     try:
-        res = await run_in_threadpool(_ingest, body)
+        res = await run_in_threadpool(_ingest, body, identity.scope_for(request))
     except pl.LearnError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from None
     if res["accepted"]:
@@ -46,13 +48,13 @@ async def post_learn(request: Request):
             "rejected": res["rejected"], "publish": res["publish"]}
 
 
-def _ingest(body: dict) -> dict:
+def _ingest(body: dict, user_scope: str = "user:owner") -> dict:
     from app.music_brain.learning import phone_learn as pl
     from app.ui import server
     from app.ui.services import replay_api
 
     return pl.ingest(body, _cache(), liked_dir=replay_api.REPLAY_CACHE_DIR, name_of=server._name_of,
-                     save_set_log=server.save_set_log)
+                     save_set_log=server.save_set_log, user_scope=user_scope)
 
 
 def _cache():

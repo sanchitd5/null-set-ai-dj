@@ -1,0 +1,2105 @@
+{
+ "ops": [
+  {
+   "delta": {
+    "add": [
+     "t2",
+     "t5",
+     "t1"
+    ],
+    "field": "tags"
+   },
+   "device": "dev-b",
+   "key": "k4",
+   "kind": "union",
+   "op_id": "dev-c:60",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000033000
+  },
+  {
+   "delta": {
+    "w": 0
+   },
+   "device": "dev-a",
+   "key": "k3",
+   "kind": "max",
+   "op_id": "dev-a:36",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000025000
+  },
+  {
+   "delta": {
+    "bad": 2,
+    "good": 0,
+    "n": 4
+   },
+   "device": "dev-a",
+   "key": "k2",
+   "kind": "incr",
+   "op_id": "dev-b:10",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000025000
+  },
+  {
+   "delta": {
+    "add": [
+     "t2"
+    ],
+    "field": "tags"
+   },
+   "device": "dev-b",
+   "key": "k4",
+   "kind": "union",
+   "op_id": "dev-c:22",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000037000
+  },
+  {
+   "delta": {
+    "label": "x",
+    "rank": 1
+   },
+   "device": "dev-b",
+   "key": "k3",
+   "kind": "lww",
+   "op_id": "dev-c:73",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000027000
+  },
+  {
+   "delta": {
+    "w": 7
+   },
+   "device": "dev-c",
+   "key": "k3",
+   "kind": "max",
+   "op_id": "dev-b:66",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000035000
+  },
+  {
+   "delta": {
+    "w": 2.5
+   },
+   "device": "dev-c",
+   "key": "k2",
+   "kind": "max",
+   "op_id": "dev-a:51",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000034000
+  },
+  {
+   "delta": {
+    "add": [
+     "t6"
+    ],
+    "field": "tags"
+   },
+   "device": "dev-b",
+   "key": "k3",
+   "kind": "union",
+   "op_id": "dev-a:29",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000005000
+  },
+  {
+   "delta": {
+    "bad": 1
+   },
+   "device": "dev-a",
+   "key": "k1",
+   "kind": "incr",
+   "op_id": "dev-a:65",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000013000
+  },
+  {
+   "delta": {
+    "bad": 2,
+    "good": 1,
+    "n": 0
+   },
+   "device": "dev-c",
+   "key": "k2",
+   "kind": "incr",
+   "op_id": "dev-b:98",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000017000
+  },
+  {
+   "delta": {
+    "bad": 0
+   },
+   "device": "dev-b",
+   "key": "k1",
+   "kind": "incr",
+   "op_id": "dev-b:32",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000001000
+  },
+  {
+   "delta": {
+    "label": "z",
+    "rank": 9
+   },
+   "device": "dev-a",
+   "key": "k3",
+   "kind": "lww",
+   "op_id": "dev-c:108",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000016000
+  },
+  {
+   "delta": {
+    "deleted": 1
+   },
+   "device": "dev-c",
+   "key": "k2",
+   "kind": "lww",
+   "op_id": "dev-c:99",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000001000
+  },
+  {
+   "delta": {
+    "good": 5,
+    "n": 1
+   },
+   "device": "dev-a",
+   "key": "k2",
+   "kind": "incr",
+   "op_id": "dev-c:52",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000027000
+  },
+  {
+   "delta": {
+    "add": [
+     "t1",
+     "t3",
+     "t2"
+    ],
+    "field": "tags"
+   },
+   "device": "dev-c",
+   "key": "k2",
+   "kind": "union",
+   "op_id": "dev-a:58",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000040000
+  },
+  {
+   "delta": {
+    "bad": 2,
+    "good": 0,
+    "n": 4
+   },
+   "device": "dev-a",
+   "key": "k2",
+   "kind": "incr",
+   "op_id": "dev-b:10",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000025000
+  },
+  {
+   "delta": {
+    "add": [
+     "t3",
+     "t2",
+     "t1"
+    ],
+    "field": "tags"
+   },
+   "device": "dev-a",
+   "key": "k3",
+   "kind": "union",
+   "op_id": "dev-c:18",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000007000
+  },
+  {
+   "delta": {
+    "add": [
+     "t4"
+    ],
+    "field": "tags"
+   },
+   "device": "dev-a",
+   "key": "k1",
+   "kind": "union",
+   "op_id": "dev-b:94",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000038000
+  },
+  {
+   "delta": {
+    "bad": 0,
+    "good": 1,
+    "n": 0
+   },
+   "device": "dev-a",
+   "key": "k1",
+   "kind": "incr",
+   "op_id": "dev-c:6",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000032000
+  },
+  {
+   "delta": {
+    "bad": 2
+   },
+   "device": "dev-a",
+   "key": "k4",
+   "kind": "incr",
+   "op_id": "dev-a:89",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000018000
+  },
+  {
+   "delta": {
+    "bad": 0,
+    "n": 3
+   },
+   "device": "dev-b",
+   "key": "k3",
+   "kind": "incr",
+   "op_id": "dev-c:14",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000035000
+  },
+  {
+   "delta": {
+    "bad": 3
+   },
+   "device": "dev-a",
+   "key": "k4",
+   "kind": "incr",
+   "op_id": "dev-c:67",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000011000
+  },
+  {
+   "delta": {
+    "label": "z",
+    "rank": 7
+   },
+   "device": "dev-c",
+   "key": "k4",
+   "kind": "lww",
+   "op_id": "dev-c:78",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000032000
+  },
+  {
+   "delta": {
+    "w": 0
+   },
+   "device": "dev-c",
+   "key": "k2",
+   "kind": "max",
+   "op_id": "dev-a:103",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000030000
+  },
+  {
+   "delta": {
+    "w": 2.5
+   },
+   "device": "dev-c",
+   "key": "k2",
+   "kind": "max",
+   "op_id": "dev-a:51",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000034000
+  },
+  {
+   "delta": {
+    "bad": 1,
+    "good": 4
+   },
+   "device": "dev-a",
+   "key": "k1",
+   "kind": "incr",
+   "op_id": "dev-c:35",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000017000
+  },
+  {
+   "delta": {
+    "w": 3.25
+   },
+   "device": "dev-b",
+   "key": "k1",
+   "kind": "max",
+   "op_id": "dev-a:34",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000033000
+  },
+  {
+   "delta": {
+    "bad": 1,
+    "n": 0
+   },
+   "device": "dev-a",
+   "key": "k1",
+   "kind": "incr",
+   "op_id": "dev-c:110",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000027000
+  },
+  {
+   "delta": {
+    "bad": 5,
+    "good": 4,
+    "n": 2
+   },
+   "device": "dev-a",
+   "key": "k2",
+   "kind": "incr",
+   "op_id": "dev-c:82",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000017000
+  },
+  {
+   "delta": {
+    "bad": 0,
+    "good": 0,
+    "n": 4
+   },
+   "device": "dev-a",
+   "key": "k1",
+   "kind": "incr",
+   "op_id": "dev-a:27",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000038000
+  },
+  {
+   "delta": {
+    "label": "z",
+    "rank": 1
+   },
+   "device": "dev-b",
+   "key": "k2",
+   "kind": "lww",
+   "op_id": "dev-b:33",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000000000
+  },
+  {
+   "delta": {
+    "good": 0,
+    "n": 1
+   },
+   "device": "dev-a",
+   "key": "k1",
+   "kind": "incr",
+   "op_id": "dev-b:5",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000038000
+  },
+  {
+   "delta": {
+    "add": [
+     "t3"
+    ],
+    "field": "tags"
+   },
+   "device": "dev-c",
+   "key": "k3",
+   "kind": "union",
+   "op_id": "dev-c:85",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000006000
+  },
+  {
+   "delta": {
+    "add": [
+     "t1",
+     "t6"
+    ],
+    "field": "tags"
+   },
+   "device": "dev-c",
+   "key": "k2",
+   "kind": "union",
+   "op_id": "dev-b:20",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000011000
+  },
+  {
+   "delta": {
+    "label": null,
+    "rank": 1
+   },
+   "device": "dev-b",
+   "key": "k2",
+   "kind": "lww",
+   "op_id": "dev-c:114",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000021000
+  },
+  {
+   "delta": {
+    "w": 7
+   },
+   "device": "dev-a",
+   "key": "k3",
+   "kind": "max",
+   "op_id": "dev-c:117",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000022000
+  },
+  {
+   "delta": {
+    "label": "y",
+    "rank": 8
+   },
+   "device": "dev-c",
+   "key": "k3",
+   "kind": "lww",
+   "op_id": "dev-b:68",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000012000
+  },
+  {
+   "delta": {
+    "add": [
+     "t3",
+     "t4",
+     "t6"
+    ],
+    "field": "tags"
+   },
+   "device": "dev-a",
+   "key": "k4",
+   "kind": "union",
+   "op_id": "dev-b:38",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000013000
+  },
+  {
+   "delta": {
+    "add": [
+     "t4",
+     "t1"
+    ],
+    "field": "tags"
+   },
+   "device": "dev-b",
+   "key": "k2",
+   "kind": "union",
+   "op_id": "dev-b:113",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000009000
+  },
+  {
+   "delta": {
+    "bad": 0,
+    "good": 3
+   },
+   "device": "dev-b",
+   "key": "k2",
+   "kind": "incr",
+   "op_id": "dev-a:11",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000014000
+  },
+  {
+   "delta": {
+    "add": [
+     "t2",
+     "t6",
+     "t3"
+    ],
+    "field": "tags"
+   },
+   "device": "dev-a",
+   "key": "k3",
+   "kind": "union",
+   "op_id": "dev-a:50",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000038000
+  },
+  {
+   "delta": {
+    "label": null,
+    "rank": 9
+   },
+   "device": "dev-a",
+   "key": "k3",
+   "kind": "lww",
+   "op_id": "dev-b:92",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000029000
+  },
+  {
+   "delta": {
+    "label": "x",
+    "rank": 8
+   },
+   "device": "dev-a",
+   "key": "k2",
+   "kind": "lww",
+   "op_id": "dev-a:62",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000000000
+  },
+  {
+   "delta": {
+    "label": null,
+    "rank": 0
+   },
+   "device": "dev-b",
+   "key": "k3",
+   "kind": "lww",
+   "op_id": "dev-a:53",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000031000
+  },
+  {
+   "delta": {
+    "add": [
+     "t1",
+     "t6",
+     "t3"
+    ],
+    "field": "tags"
+   },
+   "device": "dev-b",
+   "key": "k2",
+   "kind": "union",
+   "op_id": "dev-c:71",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000026000
+  },
+  {
+   "delta": {
+    "add": [
+     "t2",
+     "t6",
+     "t1"
+    ],
+    "field": "tags"
+   },
+   "device": "dev-a",
+   "key": "k1",
+   "kind": "union",
+   "op_id": "dev-b:90",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000007000
+  },
+  {
+   "delta": {
+    "w": 7
+   },
+   "device": "dev-a",
+   "key": "k2",
+   "kind": "max",
+   "op_id": "dev-b:116",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000025000
+  },
+  {
+   "delta": {
+    "add": [
+     "t6"
+    ],
+    "field": "tags"
+   },
+   "device": "dev-b",
+   "key": "k3",
+   "kind": "union",
+   "op_id": "dev-a:29",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000005000
+  },
+  {
+   "delta": {
+    "add": [
+     "t2",
+     "t5"
+    ],
+    "field": "tags"
+   },
+   "device": "dev-c",
+   "key": "k2",
+   "kind": "union",
+   "op_id": "dev-b:19",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000017000
+  },
+  {
+   "delta": {
+    "bad": 1,
+    "good": 1,
+    "n": 5
+   },
+   "device": "dev-b",
+   "key": "k4",
+   "kind": "incr",
+   "op_id": "dev-c:3",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000005000
+  },
+  {
+   "delta": {
+    "bad": 1,
+    "good": 0,
+    "n": 0
+   },
+   "device": "dev-b",
+   "key": "k2",
+   "kind": "incr",
+   "op_id": "dev-c:56",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000021000
+  },
+  {
+   "delta": {
+    "good": 3,
+    "n": 2
+   },
+   "device": "dev-c",
+   "key": "k4",
+   "kind": "incr",
+   "op_id": "dev-a:74",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000010000
+  },
+  {
+   "delta": {
+    "add": [
+     "t3"
+    ],
+    "field": "tags"
+   },
+   "device": "dev-a",
+   "key": "k4",
+   "kind": "union",
+   "op_id": "dev-c:26",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000015000
+  },
+  {
+   "delta": {
+    "w": 1
+   },
+   "device": "dev-b",
+   "key": "k1",
+   "kind": "max",
+   "op_id": "dev-c:42",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000021000
+  },
+  {
+   "delta": {
+    "deleted": 1
+   },
+   "device": "dev-c",
+   "key": "k1",
+   "kind": "lww",
+   "op_id": "dev-b:107",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000029000
+  },
+  {
+   "delta": {
+    "label": "x",
+    "rank": 0
+   },
+   "device": "dev-b",
+   "key": "k1",
+   "kind": "lww",
+   "op_id": "dev-b:118",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000029000
+  },
+  {
+   "delta": {
+    "deleted": 1
+   },
+   "device": "dev-c",
+   "key": "k3",
+   "kind": "lww",
+   "op_id": "dev-c:100",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000037000
+  },
+  {
+   "delta": {
+    "bad": 0
+   },
+   "device": "dev-b",
+   "key": "k1",
+   "kind": "incr",
+   "op_id": "dev-b:32",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000001000
+  },
+  {
+   "delta": {
+    "bad": 3,
+    "good": 3,
+    "n": 4
+   },
+   "device": "dev-c",
+   "key": "k2",
+   "kind": "incr",
+   "op_id": "dev-b:13",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000036000
+  },
+  {
+   "delta": {
+    "bad": 2,
+    "good": 5
+   },
+   "device": "dev-c",
+   "key": "k4",
+   "kind": "incr",
+   "op_id": "dev-a:97",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000034000
+  },
+  {
+   "delta": {
+    "add": [
+     "t1",
+     "t3",
+     "t6"
+    ],
+    "field": "tags"
+   },
+   "device": "dev-c",
+   "key": "k4",
+   "kind": "union",
+   "op_id": "dev-c:1",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000010000
+  },
+  {
+   "delta": {
+    "add": [
+     "t3",
+     "t6",
+     "t2"
+    ],
+    "field": "tags"
+   },
+   "device": "dev-c",
+   "key": "k1",
+   "kind": "union",
+   "op_id": "dev-a:0",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000021000
+  },
+  {
+   "delta": {
+    "label": null,
+    "rank": 1
+   },
+   "device": "dev-b",
+   "key": "k2",
+   "kind": "lww",
+   "op_id": "dev-c:114",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000021000
+  },
+  {
+   "delta": {
+    "w": 1
+   },
+   "device": "dev-a",
+   "key": "k2",
+   "kind": "max",
+   "op_id": "dev-a:16",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000000000
+  },
+  {
+   "delta": {
+    "w": 3.25
+   },
+   "device": "dev-a",
+   "key": "k1",
+   "kind": "max",
+   "op_id": "dev-c:119",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000021000
+  },
+  {
+   "delta": {
+    "deleted": 1
+   },
+   "device": "dev-c",
+   "key": "k2",
+   "kind": "lww",
+   "op_id": "dev-c:99",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000001000
+  },
+  {
+   "delta": {
+    "n": 0
+   },
+   "device": "dev-b",
+   "key": "k2",
+   "kind": "incr",
+   "op_id": "dev-a:21",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000030000
+  },
+  {
+   "delta": {
+    "label": "x",
+    "rank": 8
+   },
+   "device": "dev-a",
+   "key": "k2",
+   "kind": "lww",
+   "op_id": "dev-b:77",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000026000
+  },
+  {
+   "delta": {
+    "w": 2.5
+   },
+   "device": "dev-b",
+   "key": "k3",
+   "kind": "max",
+   "op_id": "dev-b:70",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000018000
+  },
+  {
+   "delta": {
+    "bad": 2,
+    "good": 5
+   },
+   "device": "dev-c",
+   "key": "k4",
+   "kind": "incr",
+   "op_id": "dev-a:97",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000034000
+  },
+  {
+   "delta": {
+    "w": 0
+   },
+   "device": "dev-c",
+   "key": "k2",
+   "kind": "max",
+   "op_id": "dev-a:111",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000009000
+  },
+  {
+   "delta": {
+    "good": 4,
+    "n": 2
+   },
+   "device": "dev-a",
+   "key": "k3",
+   "kind": "incr",
+   "op_id": "dev-a:17",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000018000
+  },
+  {
+   "delta": {
+    "n": 2
+   },
+   "device": "dev-c",
+   "key": "k4",
+   "kind": "incr",
+   "op_id": "dev-c:28",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000035000
+  },
+  {
+   "delta": {
+    "bad": 5,
+    "good": 3
+   },
+   "device": "dev-a",
+   "key": "k2",
+   "kind": "incr",
+   "op_id": "dev-c:54",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000035000
+  },
+  {
+   "delta": {
+    "bad": 5,
+    "good": 3,
+    "n": 5
+   },
+   "device": "dev-a",
+   "key": "k1",
+   "kind": "incr",
+   "op_id": "dev-a:25",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000023000
+  },
+  {
+   "delta": {
+    "label": "y",
+    "rank": 7
+   },
+   "device": "dev-c",
+   "key": "k4",
+   "kind": "lww",
+   "op_id": "dev-c:81",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000007000
+  },
+  {
+   "delta": {
+    "label": "z",
+    "rank": 4
+   },
+   "device": "dev-b",
+   "key": "k4",
+   "kind": "lww",
+   "op_id": "dev-a:57",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000015000
+  },
+  {
+   "delta": {
+    "w": 3.25
+   },
+   "device": "dev-c",
+   "key": "k1",
+   "kind": "max",
+   "op_id": "dev-b:79",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000037000
+  },
+  {
+   "delta": {
+    "label": "z",
+    "rank": 9
+   },
+   "device": "dev-a",
+   "key": "k4",
+   "kind": "lww",
+   "op_id": "dev-a:9",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000015000
+  },
+  {
+   "delta": {
+    "add": [
+     "t2",
+     "t4",
+     "t1"
+    ],
+    "field": "tags"
+   },
+   "device": "dev-a",
+   "key": "k2",
+   "kind": "union",
+   "op_id": "dev-b:7",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000040000
+  },
+  {
+   "delta": {
+    "bad": 4,
+    "good": 4,
+    "n": 4
+   },
+   "device": "dev-c",
+   "key": "k1",
+   "kind": "incr",
+   "op_id": "dev-c:23",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000036000
+  },
+  {
+   "delta": {
+    "add": [
+     "t6"
+    ],
+    "field": "tags"
+   },
+   "device": "dev-a",
+   "key": "k3",
+   "kind": "union",
+   "op_id": "dev-c:43",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000004000
+  },
+  {
+   "delta": {
+    "w": 3.25
+   },
+   "device": "dev-a",
+   "key": "k4",
+   "kind": "max",
+   "op_id": "dev-c:69",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000002000
+  },
+  {
+   "delta": {
+    "good": 4
+   },
+   "device": "dev-c",
+   "key": "k2",
+   "kind": "incr",
+   "op_id": "dev-a:41",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000013000
+  },
+  {
+   "delta": {
+    "w": 3.25
+   },
+   "device": "dev-a",
+   "key": "k1",
+   "kind": "max",
+   "op_id": "dev-c:96",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000006000
+  },
+  {
+   "delta": {
+    "label": "x",
+    "rank": 5
+   },
+   "device": "dev-a",
+   "key": "k4",
+   "kind": "lww",
+   "op_id": "dev-a:55",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000033000
+  },
+  {
+   "delta": {
+    "good": 4
+   },
+   "device": "dev-c",
+   "key": "k2",
+   "kind": "incr",
+   "op_id": "dev-a:41",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000013000
+  },
+  {
+   "delta": {
+    "label": "z",
+    "rank": 1
+   },
+   "device": "dev-b",
+   "key": "k2",
+   "kind": "lww",
+   "op_id": "dev-b:33",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000000000
+  },
+  {
+   "delta": {
+    "add": [
+     "t3",
+     "t6"
+    ],
+    "field": "tags"
+   },
+   "device": "dev-c",
+   "key": "k2",
+   "kind": "union",
+   "op_id": "dev-b:64",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000035000
+  },
+  {
+   "delta": {
+    "add": [
+     "t3"
+    ],
+    "field": "tags"
+   },
+   "device": "dev-a",
+   "key": "k4",
+   "kind": "union",
+   "op_id": "dev-c:26",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000015000
+  },
+  {
+   "delta": {
+    "deleted": 1
+   },
+   "device": "dev-c",
+   "key": "k3",
+   "kind": "lww",
+   "op_id": "dev-c:104",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000001000
+  },
+  {
+   "delta": {
+    "add": [
+     "t1",
+     "t3",
+     "t2"
+    ],
+    "field": "tags"
+   },
+   "device": "dev-c",
+   "key": "k2",
+   "kind": "union",
+   "op_id": "dev-a:58",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000040000
+  },
+  {
+   "delta": {
+    "label": "y",
+    "rank": 7
+   },
+   "device": "dev-c",
+   "key": "k3",
+   "kind": "lww",
+   "op_id": "dev-a:102",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000006000
+  },
+  {
+   "delta": {
+    "add": [
+     "t2",
+     "t4",
+     "t1"
+    ],
+    "field": "tags"
+   },
+   "device": "dev-b",
+   "key": "k2",
+   "kind": "union",
+   "op_id": "dev-b:59",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000018000
+  },
+  {
+   "delta": {
+    "add": [
+     "t5",
+     "t3"
+    ],
+    "field": "tags"
+   },
+   "device": "dev-a",
+   "key": "k2",
+   "kind": "union",
+   "op_id": "dev-a:95",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000021000
+  },
+  {
+   "delta": {
+    "w": 2.5
+   },
+   "device": "dev-c",
+   "key": "k4",
+   "kind": "max",
+   "op_id": "dev-b:39",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000039000
+  },
+  {
+   "delta": {
+    "bad": 1,
+    "good": 1,
+    "n": 5
+   },
+   "device": "dev-b",
+   "key": "k4",
+   "kind": "incr",
+   "op_id": "dev-c:3",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000005000
+  },
+  {
+   "delta": {
+    "bad": 5,
+    "good": 3
+   },
+   "device": "dev-a",
+   "key": "k2",
+   "kind": "incr",
+   "op_id": "dev-c:54",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000035000
+  },
+  {
+   "delta": {
+    "add": [
+     "t4",
+     "t3",
+     "t6"
+    ],
+    "field": "tags"
+   },
+   "device": "dev-a",
+   "key": "k4",
+   "kind": "union",
+   "op_id": "dev-c:112",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000014000
+  },
+  {
+   "delta": {
+    "w": 0
+   },
+   "device": "dev-a",
+   "key": "k3",
+   "kind": "max",
+   "op_id": "dev-a:37",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000028000
+  },
+  {
+   "delta": {
+    "bad": 0,
+    "n": 3
+   },
+   "device": "dev-b",
+   "key": "k3",
+   "kind": "incr",
+   "op_id": "dev-c:14",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000035000
+  },
+  {
+   "delta": {
+    "bad": 3,
+    "good": 3,
+    "n": 4
+   },
+   "device": "dev-c",
+   "key": "k2",
+   "kind": "incr",
+   "op_id": "dev-b:13",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000036000
+  },
+  {
+   "delta": {
+    "w": 7
+   },
+   "device": "dev-c",
+   "key": "k1",
+   "kind": "max",
+   "op_id": "dev-b:72",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000026000
+  },
+  {
+   "delta": {
+    "deleted": 1
+   },
+   "device": "dev-a",
+   "key": "k1",
+   "kind": "lww",
+   "op_id": "dev-a:31",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000007000
+  },
+  {
+   "delta": {
+    "bad": 0,
+    "good": 2,
+    "n": 2
+   },
+   "device": "dev-c",
+   "key": "k3",
+   "kind": "incr",
+   "op_id": "dev-c:115",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000007000
+  },
+  {
+   "delta": {
+    "label": "z",
+    "rank": 5
+   },
+   "device": "dev-c",
+   "key": "k3",
+   "kind": "lww",
+   "op_id": "dev-a:47",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000024000
+  },
+  {
+   "delta": {
+    "w": 3.25
+   },
+   "device": "dev-b",
+   "key": "k4",
+   "kind": "max",
+   "op_id": "dev-c:83",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000033000
+  },
+  {
+   "delta": {
+    "w": 2.5
+   },
+   "device": "dev-a",
+   "key": "k4",
+   "kind": "max",
+   "op_id": "dev-a:86",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000030000
+  },
+  {
+   "delta": {
+    "w": 1
+   },
+   "device": "dev-b",
+   "key": "k3",
+   "kind": "max",
+   "op_id": "dev-a:84",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000020000
+  },
+  {
+   "delta": {
+    "add": [
+     "t2",
+     "t4",
+     "t1"
+    ],
+    "field": "tags"
+   },
+   "device": "dev-a",
+   "key": "k2",
+   "kind": "union",
+   "op_id": "dev-b:7",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000040000
+  },
+  {
+   "delta": {
+    "label": null,
+    "rank": 0
+   },
+   "device": "dev-b",
+   "key": "k3",
+   "kind": "lww",
+   "op_id": "dev-a:53",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000031000
+  },
+  {
+   "delta": {
+    "add": [
+     "t2",
+     "t3"
+    ],
+    "field": "tags"
+   },
+   "device": "dev-c",
+   "key": "k1",
+   "kind": "union",
+   "op_id": "dev-c:44",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000029000
+  },
+  {
+   "delta": {
+    "label": "y",
+    "rank": 9
+   },
+   "device": "dev-c",
+   "key": "k1",
+   "kind": "lww",
+   "op_id": "dev-a:8",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000017000
+  },
+  {
+   "delta": {
+    "add": [
+     "t1"
+    ],
+    "field": "tags"
+   },
+   "device": "dev-b",
+   "key": "k3",
+   "kind": "union",
+   "op_id": "dev-b:80",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000004000
+  },
+  {
+   "delta": {
+    "good": 4
+   },
+   "device": "dev-b",
+   "key": "k4",
+   "kind": "incr",
+   "op_id": "dev-a:76",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000032000
+  },
+  {
+   "delta": {
+    "add": [
+     "t3"
+    ],
+    "field": "tags"
+   },
+   "device": "dev-b",
+   "key": "k2",
+   "kind": "union",
+   "op_id": "dev-b:49",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000033000
+  },
+  {
+   "delta": {
+    "w": 3.25
+   },
+   "device": "dev-b",
+   "key": "k1",
+   "kind": "max",
+   "op_id": "dev-a:34",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000033000
+  },
+  {
+   "delta": {
+    "bad": 0,
+    "n": 1
+   },
+   "device": "dev-a",
+   "key": "k3",
+   "kind": "incr",
+   "op_id": "dev-a:45",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000002000
+  },
+  {
+   "delta": {
+    "deleted": 1
+   },
+   "device": "dev-b",
+   "key": "k1",
+   "kind": "lww",
+   "op_id": "dev-b:48",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000017000
+  },
+  {
+   "delta": {
+    "label": "z",
+    "rank": 2
+   },
+   "device": "dev-a",
+   "key": "k1",
+   "kind": "lww",
+   "op_id": "dev-b:15",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000003000
+  },
+  {
+   "delta": {
+    "good": 3,
+    "n": 3
+   },
+   "device": "dev-c",
+   "key": "k1",
+   "kind": "incr",
+   "op_id": "dev-a:30",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000022000
+  },
+  {
+   "delta": {
+    "w": 0
+   },
+   "device": "dev-a",
+   "key": "k2",
+   "kind": "max",
+   "op_id": "dev-c:24",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000008000
+  },
+  {
+   "delta": {
+    "bad": 0,
+    "good": 2,
+    "n": 2
+   },
+   "device": "dev-c",
+   "key": "k3",
+   "kind": "incr",
+   "op_id": "dev-c:115",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000007000
+  },
+  {
+   "delta": {
+    "add": [
+     "t4",
+     "t2",
+     "t5"
+    ],
+    "field": "tags"
+   },
+   "device": "dev-a",
+   "key": "k1",
+   "kind": "union",
+   "op_id": "dev-a:2",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000007000
+  },
+  {
+   "delta": {
+    "w": 2.5
+   },
+   "device": "dev-a",
+   "key": "k3",
+   "kind": "max",
+   "op_id": "dev-c:61",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000034000
+  },
+  {
+   "delta": {
+    "bad": 1,
+    "good": 0,
+    "n": 0
+   },
+   "device": "dev-b",
+   "key": "k2",
+   "kind": "incr",
+   "op_id": "dev-c:56",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000021000
+  },
+  {
+   "delta": {
+    "w": 3.25
+   },
+   "device": "dev-b",
+   "key": "k4",
+   "kind": "max",
+   "op_id": "dev-c:83",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000033000
+  },
+  {
+   "delta": {
+    "w": 7
+   },
+   "device": "dev-b",
+   "key": "k4",
+   "kind": "max",
+   "op_id": "dev-a:87",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000018000
+  },
+  {
+   "delta": {
+    "bad": 5,
+    "good": 4,
+    "n": 2
+   },
+   "device": "dev-a",
+   "key": "k4",
+   "kind": "incr",
+   "op_id": "dev-a:106",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000035000
+  },
+  {
+   "delta": {
+    "bad": 0,
+    "good": 1,
+    "n": 0
+   },
+   "device": "dev-a",
+   "key": "k1",
+   "kind": "incr",
+   "op_id": "dev-c:6",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000032000
+  },
+  {
+   "delta": {
+    "label": "x",
+    "rank": 8
+   },
+   "device": "dev-a",
+   "key": "k2",
+   "kind": "lww",
+   "op_id": "dev-b:77",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000026000
+  },
+  {
+   "delta": {
+    "w": 2.5
+   },
+   "device": "dev-c",
+   "key": "k2",
+   "kind": "max",
+   "op_id": "dev-b:91",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000012000
+  },
+  {
+   "delta": {
+    "add": [
+     "t4"
+    ],
+    "field": "tags"
+   },
+   "device": "dev-c",
+   "key": "k3",
+   "kind": "union",
+   "op_id": "dev-a:101",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000006000
+  },
+  {
+   "delta": {
+    "good": 5
+   },
+   "device": "dev-c",
+   "key": "k2",
+   "kind": "incr",
+   "op_id": "dev-a:109",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000021000
+  },
+  {
+   "delta": {
+    "add": [
+     "t1",
+     "t3",
+     "t5"
+    ],
+    "field": "tags"
+   },
+   "device": "dev-c",
+   "key": "k2",
+   "kind": "union",
+   "op_id": "dev-a:93",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000001000
+  },
+  {
+   "delta": {
+    "w": 2.5
+   },
+   "device": "dev-b",
+   "key": "k3",
+   "kind": "max",
+   "op_id": "dev-a:12",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000040000
+  },
+  {
+   "delta": {
+    "label": "z",
+    "rank": 2
+   },
+   "device": "dev-b",
+   "key": "k4",
+   "kind": "lww",
+   "op_id": "dev-c:46",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000025000
+  },
+  {
+   "delta": {
+    "deleted": 1
+   },
+   "device": "dev-a",
+   "key": "k1",
+   "kind": "lww",
+   "op_id": "dev-b:105",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000030000
+  },
+  {
+   "delta": {
+    "add": [
+     "t4",
+     "t2"
+    ],
+    "field": "tags"
+   },
+   "device": "dev-b",
+   "key": "k4",
+   "kind": "union",
+   "op_id": "dev-b:40",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000003000
+  },
+  {
+   "delta": {
+    "add": [
+     "t1",
+     "t3",
+     "t5"
+    ],
+    "field": "tags"
+   },
+   "device": "dev-c",
+   "key": "k2",
+   "kind": "union",
+   "op_id": "dev-a:93",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000001000
+  },
+  {
+   "delta": {
+    "label": null,
+    "rank": 4
+   },
+   "device": "dev-b",
+   "key": "k2",
+   "kind": "lww",
+   "op_id": "dev-a:4",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000000000
+  },
+  {
+   "delta": {
+    "add": [
+     "t1",
+     "t3",
+     "t5"
+    ],
+    "field": "tags"
+   },
+   "device": "dev-a",
+   "key": "k2",
+   "kind": "union",
+   "op_id": "dev-b:63",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000000000
+  },
+  {
+   "delta": {
+    "add": [
+     "t1",
+     "t2",
+     "t5"
+    ],
+    "field": "tags"
+   },
+   "device": "dev-a",
+   "key": "k1",
+   "kind": "union",
+   "op_id": "dev-c:88",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000036000
+  },
+  {
+   "delta": {
+    "good": 5
+   },
+   "device": "dev-c",
+   "key": "k1",
+   "kind": "incr",
+   "op_id": "dev-a:75",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000037000
+  },
+  {
+   "delta": {
+    "add": [
+     "t2",
+     "t6",
+     "t3"
+    ],
+    "field": "tags"
+   },
+   "device": "dev-a",
+   "key": "k3",
+   "kind": "union",
+   "op_id": "dev-a:50",
+   "scope": "global",
+   "tbl": "edge",
+   "ts": 1700000038000
+  }
+ ],
+ "rows": {
+  "edge\u001fk1": {
+   "_st": {
+    "deleted": [
+     1700000030000,
+     "dev-a"
+    ],
+    "label": [
+     1700000029000,
+     "dev-b"
+    ],
+    "rank": [
+     1700000029000,
+     "dev-b"
+    ]
+   },
+   "bad": 12,
+   "deleted": 1,
+   "good": 20,
+   "label": "x",
+   "n": 17,
+   "rank": 0,
+   "tags": [
+    "t1",
+    "t2",
+    "t3",
+    "t4",
+    "t5",
+    "t6"
+   ],
+   "updated": 1700000038000,
+   "w": 7
+  },
+  "edge\u001fk2": {
+   "_st": {
+    "deleted": [
+     1700000001000,
+     "dev-c"
+    ],
+    "label": [
+     1700000026000,
+     "dev-a"
+    ],
+    "rank": [
+     1700000026000,
+     "dev-a"
+    ]
+   },
+   "bad": 18,
+   "deleted": 1,
+   "good": 28,
+   "label": "x",
+   "n": 11,
+   "rank": 8,
+   "tags": [
+    "t1",
+    "t2",
+    "t3",
+    "t4",
+    "t5",
+    "t6"
+   ],
+   "updated": 1700000040000,
+   "w": 7
+  },
+  "edge\u001fk3": {
+   "_st": {
+    "deleted": [
+     1700000037000,
+     "dev-c"
+    ],
+    "label": [
+     1700000031000,
+     "dev-b"
+    ],
+    "rank": [
+     1700000031000,
+     "dev-b"
+    ]
+   },
+   "bad": 0,
+   "deleted": 1,
+   "good": 6,
+   "label": null,
+   "n": 8,
+   "rank": 0,
+   "tags": [
+    "t1",
+    "t2",
+    "t3",
+    "t4",
+    "t6"
+   ],
+   "updated": 1700000040000,
+   "w": 7
+  },
+  "edge\u001fk4": {
+   "_st": {
+    "label": [
+     1700000033000,
+     "dev-a"
+    ],
+    "rank": [
+     1700000033000,
+     "dev-a"
+    ]
+   },
+   "bad": 13,
+   "good": 17,
+   "label": "x",
+   "n": 11,
+   "rank": 5,
+   "tags": [
+    "t1",
+    "t2",
+    "t3",
+    "t4",
+    "t5",
+    "t6"
+   ],
+   "updated": 1700000039000,
+   "w": 7
+  }
+ }
+}
