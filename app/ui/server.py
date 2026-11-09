@@ -2997,6 +2997,17 @@ def _autopilot_suggest_impl(req: AutopilotSuggestRequest):
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"LLM suggest error: {exc}") from exc
+    try:      # graph picks, shadow only: logged next to the LLM's, never changes them (GRAPHDB G6)
+        from app.ui.services import graph_pick
+
+        if graph_pick.mode() != "off":
+            graph_pick.shadow(
+                req.track_id,
+                graph_pick.state_from_request(req, history_display, avoid_display, queue_display, earlier,
+                                              _track_names, lang_check, analysis.bpm),
+                suggestions, lang_check, seed_key=graph_pick.name_key(f"{artist_part} - {title_part}"))
+    except Exception:
+        pass
     for s in suggestions:
         if s.get("title") and s.get("genre"):
             _set_label(_suggested_genres, _genre_key(s["title"]), s["genre"])
