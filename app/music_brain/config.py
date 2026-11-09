@@ -3,12 +3,13 @@
 import os
 from pathlib import Path
 from app.music_brain.generated import dj_config as DJ
+from app.music_brain import atlas_bridge
 
 # Repository root (this file lives at <root>/app/music_brain/config.py)
 ROOT_DIR = Path(__file__).resolve().parent.parent.parent
 
 # Ground-truth Obsidian DJ knowledge base
-DJ_KB_DIR = ROOT_DIR / "DJ"
+DJ_KB_DIR = atlas_bridge.KB_DIR     # the DJ wiki: private, in the dj-atlas submodule (absent in a public clone)
 TRANSITION_COOKBOOK_DIR = DJ_KB_DIR / "05 - Transition Cookbook"
 MUSIC_THEORY_DIR = DJ_KB_DIR / "02 - Music Theory"
 CORE_TECHNIQUES_DIR = DJ_KB_DIR / "04 - Core Techniques"

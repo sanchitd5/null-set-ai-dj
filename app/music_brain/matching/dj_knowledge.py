@@ -22,7 +22,9 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Iterable, Optional
 
-DJ_DIR = Path(__file__).resolve().parents[3] / "DJ"
+from app.music_brain import atlas_bridge
+
+DJ_DIR = atlas_bridge.KB_DIR       # the DJ wiki lives in the private dj-atlas submodule; absent -> no briefs
 MAX_SECTION_CHARS = 420
 MAX_BRIEF_CHARS = 2000
 

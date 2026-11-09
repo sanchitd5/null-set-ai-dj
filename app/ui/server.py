@@ -2668,7 +2668,10 @@ _VETO_MEMO: dict = {}
 
 def _vetoes() -> list:
     """The owner's vetoes (seed + the user DB), re-read when a veto is stored."""
-    from app.music_brain.atlas import vetoes as vt
+    try:
+        from app.music_brain.atlas import vetoes as vt
+    except ImportError:      # private atlas builder absent (app.music_brain.atlas_bridge): no vetoes
+        return []
 
     stamp = vt.stamp(CACHE_DIR)
     if _VETO_MEMO.get("stamp") != stamp:
@@ -2699,7 +2702,10 @@ def get_vetoes():
 def post_veto(req: VetoRequest):
     """Console "bad pair": the owner's live veto. Stored at once (atomic) and read by every booking
     path through /api/autopilot/vet; the next atlas build turns it into PLAYED_BAD evidence."""
-    from app.music_brain.atlas import vetoes as vt
+    try:
+        from app.music_brain.atlas import vetoes as vt
+    except ImportError:
+        raise HTTPException(status_code=501, detail="vetoes need the private atlas builder (not installed)") from None
     from app.music_brain.analysis.genre import genre_scenes
 
     a = req.a_name or (_name_of(req.a_id) if req.a_id else "")
@@ -3280,9 +3286,10 @@ def get_track_audio(track_id: str, q: str = ""):
     return _audio_response(path, track_id, q, audio_io.MEDIA_TYPES.get(path.suffix.lower()))
 
 
-from app.ui.services.atlas_api import router as _atlas_router  # noqa: E402 -- pair atlas + macros (/api/atlas, /api/macros)
-
-app.include_router(_atlas_router)
+from app.music_brain import atlas_bridge  # noqa: E402
+if atlas_bridge.AVAILABLE:      # pair atlas + macros (/api/atlas, /api/macros); the builder is the private dj-atlas submodule
+    from app.ui.services.atlas_api import router as _atlas_router  # noqa: E402
+    app.include_router(_atlas_router)
 from app.ui.services.replay_api import router as _replay_router  # noqa: E402 -- set history, replay, time travel, liked
 
 app.include_router(_replay_router)

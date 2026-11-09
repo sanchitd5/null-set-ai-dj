@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+from app.music_brain import atlas_bridge
+
 # Auth stays ON in tests: a throwaway account store (owner password + one device token) and
 # session secret, set before app.ui.server is imported, so the owner's real store and .env
 # are never read. testclient_compat.TestClient sends DJ_API_TOKEN as a Bearer header;
@@ -103,6 +105,8 @@ def _private_genre_labels(tmp_path_factory, monkeypatch):
 @pytest.fixture(autouse=True)
 def _private_vetoes(tmp_path_factory, monkeypatch):
     """Tests never write the real data/cache/vetoes.json (the owner's private vetoes)."""
+    if not atlas_bridge.AVAILABLE:
+        return
     from app.music_brain.atlas import vetoes
     p = tmp_path_factory.mktemp("vetoes") / "vetoes.json"
     monkeypatch.setattr(vetoes, "path", lambda cache_dir=None: p)
@@ -151,3 +155,46 @@ def _private_library(tmp_path_factory, monkeypatch):
                 r["error"] = "cut not stubbed"
         return rows
     monkeypatch.setattr(learn_cleanup, "register_rows", fake_register)
+
+
+# ---- needs_atlas: tests of the private atlas builder skip when the dj-atlas submodule is absent ----
+
+# test modules that read the DJ wiki (cookbook recipes, playbooks); with no wiki they skip as a whole
+_NEEDS_KB_WIKI = {"test_key_scoring.py", "test_knowledge_parser.py", "test_matcher_review.py", "test_match_genre.py",
+                  "test_mind_plan.py", "test_prompt_no_examples.py", "test_recipe_matcher.py", "test_scene_profile.py",
+                  "test_track_identity_and_knowledge.py"}
+
+
+def pytest_collection_modifyitems(config, items):
+    """Tests marked needs_atlas skip, with the reason, when the dj-atlas builder is absent."""
+    if atlas_bridge.AVAILABLE:
+        return
+    skip = pytest.mark.skip(reason=atlas_bridge.SKIP_REASON)
+    skip_kb = pytest.mark.skip(reason="needs_atlas: the DJ knowledge wiki (dj-atlas builder/kb/DJ) is not checked out")
+    for item in items:
+        if "needs_atlas" in item.keywords:
+            item.add_marker(skip)
+        elif item.path.name in _NEEDS_KB_WIKI:
+            item.add_marker(skip_kb)
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_make_collect_report(collector):
+    """A test module whose top-level import of an atlas module fails because the builder is
+    absent is reported as skipped (with the reason), not as a collection error."""
+    outcome = yield
+    rep = outcome.get_result()
+    if rep.outcome == "failed" and not atlas_bridge.AVAILABLE and "app.music_brain.atlas" in str(rep.longrepr):
+        outcome.force_result(pytest.CollectReport(
+            rep.nodeid, "skipped", (str(getattr(collector, "path", rep.nodeid)), None, atlas_bridge.SKIP_REASON),
+            rep.result, rep.sections))
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    """The same for a test that imports an atlas module inside the test body."""
+    outcome = yield
+    if call.excinfo is not None and atlas_bridge.is_atlas_import_error(call.excinfo.value):
+        rep = outcome.get_result()
+        rep.outcome = "skipped"
+        rep.longrepr = (str(item.path), item.location[1] or 0, "Skipped: " + atlas_bridge.SKIP_REASON)

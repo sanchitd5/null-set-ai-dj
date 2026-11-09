@@ -33,7 +33,7 @@ from typing import Callable, Dict, List, Optional
 
 APP_URL = "http://127.0.0.1:8000"
 
-from app.music_brain.atlas.studied_combos import _ID_ONLY as _ID_TITLE     # "ID", "ID ID - Higher", "Adam Beyer - ID"
+_ID_TITLE = re.compile(r"^\s*id(\s*[-–—]?\s*id)?\s*([-–—]|$)|[-–—]\s*id\s*$", re.I)     # "ID", "ID ID - Higher", "Adam Beyer - ID"
 _NOT_THE_SONG = re.compile(r"\b(samples?|sample[\s_-]*pack|presets?|serum|wav[\s_-]*samples|construction[\s_-]*kit|"
                            r"isolated[\s_-]*(vocals?|stems?)|acapella|a[\s_-]*cappella|instrumental[\s_-]*only)\b", re.I)
 

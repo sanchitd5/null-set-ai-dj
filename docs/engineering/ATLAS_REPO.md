@@ -8,8 +8,15 @@ data without an APK.
 
 Code: `app/music_brain/matching/knowledge_publish.py` (publish, update, version, snapshot, schedule),
 `knowledge.py` (export, CLI), `knowledge_sync.py` (pull side, unchanged), `app/ui/services/knowledge_api.py`
-(routes), `deploy/atlas/split_atlas.sh` (the one-time split). Tests: `app/tests/py/test_atlas_repo_*.py`,
-`test_atlas_split_script.py`.
+(routes). Tests: `app/tests/py/test_atlas_repo_*.py`. The one-time split script and its test now live in dj-atlas.
+
+**The atlas builder is private.** Everything that builds, scores or seeds the atlas (`pair_atlas`, `atlas_store`,
+`macros`, `studied_combos`, `vetoes` + seed, `pair_atlas_rules.js`, `seed_combos.json`, the set studies) is in
+dj-atlas under `builder/`, so this public repo has none of it. The one adapter is
+`app/music_brain/atlas_bridge.py`: with the submodule checked out, `app.music_brain.atlas.<module>` resolves
+to `knowledge/builder/atlas/<module>.py`; without it (a public clone, CI) the atlas features are off, the
+server still starts, and tests that need the builder skip ("needs_atlas"). `app/tests/py/test_no_atlas_in_public.py`
+(also a CI step) fails if such a file is tracked here again.
 
 ## Layout of dj-atlas (the folder as it is today)
 
