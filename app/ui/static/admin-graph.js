@@ -20,6 +20,10 @@
       return r.json();
     });
   }
+  function trendText(t) {
+    if (!t) return null;
+    return '#' + t.rank + ' (' + Object.keys(t.regions).sort().map(function (r) { return r + ' #' + t.regions[r]; }).join(', ') + ')';
+  }
   function fmtTime(s) { var n = Number(s); return n ? new Date(n * 1000).toISOString().replace('T', ' ').slice(0, 19) + ' UTC' : '-'; }
 
   function filters() {
@@ -48,6 +52,7 @@
     box.textContent = '';
     if (!s || s.available === false) { box.textContent = 'No graph.db yet. Rebuild it from the Jobs page.'; return; }
     var parts = ['rev ' + s.rev, 'built ' + fmtTime(s.built_at), s.nodes + ' nodes', s.edges + ' edges'];
+    if (s.trending) parts.push(s.trending + ' trending');
     var ek = s.edge_kinds || {};
     Object.keys(ek).sort().forEach(function (k) { parts.push(k + ' ' + ek[k]); });
     box.textContent = parts.join(' | ');
@@ -59,6 +64,7 @@
       {selector: 'node', style: {'background-color': '#475569', label: 'data(label)', color: '#e5e7eb', 'font-size': 11,
         'text-wrap': 'ellipsis', 'text-max-width': 110, 'text-valign': 'bottom', 'text-margin-y': 4, width: 26, height: 26}},
       {selector: 'node[?library]', style: {'background-color': '#2563eb'}},
+      {selector: 'node[?trending]', style: {'border-width': 3, 'border-color': '#fbbf24'}},
       {selector: 'node.center', style: {'border-width': 4, 'border-color': '#fbbf24', width: 38, height: 38}},
       {selector: 'node.done', style: {'border-width': 2, 'border-color': '#e5e7eb'}},
       {selector: 'node:selected', style: {'overlay-color': '#fbbf24', 'overlay-opacity': 0.25}},
@@ -78,7 +84,8 @@
     cy.batch(function () {
       g.nodes.forEach(function (n) {
         if (cy.getElementById('n' + n.id).empty())
-          cy.add({group: 'nodes', data: {id: 'n' + n.id, nid: n.id, label: n.label, library: n.library, lang: n.lang || ''}});
+          cy.add({group: 'nodes', data: {id: 'n' + n.id, nid: n.id, label: n.label, library: n.library, lang: n.lang || '',
+            trending: !!n.trend}});
       });
       g.edges.forEach(function (e) {
         var id = 'e' + e.a + '_' + e.b + '_' + e.kind;
@@ -125,11 +132,17 @@
       var kv = el('table', null, {'class': 'kv'});
       [['Artist', n.artist], ['Title', n.title], ['BPM', n.bpm != null ? Math.round(n.bpm * 10) / 10 : null], ['Key', n.key],
         ['Energy', n.energy], ['Language', n.lang], ['Scene', n.scene], ['Source', n.source],
-        ['Library', n.library ? 'yes' : 'no'], ['YouTube id', n.yt_id]].forEach(function (r) {
+        ['Library', n.library ? 'yes' : 'no'], ['YouTube id', n.yt_id], ['Trending', trendText(n.trend)]].forEach(function (r) {
         var tr = el('tr'); tr.appendChild(el('th', r[0])); tr.appendChild(el('td', r[1] == null || r[1] === '' ? '-' : String(r[1])));
         kv.appendChild(tr);
       });
       p.appendChild(kv);
+      if ((n.trend_history || []).length) {
+        p.appendChild(el('h3', 'Chart history (day, region, place)'));
+        var hl = el('ul');
+        n.trend_history.slice(0, 14).forEach(function (h) { hl.appendChild(el('li', h.day + '  ' + h.region + '  #' + h.rank)); });
+        p.appendChild(hl);
+      }
       Object.keys(d.edges).sort().forEach(function (k) {
         var g = d.edges[k], h = el('h3', k + ' (out ' + g.out + ', in ' + g.in + ')');
         h.style.borderLeft = '6px solid ' + (COLORS[k] || '#64748b'); h.style.paddingLeft = '8px';
@@ -160,13 +173,13 @@
 
   function search(ev) {
     ev.preventDefault();
-    var q = $('gq').value.trim(), box = $('gresults');
+    var q = $('gq').value.trim(), box = $('gresults'), trend = $('gtrend').checked;
     box.textContent = '';
-    if (!q) return;
-    getJSON('/api/admin/graph/node?q=' + encodeURIComponent(q)).then(function (r) {
+    if (!q && !trend) return;
+    getJSON('/api/admin/graph/node?q=' + encodeURIComponent(q) + (trend ? '&trending=1' : '')).then(function (r) {
       if (!r.results.length) { box.appendChild(el('p', 'No match.', {'class': 'muted'})); return; }
       r.results.forEach(function (n) {
-        var b = el('button', n.label + (n.library ? '' : '  (not in library)'), {type: 'button'});
+        var b = el('button', n.label + (n.library ? '' : '  (not in library)') + (n.trend ? '  [trending #' + n.trend.rank + ']' : ''), {type: 'button'});
         b.addEventListener('click', function () { box.textContent = ''; centre(n.id); });
         box.appendChild(b);
       });
