@@ -1,0 +1,4 @@
+[submodule "app/music_brain/knowledge"]
+	path = app/music_brain/knowledge
+	url = https://github.com/sanchitd5/dj-atlas.git
+	branch = main
