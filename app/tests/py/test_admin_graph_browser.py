@@ -16,7 +16,7 @@ from app.tests.py.test_admin_graph_api import build_graph
 from app.tests.py.test_admin_shell import ADMIN, _google_cookie, env  # noqa: F401
 
 pytestmark = pytest.mark.skipif(not atlas_bridge.AVAILABLE, reason=atlas_bridge.SKIP_REASON)
-SCRIPT = Path(__file__).resolve().parents[1] / "js" / "admin_graph_check.js"
+SCRIPT = Path(__file__).resolve().parents[1] / "js" / "admin_graph_browser.js"
 STATIC = Path(__file__).resolve().parents[2] / "ui" / "static"
 
 

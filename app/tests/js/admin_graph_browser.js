@@ -1,5 +1,5 @@
 // Browser check for /admin/graph (run by app/tests/py/test_admin_graph_browser.py with the global playwright).
-// usage: node admin_graph_check.js <baseUrl> <cookieName> <cookieValue> <searchText> <expectedNeighbours>
+// usage: node admin_graph_browser.js <baseUrl> <cookieName> <cookieValue> <searchText> <expectedNeighbours>
 const { chromium } = require('playwright');
 
 const [base, cookieName, cookieValue, query, expected] = process.argv.slice(2);
