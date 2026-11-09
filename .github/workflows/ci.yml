@@ -44,5 +44,8 @@ jobs:
           done
           exit $fail
 
+      - name: Guard - no atlas building code or seed data in the public repo
+        run: python -m pytest app/tests/py/test_no_atlas_in_public.py -q
+
       - name: pytest (not slow)
         run: python -m pytest app/tests/ -q -m "not slow" --ignore=app/tests/py/test_ui_server.py

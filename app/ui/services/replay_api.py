@@ -19,7 +19,6 @@ from typing import Optional, Union
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from app.music_brain.atlas import macros as mc
 from app.music_brain.config import CACHE_DIR
 from app.music_brain.learning import history_api as history
 from app.music_brain.learning import liked as lk
@@ -85,6 +84,10 @@ def post_replay(body: ReplayBody):
         else:
             out = rp.travel(body.session, body.at, body.step, REPLAY_CACHE_DIR)
         if body.save and out.get("replay"):
+            try:
+                from app.music_brain.atlas import macros as mc
+            except ImportError:
+                raise HTTPException(status_code=501, detail="macros need the private atlas builder (not installed)")
             out["replay"]["macro"] = mc.save(out["replay"]["macro"], REPLAY_CACHE_DIR)
     except (KeyError, ValueError, IndexError) as exc:
         _err(exc)
