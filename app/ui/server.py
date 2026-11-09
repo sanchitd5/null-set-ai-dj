@@ -3211,6 +3211,14 @@ app.include_router(_mobile_router)
 from app.ui.services.session_events_api import router as _session_events_router  # noqa: E402 -- batched session events (phone watchdog)
 
 app.include_router(_session_events_router)
+from app.ui.services import quarantine_cleanup as _quarantine_cleanup  # noqa: E402 -- _pick_quarantine retention + GET /api/admin/quarantine
+
+app.include_router(_quarantine_cleanup.router)
+
+
+@app.on_event("startup")
+def _startup_quarantine_cleanup() -> None:
+    _quarantine_cleanup.start()                  # now, then daily
 app.include_router(_set_lease.router)      # /api/set/lease: one set at a time
 from app.ui.services.build_info import router as _build_router  # noqa: E402 -- GET /api/build (reload prompt)
 
