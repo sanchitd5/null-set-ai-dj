@@ -33,7 +33,12 @@ All behind the owner auth (cookie or device token, `AUTH.md`), so every caller i
   once, the session log gets action `closed`. A later beat from that lease answers 409 `lease ended` with no `holder`
   (unless another set holds the lease now). The phone treats that as "set closed" (idle, a new lease on the next play),
   not as "server busy".
-* Session log: kind `set_lease`, action `grant` / `release` / `takeover` / `lapsed` / `revived` / `closed`.
+* **Force close** (admin shell, `ADMIN.md`): `LeaseStore.force_close` ends the live set like the sweep (publish, history entry);
+  the holder's next beat answers 409 `closed by admin`.
+* **History**: the last `MAX_HISTORY` (50) closed sets (`id_hash` = 8 hex of the lease id's sha256, client, device, holder,
+  started, ended, reason `released` / `taken_over` / `lapsed` / `paused_timeout` / `admin`) live in `set_lease.json`
+  and feed the admin sessions page. The lease id itself is never stored there.
+* Session log: kind `set_lease`, action `grant` / `release` / `takeover` / `lapsed` / `revived` / `closed` / `force_close`.
 
 ## Gate
 

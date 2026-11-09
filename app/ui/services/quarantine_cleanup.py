@@ -8,7 +8,9 @@ import threading
 import time
 from pathlib import Path
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+
+from app.ui.services import admin
 
 AUDIO_DAYS = 7
 NOTE_DAYS = 30
@@ -105,6 +107,6 @@ def start() -> None:
     threading.Thread(target=_loop, daemon=True, name="quarantine-cleanup").start()
 
 
-@router.get("/api/admin/quarantine")
+@router.get("/api/admin/quarantine", dependencies=[Depends(admin.require_admin)])   # admin gate: DJ_ADMIN_EMAILS
 def get_quarantine() -> dict:
     return summary()

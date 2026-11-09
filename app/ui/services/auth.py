@@ -595,6 +595,15 @@ def make_session(settings: AuthSettings, user: dict, now: Optional[float] = None
     return f"{body}.{_session_sig(settings, body)}"
 
 
+def session_user(value: str) -> Optional[str]:
+    """The Google subject a session cookie was issued for ('g-<sub>'), else None (password session or malformed).
+    Reads the field only: call it on a cookie `check_session` already accepted."""
+    parts = value.split(".")
+    if len(parts) == 6 and parts[1].startswith(_SESSION_GOOGLE):
+        return parts[1][len(_SESSION_GOOGLE):] or None
+    return None
+
+
 def check_session(settings: AuthSettings, value: str, now: Optional[float] = None) -> str:
     """'ok' | 'expired' | 'stale' (password changed / user gone) | 'bad' (forged, malformed)."""
     parts = value.split(".")
@@ -1128,7 +1137,8 @@ class TokenAuthMiddleware:
                 return await self._deny(scope, send, 403)      # approving needs the owner's browser login
             if row and self._token_identity_ok(row):
                 # who asked, for the app (set lease holder): never the token itself
-                scope["dj_auth"] = {"kind": "device", "key": "device:" + row["id"], "name": row.get("name")}
+                scope["dj_auth"] = {"kind": "device", "key": "device:" + row["id"], "name": row.get("name"),
+                                     "sub": row.get("sub") or None}
                 return await self._authed(scope, receive, send, path, method)
             self.guard.limiter.fail("ip:" + ip, s)
             return await self._deny(scope, send, 401)
@@ -1139,7 +1149,8 @@ class TokenAuthMiddleware:
             if state == "ok":
                 if (scope["type"] == "websocket" or method not in _SAFE_METHODS) and not origin_ok(s, headers):
                     return await self._deny(scope, send, 403)
-                scope["dj_auth"] = {"kind": "browser", "key": "browser:" + _sha256(cookie)[:16], "name": "browser"}
+                scope["dj_auth"] = {"kind": "browser", "key": "browser:" + _sha256(cookie)[:16], "name": "browser",
+                                     "sub": session_user(cookie)}
                 if scope["type"] == "http" and path == s.device_path:
                     try:
                         return await self._device_page(scope, receive, send, headers, ip, cookie, method)

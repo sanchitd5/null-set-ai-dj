@@ -236,3 +236,61 @@ def test_queue_stems_downgrades_for_a_non_holder(monkeypatch):
         set_lease._may_lead.reset(token)
     server._queue_stems("abc")
     assert asked == [False, True]
+
+
+# ---- history + force close (admin shell) -----------------------------------------------------
+
+def test_history_per_end_reason(tmp_path):
+    clock = Clock()
+    s = _store(tmp_path, clock)
+    a, _ = s.acquire("phone", "p1", PHONE)
+    s.release(a["id"])
+    b, _ = s.acquire("phone", "p2", PHONE)
+    s.takeover("console", "c1", CONSOLE)
+    clock.t += 500
+    s.acquire("phone", "p3", PHONE)                       # the console lease lapsed
+    clock.t += 5000
+    s.sweep()                                            # long idle: closed by the server
+    c, _ = s.acquire("phone", "p4", PHONE)
+    assert s.force_close() is not None
+    rows = s.history_view(20)
+    reasons = {r["device_name"]: r["reason"] for r in rows}
+    assert reasons == {"p1": "released", "p2": "taken_over", "c1": "lapsed", "p3": "paused_timeout", "p4": "admin"}
+    assert all(r["duration_s"] >= 0 for r in rows)
+    assert s.history_view(20)[0]["device_name"] == "p4"        # newest first
+
+
+def test_history_cap_and_no_ids(tmp_path):
+    s = _store(tmp_path)
+    ids = []
+    for i in range(set_lease.MAX_HISTORY + 5):
+        lease, _ = s.acquire("phone", f"d{i}", PHONE)
+        ids.append(lease["id"])
+        s.release(lease["id"])
+    view = s.history_view(500)
+    assert len(view) == set_lease.MAX_HISTORY and view[0]["device_name"] == f"d{set_lease.MAX_HISTORY + 4}"
+    text = str(view)
+    assert not any(i in text for i in ids) and all(len(r["id_hash"]) == 8 for r in view)
+
+
+def test_force_close_then_old_beat_and_new_acquire(tmp_path):
+    s = _store(tmp_path)
+    assert s.force_close() is None                            # nothing live
+    lease, _ = s.acquire("phone", "pixel", PHONE)
+    view = s.force_close()
+    assert view["device_name"] == "pixel" and "id" not in view and s.status()["active"] is False
+    got, body = s.beat(lease["id"])
+    assert got is None and body["detail"] == "closed by admin" and body["code"] == "set_lease"
+    assert s.acquire("console", "studio", CONSOLE)[1] is None
+    s2 = _store(tmp_path)                                    # file round trip
+    assert [r["reason"] for r in s2.history_view(5)] == ["admin"]
+
+
+def test_status_admin(tmp_path):
+    clock = Clock()
+    s = _store(tmp_path, clock)
+    assert s.status_admin() == {"active": False, "lease": None}
+    s.acquire("phone", "pixel", PHONE)
+    clock.t += 25
+    v = s.status_admin()["lease"]
+    assert v["last_beat"] == 1000.0 and v["lapses_in"] == 35.0 and "id" not in v
