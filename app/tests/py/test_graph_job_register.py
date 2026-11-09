@@ -1,5 +1,6 @@
 """The private builder's graph_expand job reaches the job runner only through atlas_bridge.register_jobs.
-Without the builder the server registers nothing; with it the job is idle-only and off by default."""
+Without the builder the server registers nothing; with it graph_expand is idle-only, on by default and runs
+hourly by cron (owner decision 2026-11-09), and graph_trending runs daily."""
 import pytest
 
 from app.music_brain import atlas_bridge
@@ -14,10 +15,13 @@ def test_without_the_builder_nothing_registers(monkeypatch, tmp_path):
 
 
 @pytest.mark.skipif(not atlas_bridge.AVAILABLE, reason=atlas_bridge.SKIP_REASON)
-def test_graph_expand_registers_idle_only_and_off(tmp_path, monkeypatch):
+def test_graph_jobs_register_on_cron(tmp_path, monkeypatch):
     monkeypatch.delenv("DJ_GRAPH_EXPAND", raising=False)
+    monkeypatch.delenv("DJ_GRAPH_TRENDING", raising=False)
     reg = Registry(cache_dir=tmp_path)
     assert atlas_bridge.register_jobs(reg.register) is True
-    spec = reg._jobs["graph_expand"].spec
-    assert spec.idle_only and spec.kind == "idle_worker"
-    assert reg._jobs["graph_expand"].spec.settings["enabled"].default is False
+    expand = reg._jobs["graph_expand"].spec
+    assert expand.idle_only and expand.schedule == "0 * * * *"
+    assert expand.settings["enabled"].default is True
+    trending = reg._jobs["graph_trending"].spec
+    assert trending.idle_only and trending.schedule == "20 5 * * *"
