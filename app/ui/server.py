@@ -3331,6 +3331,9 @@ app.include_router(_config_live_router)
 from app.ui.services.knowledge_api import router as _knowledge_router  # noqa: E402 -- GET /api/knowledge/version, /snapshot (the phone pulls the dj-atlas knowledge)
 
 app.include_router(_knowledge_router)
+from app.ui.services.graph_api import router as _graph_router  # noqa: E402 -- GET /api/graph/version, /snapshot (the phone pulls graph.db via atlas_bridge)
+
+app.include_router(_graph_router)
 from app.ui.services.app_crash_api import router as _app_crash_router  # noqa: E402 -- POST /api/app/crash (phone start-up crash report)
 
 app.include_router(_app_crash_router)
