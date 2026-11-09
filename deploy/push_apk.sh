@@ -19,6 +19,9 @@
 # null-set-dj.json (from_version_code, from_sha256, sha256 of the result APK, patch_sha256, patch_size, size).
 # The phone then downloads a few MB instead of the whole APK. --no-patches skips this step.
 # Needs python3 in the CT and ~3x the APK size of free RAM for a few seconds.
+# Release notes: the same push also appends this build's NOTES to changelog.json next to the APK (deploy/changelog.py;
+# idempotent per build number, older entries kept), which the app's "What's new" page reads from /api/app/changelog.
+# One-time history seed: deploy/push_changelog_seed.sh.
 # Force update: --block 15,16 lists builds that must update ("blocked_version_codes" in android.json): a phone on one of
 # them skips its normal start and opens the update screen. Without --block the earlier list is kept (apk_delta.py
 # carries it over, so not with --no-patches); --block none clears it. Block only builds older than the one you publish.
@@ -90,6 +93,10 @@ if [ "$2" = 1 ]; then
   pct exec __CT__ -- python3 "$D/apk_delta.py" publish --dir "$D" --keep "$3"
 fi
 rm -f /root/apk_delta.py
+# release-notes history (GET /api/app/changelog): add this build's entry; a failure here must not undo the release
+pct push __CT__ /root/changelog.py "$D/changelog.py" --perms 755
+pct exec __CT__ -- python3 "$D/changelog.py" add --dir "$D" || echo "WARNING: changelog entry not written" >&2
+rm -f /root/changelog.py
 H
 )
 HOSTSCRIPT="${HOSTSCRIPT//__DEST__/$DEST}"; HOSTSCRIPT="${HOSTSCRIPT//__CT__/$CT}"
@@ -98,6 +105,7 @@ run() { if [ "$DRY" = 1 ]; then echo "[dry-run] $*"; else "$@"; fi; }
 run scp -P $HOST_PORT "$APK" "$HOST:/root/null-set-dj.apk"
 run scp -P $HOST_PORT "$JSON" "$HOST:/root/null-set-dj.json"
 [ "$PATCHES" = 1 ] && run scp -P $HOST_PORT "$HERE/apk_delta.py" "$HOST:/root/apk_delta.py"
+run scp -P $HOST_PORT "$HERE/changelog.py" "$HOST:/root/changelog.py"
 if [ "$DRY" = 1 ]; then
   echo "[dry-run] ssh -p $HOST_PORT $HOST bash -s $SHA $PATCHES $KEEP <<'script'"; echo "$HOSTSCRIPT"; echo "script"
 else
