@@ -1,9 +1,0 @@
-{
- "version": 1,
- "vetoes": [
-  {"kind": "pair", "a": "TH;EN - Bodyrock", "b": "Masters At Work - Work (Skytech Remix)", "source": "seed",
-   "at": "2026-09-30T16:37:00", "note": "owner, live set 2026-09-30_154332: spoiling the vibe in an electronic set (FOLLOW SET booked it twice)"},
-  {"kind": "pair", "a": "Sammy Virji - Hackney Pigeon", "b": "Santigold - You'll Find a Way", "source": "seed",
-   "at": "2026-09-30T16:41:10", "note": "owner, live set 2026-09-30_154332: bad match, vibe killer (mashup + Echo Out)"}
- ]
-}

@@ -41,7 +41,10 @@ from typing import Iterable, List, Optional
 
 from app.music_brain.analysis import scene_profile as sp
 from app.music_brain.analysis.genre import family_jump, genre_families, scene_keys, scene_relation
-from app.music_brain.atlas import vetoes as vt
+try:
+    from app.music_brain.atlas import vetoes as vt
+except ImportError:       # private atlas builder absent (see atlas_bridge): no owner vetoes to apply
+    vt = None
 from app.ui.services.set_memory import _key as memory_key
 
 
@@ -55,7 +58,7 @@ def vet_one(a_name: str, b_name: str, *, a_genre: Optional[str] = None, a_era: O
             punjabi_profile: str = "off", anchor_genre: Optional[str] = None,
             set_genre: Optional[str] = None) -> Optional[dict]:
     """None when B may follow A, else {gate, why}."""
-    why = vt.blocked(vetoes, a_name, b_name, a_genre)
+    why = vt.blocked(vetoes, a_name, b_name, a_genre) if vt else None
     if why:
         return {"gate": "veto", "why": why}
     # a label that maps to no family ("indie": Beedi -> We Are The People) or no label at all ("CC" after
