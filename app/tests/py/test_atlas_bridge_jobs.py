@@ -62,3 +62,16 @@ def test_register_appliers_follows_the_same_never_raise_rules(monkeypatch, capsy
     mod.register = boom
     assert ab.register_appliers(lambda t, f: None) is False
     assert "applier registration failed" in capsys.readouterr().out
+
+@pytest.mark.needs_atlas
+def test_builder_registers_graph_trending_idle_only():
+    from app.ui.services import job_registry as jr
+    got = []
+    assert ab.register_jobs(got.append) is True
+    spec = next(s for s in got if s.name == "graph_trending")
+    assert isinstance(spec, jr.JobSpec) and spec.idle_only
+    if "schedule" in jr.JobSpec.__dataclass_fields__:                    # the cron runner (G12)
+        assert spec.schedule == "20 5 * * *"
+    else:
+        assert spec.interval_s == 86400.0
+    assert {"enabled", "regions", "max_regions", "per_region", "pace_s"} <= set(spec.settings)

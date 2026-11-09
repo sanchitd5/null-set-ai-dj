@@ -1,8 +1,9 @@
 """Admin graph view: /admin/graph and the read-only JSON API under /api/admin/graph (G11).
 
     GET /admin/graph                                   the page (static/admin-graph.js draws it with cytoscape)
-    GET /api/admin/graph/stats                         {rev, seq, built_at, nodes, edges, node_kinds, edge_kinds, langs}
+    GET /api/admin/graph/stats                         {rev, seq, built_at, nodes, edges, node_kinds, edge_kinds, langs, trending}
     GET /api/admin/graph/node?q=<name or yt id>        {results: [node]}   (q empty: 422)
+    GET /api/admin/graph/node?trending=1[&q=]          {results: [node]}   songs on a region chart now, best place first
     GET /api/admin/graph/node?id=<n>                   {node, edges: {kind: {out, in, top}}}
     GET /api/admin/graph/neighbours?id=&k=&kinds=a,b&min_weight=&lang=      {center, nodes, edges}
 
@@ -25,7 +26,8 @@ _BODY = """
 <div id="gstats" class="muted">loading</div>
 <form id="gsearch" class="gbar"><input id="gq" type="search" placeholder="artist, title or YouTube id" autocomplete="off"
   aria-label="search">
-<button type="submit">Search</button></form>
+<button type="submit">Search</button>
+<label><input id="gtrend" type="checkbox"> Trending only</label></form>
 <div id="gresults"></div>
 <details class="gbar"><summary>Filters</summary>
  <div id="gkinds"></div>
@@ -65,12 +67,14 @@ def register(router, require_admin, page) -> None:
         return st if st is not None else {"available": False}
 
     @router.get("/api/admin/graph/node")
-    def graph_node(q: str = "", id: int = 0, email: str = Depends(require_admin)):
+    def graph_node(q: str = "", id: int = 0, trending: int = 0, email: str = Depends(require_admin)):
         if id:
             d = atlas_bridge.graph_view("node_detail", id)
             return d if d is not None else _unavailable()
-        if not q.strip():
+        if not q.strip() and not trending:
             return JSONResponse({"detail": "q or id required", "code": "bad_query"}, status_code=422)
+        if trending:
+            return {"results": atlas_bridge.graph_view("find", q, 25, trending=True) or []}
         return {"results": atlas_bridge.graph_view("find", q) or []}
 
     @router.get("/api/admin/graph/neighbours")

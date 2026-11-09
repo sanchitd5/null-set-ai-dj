@@ -104,3 +104,24 @@ def test_page_has_scripts_and_nav(env, graph):  # noqa: F811
     assert r.status_code == 200 and "script-src 'self'" in r.headers["content-security-policy"]
     assert "/vendor/cytoscape.min.js" in r.text and "/admin-graph.js" in r.text and 'href="/admin/graph"' in r.text
     assert 'http-equiv="refresh"' not in r.text and "width=device-width" in r.text
+
+
+def test_trending_filter_badge_and_history(env, graph):  # noqa: F811
+    import time
+
+    from app.music_brain.atlas import graph_schema as gs
+    conn = gs.open_graph(None)
+    now = int(time.time())
+    conn.execute("INSERT INTO trend (node_id, region, rank, seen_at) VALUES (?, 'XX', 3, ?)", (graph[2], now))
+    conn.execute("INSERT INTO trend_hist (node_id, region, day, rank) VALUES (?, 'XX', '2026-01-02', 3)", (graph[2],))
+    c = _admin(env)
+    hit = c.get("/api/admin/graph/node", params={"trending": 1}).json()["results"]
+    assert [n["id"] for n in hit] == [graph[2]] and hit[0]["trend"]["rank"] == 3 and hit[0]["trend"]["regions"] == {"XX": 3}
+    assert c.get("/api/admin/graph/node", params={"trending": 1, "q": "artist a"}).json() == {"results": []}
+    plain = c.get("/api/admin/graph/node", params={"q": "artist c"}).json()["results"]
+    assert plain[0]["trend"]["rank"] == 3
+    d = c.get("/api/admin/graph/node", params={"id": graph[2]}).json()["node"]
+    assert d["trend"]["rank"] == 3 and d["trend_history"] == [{"day": "2026-01-02", "region": "XX", "rank": 3}]
+    assert c.get("/api/admin/graph/node", params={"id": graph[0]}).json()["node"]["trend"] is None
+    assert c.get("/api/admin/graph/stats").json()["trending"] == 1
+    assert "gtrend" in c.get("/admin/graph").text

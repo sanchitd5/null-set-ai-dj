@@ -53,6 +53,9 @@ Search a song by name or YouTube id; it is drawn with its top-k neighbours per e
 `app/ui/static/vendor/` with its licence, no CDN). Tap a node to expand one hop and open its details (artist, title,
 bpm, key, energy, language, scene, source, library, edges grouped by kind); long-press also opens the details.
 Filters: edge kinds, minimum weight, language. Read-only JSON: `GET /api/admin/graph/stats`, `/node?q=|id=`,
-`/neighbours?id=&k=&kinds=&min_weight=&lang=`. Data is read from graph.db through `atlas_bridge.graph_view` (the
+`/neighbours?id=&k=&kinds=&min_weight=&lang=`. "Trending only" (`/node?trending=1[&q=]`) lists the songs on a region chart now; trending
+songs carry a `trend` badge (best chart place and per-region places) and the song detail shows the daily chart history.
+The `graph_trending` job (private, daily, idle only; regions from its `regions` setting or the library's languages) fills
+it, and the idle expansion takes charting songs as candidates. Data is read from graph.db through `atlas_bridge.graph_view` (the
 `graph_store` views in the private dj-atlas); without a graph.db the page says so and the API answers empty/404.
 The admin pages use one responsive stylesheet: readable at 360 px, 44 px tap targets, tables turn into cards.
