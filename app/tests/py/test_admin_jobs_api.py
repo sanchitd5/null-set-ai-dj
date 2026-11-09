@@ -55,7 +55,8 @@ def test_list_view_idle_and_page(env, reg):  # noqa: F811
     assert c.get("/api/admin/jobs/nope").status_code == 404
     page = c.get("/admin/jobs")
     assert page.status_code == 200 and "Work &lt;i&gt;" in page.text and "<i>" not in page.text
-    assert 'content="3"' in page.text and "<script" not in page.text
+    assert page.text.count("<script") == 1 and 'src="/admin-jobs.js"' in page.text   # same-origin script only
+    assert "script-src 'self'" in page.headers["content-security-policy"]
     assert 'href="/admin/jobs"' in c.get("/admin").text                  # the nav link
 
 
@@ -114,3 +115,51 @@ def test_form_post_redirects_back_to_the_page(env, reg):  # noqa: F811
     r = c.post("/api/admin/jobs/work/run", headers={**ORIGIN, "Accept": "text/html"}, follow_redirects=False)
     assert r.status_code == 303 and r.headers["location"] == "/admin/jobs"
     assert admin.audit().recent(1)[0]["action"] == "job_run"
+
+
+def _sched_reg(reg):
+    r, _ = reg
+    r.register(JobSpec("cronj", "Cron job", fn=lambda ctx: None, kind="manual", schedule="0 * * * *", idle_only=True))
+    return r
+
+
+def test_schedule_put_validates_and_audits(env, reg):  # noqa: F811
+    c = _admin(env)
+    _sched_reg(reg)
+    v = c.put("/api/admin/jobs/cronj/schedule", json={"schedule": "*/5 * * * *", "enabled": False, "max_runtime_s": 600},
+              headers=ORIGIN)
+    assert v.status_code == 200
+    s = v.json()["schedule"]
+    assert s["expr"] == "*/5 * * * *" and s["enabled"] is False and s["max_runtime_s"] == 600 and s["default"] == "0 * * * *"
+    for bad in ({"schedule": "61 * * * *"}, {"schedule": "* * *"}, {"enabled": "yes"}, {"max_runtime_s": -1}, {"nope": 1}, {}):
+        r = c.put("/api/admin/jobs/cronj/schedule", json=bad, headers=ORIGIN)
+        assert r.status_code == 422 and r.json()["code"] == "bad_schedule", bad
+    assert c.put("/api/admin/jobs/cronj/schedule", json={"schedule": None}, headers=ORIGIN).json()["schedule"]["expr"] is None
+    assert c.put("/api/admin/jobs/ext/schedule", json={"enabled": True}, headers=ORIGIN).status_code == 409
+    assert c.put("/api/admin/jobs/nope/schedule", json={"enabled": True}, headers=ORIGIN).status_code == 404
+    assert [a for a in _actions(c) if a[0] == "job_schedule"] == [("job_schedule", "cronj")] * 2
+
+
+def test_schedule_put_gate(env, reg, monkeypatch):  # noqa: F811
+    app, s, *_ = env
+    _sched_reg(reg)
+    c = _client(app, s, _google_cookie(s, "1002", OTHER))
+    assert c.put("/api/admin/jobs/cronj/schedule", json={"enabled": False}, headers=ORIGIN).status_code == 403
+    assert reg[0].view("cronj")["schedule"]["enabled"] is True
+    monkeypatch.delenv("DJ_ADMIN_EMAILS")
+    assert _admin(env).put("/api/admin/jobs/cronj/schedule", json={"enabled": False}, headers=ORIGIN).status_code == 404
+
+
+def test_page_shows_schedule_and_is_phone_sized(env, reg):  # noqa: F811
+    c = _admin(env)
+    r = _sched_reg(reg)
+    r.set_schedule("cronj", {"max_runtime_s": 3000})
+    page = c.get("/admin/jobs").text
+    for want in ('name="schedule" value="0 * * * *"', 'name="max_min"', 'value="50"', 'name="enabled" checked',
+                 "Save schedule", "cron 0 * * * *", "server local time", 'data-label="Next run"', "not scheduled"):
+        assert want in page, want
+    assert 'name="viewport" content="width=device-width,initial-scale=1"' in page      # 360 px: one column, no side scroll
+    assert "@media (max-width:640px)" in page and "table,tbody,tr,td{display:block;width:100%}" in page
+    assert "max-width:24em" in page and "min-height:44px" in page
+    assert "<script" in page and "onclick" not in page and "javascript:" not in page
+    assert 'http-equiv="refresh"' not in page                      # a refresh would wipe a half-edited form
