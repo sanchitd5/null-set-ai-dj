@@ -194,6 +194,7 @@ def _file(p: Path, data: bytes) -> str:
     return str(p)
 
 
+@pytest.mark.needs_atlas       # the learn's macros step (library registration) is the private builder
 def test_cleanup_registers_before_it_deletes(tmp_path):
     t = _tidy(tmp_path)
     good = _file(t.songs_dir / "A - One.mp3", b"good song")
@@ -231,6 +232,7 @@ def test_cleanup_deletes_flac_clips_and_their_stems(tmp_path):
     assert t.result()["deleted"]["clips"] == 1 and t.result()["deleted"]["clip_stems"] == 1
 
 
+@pytest.mark.needs_atlas       # the learn's macros step (library registration) is the private builder
 def test_recording_deleted_only_after_every_id_is_cut(tmp_path, monkeypatch):
     t = _tidy(tmp_path)
     rec = Path(_file(t.sets_dir / "S1.mp3", b"the set"))
@@ -284,6 +286,7 @@ def test_keep_files_deletes_nothing(tmp_path, monkeypatch):
     assert "cleanup" not in rep and f.exists() and (tmp_path / "set.wav").exists()
 
 
+@pytest.mark.needs_atlas       # the learn's macros step (library registration) is the private builder
 def test_default_learn_cleans_up_and_repoints_study(tmp_path, monkeypatch):
     import json
     _stub_study(tmp_path, monkeypatch)

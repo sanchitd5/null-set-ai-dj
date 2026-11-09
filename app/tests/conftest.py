@@ -159,6 +159,16 @@ def _private_library(tmp_path_factory, monkeypatch):
 
 # ---- needs_atlas: tests of the private atlas builder skip when the dj-atlas submodule is absent ----
 
+def pytest_collection_modifyitems(config, items):
+    """Tests marked needs_atlas skip, with the reason, when the dj-atlas builder is absent."""
+    if atlas_bridge.AVAILABLE:
+        return
+    skip = pytest.mark.skip(reason=atlas_bridge.SKIP_REASON)
+    for item in items:
+        if "needs_atlas" in item.keywords:
+            item.add_marker(skip)
+
+
 @pytest.hookimpl(hookwrapper=True)
 def pytest_make_collect_report(collector):
     """A test module whose top-level import of an atlas module fails because the builder is
