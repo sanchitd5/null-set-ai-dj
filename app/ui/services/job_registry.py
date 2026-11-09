@@ -15,8 +15,19 @@ The scheduler is `tick(now)`; `start()` runs it on one daemon thread (`jobs-sche
 its own daemon thread `job-<name>`. Tests drive tick() with a fake clock and a `spawn` that runs the job inline.
 This module knows nothing about atlas data and never decides what to play; it only schedules.
 
-State and options persist in user.db (store "jobs"): job_state (paused flag, settings, checkpoint, last run) and
-job_run (the newest RUN_KEEP runs per job). Progress and the log ring are memory only.
+State and options persist in user.db (store "jobs"): job_state (paused flag, settings, schedule overrides, checkpoint, last run,
+last_fire / next_fire) and job_run (the newest RUN_KEEP runs per job). Progress and the log ring are memory only.
+
+Cron schedules (cron.py; server local time). A job of any non-external kind may carry a `schedule` (5-field cron);
+when it does, the cron decides when it starts and the kind's own cadence (interval, idle loop) is not used. Per job:
+    enabled         off = the schedule does not fire (run now still works); next fire is recomputed on enabling
+    max_runtime_s   0 = no limit; at the limit the job is asked to stop (cooperatively, status "timeout")
+    overlap         always "skip": a fire due while the job still runs is skipped and logged in the history
+    missed          always "run once": a fire missed while the server was down runs once at startup (never a backlog,
+                    because the next fire is always computed from the current time)
+    idle_only       a fire that lands during a set waits for idle until the next fire or DEFER_MAX_S (whichever is
+                    first), then is skipped and logged as "skipped: busy"
+The schedule, enabled, max_runtime_s and idle_only can be overridden at runtime (set_schedule; persisted).
 """
 from __future__ import annotations
 
@@ -29,8 +40,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
+from app.ui.services import cron
+
 LOG_KEEP = 200
 RUN_KEEP = 200
+DEFER_MAX_S = 3600.0          # an idle_only fire waits at most this long for idle
+SCHED_KEYS = ("schedule", "enabled", "max_runtime_s", "idle_only")
+MAX_RUNTIME_CAP_S = 7 * 86400
 KINDS = ("periodic", "idle_worker", "manual", "external")
 STEPS = (
     """CREATE TABLE job_state (name TEXT PRIMARY KEY, paused INTEGER NOT NULL DEFAULT 0, settings TEXT, checkpoint TEXT,
@@ -38,6 +54,9 @@ STEPS = (
     CREATE TABLE job_run (id INTEGER PRIMARY KEY, name TEXT NOT NULL, started REAL NOT NULL, ended REAL,
         status TEXT, summary TEXT);
     CREATE INDEX job_run_name ON job_run (name, id)""",
+    """ALTER TABLE job_state ADD COLUMN sched TEXT;
+    ALTER TABLE job_state ADD COLUMN last_fire REAL;
+    ALTER TABLE job_state ADD COLUMN next_fire REAL""",
 )
 
 
@@ -74,6 +93,9 @@ class JobSpec:
     status_fn: Optional[Callable[[], dict]] = None          # external jobs: their own status
     pause_fn: Optional[Callable[[], Any]] = None
     resume_fn: Optional[Callable[[], Any]] = None
+    schedule: Optional[str] = None              # default cron expression (None = not scheduled); see cron.py
+    enabled: bool = True                        # default for the schedule's enabled flag
+    max_runtime_s: float = 0.0                  # default; 0 = unlimited
 
 
 @dataclass
@@ -143,6 +165,12 @@ class _Job:
         self.stop_reason = ""                      # "cancel" | "pause" | "busy" | "shutdown"
         self.stuck = False
         self.next_run: Optional[float] = None
+        self.sched: Dict[str, Any] = {}            # runtime overrides of schedule / enabled / max_runtime_s / idle_only
+        self.cron: Optional[cron.Cron] = None
+        self.next_fire: Optional[float] = None
+        self.last_fire: Optional[float] = None
+        self.pending: Optional[tuple] = None       # (due, deadline) of a fire waiting for idle
+        self.deferred_logged = False
         self.progress: Dict[str, Any] = {"done": 0, "total": 0, "note": ""}
         self.logs: deque = deque(maxlen=LOG_KEEP)
         self.overrides: Dict[str, Any] = {}
@@ -206,7 +234,8 @@ class Registry:
         try:
             with self._db_lock:
                 row = self._conn().execute(
-                    "SELECT paused, settings, checkpoint, last_start, last_end, last_status, last_error, last_result "
+                    "SELECT paused, settings, checkpoint, last_start, last_end, last_status, last_error, last_result, "
+                    "sched, last_fire, next_fire "
                     "FROM job_state WHERE name = ?", (job.spec.name,)).fetchone()
         except Exception as e:                      # a broken db never stops the server
             print(f"[jobs] load {job.spec.name} failed: {type(e).__name__}: {e}", flush=True)
@@ -226,9 +255,17 @@ class Registry:
         except ValueError:
             summary = None
         job.last = {"status": row[5], "started": row[3], "ended": row[4], "error": row[6], "summary": summary}
+        job.last_fire, job.next_fire = row[9], row[10]
+        try:
+            v = json.loads(row[8]) if row[8] else {}
+            if isinstance(v, dict):
+                job.sched = {k: x for k, x in v.items() if k in SCHED_KEYS}
+        except ValueError:
+            pass
 
     def _save(self, job: _Job, **cols: Any) -> None:
-        names = ("paused", "settings", "checkpoint", "last_start", "last_end", "last_status", "last_error", "last_result")
+        names = ("paused", "settings", "checkpoint", "last_start", "last_end", "last_status", "last_error", "last_result",
+                 "sched", "last_fire", "next_fire")
         cols.setdefault("paused", int(job.paused))
 
         def w(conn):
@@ -267,9 +304,16 @@ class Registry:
             raise ValueError(f"{spec.name}: a {spec.kind} job needs fn")
         if spec.kind == "periodic" and spec.interval_s <= 0:
             raise ValueError(f"{spec.name}: a periodic job needs interval_s > 0")
+        if spec.schedule:
+            if spec.kind == "external":
+                raise ValueError(f"{spec.name}: an external job cannot be scheduled")
+            cron.parse(spec.schedule)                # CronError (a ValueError) for a bad default
+        if spec.max_runtime_s < 0:
+            raise ValueError(f"{spec.name}: max_runtime_s must be 0 or more")
         job = _Job(spec)
         self._load(job)
         now = self.clock()
+        self._arm_cron(job, now, startup=True)
         if spec.kind == "periodic":
             last = job.last.get("started")
             job.next_run = now if spec.run_at_start else (float(last) if last else now) + spec.interval_s
@@ -280,6 +324,34 @@ class Registry:
         with self._lock:
             self._jobs[spec.name] = job
         self._wake.set()
+
+    def _eff(self, job: _Job) -> Dict[str, Any]:
+        """The effective schedule options: runtime overrides over the spec's defaults."""
+        sp, o = job.spec, job.sched
+        return {"schedule": o["schedule"] if "schedule" in o else sp.schedule,
+                "enabled": bool(o.get("enabled", sp.enabled)),
+                "max_runtime_s": float(o.get("max_runtime_s", sp.max_runtime_s) or 0),
+                "idle_only": bool(o.get("idle_only", sp.idle_only))}
+
+    def _arm_cron(self, job: _Job, now: float, startup: bool = False) -> None:
+        """(Re)build the parsed cron and next_fire. At startup a persisted next_fire in the past is kept: that fire was
+        missed while the server was down and runs once (the following fire is computed from the time it starts)."""
+        eff = self._eff(job)
+        job.pending = None
+        job.cron = None
+        if job.spec.kind == "external" or not eff["schedule"]:
+            job.next_fire = None
+            return
+        try:
+            job.cron = cron.parse(eff["schedule"])
+        except cron.CronError as exc:               # a stored override that no longer parses: ignore it
+            print(f"[jobs] {job.spec.name}: bad stored schedule {eff['schedule']!r}: {exc}", flush=True)
+            job.sched.pop("schedule", None)
+            return self._arm_cron(job, now, startup)
+        if not startup or job.next_fire is None:
+            job.next_fire = cron.next_fire(job.cron, now)
+            if startup:
+                self._save(job, next_fire=job.next_fire)
 
     @staticmethod
     def _call(fn: Callable, name: str) -> None:
@@ -328,7 +400,7 @@ class Registry:
         return IdleState(False, since, "grace")
 
     def _stop_wanted(self, job: _Job) -> bool:
-        return job.stop_at is not None or (job.spec.idle_only and self._busy)
+        return job.stop_at is not None or (self._eff(job)["idle_only"] and self._busy)
 
     # ---- scheduler ---------------------------------------------------------------------------
     def _blocked(self, job: _Job) -> bool:
@@ -342,22 +414,71 @@ class Registry:
             spec = job.spec
             if spec.kind == "external" or self._blocked(job):
                 continue
+            eff = self._eff(job)
             if job.running:
-                if spec.idle_only and not idle.idle and job.stop_at is None and self._busy:
+                if eff["idle_only"] and not idle.idle and job.stop_at is None and self._busy:
                     self._ask_stop(job, "busy", now)
+                started = job.last.get("started")
+                if eff["max_runtime_s"] > 0 and job.stop_at is None and started and now - started >= eff["max_runtime_s"]:
+                    job.logs.append({"t": now, "msg": f"max runtime {int(eff['max_runtime_s'])} s reached: stopping"})
+                    self._ask_stop(job, "timeout", now)
                 if job.stop_at is not None and not job.stuck and now - job.stop_at >= self.cancel_grace_s:
                     job.stuck = True
                     job.state = "stuck"
+                if job.cron is not None and job.next_fire is not None and now >= job.next_fire and eff["enabled"]:
+                    self._skip(job, now, "skipped: still running")      # overlap policy: skip, never queue
+                    job.next_fire = cron.next_fire(job.cron, now)
+                    self._save(job, next_fire=job.next_fire)
+                continue
+            if job.cron is not None:
+                self._tick_cron(job, eff, idle, now)
                 continue
             if job.paused or spec.kind == "manual":
                 continue
-            if spec.idle_only and not idle.idle:
+            if eff["idle_only"] and not idle.idle:
                 continue
             if spec.kind == "periodic" and (job.next_run is None or now < job.next_run):
                 continue
             if spec.kind == "idle_worker" and job.next_run is not None and now < job.next_run:
                 continue
             self._start(job, now)
+
+    def _skip(self, job: _Job, now: float, why: str) -> None:
+        job.logs.append({"t": now, "msg": why})
+        self._record_run(job, now, now, "skipped", why)
+
+    def _tick_cron(self, job: _Job, eff: dict, idle: IdleState, now: float) -> None:
+        """A scheduled job that is not running: roll the schedule, start a due fire (waiting for idle when idle_only)."""
+        if job.next_fire is None:
+            job.next_fire = cron.next_fire(job.cron, now)
+            self._save(job, next_fire=job.next_fire)
+        if job.paused or not eff["enabled"]:
+            job.pending = None
+            if now >= job.next_fire:                # keep the schedule moving; a paused or disabled job never backfills
+                job.next_fire = cron.next_fire(job.cron, now)
+                self._save(job, next_fire=job.next_fire)
+            return
+        if job.pending is None and now >= job.next_fire:
+            due = job.next_fire
+            job.next_fire = cron.next_fire(job.cron, now)       # the next fire counts from now: no backlog
+            job.pending = (due, min(due + DEFER_MAX_S, job.next_fire))
+            job.deferred_logged = False
+            self._save(job, next_fire=job.next_fire)
+        if job.pending is None:
+            return
+        _, deadline = job.pending
+        if eff["idle_only"] and not idle.idle:
+            if not job.deferred_logged:
+                job.deferred_logged = True
+                job.logs.append({"t": now, "msg": "deferred: a set is live, waiting for idle"})
+            if now >= deadline:
+                job.pending = None
+                self._skip(job, now, "skipped: busy")
+            return
+        job.pending = None
+        job.last_fire = now
+        self._save(job, last_fire=now)
+        self._start(job, now)
 
     def _ask_stop(self, job: _Job, reason: str, now: float) -> None:
         job.stop_at, job.stop_reason = now, reason
@@ -399,7 +520,7 @@ class Registry:
         with self._lock:
             reason = job.stop_reason
             if status == "stopped":
-                status = {"cancel": "cancelled", "pause": "paused"}.get(reason, "stopped")
+                status = {"cancel": "cancelled", "pause": "paused", "timeout": "timeout"}.get(reason, "stopped")
             job.checkpoint = ctx.checkpoint if isinstance(ctx.checkpoint, dict) else {}
             summary = result if isinstance(result, (dict, str, int, float, bool, list)) else None
             job.last = {"status": status, "started": started, "ended": ended, "error": error, "summary": summary}
@@ -427,7 +548,7 @@ class Registry:
             raise JobError(409, "running", "already running")
         if job.paused:
             raise JobError(409, "paused", "paused: resume it first")
-        if spec.idle_only and not self.idle().idle:
+        if self._eff(job)["idle_only"] and not self.idle().idle:
             raise JobError(409, "not_idle", "a set is live (or just ended)")
         self._start(job, self.clock())
         return self.view(name)
@@ -503,6 +624,40 @@ class Registry:
         self._save(job, settings=_json(merged))
         return self.view(name)
 
+    def set_schedule(self, name: str, values: dict) -> dict:
+        """Validate and persist schedule overrides. Keys: schedule (cron text, or null/"" = not scheduled), enabled,
+        max_runtime_s (0 = no limit), idle_only. ValueError (cron.CronError included) for a bad key or value."""
+        job = self._get(name)
+        if job.spec.kind == "external":
+            raise JobError(409, "not_supported", "this job cannot be scheduled")
+        if not isinstance(values, dict) or not values:
+            raise ValueError("expected an object with schedule, enabled, max_runtime_s or idle_only")
+        clean: Dict[str, Any] = {}
+        for k, v in values.items():
+            if k == "schedule":
+                clean[k] = None if v is None or (isinstance(v, str) and not v.strip()) else cron.validate(v)
+            elif k in ("enabled", "idle_only"):
+                if not isinstance(v, bool):
+                    raise ValueError(f"{k}: expected true or false")
+                clean[k] = v
+            elif k == "max_runtime_s":
+                if isinstance(v, bool) or not isinstance(v, (int, float)) or v < 0 or v > MAX_RUNTIME_CAP_S:
+                    raise ValueError(f"max_runtime_s: expected 0 to {MAX_RUNTIME_CAP_S} seconds")
+                clean[k] = float(v)
+            else:
+                raise ValueError(f"unknown schedule field {k!r}")
+        now = self.clock()
+        with self._lock:
+            was = self._eff(job)
+            job.sched.update(clean)
+            merged = dict(job.sched)
+            eff = self._eff(job)
+            if eff["schedule"] != was["schedule"] or (eff["enabled"] and not was["enabled"]):
+                self._arm_cron(job, now)            # a new schedule or a re-enable counts from now, never backfills
+        self._save(job, sched=_json(merged), next_fire=job.next_fire)
+        self._wake.set()
+        return self.view(name)
+
     def _save_checkpoint(self, job: _Job, checkpoint: dict) -> None:
         job.checkpoint = dict(checkpoint)
         self._save(job, checkpoint=_json(job.checkpoint, 20000))
@@ -512,6 +667,13 @@ class Registry:
         job = self._get(name)
         rows = list(job.logs)
         return rows[-max(0, int(n)):] if n else []
+
+    def _history(self, name: str, n: int = 20) -> List[dict]:
+        try:
+            return self.runs(name, n)
+        except Exception as e:                      # a broken db never breaks the page
+            print(f"[jobs] history {name} failed: {type(e).__name__}: {e}", flush=True)
+            return []
 
     def view(self, name: str) -> dict:
         job = self._get(name)
@@ -529,11 +691,18 @@ class Registry:
         elif self._blocked(job):
             state = "disabled"
         running = job.running
+        eff = self._eff(job)
+        scheduled = job.cron is not None and not job.paused and eff["enabled"]
         can_run = (spec.kind != "external" and spec.fn is not None and self.enabled and not running and not job.paused)
         view = {
-            "name": spec.name, "title": spec.title, "kind": spec.kind, "state": state, "idle_only": spec.idle_only,
+            "name": spec.name, "title": spec.title, "kind": spec.kind, "state": state, "idle_only": eff["idle_only"],
             "paused": job.paused, "progress": progress,
-            "last": dict(job.last), "next_run": job.next_run if spec.kind == "periodic" and not job.paused else None,
+            "last": dict(job.last), "next_run": job.next_fire if scheduled else (job.next_run if spec.kind == "periodic" and job.cron is None and not job.paused else None),
+            "schedule": {"expr": eff["schedule"], "default": spec.schedule, "enabled": eff["enabled"],
+                         "max_runtime_s": eff["max_runtime_s"], "idle_only": eff["idle_only"], "overlap": "skip",
+                         "missed": "run_once", "last_fire": job.last_fire, "next_fire": job.next_fire if scheduled else None,
+                         "editable": spec.kind != "external"},
+            "history": self._history(name),
             "settings": {k: {"value": job.overrides.get(k, s.default), "default": s.default, "min": s.min, "max": s.max,
                              "type": s.type} for k, s in spec.settings.items()},
             "controls": {"pause": not job.paused and (spec.kind != "external" or spec.pause_fn is not None),
