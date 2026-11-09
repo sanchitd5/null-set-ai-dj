@@ -63,6 +63,7 @@ import sys
 import tempfile
 import threading
 import time
+import zlib
 from collections import OrderedDict, deque
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -1581,6 +1582,81 @@ class BodyLimitMiddleware:
         await send({"type": "http.response.body", "body": body})
 
 
+class GzipRequestMiddleware:
+    """`Content-Encoding: gzip` request bodies, decompressed before the app sees them.
+
+    Sits INSIDE BodyLimitMiddleware, so the wire (compressed) size is already capped by it; this one
+    caps the DECOMPRESSED size with the same per-route limit (zip-bomb guard: the stream is inflated
+    in bounded steps and stops one byte past the cap -> 413). A corrupt / truncated stream -> 400,
+    any other encoding -> 415, no Content-Encoding (or `identity`) passes through untouched."""
+
+    def __init__(self, app, limits: Dict[Tuple[str, str], int], default: Optional[int] = None):
+        self.app = app
+        self.limits = limits
+        self.default = default
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        enc = _headers(scope).get("content-encoding", "").strip().lower()
+        if enc in ("", "identity"):
+            return await self.app(scope, receive, send)
+        if enc not in ("gzip", "x-gzip"):
+            return await self._fail(send, 415, "unsupported Content-Encoding (gzip or none)")
+        cap = self.limits.get((scope.get("method", ""), scope.get("path", "")), self.default)
+        if cap is None:
+            cap = 64 * 1024 * 1024
+        inflater, out, size = zlib.decompressobj(16 + zlib.MAX_WBITS), [], 0
+        try:
+            more = True
+            while more:
+                msg = await receive()
+                if msg["type"] == "http.disconnect":
+                    return
+                chunk, more = msg.get("body", b""), msg.get("more_body", False)
+                if chunk and inflater.eof:
+                    raise zlib.error("data after the gzip stream")
+                while chunk and not inflater.eof:
+                    part = inflater.decompress(chunk, cap - size + 1)    # max_length > 0: 0 would mean unlimited
+                    size += len(part)
+                    if size > cap:
+                        return await BodyLimitMiddleware._too_large(send, cap)
+                    out.append(part)
+                    chunk = inflater.unconsumed_tail
+                if inflater.unused_data:
+                    raise zlib.error("data after the gzip stream")
+            if not inflater.eof:
+                raise zlib.error("truncated gzip stream")
+            tail = inflater.flush()
+            size += len(tail)
+            if size > cap:
+                return await BodyLimitMiddleware._too_large(send, cap)
+            out.append(tail)
+        except zlib.error:
+            return await self._fail(send, 400, "corrupt gzip request body")
+        body = b"".join(out)
+        scope = dict(scope)
+        scope["headers"] = [(k, v) for k, v in scope["headers"] if k.lower() not in (b"content-encoding", b"content-length")]
+        scope["headers"].append((b"content-length", str(len(body)).encode()))
+        sent = False
+
+        async def inflated():
+            nonlocal sent
+            if sent:
+                return await receive()          # after the body: the client's disconnect
+            sent = True
+            return {"type": "http.request", "body": body, "more_body": False}
+
+        await self.app(scope, inflated, send)
+
+    @staticmethod
+    async def _fail(send, status, detail):
+        body = json.dumps({"detail": detail}).encode()
+        await send({"type": "http.response.start", "status": status,
+                    "headers": [_JSON, (b"content-length", str(len(body)).encode()), (b"connection", b"close")]})
+        await send({"type": "http.response.body", "body": body})
+
+
 # ---- log redaction ---------------------------------------------------------------------------
 
 class RedactFilter(logging.Filter):
@@ -1636,6 +1712,8 @@ def install(app, settings: AuthSettings, body_limits: Optional[Dict[Tuple[str, s
     redaction. Returns the Guard holding the live settings and the limiter."""
     guard = Guard(settings)
     if body_limits or default_body_limit:
+        # innermost of the three: gzip bodies are inflated only after auth and the wire-size cap
+        app.add_middleware(GzipRequestMiddleware, limits=dict(body_limits or {}), default=default_body_limit)
         app.add_middleware(BodyLimitMiddleware, limits=dict(body_limits or {}), default=default_body_limit)
     app.add_middleware(TokenAuthMiddleware, guard=guard)
     if settings.allowed_origins:
