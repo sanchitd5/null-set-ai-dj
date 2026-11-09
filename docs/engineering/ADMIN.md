@@ -23,7 +23,9 @@
 thread; status plus optional pause/resume). Built-in jobs are registered by `jobs_builtin.py` at startup:
 `quarantine_cleanup` (periodic 24 h, also at start), `lang_id` (pause/resume + status), `knowledge_publish`
 (observe only) and `graph_rebuild` (manual, only when the private builder is present; never automatic). Private jobs
-arrive through `atlas_bridge.register_jobs`.
+arrive through `atlas_bridge.register_jobs`: `graph_expand` (idle-only, off until `DJ_GRAPH_EXPAND=1` or its
+`enabled` setting) downloads, analyses and pairs the best YouTube-related songs the library lacks; its candidates
+queued / done / failed and the measured-pair count are in the job's last result. Downloaded songs join the library.
 
 * Idle = no active set lease for `DJ_IDLE_GRACE_S` (30 s). A lease change calls a `set_lease` listener, so a running
   `idle_only` job sees `ctx.should_stop()` true at once. Stopping is cooperative; a run that ignores it for
