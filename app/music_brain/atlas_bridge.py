@@ -75,3 +75,16 @@ def build_graph(cache_dir=None, log: Callable[[str], None] = print) -> dict:
         raise ImportError(SKIP_REASON)
     from app.music_brain.atlas import graph_build
     return graph_build.build_graph(cache_dir, log)
+
+
+def graph_view(name: str, *args, **kwargs):
+    """Read-only graph.db views for the admin graph page (stats, find, node_detail, neighbours in the builder's
+    graph_store). None when there is no atlas, no graph.db, or this dj-atlas pin predates the views."""
+    if not AVAILABLE:
+        return None
+    try:
+        from app.music_brain.atlas import graph_store
+        fn = getattr(graph_store, name)
+    except (ImportError, AttributeError):
+        return None
+    return fn(*args, **kwargs)
