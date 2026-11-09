@@ -138,6 +138,54 @@ def encode_m4a(pcm: np.ndarray, dest: Path) -> dict:
     return meta
 
 
+def encode_whole_m4a(stem_path: str, dest: Path, block_s: float = 30.0) -> dict:
+    """Whole stem -> m4a (same codec, bitrate, priming contract and meta as [encode_m4a]), streamed to
+    ffmpeg in blocks so a long song never sits in memory as one float array."""
+    import soundfile as sf
+
+    dest = Path(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=f".{dest.stem}.", suffix=".m4a", dir=dest.parent)
+    os.close(fd)
+    try:
+        proc = subprocess.Popen(
+            ["ffmpeg", "-nostdin", "-v", "error", "-y",
+             "-f", "f32le", "-ar", str(SAMPLE_RATE), "-ac", "2", "-i", "pipe:0",
+             "-c:a", "aac", "-b:a", BITRATE, "-ar", str(SAMPLE_RATE), "-ac", "2",
+             "-movflags", "+faststart", tmp],
+            stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+        n = 0
+        try:
+            with sf.SoundFile(stem_path) as f:
+                if f.samplerate != SAMPLE_RATE:
+                    raise ValueError(f"stem sample rate {f.samplerate}, expected {SAMPLE_RATE}")
+                step = int(block_s * SAMPLE_RATE)
+                while True:
+                    x = f.read(step, dtype="float32", always_2d=True)
+                    if not x.shape[0]:
+                        break
+                    if x.shape[1] == 1:
+                        x = np.repeat(x, 2, axis=1)
+                    n += int(x.shape[0])
+                    proc.stdin.write(np.ascontiguousarray(np.clip(x, -1.0, 1.0), dtype="<f4").tobytes())
+        finally:
+            proc.stdin.close()
+            err = proc.stderr.read()
+            if proc.wait() != 0:
+                raise RuntimeError(f"ffmpeg failed: {err.decode(errors='replace')[:200]}")
+        packets = int(subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "a:0", "-count_packets",
+             "-show_entries", "stream=nb_read_packets", "-of", "csv=p=0", tmp],
+            check=True, capture_output=True, text=True).stdout.strip().rstrip(","))
+        meta = {"frames": n, "sample_rate": SAMPLE_RATE, "encoder_delay": ENCODER_DELAY,
+                "encoder_padding": max(0, packets * AAC_FRAME - ENCODER_DELAY - n),
+                "sha256": sha256_file(tmp)}
+        os.replace(tmp, dest)
+    finally:
+        Path(tmp).unlink(missing_ok=True)
+    return meta
+
+
 def cached_window(dest: Path) -> Optional[dict]:
     """Meta of a cached window when the m4a still matches its sha256; a mismatch deletes both."""
     meta_p = dest.with_suffix(".json")
