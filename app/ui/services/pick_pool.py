@@ -95,12 +95,30 @@ def atlas_neighbours(track_id: str, names: dict, cache_dir) -> list[dict]:
     return out
 
 
-def build_pool(*, atlas: list[dict], cat: list[dict], exclude: Iterable[str], seed_title: str,
+def _by_language(rows: list[dict], lang_check) -> list[dict]:
+    """Rows in a language the set is not in: dropped (one-language set) or moved to the back (mixed set).
+    Unknown / unanalysed rows stay (the script gate and the post-download check decide)."""
+    keep, back = [], []
+    for r in rows:
+        try:
+            verdict, _ = lang_check(r)
+        except Exception:               # a gate bug must not empty the pool
+            verdict = "ok"
+        if verdict == "block":
+            continue
+        (back if verdict == "penalty" else keep).append(r)
+    return keep + back
+
+
+def build_pool(*, atlas: list[dict], cat: list[dict], exclude: Iterable[str], seed_title: str, lang_check=None,
                limit: int = MAX_POOL) -> list[dict]:
     """Merge, drop the playing / played / rejected songs, number them C1..Cn. Library entries first
-    (about half the slots), the rest catalogue, so the model sees both."""
+    (about half the slots), the rest catalogue, so the model sees both. lang_check(row) -> (verdict, reason):
+    a song in a language the set is not in is dropped ("block") or sent to the back ("penalty")."""
     skip = {_bare(str(x).split(" - ", 1)[-1]) for x in exclude}
     skip.add(_bare(seed_title))
+    if lang_check is not None:
+        atlas, cat = _by_language(atlas, lang_check), _by_language(cat, lang_check)
     seen, pool = set(), []
 
     def take(rows: list[dict], cap: int) -> None:

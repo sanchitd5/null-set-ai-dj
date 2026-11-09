@@ -23,7 +23,7 @@ def test_hit_skips_heavy_slot_miss_takes_one(monkeypatch):
     load_shed.stats["peak"] = 0
     try:
         hit = asyncio.run(server.get_analysis("hit0000000000000"))
-        assert hit == {"bpm": 120.0, "art_url": None}
+        assert hit == {"bpm": 120.0, "art_url": None, "language": None}
         assert load_shed.stats["peak"] == 0, "a cache hit must not take a heavy slot"
         miss = asyncio.run(server.get_analysis("miss000000000000"))
         assert miss["bpm"] == 120.0
