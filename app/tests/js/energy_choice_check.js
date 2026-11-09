@@ -96,7 +96,9 @@ assert.strictEqual(ap.windowLevel(null, 1, 1), null); n++;
   const fs = require("fs"), path = require("path");
   const tr = require("../../ui/static/tempo-rule.js");
   const mm = require("../../ui/static/macro-mode.js");
-  const gold = JSON.parse(fs.readFileSync(path.join(__dirname, "../fixtures/owner_liked_pairs.json"), "utf8"));
+  const goldFile = path.join(__dirname, "../../music_brain/knowledge/builder/tests/fixtures/owner_liked_pairs.json");
+  if (!fs.existsSync(goldFile)) { console.log("skipped the owner-liked golden: needs_atlas (private dj-atlas submodule absent)"); process.exit(0); }
+  const gold = JSON.parse(fs.readFileSync(goldFile, "utf8"));
   const bands = { relaxed: 4, middle: 6, high: 8 };
   for (const [band, setLevel] of Object.entries(bands)) {
     for (const kind of ["low", "beat", null]) {
