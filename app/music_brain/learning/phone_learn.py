@@ -30,7 +30,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 MARK_ITEM = "learn_item"
 MARK_PAIR = "phone_pair"
 MARK_YT = "yt_edge"
-KINDS = ("set_log", "transition", "bad_pair", "like", "yt_edges")
+KINDS = ("set_log", "transition", "bad_pair", "like", "yt_edges", "op")
 OUTCOMES = ("landed", "skipped")
 MAX_ITEMS = 100                         # per request
 KEEP_ITEMS = 50000                      # newest provenance marks kept
@@ -174,12 +174,23 @@ def _yt_edges(item: dict, d: dict, dev: dict, cache_dir: Path, **_) -> dict:
     return {"edges": done}
 
 
-_APPLY = {"transition": _transition, "bad_pair": _bad_pair, "like": _like, "set_log": _set_log,
+def _op(item: dict, d: dict, dev: dict, cache_dir: Path, user_scope: str = "user:owner", **_) -> dict:
+    """An op-log op sent through the outbox: the same ingest the /api/sync/ops path uses (idempotent by op_id)."""
+    from app.ui.services import sync_api
+
+    res = sync_api.get_log().ingest([{**d, "op_id": item["id"]}], dev["device_id"], user_scope)
+    if res["rejected"]:
+        raise ValueError(res["rejected"][0]["why"])
+    return {"ref": item["id"]}
+
+
+_APPLY = {"op": _op, "transition": _transition, "bad_pair": _bad_pair, "like": _like, "set_log": _set_log,
           "yt_edges": _yt_edges}
 
 
 def ingest(body: dict, cache_dir: Optional[Path] = None, *, liked_dir: Optional[Path] = None,
-           name_of: Optional[Callable[[str], str]] = None, save_set_log: Optional[Callable[[dict], dict]] = None) -> dict:
+           name_of: Optional[Callable[[str], str]] = None, save_set_log: Optional[Callable[[dict], dict]] = None,
+           user_scope: str = "user:owner") -> dict:
     """Validate, dedup and apply one request. -> {"accepted": [ids], "duplicate": [ids],
     "rejected": [{id, why}], "publish": bool, "pairs": [keys to overlay]}. LearnError: bad envelope."""
     from app.music_brain import user_marks as um
@@ -221,7 +232,7 @@ def ingest(body: dict, cache_dir: Optional[Path] = None, *, liked_dir: Optional[
                 raise ValueError("private string in the item (path or e-mail)")
             item = {"id": iid, "at": _clean_at(raw.get("at"))}
             res = _APPLY[kind](item, data, dev, cache_dir, liked_dir=liked_dir, name_of=name_of,
-                               save_set_log=save_set_log)
+                               save_set_log=save_set_log, user_scope=user_scope)
         except Exception as exc:  # noqa: BLE001 -- one bad item never fails the batch; the cause goes back
             why = getattr(exc, "detail", None) or str(exc)
             out["rejected"].append({"id": iid, "why": _text(why, 200) or type(exc).__name__})

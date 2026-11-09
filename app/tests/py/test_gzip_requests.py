@@ -85,7 +85,7 @@ def test_learn_route_gets_the_inflated_body(api_token, monkeypatch):
 
     seen = {}
 
-    def fake(body):
+    def fake(body, scope="user:owner"):
         seen.update(body)
         return {"accepted": [], "duplicate": [], "rejected": [], "publish": False}
 
