@@ -29,6 +29,7 @@ from app.ui.services.ranged_file import RangedFileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from app.music_brain.analysis import lang_id
 from app.music_brain.analysis.analyzer import analyze as analyze_track
 from app.music_brain.audio import audio_io
 from app.music_brain.config import (
@@ -490,7 +491,8 @@ def list_tracks():
         # not_a_song: live/event recordings and mixes already in the library
         # (downloaded before those filters existed); the autopilot skips them.
         return {"track_id": tid, "path": str(p), "display_name": name,
-                "not_a_song": bool(_is_live(name) or _is_mix(name)), "art_url": album_art.art_url(tid)}
+                "not_a_song": bool(_is_live(name) or _is_mix(name)), "art_url": album_art.art_url(tid),
+                "language": lang_id.public(lang_id.get(tid))}
 
     return {"tracks": [_entry(tid, p) for tid, p in _tracks.items()]}
 
@@ -529,7 +531,7 @@ def scan_configured_library():
 @_bounded
 def _analysis_miss(track_id: str, path) -> dict:
     """Full analysis (decode + compute): holds one HEAVY_SLOTS seat so a burst of misses can't starve the pool."""
-    return {**analyze_track(path).to_dict(), "art_url": album_art.art_url(track_id)}
+    return {**analyze_track(path).to_dict(), "art_url": album_art.art_url(track_id), "language": lang_id.public(lang_id.get(track_id))}
 
 
 @app.get("/api/tracks/{track_id}/analysis")
@@ -540,7 +542,7 @@ async def get_analysis(track_id: str):
     path = await run_in_threadpool(_track_path, track_id)
     hit = await run_in_threadpool(analyzer.cached_analysis, path)   # stored record: ~ms, no heavy slot
     if hit is not None:
-        return {**hit.to_dict(), "art_url": album_art.art_url(track_id)}
+        return {**hit.to_dict(), "art_url": album_art.art_url(track_id), "language": lang_id.public(lang_id.get(track_id))}
     return await _analysis_miss(track_id, path)
 
 
@@ -566,7 +568,7 @@ def post_analysis_batch(req: AnalysisBatchRequest):
             res = analyzer.cached_analysis(_track_path(tid))
         except HTTPException:
             pass
-        out[tid] = {**res.to_dict(), "art_url": album_art.art_url(tid)} if res else None
+        out[tid] = {**res.to_dict(), "art_url": album_art.art_url(tid), "language": lang_id.public(lang_id.get(tid))} if res else None
     return out
 
 
@@ -647,6 +649,72 @@ def _llm_busy() -> bool:
     return bool(snap["in_flight"] or snap["queued"] or snap.get("live"))
 
 
+def _queue_langid(track_id: str) -> None:
+    """A track just got its stems: identify its sung language next (lang_service). Never raises."""
+    try:
+        from app.ui.services import lang_service
+
+        lang_service.queue(track_id, urgent=True)
+    except Exception as exc:
+        print(f"[langid] queue {track_id}: {exc}", flush=True)
+
+
+def _vocal_stem_of(track_id: str) -> Optional[str]:
+    stems = _cached_stems4(track_id)
+    return (stems or {}).get("vocals")
+
+
+@app.on_event("startup")
+def _start_langid() -> None:
+    """Language id of every library song, in the background (CPU, only while the LLM is idle)."""
+    from app.ui.services import lang_service
+    from app.ui.services.download_service import _is_live, _is_mix
+
+    lang_service.start(
+        tracks=lambda: _tracks, names=lambda: _track_names, vocal_of=_vocal_stem_of, llm_busy=_llm_busy,
+        is_song=lambda tid: not (_is_mix(_track_names.get(tid) or "") or _is_live(_track_names.get(tid) or "")))
+
+
+class LanguageCheckRequest(BaseModel):
+    track_id: Optional[str] = None
+    name: Optional[str] = None          # "Artist - Title" when the song is not (yet) in the library
+    history: List[str] = []             # songs played in this set, oldest first (the playing song last)
+
+
+@app.get("/api/tracks/{track_id}/language")
+def get_track_language(track_id: str):
+    """{lang, conf, instr, analysed}: the sung language (Whisper language id on the vocal stem). lang is null
+    for an instrumental or an unsure song; analysed false = not identified yet."""
+    from app.ui.services import lang_service
+
+    _track_path(track_id)
+    lg = lang_service.language_of(track_id)
+    return {"track_id": track_id, "analysed": lg is not None, **(lg or {"lang": None, "conf": 0.0, "instr": False})}
+
+
+@app.post("/api/language/check")
+def post_language_check(req: LanguageCheckRequest):
+    """The one language gate for a pick from ANY source (phone up-next, auto-fill, queue refill, LEAD TO
+    bridge): verdict ok | unknown | penalty | block against the set's language profile. Hand picks never ask."""
+    from app.ui.services import lang_service
+
+    prof = lang_service.profile_for(_track_names, req.history[-12:])
+    verdict, reason = lang_service.check(_track_names, prof, req.track_id, req.name)
+    if verdict in ("block", "penalty"):
+        from app.ui.services.autopilot_service import note_rejects
+
+        note_rejects([{"artist": "", "title": req.name or _track_names.get(req.track_id or "", "")}], reason)
+    return {"verdict": verdict, "reason": reason, "profile": {"n": prof["n"], "share": prof["share"], "pure": prof["pure"]},
+            "language": lang_service.language_of(req.track_id) if req.track_id else None}
+
+
+@app.get("/api/language/status")
+def get_language_status():
+    from app.ui.services import lang_service
+
+    return lang_service.status()
+
+
 def _stem_wait_note() -> str:
     """Why the background stem backfill is waiting, in the owner's words: the STEMS wait
     for the AI, the AI is not paused ("llm shows llm paused" was read the other way round)."""
@@ -691,6 +759,7 @@ def _remote_finish(tid: str, js: dict) -> None:
     if js.get("seconds") is not None:
         _stem_done["last_seconds"] = js.get("seconds")
     _cached_vocal_regions(tid)
+    _queue_langid(tid)
 
 
 def _remote_stem_worker() -> None:
@@ -826,6 +895,7 @@ def _stem_worker() -> None:
                 separate_stems(_track_path(tid))
                 _stem_done["separated"] += 1
                 _cached_vocal_regions(tid)
+                _queue_langid(tid)
             except Exception as exc:
                 _stem_done["failed"] += 1
                 print(f"[stems] {tid}: {exc}", flush=True)
@@ -850,6 +920,7 @@ def _stem_worker() -> None:
                 _stem_done["separated"] += 1
                 _stem_done["last_seconds"] = res.get("seconds")
                 _cached_vocal_regions(tid)
+                _queue_langid(tid)
             except Exception as exc:
                 _stem_done["failed"] += 1
                 print(f"[stems] {tid}: {exc}", flush=True)
@@ -2839,6 +2910,18 @@ def _autopilot_suggest_impl(req: AutopilotSuggestRequest):
     except Exception as exc:
         print(f"[suggest] loudness unavailable: {exc}", flush=True)
 
+    # Language of the set (Whisper language id of the played songs' vocals): the pool and the final filter
+    # drop / penalise a song sung in a language the set is not in. Best-effort: no profile = no gate.
+    lang_check = None
+    try:
+        from app.ui.services import lang_service
+        lprof = lang_service.profile_for(_track_names, history_display, req.track_id)
+
+        def lang_check(row: dict) -> tuple[str, str]:
+            return lang_service.check(_track_names, lprof, row.get("track_id"),
+                                      f"{row.get('artist', '')} - {row.get('title', '')}")
+    except Exception as exc:
+        print(f"[suggest] language profile unavailable: {exc}", flush=True)
     candidates: list = []
     if not req.lead_to:
         try:
@@ -2852,7 +2935,7 @@ def _autopilot_suggest_impl(req: AutopilotSuggestRequest):
             atl = pick_pool.atlas_neighbours(req.track_id, _track_names, CACHE_DIR)
             candidates = pick_pool.build_pool(
                 atlas=atl, cat=cat, seed_title=title_part,
-                exclude=history_display + avoid_display + queue_display + list(earlier))
+                exclude=history_display + avoid_display + queue_display + list(earlier), lang_check=lang_check)
         except Exception as exc:       # grounding is best-effort: no pool = free text, verified as before
             print(f"[suggest] candidate pool unavailable: {exc}", flush=True)
     meta: dict = {}
@@ -2897,6 +2980,7 @@ def _autopilot_suggest_impl(req: AutopilotSuggestRequest):
             punjabi_profile=req.punjabi_profile,
             scene_anchor=req.scene_anchor.strip(),
             candidates=candidates,
+            lang_check=lang_check,
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"LLM suggest error: {exc}") from exc
