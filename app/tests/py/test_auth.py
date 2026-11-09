@@ -458,3 +458,38 @@ def test_cli_reads_the_repo_env(tmp_path, monkeypatch, capsys):
     assert auth.main(["new-token", "cli"]) == 0                      # no --file
     assert store.exists() and capsys.readouterr().out.strip().startswith(auth.TOKEN_PREFIX)
     assert (store.parent.stat().st_mode & 0o777) == 0o700 and (store.stat().st_mode & 0o777) == 0o600
+
+
+def test_dj_auth_carries_google_sub(tmp_path):
+    """scope["dj_auth"]["sub"]: the Google subject for a Google browser session or device token, else None."""
+    from fastapi import FastAPI, Request
+
+    app = FastAPI()
+
+    @app.get("/who")
+    def _who(request: Request):
+        return request.scope.get("dj_auth")
+
+    s = auth.AuthSettings.from_env(store_path=tmp_path / "auth.json", environ={
+        "DJ_SESSION_SECRET": "s" * 40, "DJ_GOOGLE_CLIENT_ID": "web.apps.googleusercontent.com",
+        "DJ_GOOGLE_CLIENT_SECRET": "x", "DJ_PUBLIC_URL": "https://testserver", "DJ_ALLOWED_EMAILS": "boss@example.com"})
+    auth.install(app, s, log_names=())
+    row = s.store.bind_google("1001", "boss@example.com")
+    s.store.set_password("owner", "a-long-enough-password")
+    plain, _ = s.store.new_token("laptop")
+    issued, _ = s.store.new_token("phone", sub="1001")
+
+    def who(cookie=None, bearer=None):
+        c = TestClient(app, auth=False, base_url="https://testserver")
+        if cookie:
+            c.cookies.set(s.cookie_name, cookie)
+        if bearer:
+            c.headers["Authorization"] = f"Bearer {bearer}"
+        return c.get("/who").json()
+
+    g = auth.make_session(s, {"name": "g-1001", "pw_version": row["version"]})
+    assert who(cookie=g)["sub"] == "1001" and who(cookie=g)["kind"] == "browser"
+    assert who(bearer=issued)["sub"] == "1001" and who(bearer=issued)["kind"] == "device"
+    assert who(bearer=plain)["sub"] is None
+    assert who(cookie=auth.make_session(s, s.store.user))["sub"] is None
+    assert auth.session_user("v2.owner.1.9.x.y") is None and auth.session_user("junk") is None

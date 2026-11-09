@@ -90,6 +90,8 @@ from app.ui.services import set_lease as _set_lease  # noqa: E402 -- one set at 
 
 app.add_middleware(_set_lease.Gate)        # added before auth = runs inside it: only signed-in callers see the holder
 AUTH_GUARD = _auth.install(app, AUTH_SETTINGS, body_limits=UPLOAD_LIMITS, default_body_limit=MAX_BODY_BYTES)
+from app.ui.services import admin as _admin  # noqa: E402 -- owner-only /admin shell (DJ_ADMIN_EMAILS)
+_admin.configure(AUTH_GUARD)
 
 
 @app.get("/health")
@@ -3310,6 +3312,7 @@ app.include_router(_session_events_router)
 from app.ui.services import quarantine_cleanup as _quarantine_cleanup  # noqa: E402 -- _pick_quarantine retention + GET /api/admin/quarantine
 
 app.include_router(_quarantine_cleanup.router)
+app.include_router(_admin.router)             # /admin, /api/admin/*: before the static mount
 
 
 @app.on_event("startup")

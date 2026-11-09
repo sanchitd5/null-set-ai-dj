@@ -22,6 +22,7 @@ State is one small JSON file (atomic write) so a restart keeps the holder; times
 from __future__ import annotations
 
 import contextvars
+import hashlib
 import json
 import os
 import re
@@ -41,6 +42,7 @@ BEAT_S = 15.0
 HEADER = "x-set-lease"
 CLIENTS = ("console", "phone")
 MAX_TAKEN = 20
+MAX_HISTORY = 50                                 # closed sets kept for the admin page
 try:                                             # one value for Dart, Python and JS (dj-config SESSION_PAUSE_CLOSE_MIN)
     from app.music_brain.generated.dj_config import SESSION_PAUSE_CLOSE_MIN as SESSION_CLOSE_MIN
 except ImportError:                              # pragma: no cover - generated file missing: the documented default
@@ -65,7 +67,7 @@ def is_set_scoped(method: str, path: str) -> bool:
 
 
 class LeaseStore:
-    """{"current": lease|null, "taken_over": [{id, at}]}. A lease is active while now < deadline;
+    """{"current": lease|null, "taken_over": [{id, at, why?}], "history": [closed sets, newest last]}. A lease is active while now < deadline;
     a lapsed one stays as `current` until someone else takes the set (its holder's next beat
     revives it)."""
 
@@ -92,7 +94,8 @@ class LeaseStore:
             data = {}                             # a corrupt file: no lease (fail open, crash-safe)
         cur = data.get("current")
         return {"current": cur if isinstance(cur, dict) and cur.get("id") else None,
-                "taken_over": [t for t in data.get("taken_over") or [] if isinstance(t, dict)][-MAX_TAKEN:]}
+                "taken_over": [t for t in data.get("taken_over") or [] if isinstance(t, dict)][-MAX_TAKEN:],
+                "history": [h for h in data.get("history") or [] if isinstance(h, dict)][-MAX_HISTORY:]}
 
     def _snap(self):
         """(version, json text) of the state. Caller holds self._lock; memory only, no I/O."""
@@ -165,6 +168,16 @@ class LeaseStore:
         return {"id": secrets.token_urlsafe(18), "client": client, "device_name": device_name,
                 "holder": holder, "started": round(now, 3), "deadline": round(now + TTL_S, 3)}
 
+    def _end(self, cur: dict, reason: str, now: float) -> None:
+        """Record `cur` as a closed set (reason: released, taken_over, lapsed, paused_timeout, admin).
+        Caller holds self._lock and snapshots afterwards. The lease id is stored only as an 8 hex hash."""
+        h = cur.get("holder") or {}
+        entry = {"id_hash": hashlib.sha256(str(cur.get("id")).encode()).hexdigest()[:8],
+                 "client": cur.get("client"), "device_name": cur.get("device_name"),
+                 "holder": {"kind": h.get("kind"), "name": h.get("name")},
+                 "started": cur.get("started"), "ended": round(now, 3), "reason": reason}
+        self._data["history"] = (self._data["history"] + [entry])[-MAX_HISTORY:]
+
     def acquire(self, client: str, device_name: str, holder: dict):
         """(lease, None) granted, or (None, conflict body)."""
         with self._lock:
@@ -173,6 +186,8 @@ class LeaseStore:
             if cur is not None:
                 return None, self.conflict(cur, holder)
             old = self._data["current"]
+            if old:
+                self._end(old, "lapsed", float(old.get("deadline", now)))
             lease = self._data["current"] = self._new(client, device_name, holder, now)
             snap = self._snap()
         self._flush(snap)
@@ -189,6 +204,7 @@ class LeaseStore:
             old = self._data["current"]
             prev = self.public(old) if old and self._active(now) else None
             if old:
+                self._end(old, "taken_over", now)
                 self._data["taken_over"] = (self._data["taken_over"] + [{"id": old["id"], "at": round(now, 3)}])[-MAX_TAKEN:]
             lease = self._data["current"] = self._new(client, device_name, holder, now)
             snap = self._snap()
@@ -209,8 +225,10 @@ class LeaseStore:
                 snap = self._snap()
                 lease = dict(cur)
             else:
-                taken = any(secrets.compare_digest(str(t.get("id")), str(lease_id)) for t in self._data["taken_over"])
-                body = {"detail": "taken over" if taken else "lease ended", "code": "set_lease"}
+                row = next((t for t in self._data["taken_over"]
+                            if secrets.compare_digest(str(t.get("id")), str(lease_id))), None)
+                detail = "lease ended" if row is None else "closed by admin" if row.get("why") == "admin" else "taken over"
+                body = {"detail": detail, "code": "set_lease"}
                 active = self._active(now)
                 if active:
                     body.update(holder=self.public(active), since=active.get("started"))
@@ -225,6 +243,7 @@ class LeaseStore:
             cur = self._data["current"]
             if not cur or not secrets.compare_digest(str(cur["id"]), str(lease_id)):
                 return False
+            self._end(cur, "released", self.clock())
             self._data["current"] = None
             snap = self._snap()
         self._flush(snap)
@@ -239,12 +258,49 @@ class LeaseStore:
             cur = self._data["current"]
             if not cur or now - float(cur.get("deadline", 0)) < SESSION_CLOSE_MIN * 60 - TTL_S:
                 return False
+            self._end(cur, "paused_timeout", now)
             self._data["current"] = None
             snap = self._snap()
         self._flush(snap)
         self.log("set_lease", action="closed", client=cur.get("client"), device=cur.get("device_name"),
                  since=cur.get("started"), idle_min=SESSION_CLOSE_MIN)
         return True
+
+    def force_close(self, reason: str = "admin") -> Optional[dict]:
+        """End the live set from the admin shell: the public view of what was closed, or None when no set is
+        live. The holder's next beat answers 409 "closed by admin"."""
+        with self._lock:
+            now = self.clock()
+            cur = self._active(now)
+            if cur is None:
+                return None
+            view = self.public(cur)
+            self._end(cur, reason, now)
+            self._data["taken_over"] = (self._data["taken_over"] + [{"id": cur["id"], "at": round(now, 3), "why": reason}])[-MAX_TAKEN:]
+            self._data["current"] = None
+            snap = self._snap()
+        self._flush(snap)
+        self.log("set_lease", action="force_close", client=cur.get("client"), device=cur.get("device_name"), reason=reason)
+        return view
+
+    def history_view(self, n: int = 20) -> list:
+        """Closed sets, newest first, without any lease id."""
+        with self._lock:
+            rows = list(self._data["history"][-n:]) if n > 0 else []
+        return [dict(r, duration_s=round(float(r.get("ended") or 0) - float(r.get("started") or 0), 1))
+                for r in reversed(rows)]
+
+    def status_admin(self) -> dict:
+        """The live set for the admin page (no id): public view plus last beat age and seconds to lapse."""
+        with self._lock:
+            now = self.clock()
+            cur = self._active(now)
+            if cur is None:
+                return {"active": False, "lease": None}
+            view = self.public(cur)
+            view["last_beat"] = round(float(cur["deadline"]) - TTL_S, 3)
+            view["lapses_in"] = round(float(cur["deadline"]) - now, 1)
+            return {"active": True, "lease": view}
 
     def allows(self, lease_id: Optional[str]):
         """None when a set-scoped request may go ahead, else the 409 body."""
@@ -363,6 +419,15 @@ def sweep_once() -> bool:
         from app.music_brain.matching import knowledge_publish
         knowledge_publish.on_set_end(log=lambda m: print(m, flush=True))
     return closed
+
+
+def force_close_once(reason: str = "admin") -> Optional[dict]:
+    """Admin close of the process store's live set: same end-of-set publish as the sweep. The closed set's public view, or None."""
+    view = store().force_close(reason)
+    if view:
+        from app.music_brain.matching import knowledge_publish
+        knowledge_publish.on_set_end(log=lambda m: print(m, flush=True))
+    return view
 
 
 def start_sweeper(every_s: float = SWEEP_EVERY_S) -> threading.Thread:
