@@ -2839,6 +2839,22 @@ def _autopilot_suggest_impl(req: AutopilotSuggestRequest):
     except Exception as exc:
         print(f"[suggest] loudness unavailable: {exc}", flush=True)
 
+    candidates: list = []
+    if not req.lead_to:
+        try:
+            from app.music_brain.atlas import atlas_store
+            from app.ui.services import pick_pool
+            host = engine.current().host
+            search = getattr(host, "search_songs", None)
+            seed = pick_pool.key_of(artist_part, title_part)
+            qs = [f"{artist_part} songs"] + ([f"best {genre} songs"] if genre else [])
+            cat = pick_pool.catalogue(seed, qs, search) if search else []
+            atl = pick_pool.atlas_neighbours(req.track_id, _track_names, CACHE_DIR)
+            candidates = pick_pool.build_pool(
+                atlas=atl, cat=cat, seed_title=title_part,
+                exclude=history_display + avoid_display + queue_display + list(earlier))
+        except Exception as exc:       # grounding is best-effort: no pool = free text, verified as before
+            print(f"[suggest] candidate pool unavailable: {exc}", flush=True)
     meta: dict = {}
     try:
         suggestions = suggest_next_tracks(
@@ -2880,6 +2896,7 @@ def _autopilot_suggest_impl(req: AutopilotSuggestRequest):
             lead_bpm=req.lead_bpm,
             punjabi_profile=req.punjabi_profile,
             scene_anchor=req.scene_anchor.strip(),
+            candidates=candidates,
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"LLM suggest error: {exc}") from exc

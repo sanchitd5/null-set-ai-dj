@@ -22,6 +22,7 @@ from concurrent.futures import ThreadPoolExecutor, wait
 
 from app.ui.services import engine, llm_capture, llm_gate
 from app.ui.services import pick_identity as _pick_identity
+from app.ui.services import pick_pool
 from app.ui.services.set_memory import PROMPT_LIMIT
 
 # ── Camelot wheel compatibility rules ─────────────────────────────────────────
@@ -1284,6 +1285,7 @@ def suggest_next_tracks(
     energy_reset: bool = False,
     punjabi_profile: str = "off",  # scene_profile mode: off | on | auto
     scene_anchor: str = "",        # the set's scene while the playing song is an off-scene mistake
+    candidates: list[dict] | None = None,   # pick_pool.build_pool(): picks must be one of these (by cid)
 ) -> list[dict]:
     """
     Call local Ollama (gemma3:4b) to suggest next n tracks.
@@ -1380,6 +1382,27 @@ def suggest_next_tracks(
             history=prompt_history(history_display or history, queue_display, avoid_display),
             n=n,
         )
+
+    # Grounded picks: the model chooses a candidate id; free text is rejected before any lookup.
+    pool = list(candidates or []) if len(candidates or []) >= pick_pool.MIN_POOL else []
+    if pool:
+        user_msg += pick_pool.prompt_block(pool)
+
+    def _g(picks: list[dict]) -> list[dict]:
+        """Keep the picks that are a pool candidate (cid or exact name); log + drop the rest. Catalogue
+        candidates already passed pick_identity at HIGH, so they are remembered as verified."""
+        if not pool:
+            return picks
+        ok, free = pick_pool.ground(picks, pool)
+        if free:
+            note_rejects(free, "free-text pick (not a candidate id)")
+        with _verify_lock:
+            for p in ok:
+                if p.get("pool_source") == "catalogue":
+                    k = _verify_key(p.get("artist", ""), p.get("title", ""))
+                    _verify_cache.pop(k, None)
+                    _verify_cache[k] = (time.time(), True)
+        return ok
 
     prio = llm_gate.LOOKAHEAD if lookahead else llm_gate.SUGGEST
     t_start = time.monotonic()
@@ -1516,6 +1539,24 @@ def suggest_next_tracks(
     suggestions = [x for x in suggestions if _bare_title(x.get("title", "")) != seed]
     # Real songs only: a local model invents plausible titles ("Four Tet - Morrison").
     # Those used to fail at download, one full prepare round later.
+    if pool:
+        grounded = _g(suggestions)
+        if not grounded and suggestions and can_retry():
+            ids = "; ".join(f'{c["cid"]} {c["artist"]} - {c["title"]}' for c in pool)[:600]
+            print(f"[suggest] no pick was a candidate; asking again with ids only", flush=True)
+            try:
+                data2 = _extract_json(chat_raw(system_msg, user_msg + (
+                    f"\n\nREJECTED - none of your songs was in CANDIDATES. Answer only with ids from: {ids}."),
+                    temperature=0.4, max_tokens=mt, priority=prio, kind=kind))
+                data2.setdefault("current_genre", data.get("current_genre"))
+                data2.setdefault("current_era", data.get("current_era"))
+                retry = _filt(
+                    data2, history, occasion_set=bool((occasion or "").strip()) and not lead_to,
+                    current_key=camelot, allow_genre_change=bool(lead_to), current_artist=artist, measured_energy=measured_energy, energy_lo=energy_lo, punjabi_profile=punjabi_profile, scene_genre=scene_genre)
+                grounded = _g([x for x in retry if _bare_title(x.get("title", "")) != seed])
+            except ValueError as exc:
+                print(f"[suggest] candidate retry failed: {exc}", flush=True)
+        suggestions = grounded
     real, fake = _verify_picks(suggestions)
     # Nothing real left: one retry even past the budget, since an empty answer
     # costs the client a whole prepare round (the hold-loop path).
@@ -1536,7 +1577,7 @@ def suggest_next_tracks(
             if not moving:
                 retry = [x for x in retry if _tempo_locks(target, x.get("expected_bpm")) is not False]
             retry = [x for x in retry if _bare_title(x.get("title", "")) != seed]
-            real, _ = _verify_picks(retry)
+            real, _ = _verify_picks(_g(retry))
         except ValueError as exc:
             print(f"[suggest] real-song retry failed: {exc}", flush=True)
     elif fake:
@@ -1579,7 +1620,7 @@ def suggest_next_tracks(
                 data3, history, occasion_set=bool((occasion or "").strip()) and not lead_to,
                 current_key=camelot, allow_genre_change=bool(lead_to), current_artist=artist, measured_energy=measured_energy, energy_lo=energy_lo, punjabi_profile=punjabi_profile, scene_genre=scene_genre)
             retry = [x for x in retry if _bare_title(x.get("title", "")) != seed]
-            real3, _ = _verify_picks(retry)
+            real3, _ = _verify_picks(_g(retry))
             fresh = [x for x in real3 if _bare_title(x.get("title", "")) not in heard]
         except ValueError as exc:
             print(f"[suggest] earlier-set retry failed: {exc}", flush=True)
@@ -1604,7 +1645,7 @@ def suggest_next_tracks(
                 measured_energy=measured_energy, energy_lo=energy_lo, punjabi_profile=punjabi_profile, scene_genre=scene_genre)
             retry = [x for x in retry if _bare_title(x.get("title", "")) != seed
                      and _bare_title(x.get("title", "")) not in heard]
-            real4, _ = _verify_picks(retry)
+            real4, _ = _verify_picks(_g(retry))
             spaced = artist_spacing(real4, recent_all)
         except ValueError as exc:
             print(f"[suggest] artist retry failed: {exc}", flush=True)
