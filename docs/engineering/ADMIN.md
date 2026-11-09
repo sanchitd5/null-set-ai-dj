@@ -21,10 +21,9 @@
 `app/ui/services/job_registry.py` is a generic runner: a `JobSpec` is `periodic` (every `interval_s`), `idle_worker`
 (runs whenever idle, loops until `ctx.should_stop()`), `manual` (run now only) or `external` (another module's own
 thread; status plus optional pause/resume). Built-in jobs are registered by `jobs_builtin.py` at startup:
-`quarantine_cleanup` (periodic 24 h, also at start), `lang_id` (pause/resume + status), `knowledge_publish`
+`quarantine_cleanup` (cron `15 4 * * *`), `sync_compact` (cron `30 3 * * *`), `lang_id` (pause/resume + status), `knowledge_publish`
 (observe only) and `graph_rebuild` (manual, only when the private builder is present; never automatic). Private jobs
-arrive through `atlas_bridge.register_jobs`: `graph_expand` (idle-only, off until `DJ_GRAPH_EXPAND=1` or its
-`enabled` setting) downloads, analyses and pairs the best YouTube-related songs the library lacks; its candidates
+arrive through `atlas_bridge.register_jobs`: `graph_expand` (cron `0 * * * *`, idle-only, on by default; `DJ_GRAPH_EXPAND=0` is the kill switch) downloads, analyses and pairs the best YouTube-related songs the library lacks; its candidates
 queued / done / failed and the measured-pair count are in the job's last result. Downloaded songs join the library.
 
 * Idle = no active set lease for `DJ_IDLE_GRACE_S` (30 s). A lease change calls a `set_lease` listener, so a running
@@ -35,6 +34,17 @@ queued / done / failed and the measured-pair count are in the job's last result.
   `GET /api/admin/jobs`, `/api/admin/jobs/{name}`, `.../log?tail=n`, `/api/admin/idle`. Every write is audited.
 * State persists in `user.db` (`job_state`, `job_run`, newest 200 runs per job): a pause survives a restart; a job's
   checkpoint (`ctx.checkpoint`, `ctx.save_checkpoint()`) is handed to its next run.
+* Cron (`app/ui/services/cron.py`, stdlib only): a job of any non-external kind may have a 5-field `schedule`
+  (`minute hour day-of-month month day-of-week`; `*`, lists, ranges, `*/n`, `a-b/n`, jan..dec, sun..sat, `@hourly`
+  `@daily` ...). Read in the SERVER'S LOCAL TIME (naive wall clock, so DST never shifts a fire; a time skipped by
+  spring-forward fires when the clock jumps, a repeated one fires once). Day-of-month and day-of-week are OR-ed when
+  both are restricted. An invalid expression is rejected at register time and by the API (422 `bad_schedule`).
+  Per job: `enabled`, `max_runtime_s` (0 = none; at the limit the job is asked to stop, status `timeout`, so it ends at its
+  next safe point), `idle_only` (a fire during a set waits for idle until the next fire or one hour, then is
+  skipped and logged `skipped: busy`), overlap = skip (a fire due while still running is logged `skipped: still
+  running`), missed run = once at startup (never a backlog). `PUT /api/admin/jobs/{name}/schedule`
+  `{schedule, enabled, max_runtime_s, idle_only}` (audited as `job_schedule`); the page has a form for it.
+  `last_fire` / `next_fire` / the newest 20 runs are in each job view (`schedule`, `history`).
 * `DJ_JOBS=0` turns the scheduler off (built-in external jobs are still listed), `DJ_JOBS_TICK_S` (2 s) is the tick.
 
 ## Graph view (/admin/graph)

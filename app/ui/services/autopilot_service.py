@@ -630,13 +630,27 @@ def _artist_clash(current_artist: str, sug_artist: str) -> str | None:
     return None
 
 
+def _energy_1_10(v) -> float:
+    """An LLM energy score on the 1-10 scale. Small models sometimes answer on a 0-1 scale (0.3, 0.85, 1.0), so a
+    decimal at or below 1 is scaled up. A whole number (JSON int or "1") is always 1-10: 1 means very calm, never 10
+    (that misread rejected every slow candidate as an "energy gap 9" next to a calm song)."""
+    if isinstance(v, bool):
+        raise ValueError("energy is not a number")
+    if isinstance(v, str):
+        v = v.strip()
+        v = int(v) if v.lstrip("-").isdigit() else float(v)
+    if isinstance(v, int):
+        return float(v)
+    v = float(v)
+    return v * 10 if v <= 1.0 else v
+
+
 def _profile_clash(cur: dict, sug: dict) -> str | None:
     """Return a reason string if the suggestion's profile clashes with the current track's."""
     if not isinstance(cur, dict) or not isinstance(sug, dict):
         return None  # model skipped profiles: can't judge, audio vibe gate still applies
     def _e(v) -> float:
-        v = float(v)
-        return v * 10 if v <= 1.0 else v  # small models often answer on a 0-1 scale
+        return _energy_1_10(v)
 
     try:
         cur_e = float(cur.get("energy")) if cur.get("_measured") else _e(cur.get("energy"))  # measured is already 1-10
