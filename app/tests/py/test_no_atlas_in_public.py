@@ -29,6 +29,9 @@ FORBIDDEN_PATH = [re.compile(p) for p in (
     r"^DJ/", r"^\.obsidian/",              # the DJ knowledge wiki and its Obsidian config
     r"^research/",                         # research notes, studies, experiment outputs
     r"(^|/)owner_liked_[^/]*\.json$", r"(^|/)test_live_fixes_golden\.py$",   # owner data and its golden
+    r"(^|/)live_set_[^/]*\.json$", r"(^|/)session_\d{4}-[^/]*\.(json|jsonl)$",   # real set logs and sessions
+    r"^app/sim/fixtures/",                 # recorded real runs, the track pool, the frozen learned stores
+    r"(^|/)set_memory\.json$",
 )]
 
 # source files that define the build (a rename would dodge the path patterns)
