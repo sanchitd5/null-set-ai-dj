@@ -305,6 +305,64 @@ def _merge_file(path: str, b: Optional[bytes], s: Optional[bytes], r: Optional[b
     return r
 
 
+def _built_at(files: Dict[str, bytes]) -> Optional[float]:
+    meta = _decode(f"{kn.ATLAS_DIR}/{kn.ATLAS_META}", files.get(f"{kn.ATLAS_DIR}/{kn.ATLAS_META}"))
+    v = meta.get("built_at") if isinstance(meta, dict) else None
+    return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+
+
+def _meta_tracks(files: Dict[str, bytes]) -> Set[str]:
+    meta = _decode(f"{kn.ATLAS_DIR}/{kn.ATLAS_META}", files.get(f"{kn.ATLAS_DIR}/{kn.ATLAS_META}"))
+    t = meta.get("tracks") if isinstance(meta, dict) else None
+    return set(t) if isinstance(t, dict) else set()
+
+
+def _derive_meta(meta: dict, files: Dict[str, bytes]) -> None:
+    """shards and the pair / track counts of `meta`, from the pair files in `files`."""
+    pairs = {p[len(kn.ATLAS_DIR) + 7:-len(".json.gz")]: p for p in files if _kind(p) == "pair"}
+    meta["shards"] = sorted(pairs)
+    stats = dict(meta.get("stats") or {})
+    n_pairs = 0
+    for p in pairs.values():
+        d = _decode(p, files[p])
+        n_pairs += len(d) if isinstance(d, dict) else 0
+    stats["pairs"], stats["tracks"] = n_pairs, len(meta.get("tracks") or {})
+    meta["stats"] = stats
+
+
+def _keep_absent(out: Dict[str, bytes], mine: Dict[str, bytes], theirs: Dict[str, bytes],
+                 guards: List[str]) -> Set[str]:
+    """GUARD: a track the published atlas holds and the server's atlas lacks (the server's library or atlas build
+    is behind) is never dropped by a publish: its pair shard, and its pairs as B in other shards, stay as the
+    remote has them. Returns the absent track ids (their meta rows are restored by the caller)."""
+    absent = _meta_tracks(theirs) - _meta_tracks(mine)
+    if not absent:
+        return set()
+    kept_rows = 0
+    for path in sorted(p for p in theirs if _kind(p) == "pair"):
+        a = path[len(kn.ATLAS_DIR) + 7:-len(".json.gz")]
+        rows_r = _decode(path, theirs[path])
+        if not isinstance(rows_r, dict):
+            continue
+        if a in absent:
+            if out.get(path) != theirs[path]:
+                kept_rows += len(rows_r)
+            out[path] = theirs[path]
+            continue
+        miss = {k: v for k, v in rows_r.items() if k.split(">")[-1] in absent}
+        if not miss:
+            continue
+        rows_o = _decode(path, out.get(path)) if path in out else {}
+        rows_o = rows_o if isinstance(rows_o, dict) else {}
+        add = {k: v for k, v in miss.items() if k not in rows_o}
+        if add:
+            kept_rows += len(add)
+            out[path] = _encode(path, dict(sorted({**rows_o, **add}.items())))
+    guards.append(f"guard: kept {len(absent)} tracks ({kept_rows} pair rows) of the published atlas that the "
+                  "server atlas lacks")
+    return absent
+
+
 def _merge_meta(path: str, b, s, r, files: Dict[str, bytes], ctx: _Ctx) -> Optional[bytes]:
     """meta.json after the pair files are merged: tracks per row, the rest per key; shards and stats derived."""
     ob, os_, or_ = (_decode(path, x) for x in (b, s, r))
@@ -326,16 +384,13 @@ def _merge_meta(path: str, b, s, r, files: Dict[str, bytes], ctx: _Ctx) -> Optio
             v = vs if vs == vr or vr == vb else (vr if vs == vb else vr)
         if v is not MISSING:
             meta[k] = v
-    pairs = {p[len(kn.ATLAS_DIR) + 7:-len(".json.gz")]: p for p in files if _kind(p) == "pair"}
-    meta["shards"] = sorted(pairs)
+    bs, br = os_.get("built_at"), or_.get("built_at")
+    if all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in (bs, br)):
+        meta["built_at"] = max(bs, br)                  # GUARD: a publish never moves built_at backwards
     stats = dict(os_.get("stats") or {})
     stats.update({k: v for k, v in (or_.get("stats") or {}).items() if (ob.get("stats") or {}).get(k) != v})
-    n_pairs = 0
-    for p in pairs.values():
-        d = _decode(p, files[p])
-        n_pairs += len(d) if isinstance(d, dict) else 0
-    stats["pairs"], stats["tracks"] = n_pairs, len(meta.get("tracks") or {})
     meta["stats"] = stats
+    _derive_meta(meta, files)
     if meta == or_:
         return r
     if meta == os_:
@@ -356,6 +411,12 @@ def merge_trees(base: Dict[str, bytes], mine: Dict[str, bytes], theirs: Dict[str
             wholesale, notes["atlas"] = theirs, "remote atlas is on other rules: kept"
         elif rs != rb:
             wholesale, notes["atlas"] = mine, "server atlas is on new rules: replaces the published one"
+    guards: List[str] = []
+    bs, br = _built_at(mine), _built_at(theirs)
+    if wholesale is mine and bs is not None and br is not None and bs < br:
+        wholesale, notes["atlas"] = theirs, "guard: server atlas is older than the published one: kept the published"
+        guards.append(f"guard: server atlas built_at {bs:.0f} is older than the published {br:.0f}; "
+                      "the published atlas stays")
     out: Dict[str, bytes] = {}
     for path in sorted(set(base) | set(mine) | set(theirs)):
         if path == meta_path:
@@ -370,9 +431,22 @@ def merge_trees(base: Dict[str, bytes], mine: Dict[str, bytes], theirs: Dict[str
         data = wholesale.get(meta_path)
     else:
         data = _merge_meta(meta_path, base.get(meta_path), mine.get(meta_path), theirs.get(meta_path), out, ctx)
+    absent = _keep_absent(out, mine, theirs, guards) if wholesale is not theirs else set()
+    if absent:
+        meta = _decode(meta_path, data) if data is not None else MISSING
+        old = _decode(meta_path, theirs.get(meta_path))
+        if isinstance(meta, dict) and isinstance(old, dict):
+            tr = dict(meta.get("tracks") or {})
+            tr.update({t: v for t, v in (old.get("tracks") or {}).items() if t in absent})
+            meta["tracks"] = dict(sorted(tr.items()))
+            _derive_meta(meta, out)
+            data = _encode(meta_path, meta)
+        elif data is None:
+            data = theirs.get(meta_path)
     if data is not None:
         out[meta_path] = data
     notes["kept_remote_rows"] = sorted(ctx.kept)
+    notes["guards"] = guards
     return out, notes
 
 
@@ -554,7 +628,10 @@ def _attempt(cache: Path, out: Path, branch: str, push: bool, dry: bool, log) ->
                 rep["stashed"] = True
                 log("knowledge publish: the checkout had changes an export does not reproduce; kept in `git stash`")
         mine = _work_files(work)
-        return _finish(cache, out, branch, push, dry, rep, base, mine, theirs, remote_sha)
+        rep = _finish(cache, out, branch, push, dry, rep, base, mine, theirs, remote_sha)
+        for g in rep.get("guards") or []:
+            log(f"knowledge publish: {g}")
+        return rep
     finally:
         if tmp is not None:
             tmp.cleanup()
