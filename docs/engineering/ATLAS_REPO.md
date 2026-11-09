@@ -66,6 +66,14 @@ dj-atlas main  -> knowledge update (submodule update --remote) -> knowledge sync
   5 s later (runs coalesce), and a daemon thread publishes every `DJ_ATLAS_PUBLISH_HOURS` (24) h. Both call
   the same `publish`, push only with `DJ_ATLAS_PUSH=1`, and never raise into the server.
 
+## Publish guard (no atlas regression)
+
+A publish never makes the published atlas worse (2026-11-09: a server whose atlas build was older replaced a newer
+one and dropped 18 tracks): (1) a server atlas on other rules replaces the published one only when its
+`built_at` is newer, else the published atlas stays and the log says `guard: server atlas built_at ... is older`;
+(2) `built_at` never moves backwards in a merge; (3) a track the published atlas holds and the server's atlas lacks
+keeps its pair shard, its pairs as B in other shards and its meta row (`guard: kept N tracks ...`).
+
 ## Conflict rules (owner wins)
 
 The row is the unit: a macro file, a learned technique, a label, one pair (`a>b`), a track in `meta.json`,
