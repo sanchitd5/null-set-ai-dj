@@ -31,7 +31,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from app.ui.services import set_lease
 
 MAX_AUDIT = 5000
-NAV = [("Sessions", "/admin/sessions"), ("Jobs", "/admin/jobs")]   # later admin pages append here
+NAV = [("Sessions", "/admin/sessions"), ("Jobs", "/admin/jobs"), ("Graph", "/admin/graph")]   # later admin pages append here
 _PAGE_CSP = "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'"
 STEPS = (
     """CREATE TABLE admin_audit (id INTEGER PRIMARY KEY, at REAL NOT NULL, actor TEXT NOT NULL,
@@ -129,10 +129,21 @@ def use_audit(a: Optional[AuditLog]) -> None:
 
 # ---- pages -------------------------------------------------------------------------------------
 
-_CSS = ("body{font:14px system-ui,sans-serif;margin:0;background:#111;color:#eee}"
-        "nav{padding:10px 16px;background:#1b1b1b}nav a{color:#9cf;margin-right:14px;text-decoration:none}"
-        "main{padding:16px}table{border-collapse:collapse}th,td{padding:4px 10px;border-bottom:1px solid #333;text-align:left}"
-        "button{padding:6px 12px}.muted{color:#999}")
+_CSS = ("*{box-sizing:border-box}body{font:15px system-ui,sans-serif;margin:0;background:#111;color:#eee}"
+        "nav{display:flex;flex-wrap:wrap;align-items:center;gap:4px;padding:6px 12px;background:#1b1b1b}"
+        "nav a{color:#9cf;text-decoration:none;display:inline-flex;align-items:center;min-height:44px;padding:0 10px}"
+        "nav .muted{margin-left:auto;overflow-wrap:anywhere}"
+        "main{padding:12px 16px}h1{font-size:22px;margin:.3em 0}h2{font-size:18px}"
+        "table{border-collapse:collapse;width:100%}th,td{padding:6px 10px;border-bottom:1px solid #333;text-align:left;vertical-align:top}"
+        "button,input,select{font:inherit;min-height:44px;padding:6px 14px}"
+        "td a{display:inline-flex;align-items:center;min-height:44px;padding:0 8px;color:#9cf}"
+        ".muted{color:#999}"
+        "@media (max-width:640px){main{padding:8px 10px}"
+        "table,tbody,tr,td{display:block;width:100%}tr:has(th){display:none}"
+        "table:not(.kv) tr{margin:0 0 10px;border:1px solid #333;border-radius:8px;padding:4px 8px;background:#181818}"
+        "table:not(.kv) td{border:0;padding:4px 0}"
+        "td[data-label]::before{content:attr(data-label);display:block;font-size:12px;color:#999}"
+        "table.kv tr{display:flex;gap:10px}table.kv th,table.kv td{display:block}}")
 
 
 def _t(ts) -> str:
@@ -144,14 +155,15 @@ def _dur(sec) -> str:
     return f"{sec // 3600}:{sec % 3600 // 60:02d}:{sec % 60:02d}"
 
 
-def _page(title: str, body: str, email: str, refresh: int = 5) -> HTMLResponse:
+def _page(title: str, body: str, email: str, refresh: int = 5, head: str = "", csp: str = _PAGE_CSP) -> HTMLResponse:
     e = html.escape
+    meta_refresh = f'<meta http-equiv="refresh" content="{int(refresh)}">' if refresh else ""
     nav = "".join(f'<a href="{e(u)}">{e(n)}</a>' for n, u in NAV)
     doc = (f'<!doctype html><html lang="en"><head><meta charset="utf-8"><title>{e(title)}</title>'
            f'<meta name="viewport" content="width=device-width,initial-scale=1">'
-           f'<meta http-equiv="refresh" content="{int(refresh)}"><style>{_CSS}</style></head><body>'
+           f'{meta_refresh}<style>{_CSS}</style>{head}</head><body>'
            f'<nav>{nav}<span class="muted">{e(email)}</span></nav><main><h1>{e(title)}</h1>{body}</main></body></html>')
-    return HTMLResponse(doc, headers={"content-security-policy": _PAGE_CSP, "cache-control": "no-store"})
+    return HTMLResponse(doc, headers={"content-security-policy": csp, "cache-control": "no-store"})
 
 
 def _sessions_body() -> str:
@@ -161,7 +173,7 @@ def _sessions_body() -> str:
     if live["active"]:
         v = live["lease"]
         who = " ".join(x for x in (v.get("kind"), v.get("name")) if x)
-        body = ("<h2>Live set</h2><table>"
+        body = ("<h2>Live set</h2><table class=\"kv\">"
                 f"<tr><th>Client</th><td>{e(str(v.get('client')))}</td></tr>"
                 f"<tr><th>Device</th><td>{e(str(v.get('device_name')))}</td></tr>"
                 f"<tr><th>Holder</th><td>{e(who)}</td></tr>"
@@ -172,8 +184,9 @@ def _sessions_body() -> str:
     else:
         body = '<h2>Live set</h2><p class="muted">no live set</p>'
     rows = "".join(
-        f"<tr><td>{e(str(r.get('client')))}</td><td>{e(str(r.get('device_name')))}</td><td>{e(_t(r.get('started')))}</td>"
-        f"<td>{e(_t(r.get('ended')))}</td><td>{_dur(r.get('duration_s'))}</td><td>{e(str(r.get('reason')))}</td></tr>"
+        f"<tr><td data-label=\"Client\">{e(str(r.get('client')))}</td><td data-label=\"Device\">{e(str(r.get('device_name')))}</td>"
+        f"<td data-label=\"Started\">{e(_t(r.get('started')))}</td><td data-label=\"Ended\">{e(_t(r.get('ended')))}</td>"
+        f"<td data-label=\"Duration\">{_dur(r.get('duration_s'))}</td><td data-label=\"Reason\">{e(str(r.get('reason')))}</td></tr>"
         for r in st.history_view(20))
     body += ("<h2>Closed sets</h2><table><tr><th>Client</th><th>Device</th><th>Started</th><th>Ended</th>"
              f"<th>Duration</th><th>Reason</th></tr>{rows}</table>")
@@ -253,10 +266,10 @@ def _jobs_body() -> str:
         sets = "<br>".join(f"{e(k)} = {e(str(x['value']))}" for k, x in v["settings"].items())
         err = f'<br><span class="muted">{e(str(last["error"]))}</span>' if last.get("error") else ""
         rows.append(
-            f'<tr><td>{e(v["title"])}<br><span class="muted">{n} - {e(v["kind"])}{" - idle only" if v["idle_only"] else ""}</span></td>'
-            f'<td>{e(v["state"])}</td><td>{bar}{e(str(p.get("note") or ""))}</td>'
-            f'<td>{e(_fmt_state(last.get("status")))} {e(_t(last.get("ended")))}{err}</td><td>{e(_t(v["next_run"]))}</td>'
-            f'<td>{sets}</td><td>{btns}<a href="/api/admin/jobs/{n}/log?tail=100">log</a></td></tr>')
+            f'<tr><td data-label="Job">{e(v["title"])}<br><span class="muted">{n} - {e(v["kind"])}{" - idle only" if v["idle_only"] else ""}</span></td>'
+            f'<td data-label="State">{e(v["state"])}</td><td data-label="Progress">{bar}{e(str(p.get("note") or ""))}</td>'
+            f'<td data-label="Last run">{e(_fmt_state(last.get("status")))} {e(_t(last.get("ended")))}{err}</td><td data-label="Next run">{e(_t(v["next_run"]))}</td>'
+            f'<td data-label="Settings">{sets}</td><td>{btns}<a href="/api/admin/jobs/{n}/log?tail=100">log</a></td></tr>')
     return body + ("<table><tr><th>Job</th><th>State</th><th>Progress</th><th>Last run</th><th>Next run</th>"
                    f"<th>Settings</th><th></th></tr>{''.join(rows)}</table>")
 
@@ -332,3 +345,8 @@ def admin_job_settings(name: str, values: dict, email: str = Depends(require_adm
         return JSONResponse({"detail": str(exc), "code": "bad_setting"}, status_code=422)
     audit().add(email, "job_settings", name, json.dumps(values, default=str)[:300])
     return view
+
+
+from app.ui.services import admin_graph as _admin_graph  # noqa: E402 -- /admin/graph + /api/admin/graph/*
+
+_admin_graph.register(router, require_admin, _page)
