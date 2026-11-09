@@ -752,7 +752,7 @@ def _filter_suggestions(
     data: dict, history: list[str], occasion_set: bool = False, current_key: str | None = None,
     allow_genre_change: bool = False, current_artist: str = "", measured_energy: int | None = None,
     energy_lo: int | None = None, punjabi_profile: str = "off", scene_genre: str = "",
-    current_title: str = "",
+    current_title: str = "", lang_check=None,
 ) -> list[dict]:
     """Drop sets/interviews, exact repeats, profile clashes and (unless steering)
     suggestions whose expected_key clashes with `current_key`. A pick that clashes
@@ -788,6 +788,7 @@ def _filter_suggestions(
     if measured_energy is not None:
         cur = {**(cur if isinstance(cur, dict) else {}), "energy": measured_energy, "_measured": True, "_lo": energy_lo}
     ok, clashes, key_clashes, genre_jumps = [], [], [], []
+    lang_penalised: list[dict] = []
     # "move" only licenses a genre jump inside an occasion: with no occasion the
     # model says "move" freely (it let Pal Pal -> Delilah through).
     steering_any = occasion_set and steering_move
@@ -815,6 +816,19 @@ def _filter_suggestions(
             s["rejected_reason"] = "writing system far from the set"
             note_rejects([s], s["rejected_reason"])
             continue
+        # sung language (Whisper id of the vocals) against the set's profile. Not waived by steering: a
+        # one-language set only leaves its language by a hand pick (which never comes through here).
+        if lang_check is not None:
+            try:
+                lverdict, lwhy = lang_check(s)
+            except Exception:
+                lverdict, lwhy = "ok", ""
+            if lverdict in ("block", "penalty"):
+                s["rejected_reason"] = lwhy
+                note_rejects([s], lwhy)
+                if lverdict == "penalty":
+                    lang_penalised.append(s)
+                continue
         bare = _bare_title(s["title"])
         is_version = bool(_VERSION_WORDS.search(s["title"]))
         if bare in played_bare:
@@ -881,6 +895,8 @@ def _filter_suggestions(
             note_rejects([s], s["rejected_reason"])
     if ok:
         return ok
+    if lang_penalised:  # a mixed-language set and only off-language picks left: the model's first, not nothing
+        return [lang_penalised[0]]
     if genre_jumps:  # only genre jumps left: the smallest one, rather than nothing
         return [min(genre_jumps, key=lambda t: t[0])[1]]
     # everything was off-theme: keep only the best-fitting one rather than nothing
@@ -1286,6 +1302,7 @@ def suggest_next_tracks(
     punjabi_profile: str = "off",  # scene_profile mode: off | on | auto
     scene_anchor: str = "",        # the set's scene while the playing song is an off-scene mistake
     candidates: list[dict] | None = None,   # pick_pool.build_pool(): picks must be one of these (by cid)
+    lang_check=None,               # (pick) -> (verdict, reason) against the set's language profile (lang_id)
 ) -> list[dict]:
     """
     Call local Ollama (gemma3:4b) to suggest next n tracks.
@@ -1311,7 +1328,7 @@ def suggest_next_tracks(
     scene_genre = str(scene_anchor or genre or "").strip()
 
     def _filt(*a, **k):                 # every filter pass knows the playing song's credits (side-artist hops)
-        return _filter_suggestions(*a, current_title=title, **k)
+        return _filter_suggestions(*a, current_title=title, lang_check=lang_check, **k)
     try:
         target = float(tempo_target) if tempo_target is not None else 0.0
     except (TypeError, ValueError):
