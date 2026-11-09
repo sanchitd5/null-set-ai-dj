@@ -14,6 +14,8 @@ from pathlib import Path
 from typing import Callable, Optional
 from urllib.parse import quote_plus
 
+from app.ui.services import pick_identity
+
 try:
     import yt_dlp as _yt_dlp
 except ImportError:
@@ -175,15 +177,15 @@ def _sequel(video_title: str, wanted_title: str) -> bool:
 _LYRIC_UPLOAD_RE = re.compile(r"lyric|lyrical|letra|visuali[sz]er|lyrics? booklet|visual backdrop", re.IGNORECASE)
 
 
-def _search_match_filter(words: list[str], song: Optional[tuple[list[str], list[str], str]] = None,
-                         official_only: bool = False, check_live: bool = True):
+def _search_match_filter(words: list[str], song: Optional[tuple] = None,
+                         official_only: bool = False, check_live: bool = True, trace: Optional[list] = None):
     """yt-dlp match_filter: accept only a real song whose title matches the query.
 
-    song = (artist_words, title_words, raw_title) for "Artist - Title" queries:
-    stricter than `words` — the song title's words must be in the VIDEO title
-    (not the channel), the artist must appear in title or channel, and remixes /
-    edits are rejected unless the requested title is one ("Four Tet - Baby" must
-    not resolve to "Dream Baby Dream (Four Tet Remix)").
+    song = (artist_words, title_words, raw_title[, raw_artist]) for "Artist - Title" queries:
+    judged by pick_identity (whole credited names, exact title, version, shape; see there): a same-titled
+    song by another artist, an interview, a snippet or a fan edit never clears it. official_only raises the
+    bar to the HIGH tier (artist metadata / Topic / the artist's own channel / a credited title) for the
+    first pass. trace collects one row per judged candidate for the pick log.
     """
 
     def _filter(info: dict, *, incomplete: bool = False):
@@ -207,21 +209,27 @@ def _search_match_filter(words: list[str], song: Optional[tuple[list[str], list[
         if official_only and _LYRIC_UPLOAD_RE.search(title) and not (song and _LYRIC_UPLOAD_RE.search(song[2])):
             return "lyric/visualizer upload (an official audio is preferred)"
         if song:
-            artist_w, title_w, raw_title = song
-            vt = " " + _norm(title) + " "
-            full = " " + _norm(f"{title} {info.get('channel') or ''} {info.get('uploader') or ''}") + " "
+            if incomplete:          # flat search row: no artist metadata yet, the full entry decides
+                return None
+            artist_w, title_w, raw_title = song[:3]
+            raw_artist = song[3] if len(song) > 3 else " ".join(artist_w)
+            meta_artist = info.get("artists") or info.get("artist") or info.get("creator")
+            if isinstance(meta_artist, str):
+                meta_artist = [meta_artist]
+            if raw_artist:
+                v = pick_identity.judge(
+                    raw_artist, raw_title, title, channel=info.get("channel") or "",
+                    uploader=info.get("uploader") or "", artists=[str(x) for x in (meta_artist or [])],
+                    duration=duration, max_secs=MAX_TRACK_SECS,
+                    min_score=pick_identity.HIGH_SCORE if official_only else pick_identity.OK_SCORE)
+                if trace is not None:
+                    trace.append({"title": title[:90], "channel": str(info.get("channel") or "")[:50],
+                                  "secs": duration, "score": v.score, "why": v.reason[:90]})
+                return None if v.ok else v.reason
+            vt = " " + _norm(title) + " "          # title-only query: old whole-word title check
             t_hits = sum(1 for w in title_w if f" {w} " in vt)
             if title_w and t_hits / len(title_w) < 0.8:
                 return f"song title does not match ({t_hits}/{len(title_w)} words)"
-            # Prefer YouTube's artist metadata (YT Music results carry it): a tribute
-            # upload puts the real artist in its TITLE, but not in its artist field.
-            meta_artist = info.get("artists") or info.get("artist") or info.get("creator")
-            if isinstance(meta_artist, list):
-                meta_artist = " ".join(str(x) for x in meta_artist)
-            artist_hay = " " + _norm(str(meta_artist)) + " " if meta_artist else full
-            a_hits = sum(1 for w in artist_w if f" {w} " in artist_hay)
-            if artist_w and a_hits / len(artist_w) < 0.5:
-                return f"artist does not match ({a_hits}/{len(artist_w)} words)"
             if _VERSION_RE.search(title) and not _VERSION_RE.search(raw_title):
                 return "alternate version (remix/edit) not requested"
             if _sequel(title, raw_title):
@@ -285,9 +293,9 @@ def verify_song(artist: str, title: str) -> Optional[bool]:
     no download). True = found, False = no upload matches, None = search failed
     (caller must not drop the pick on None).
 
-    Stricter than the download matcher: EVERY artist word must appear (so
-    "AP Dhillon" does not pass on "Arjan Dhillon"), and dated concert uploads
-    don't count. A local model invents plausible titles; catching them here costs
+    Same identity rules as the download matcher (pick_identity: the artist is a whole
+    credited name, so "AP Dhillon" does not pass on "Arjan Dhillon"), and dated concert
+    uploads don't count. A local model invents plausible titles; catching them here costs
     ~1.5 s instead of a failed download round."""
     artist, title = " ".join(str(artist or "").split()), " ".join(str(title or "").split())
     if _yt_dlp is None or not artist or not title or len(artist) + len(title) > 200:
@@ -295,7 +303,6 @@ def verify_song(artist: str, title: str) -> Optional[bool]:
     artist_w, title_w = _words_of(artist), _words_of(re.sub(r"[\(\[][^\)\]]*[\)\]]", " ", title))
     if not artist_w or not title_w:
         return None
-    base = _search_match_filter(_words_of(f"{artist} {title}"), (artist_w, title_w, title))
     opts = {"quiet": True, "no_warnings": True, "extract_flat": "in_playlist",
             "skip_download": True, "playlistend": VERIFY_POOL}
     try:
@@ -303,10 +310,15 @@ def verify_song(artist: str, title: str) -> Optional[bool]:
     except Exception:          # incl. yt_guard.Cooling: unknown, and no request while YouTube cools
         return None
     for e in (info or {}).get("entries") or []:
-        if not e or base(e) is not None or _DATED_RE.search(e.get("title") or ""):
+        if not e or _is_mix(e.get("title") or "") or _is_non_music(e.get("title") or "") or _is_live(e.get("title") or "") \
+                or _DATED_RE.search(e.get("title") or ""):
             continue
-        hay = " " + _norm(f"{e.get('title') or ''} {e.get('channel') or ''} {e.get('uploader') or ''}") + " "
-        if all(f" {w} " in hay for w in artist_w):
+        dur = e.get("duration")
+        if dur is not None and not (MIN_TRACK_SECS <= dur < MAX_TRACK_SECS):
+            continue
+        # whole credited names, exact title, no remix / sample / interview: a namesake does not count
+        if pick_identity.judge(artist, title, e.get("title") or "", channel=e.get("channel") or "",
+                               uploader=e.get("uploader") or "", duration=dur, max_secs=MAX_TRACK_SECS).ok:
             return True
     return False
 
@@ -387,7 +399,7 @@ def download_to_dir(url: str, output_dir: Path, progress: Optional[Progress] = N
         artist, _, title = query.partition(" - ")
         if not title:
             artist, title = "", query
-        song = (_words_of(artist), _words_of(title), title)
+        song = (_words_of(artist), _words_of(title), title, artist.strip())
 
         def attempt(official_only: bool) -> list[Path]:
             try:
@@ -418,12 +430,18 @@ def _words_of(query: str) -> list[str]:
 
 def _ytdlp(url: str, output_dir: Path, progress: Optional[Progress] = None,
            words: Optional[list[str]] = None,
-           song: Optional[tuple[list[str], list[str], str]] = None,
+           song: Optional[tuple] = None,
            official_only: bool = False) -> list[Path]:
     background = progress is not None           # a job (with progress) waits out a YouTube pause
     progress = progress or _noop_progress
 
+    trace: list[dict] = []             # one row per judged candidate (pick log)
+    delivered: dict = {}               # yt-dlp's info for the file that was fetched
+
     def _dl_hook(d: dict) -> None:
+        if d.get("info_dict"):
+            delivered.update({k: d["info_dict"].get(k) for k in
+                              ("id", "title", "channel", "uploader", "artists", "artist", "creator", "duration")})
         if d.get("status") == "downloading":
             total = d.get("total_bytes") or d.get("total_bytes_estimate")
             done = d.get("downloaded_bytes") or 0
@@ -453,7 +471,7 @@ def _ytdlp(url: str, output_dir: Path, progress: Optional[Progress] = None,
         # a search results page IS a playlist; only single direct links get noplaylist
         "noplaylist": not is_search,
         "playlistend": _SEARCH_POOL,
-        "match_filter": _search_match_filter(words, song, official_only, check_live=is_search),
+        "match_filter": _search_match_filter(words, song, official_only, check_live=is_search, trace=trace),
         "progress_hooks": [_dl_hook],
         "max_downloads": 1,
         "quiet": True,
@@ -487,11 +505,95 @@ def _ytdlp(url: str, output_dir: Path, progress: Optional[Progress] = None,
     after = _audio_files(output_dir)
     new_files = sorted(after - before)
     if not new_files:
+        _log_resolve(song, official_only, trace, None)
         raise RuntimeError(
             "No matching studio track found (all results were mixes, interviews, "
             "clips or title mismatches)."
         )
-    return _reject_non_tracks(new_files, check_live=is_search)
+    _log_resolve(song, official_only, trace, delivered)
+    clean = _reject_non_tracks(new_files, check_live=is_search)
+    if song:
+        for path in clean:
+            _post_check(song, delivered, path)
+    return clean
+
+
+def _log_resolve(song, official_only: bool, trace: list, chosen: Optional[dict]) -> None:
+    """Why this upload (or none) was taken for the pick: one `pick_resolve` session event plus a log line.
+    Never raises."""
+    try:
+        if not song:
+            return
+        pick = f"{song[3] if len(song) > 3 else ' '.join(song[0])} - {song[2]}"[:120]
+        got = None
+        if chosen:
+            got = f"{str(chosen.get('title') or '')[:90]} | {str(chosen.get('channel') or '')[:50]}"
+        rows = [r for r in trace if r.get("why") is not None][:8]
+        print(f"[pick] {pick!r} pass={'official' if official_only else 'any'} -> "
+              f"{got or 'no candidate cleared the bar'} ({len(rows)} judged)", flush=True)
+        from app.ui.services import session_log
+
+        session_log.log("pick_resolve", pick=pick, pass_="official" if official_only else "any",
+                        chosen=got, judged=rows)
+    except Exception:
+        pass
+
+
+PICK_QUARANTINE = "_pick_quarantine"
+DURATION_SLACK_S = 15.0         # the file may differ from the listing by container padding only
+
+
+def _post_check(song, info: dict, path: Path) -> None:
+    """After the download: the file must still be the pick. Judged again on what was really delivered
+    (decoded length, final title / channel / artist metadata). A contradiction moves the file to
+    <cache>/_pick_quarantine/ with a note, logs it and fails the download, so it is never played."""
+    try:
+        artist = song[3] if len(song) > 3 else " ".join(song[0])
+        if not artist or not info.get("title"):
+            return
+        secs = _duration_secs(path)
+        listed = info.get("duration")
+        meta = info.get("artists") or info.get("artist") or info.get("creator")
+        meta = [meta] if isinstance(meta, str) else [str(x) for x in (meta or [])]
+        v = pick_identity.judge(artist, song[2], str(info.get("title")), channel=info.get("channel") or "",
+                                uploader=info.get("uploader") or "", artists=meta, duration=secs,
+                                max_secs=MAX_TRACK_SECS)
+        why = None if v.ok else v.reason
+        if why is None and secs is not None and listed and abs(secs - float(listed)) > max(DURATION_SLACK_S, 0.1 * float(listed)):
+            why = f"file is {secs:.0f}s but the listing said {float(listed):.0f}s"
+    except Exception:
+        return                                   # a failing check must not lose a good download
+    if why is None:
+        return
+    _quarantine(path, f"{artist} - {song[2]}", why, info)
+    raise RuntimeError(f"Downloaded file does not match the pick ({why}); kept in quarantine, not played.")
+
+
+def _quarantine(path: Path, pick: str, why: str, info: dict) -> None:
+    import json
+
+    try:
+        from app.music_brain.config import CACHE_DIR
+
+        qdir = Path(CACHE_DIR) / PICK_QUARANTINE
+        qdir.mkdir(parents=True, exist_ok=True)
+        dest = qdir / f"{int(time.time())}-{path.name}"
+        if path.exists():
+            import shutil
+
+            shutil.move(str(path), str(dest))        # may cross filesystems
+        dest.with_suffix(dest.suffix + ".json").write_text(json.dumps(
+            {"pick": pick, "why": why, "delivered": dict(info or {})}, ensure_ascii=False, default=str))
+    except Exception:
+        path.unlink(missing_ok=True)
+    try:
+        from app.ui.services import session_log
+
+        session_log.log("pick_quarantine", pick=pick[:120], why=why[:160],
+                        delivered=str((info or {}).get("title") or "")[:90])
+    except Exception:
+        pass
+    print(f"[pick] quarantined: {pick!r}: {why}", flush=True)
 
 
 def _reject_non_tracks(new_files: list[Path], check_live: bool = True) -> list[Path]:
