@@ -68,7 +68,14 @@ def failing_worker(kind, d, wavs):
     if d.name.startswith("s04"):
         os._exit(3)
     if d.name.startswith("s02"):
+        # Patch only for this folder: pool processes are reused, so a patch left in place would make a later
+        # folder that lands in the same process (e.g. s03) fail verify too.
+        real = audio_convert.verify
         audio_convert.verify = lambda w, f, s: "injected"
+        try:
+            return audio_convert.convert_dir(kind, d, wavs)
+        finally:
+            audio_convert.verify = real
     return audio_convert.convert_dir(kind, d, wavs)
 
 

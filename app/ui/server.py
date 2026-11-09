@@ -2997,6 +2997,17 @@ def _autopilot_suggest_impl(req: AutopilotSuggestRequest):
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"LLM suggest error: {exc}") from exc
+    try:      # graph picks, shadow only: logged next to the LLM's, never changes them (GRAPHDB G6)
+        from app.ui.services import graph_pick
+
+        if graph_pick.mode() != "off":
+            graph_pick.shadow(
+                req.track_id,
+                graph_pick.state_from_request(req, history_display, avoid_display, queue_display, earlier,
+                                              _track_names, lang_check, analysis.bpm),
+                suggestions, lang_check, seed_key=graph_pick.name_key(f"{artist_part} - {title_part}"))
+    except Exception:
+        pass
     for s in suggestions:
         if s.get("title") and s.get("genre"):
             _set_label(_suggested_genres, _genre_key(s["title"]), s["genre"])
@@ -3343,6 +3354,9 @@ app.include_router(_config_live_router)
 from app.ui.services.knowledge_api import router as _knowledge_router  # noqa: E402 -- GET /api/knowledge/version, /snapshot (the phone pulls the dj-atlas knowledge)
 
 app.include_router(_knowledge_router)
+from app.ui.services.graph_api import router as _graph_router  # noqa: E402 -- GET /api/graph/version, /snapshot (the phone pulls graph.db via atlas_bridge)
+
+app.include_router(_graph_router)
 from app.ui.services.app_crash_api import router as _app_crash_router  # noqa: E402 -- POST /api/app/crash (phone start-up crash report)
 
 app.include_router(_app_crash_router)

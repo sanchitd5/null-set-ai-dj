@@ -577,14 +577,16 @@ class Registry:
             self._listening = False
         self._halt.set()
         self._wake.set()
+        # Join the scheduler first: until it has exited it can still start a job thread, which a snapshot taken
+        # earlier would miss (that thread then outlives shutdown and never sees a stop request).
+        if self._thread is not None:
+            self._thread.join(timeout)
+            self._thread = None
         with self._lock:
             threads = [j.thread for j in self._jobs.values() if j.thread is not None]
             for j in self._jobs.values():
                 if j.running and j.stop_at is None:
                     self._ask_stop(j, "shutdown", self.clock())
-        if self._thread is not None:
-            self._thread.join(timeout)
-            self._thread = None
         for t in threads:
             if t is not threading.current_thread():
                 t.join(timeout)
