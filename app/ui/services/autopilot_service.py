@@ -823,6 +823,16 @@ def _filter_suggestions(
             continue
         side_hop = bool(side) and _pick_identity.primary_credit(str(s.get("artist", ""))) in side
         s["side_artist_hop"] = side_hop
+        # Genre from data, not the model: a song outside the library carries the model's own genre label, which
+        # must not satisfy the scene gate (it called an unrelated-language vocal track "Urdu pop"). Only a
+        # catalogue / platform label counts; with none the genre is unknown and the song must pass the
+        # audio language check before it is committed (needs_lang_verify, the phone asks /api/language/check).
+        if not s.get("track_id"):
+            s["genre_llm"] = s.get("genre")
+            s["genre"] = s.get("data_genre") or ""
+            s["genre_src"] = "data" if s["genre"] else "unknown"
+            if not s["genre"]:
+                s["needs_lang_verify"] = True
         # language / script far from the set (a Latin-script set suddenly in another writing system): only
         # a deliberate move (steering / a LEAD TO destination) may leave it
         pick_scripts = _pick_identity.scripts_of(f"{s.get('artist', '')} {s['title']}") - {"latin"}
@@ -911,7 +921,9 @@ def _filter_suggestions(
         return ok
     if lang_penalised:  # a mixed-language set and only off-language picks left: the model's first, not nothing
         return [lang_penalised[0]]
-    if genre_jumps:  # only genre jumps left: the smallest one, rather than nothing
+    if genre_jumps and not (cur_genre and not (steering_any or allow_genre_change)):
+        # only genre jumps left: the smallest one, rather than nothing. NEVER inside a pinned scene: the caller
+        # then relaxes inside the scene or repeats / extends a song (scene-safe fallback), no genre jump.
         return [min(genre_jumps, key=lambda t: t[0])[1]]
     # everything was off-theme: keep only the best-fitting one rather than nothing
     return [max(off_theme, key=lambda t: t[0])[1]] if off_theme else []

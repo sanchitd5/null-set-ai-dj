@@ -77,3 +77,20 @@ def test_suggest_rejects_free_text_before_lookup(monkeypatch):
     out = svc.suggest_next_tracks("Seed", "Art", 124.0, "8A", 200.0, 0.5, "", [], candidates=pool)
     assert [(s["artist"], s["title"]) for s in out] == [(pool[1]["artist"], pool[1]["title"])]
     assert all(p["title"] != "Nope" for batch in looked for p in batch)
+
+
+def test_ground_cid_embedded_in_name():
+    pool = _pool()
+    ids = {c["cid"]: c for c in pool}
+    cid = pool[1]["cid"]
+    for art, title in [(f"{cid} - Noor", "Aarzu"), (f"{cid}: Noor", "Aarzu"), (f"[{cid}] Noor", "Aarzu"),
+                       (f"{cid} | Noor", "Aarzu"), ("Noor", f"{cid} - Aarzu"), (cid, "Aarzu")]:
+        ok, free = pp.ground([{"artist": art, "title": title}], pool)
+        assert len(ok) == 1 and not free, (art, title)
+        assert ok[0]["artist"] == ids[cid]["artist"] and ok[0]["title"] == ids[cid]["title"]
+
+
+def test_ground_embedded_cid_does_not_eat_real_names():
+    pool = _pool()
+    ok, free = pp.ground([{"artist": "C3PO", "title": "Song"}], pool)
+    assert not ok and free[0]["artist"] == "C3PO"

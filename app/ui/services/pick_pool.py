@@ -58,7 +58,11 @@ def catalogue(seed: str, queries: Iterable[str], search: Callable[[str, int], li
             k = key_of(artist, title)
             if v.ok and v.tier == "high" and k not in seen:
                 seen.add(k)
-                out.append({"artist": artist, "title": title, "source": "catalogue"})
+                row = {"artist": artist, "title": title, "source": "catalogue"}
+                g = str(e.get("genre") or "").strip()      # the platform's own label, when the search returns one
+                if g:
+                    row["genre"] = g
+                out.append(row)
     if not failed:                               # a failed search is retried next call, not cached empty
         with _lock:
             _catalogue.pop(seed, None)
@@ -147,13 +151,36 @@ def prompt_block(pool: list[dict]) -> str:
             "(tempo, key, energy, scene) when choosing.\n")
 
 
+_CID_RE = re.compile(r"^\s*(?:[\[(]\s*(C\d{1,3})\s*[\])]|(C\d{1,3})\s*[-:|\u2013\u2014.]|(C\d{1,3})\s*$)\s*", re.I)
+
+
+def _strip_cid(text: str) -> tuple[str, str]:
+    """(embedded cid or "", text without it) for "C12 - Name", "C12: Name", "[C12] Name", "C12 | Name"."""
+    m = _CID_RE.match(text or "")
+    if not m:
+        return "", text or ""
+    return (m.group(1) or m.group(2) or m.group(3)).lower(), (text or "")[m.end():].strip()
+
+
+def _embedded_cid(p: dict) -> str:
+    """Cid hidden in artist or title (the model writes "C12 - Artist" into the artist field); strips it in place."""
+    found = ""
+    for f in ("artist", "title"):
+        cid, rest = _strip_cid(str(p.get(f) or ""))
+        if cid:
+            found = found or cid
+            p[f] = rest
+    return found
+
+
 def ground(picks: list[dict], pool: list[dict]) -> tuple[list[dict], list[dict]]:
     """(grounded, free_text). A pick is grounded by its cid, else by an exact artist+title match."""
     by_id = {c["cid"].lower(): c for c in pool}
     by_key = {key_of(c["artist"], c["title"]): c for c in pool}
     ok, free, used = [], [], set()
     for p in picks:
-        c = by_id.get(str(p.get("cid") or "").strip().lower()) or by_key.get(
+        emb = _embedded_cid(p)
+        c = by_id.get(str(p.get("cid") or "").strip().lower()) or by_id.get(emb) or by_key.get(
             key_of(p.get("artist", ""), p.get("title", "")))
         if not c or c["cid"] in used:
             free.append(p)
@@ -163,6 +190,8 @@ def ground(picks: list[dict], pool: list[dict]) -> tuple[list[dict], list[dict]]
         if c.get("track_id"):
             p["track_id"] = c["track_id"]
         p["pool_source"] = c["source"]
+        if c.get("genre"):                      # a label from data (catalogue / platform), never the model's own
+            p["data_genre"] = c["genre"]
         p.pop("cid", None)
         ok.append(p)
     return ok, free
