@@ -367,6 +367,53 @@ def test_no_vocals_is_the_sum_and_windows_are_cached(srv, track, stems_audio):
     assert [round(i / SR, 2) for i in on] == [1.0, 2.5, 3.0, 5.0, 7.25]
 
 
+def test_whole_stem_is_one_cached_file_with_range_resume(srv, track, tmp_path):
+    tid, body = track
+    srv.req("POST", f"/v1/tracks?id={tid}&ext=mp3", body)
+    assert srv.req("GET", f"/v1/tracks/{tid}/stems/drums.m4a")[0] == 409          # not split yet
+    tid = _upload_and_split(srv, track)
+    assert srv.req("GET", f"/v1/tracks/{tid}/stems/drums.m4a?start=3")[0] == 400   # both or neither
+    assert srv.req("GET", f"/v1/tracks/{tid}/stems/piano.m4a")[0] == 404
+    st, h, whole = srv.req("GET", f"/v1/tracks/{tid}/stems/drums.m4a")
+    assert st == 200 and h["Accept-Ranges"] == "bytes" and int(h["Content-Length"]) == len(whole)
+    assert hashlib.sha256(whole).hexdigest() == h["X-Stem-Sha256"]
+    total = int(h["X-Stem-Total-Frames"])
+    assert int(h["X-Stem-Start-Frame"]) == 0 and int(h["X-Stem-Frames"]) == total == 16 * SR
+    p = tmp_path / "whole.m4a"
+    p.write_bytes(whole)
+    x = _decode(p, False)
+    assert len(x) == total                                                         # exact length, edit list honoured
+    got = _onsets(x)
+    assert max(abs(g - round(t * SR)) for g, t in zip(got, CLICKS_S)) < SR / 1000  # within 1 ms
+    # encoded once: the other stems were encoded with it, a second request is a file read
+    files = sorted(f.name for f in (srv.cache / "stem_windows").rglob("*_whole.m4a"))
+    assert files == ["bass_whole.m4a", "drums_whole.m4a", "other_whole.m4a", "vocals_whole.m4a"]
+    assert srv.req("GET", f"/v1/tracks/{tid}/stems/drums.m4a")[2] == whole
+    # Range resume: the second half joins the first byte for byte
+    cut = len(whole) // 3
+    req = urllib.request.Request(srv.base + f"/v1/tracks/{tid}/stems/drums.m4a",
+                                 headers={"Authorization": f"Bearer {TOKEN}", "Range": f"bytes={cut}-"})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        assert r.status == 206 and r.headers["Content-Range"] == f"bytes {cut}-{len(whole) - 1}/{len(whole)}"
+        assert whole[:cut] + r.read() == whole
+    req = urllib.request.Request(srv.base + f"/v1/tracks/{tid}/stems/drums.m4a",
+                                 headers={"Authorization": f"Bearer {TOKEN}", "Range": f"bytes={len(whole) + 5}-"})
+    with pytest.raises(urllib.error.HTTPError) as e:
+        urllib.request.urlopen(req, timeout=30)
+    assert e.value.code == 416
+
+
+def test_corrupt_whole_file_is_re_encoded_not_served(srv, track):
+    tid = _upload_and_split(srv, track)
+    st, h, good = srv.req("GET", f"/v1/tracks/{tid}/stems/vocals.m4a")
+    f = next((srv.cache / "stem_windows").rglob("vocals_whole.m4a"))
+    bad = bytearray(f.read_bytes())
+    bad[len(bad) // 2] ^= 0xFF
+    f.write_bytes(bytes(bad))
+    st, h2, again = srv.req("GET", f"/v1/tracks/{tid}/stems/vocals.m4a")
+    assert st == 200 and hashlib.sha256(again).hexdigest() == h2["X-Stem-Sha256"]
+
+
 def test_corrupt_window_and_stem_are_never_served(srv, track):
     tid = _upload_and_split(srv, track)
     path = f"/v1/tracks/{tid}/stems/vocals.m4a?start=0&end=10"
