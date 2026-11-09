@@ -1461,9 +1461,19 @@ def suggest_next_tracks(
     for attempt in range(MAX_JSON_ATTEMPTS):  # ONE bounded retry when the JSON is past repair
         # 0.75: song picks should vary between runs (0.5 replayed the same set from
         # the same seed); the transition PLAN stays at a low temperature.
-        raw = chat_raw(system_msg, user_msg + retry_note,
-                       temperature=SUGGEST_TEMPERATURE if attempt == 0 else 0.4,
-                       max_tokens=mt, priority=prio, kind=kind)
+        try:
+            raw = chat_raw(system_msg, user_msg + retry_note,
+                           temperature=SUGGEST_TEMPERATURE if attempt == 0 else 0.4,
+                           max_tokens=mt, priority=prio, kind=kind)
+        except Exception:
+            if not graph_good:
+                raise
+            # GRAPHDB G10: the LLM only tops up; if it fails, the good graph picks still answer the request.
+            suggestions = graph_good[:n]
+            if meta is not None:
+                meta.update(source="graph")
+            _finalize_picks(suggestions, scene_genre)
+            return suggestions
         try:
             data = _extract_json(raw)
             if _parroted(data, title):
