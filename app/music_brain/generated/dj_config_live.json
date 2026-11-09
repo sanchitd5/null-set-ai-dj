@@ -1,6 +1,6 @@
 {
-  "_generated": "GENERATED from dj-config c56fa33 - do not edit",
-  "config_hash": "0ea7eccf825e",
+  "_generated": "GENERATED from dj-config 767068d-dirty - do not edit",
+  "config_hash": "9e24dd04bd4a",
   "values": {
     "BOOK_AFTER_LOAD_S": {
       "value": 6,
