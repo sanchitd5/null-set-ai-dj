@@ -68,6 +68,31 @@ def register_jobs(register: Callable) -> bool:
     return True
 
 
+def register_appliers(register: Callable) -> bool:
+    """Let the private builder register the op-log appliers that materialise synced ops into graph.db:
+    register(tbl, fn(op)). The builder's module is builder/atlas/sync_apply.py and is optional; without it, or
+    without the submodule, ops are still logged and relayed. Failures are logged and swallowed. True when it registered."""
+    if not AVAILABLE:
+        return False
+    try:
+        import importlib
+        mod = importlib.import_module("app.music_brain.atlas.sync_apply")
+    except ModuleNotFoundError as exc:
+        if (exc.name or "").startswith("app.music_brain.atlas"):
+            return False                           # this builder has no sync appliers yet
+        print(f"[atlas] sync_apply module failed to import: {exc}", flush=True)
+        return False
+    except Exception as exc:                       # noqa: BLE001 -- the server must start
+        print(f"[atlas] sync_apply module failed to import: {type(exc).__name__}: {exc}", flush=True)
+        return False
+    try:
+        mod.register(register)
+    except Exception as exc:                       # noqa: BLE001
+        print(f"[atlas] applier registration failed: {type(exc).__name__}: {exc}", flush=True)
+        return False
+    return True
+
+
 def build_graph(cache_dir=None, log: Callable[[str], None] = print) -> dict:
     """Rebuild graph.db through the builder's build_graph(cache_dir, log). ValueError when there is no atlas,
     ImportError when the builder does not have the graph module (an older dj-atlas pin)."""
