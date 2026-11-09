@@ -24,7 +24,7 @@ _cv = threading.Condition()
 _urgent: List[str] = []
 _backlog: List[str] = []
 _queued: set = set()
-_state = {"done": 0, "failed": 0, "busy": None, "last_secs": None, "started": False}
+_state = {"done": 0, "failed": 0, "busy": None, "last_secs": None, "started": False, "paused": False}
 
 _names_idx: Dict[str, str] = {}
 _names_len = -1
@@ -51,9 +51,18 @@ def queue(track_id: str, urgent: bool = False) -> bool:
     return True
 
 
-def _next() -> Tuple[Optional[str], bool]:
-    """(track id, came from the urgent queue)."""
+def set_paused(paused: bool) -> None:
+    """Pause / resume the worker (the admin job page). A paused worker finishes the song it is on and takes no more."""
     with _cv:
+        _state["paused"] = bool(paused)
+        _cv.notify_all()
+
+
+def _next() -> Tuple[Optional[str], bool]:
+    """(track id, came from the urgent queue); (None, False) when nothing is queued or the worker is paused."""
+    with _cv:
+        if _state["paused"]:
+            return None, False
         if _urgent:
             return _urgent.pop(0), True
         if _backlog:

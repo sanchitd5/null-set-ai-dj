@@ -1,5 +1,5 @@
-"""quarantine_cleanup: audio 7 d, notes 30 d, 2 GB cap oldest first, summary counts."""
-import os
+"""quarantine_cleanup: audio 7 d, notes 30 d, 2 GB cap oldest first, summary counts; it runs as a job, not a thread."""
+import threading
 
 from app.ui.services import quarantine_cleanup as qc
 
@@ -37,3 +37,23 @@ def test_summary_and_missing_dir(tmp_path):
     assert (s["audio_files"], s["audio_bytes"], s["notes"]) == (1, 5, 1)
     assert qc.summary(tmp_path / "nope")["audio_files"] == 0
     assert qc.cleanup(tmp_path / "nope", now=NOW) == {"audio": 0, "notes": 0, "bytes": 0}
+
+
+def test_no_thread_of_its_own_and_runs_as_a_registered_job(tmp_path, monkeypatch):
+    from app.ui.services import job_registry, jobs_builtin
+
+    assert not hasattr(qc, "start") and not hasattr(qc, "_loop")
+    before = {t.name for t in threading.enumerate()}
+    seen = []
+    monkeypatch.setattr(qc, "cleanup", lambda *a, **k: seen.append(1) or {"audio": 0, "notes": 0, "bytes": 0})
+    now = [1000.0]
+    reg = job_registry.Registry(tmp_path, lambda: now[0], spawn=lambda name, fn: fn(), environ={})
+    jobs_builtin.register_builtin(reg)
+    spec = reg._jobs["quarantine_cleanup"].spec
+    assert spec.kind == "periodic" and spec.interval_s == qc.INTERVAL_S and spec.run_at_start and not spec.idle_only
+    reg.tick()                                         # the startup run: no wait for a first interval, no thread
+    assert seen == [1] and reg.view("quarantine_cleanup")["last"]["status"] == "ok"
+    assert {t.name for t in threading.enumerate()} == before
+    now[0] += qc.INTERVAL_S
+    reg.tick()
+    assert seen == [1, 1]

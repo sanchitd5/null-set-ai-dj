@@ -164,3 +164,20 @@ def test_a_hand_pick_extends_the_profile(monkeypatch):
     prof = lang_service.profile_for(LIB, ["Aaa Bbb - Song One", "Ddd Eee - Song Foreign"], playing_id="id2")
     assert not prof["pure"] and "en" in prof["share"]
     assert lang_service.check(LIB, prof, track_id="id3")[0] == "ok"
+
+
+def test_paused_worker_takes_no_queued_id():
+    """lang_service.set_paused (the admin jobs page): _next() hands out nothing while paused, urgent included."""
+    saved = (list(lang_service._urgent), list(lang_service._backlog), dict(lang_service._state))
+    lang_service._urgent[:] = ["u1"]
+    lang_service._backlog[:] = ["b1"]
+    try:
+        lang_service.set_paused(True)
+        assert lang_service._next() == (None, False) and lang_service.status()["paused"] is True
+        assert lang_service.status()["queued"] == 2
+        lang_service.set_paused(False)
+        assert lang_service._next() == ("u1", True) and lang_service._next() == ("b1", False)
+    finally:
+        lang_service._urgent[:] = saved[0]
+        lang_service._backlog[:] = saved[1]
+        lang_service._state.update(saved[2])

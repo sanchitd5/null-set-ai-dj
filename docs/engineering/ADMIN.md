@@ -15,3 +15,22 @@
 * Audit: every admin write (actor email, action, target, time) goes to table `admin_audit` in the private `user.db`
   (newest 5000 kept, never exported) and the session log (kind `admin`).
 * `scope["dj_auth"]` now carries `sub` (Google subject for a Google browser session or device token, else None).
+
+## Jobs (`/admin/jobs`)
+
+`app/ui/services/job_registry.py` is a generic runner: a `JobSpec` is `periodic` (every `interval_s`), `idle_worker`
+(runs whenever idle, loops until `ctx.should_stop()`), `manual` (run now only) or `external` (another module's own
+thread; status plus optional pause/resume). Built-in jobs are registered by `jobs_builtin.py` at startup:
+`quarantine_cleanup` (periodic 24 h, also at start), `lang_id` (pause/resume + status), `knowledge_publish`
+(observe only) and `graph_rebuild` (manual, only when the private builder is present; never automatic). Private jobs
+arrive through `atlas_bridge.register_jobs`.
+
+* Idle = no active set lease for `DJ_IDLE_GRACE_S` (30 s). A lease change calls a `set_lease` listener, so a running
+  `idle_only` job sees `ctx.should_stop()` true at once. Stopping is cooperative; a run that ignores it for
+  `DJ_JOB_CANCEL_GRACE_S` (30 s) shows `stuck`.
+* Controls: `POST /api/admin/jobs/{name}/pause|resume|cancel|run` (409 with a `code`: `running`, `paused`, `not_idle`,
+  `not_running`, `not_supported`, `disabled`), `PUT .../settings` (typed keys, 422 on a bad key or value),
+  `GET /api/admin/jobs`, `/api/admin/jobs/{name}`, `.../log?tail=n`, `/api/admin/idle`. Every write is audited.
+* State persists in `user.db` (`job_state`, `job_run`, newest 200 runs per job): a pause survives a restart; a job's
+  checkpoint (`ctx.checkpoint`, `ctx.save_checkpoint()`) is handed to its next run.
+* `DJ_JOBS=0` turns the scheduler off (built-in external jobs are still listed), `DJ_JOBS_TICK_S` (2 s) is the tick.

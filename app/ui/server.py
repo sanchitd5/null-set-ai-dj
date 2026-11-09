@@ -3316,8 +3316,20 @@ app.include_router(_admin.router)             # /admin, /api/admin/*: before the
 
 
 @app.on_event("startup")
-def _startup_quarantine_cleanup() -> None:
-    _quarantine_cleanup.start()                  # now, then daily
+def _start_jobs() -> None:
+    """The job runner: registers the built-in jobs (quarantine cleanup now and daily, lang id, publish timer), then
+    starts the scheduler. DJ_JOBS=0 turns the scheduler off (app/ui/services/job_registry.py)."""
+    from app.ui.services import job_registry, jobs_builtin
+
+    jobs_builtin.register_builtin(job_registry.registry)
+    job_registry.registry.start()
+
+
+@app.on_event("shutdown")
+def _stop_jobs() -> None:
+    from app.ui.services import job_registry
+
+    job_registry.registry.shutdown()
 app.include_router(_set_lease.router)      # /api/set/lease: one set at a time
 from app.ui.services.build_info import router as _build_router  # noqa: E402 -- GET /api/build (reload prompt)
 
