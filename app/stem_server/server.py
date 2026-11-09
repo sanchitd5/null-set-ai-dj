@@ -7,6 +7,8 @@ Routes (all but /health need `Authorization: Bearer $STEM_SERVER_TOKEN`):
   POST /v1/separate {"id", "stems": 2|4}   -> {"job", "status", ...}
   GET  /v1/jobs/{job}                      -> {"job", "id", "status", "progress", "error", "device"}
   GET  /v1/tracks/{id}/stems/{name}.m4a?start=S&end=E   AAC of that window + X-Stem-* timing headers
+  GET  /v1/tracks/{id}/stems/{name}.m4a                 the WHOLE stem, encoded once and cached; HTTP Range (206)
+                                                        resumes; the first request encodes all four stems at once
 
 Track files and stems share the console's cache (data/cache/uploads, data/cache/stems): a song the
 console already split is served without a second split, and a song split here is the console's too.
@@ -31,7 +33,7 @@ from types import SimpleNamespace
 from typing import Dict, List, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from app.music_brain.audio import stem_service
@@ -71,6 +73,8 @@ class Settings:
         self.scope_mem = env.get("STEM_JOB_MEMORY_MAX") or None   # e.g. "7G": systemd scope for the worker
         # fp16 autocast on CUDA: ~1.3x faster, stems within 56-65 dB SDR of fp32 (STEMS_PERF.md)
         self.half = env.get("STEM_SERVER_HALF", "1") == "1"
+        # whole-song m4a cache (derived; ~6 MB per stem-minute x4): oldest go first above this
+        self.whole_cap = int(float(env.get("STEM_WHOLE_CACHE_GB", "6")) * (1 << 30))
         # The console's account store (same cache): its per-device tokens work here too, so a phone
         # that signed in with Google once uses one token for both. Re-read when it changes on disk.
         self.auth_store = AuthStore(default_store_path(env))
@@ -145,6 +149,7 @@ class StemServer:
         self._seq = 0
         self.lock = threading.RLock()         # jobs dict + hash memo + state file
         self.encode_lock = threading.Lock()   # window encode + integrity repair
+        self._set_locks: Dict[str, threading.Lock] = {}   # whole-song encode, one per stem set
         self._hash: Dict[str, tuple] = {}     # track id -> (mtime, size, full sha256)
         self.gpu = None
         self.last_gpu: Optional[dict] = None  # the GPU decisions of the last split (also on each job)
@@ -321,6 +326,8 @@ class StemServer:
                 if not self.own_ready(j.id, j.path):
                     raise RuntimeError("separation finished without a complete 4-stem set")
                 j.status, j.progress, j.model = "done", 1.0, self.s.model
+                if j.priority != "backfill":      # a phone/deck wants it: encode now, off the GPU thread
+                    threading.Thread(target=self.pre_encode, args=(j.id,), daemon=True, name="stem-encode").start()
             except Exception as exc:  # noqa: BLE001 -- reported through the job, the worker lives on
                 j.status, j.error = "error", f"{type(exc).__name__}: {exc}"[:300]
                 print(f"[stem-server] job {j.job} {j.id} failed: {j.error}", file=sys.stderr, flush=True)
@@ -401,6 +408,120 @@ class StemServer:
                 meta.update(start_frame=s0, total_frames=total, model=model)
                 windows.store_window_meta(dest, meta)
         return dest, meta
+
+    # ---- whole-song stems: encoded once, served with HTTP Range -----------------------------------
+    def whole(self, track_id: str, name: str) -> tuple[Path, dict]:
+        """The whole stem as ONE m4a (cached on disk). The first request encodes all four stems
+        in parallel (ffmpeg streams, ~1 s of CPU per minute of audio each), so the phone's four
+        downloads wait for one encode, not four in a row. Same sidecar/meta contract as windows."""
+        p = self.track_path(track_id)
+        if p is None:
+            raise HTTPException(404, "unknown track")
+        if name not in FOUR:
+            raise HTTPException(404, f"unknown stem {name}")
+        ready = self.ready_set(track_id, p)
+        if ready is None:
+            raise HTTPException(409, "not separated yet; POST /v1/separate")
+        stems, cdir, model = ready
+        dest = self.s.windows / cdir.name / f"{name}_whole.m4a"
+        meta = windows.cached_window(dest) if dest.exists() else None
+        if meta is not None:
+            os.utime(dest, None)                  # LRU for the prune
+            return dest, meta
+        with self._set_lock(cdir.name):
+            meta = windows.cached_window(dest) if dest.exists() else None
+            if meta is None:
+                bad = windows.verify_stems(cdir, stems, FOUR)
+                if bad:
+                    print(f"[stem-server] {track_id}: {bad}; deleting stems and re-splitting", file=sys.stderr, flush=True)
+                    shutil.rmtree(cdir, ignore_errors=True)
+                    shutil.rmtree(dest.parent, ignore_errors=True)
+                    self.submit(track_id, 4)
+                    raise HTTPException(409, f"stem cache failed its check ({bad}); re-splitting, retry later")
+                self._encode_all(stems, cdir.name, model)
+                meta = windows.cached_window(dest) if dest.exists() else None
+                if meta is None:
+                    raise HTTPException(500, "whole-song encode failed")
+        self._prune_whole()
+        return dest, meta
+
+    def _set_lock(self, key: str) -> threading.Lock:
+        with self.lock:
+            return self._set_locks.setdefault(key, threading.Lock())
+
+    def _encode_all(self, stems: Dict[str, str], key: str, model: str) -> None:
+        """Encode the four whole stems of one set at once (missing ones only). Caller holds the set lock."""
+        from concurrent.futures import ThreadPoolExecutor
+
+        def one(n: str) -> None:
+            dest = self.s.windows / key / f"{n}_whole.m4a"
+            if dest.exists() and windows.cached_window(dest) is not None:
+                return
+            total = windows.total_frames(stems[n])
+            t0 = time.time()
+            meta = windows.encode_whole_m4a(stems[n], dest)
+            meta.update(start_frame=0, total_frames=total, model=model)
+            windows.store_window_meta(dest, meta)
+            print(f"[stem-server] {key[:16]} {n}: whole m4a {dest.stat().st_size >> 10} KB in {time.time() - t0:.1f} s",
+                  file=sys.stderr, flush=True)
+
+        with ThreadPoolExecutor(max_workers=len(FOUR)) as ex:
+            for f in [ex.submit(one, n) for n in FOUR]:
+                f.result()
+
+    def pre_encode(self, track_id: str) -> None:
+        """Encode a freshly split song's whole stems in the background, so the phone's first request
+        is a file read. Never raises."""
+        try:
+            self.whole(track_id, FOUR[0])
+        except Exception as exc:  # noqa: BLE001 -- best effort; the first request encodes instead
+            print(f"[stem-server] pre-encode {track_id}: {exc}", file=sys.stderr, flush=True)
+
+    def _prune_whole(self) -> None:
+        """Whole-song m4a files are derived: keep the newest ones under STEM_WHOLE_CACHE_GB."""
+        try:
+            files = [(f.stat().st_mtime, f.stat().st_size, f) for f in self.s.windows.glob("*/*_whole.m4a")]
+        except OSError:
+            return
+        total = sum(sz for _, sz, _ in files)
+        for _, sz, f in sorted(files):
+            if total <= self.s.whole_cap:
+                break
+            f.unlink(missing_ok=True)
+            f.with_suffix(".json").unlink(missing_ok=True)
+            total -= sz
+
+
+def _range(header: Optional[str], size: int) -> Optional[tuple[int, int]]:
+    """'bytes=a-b' | 'bytes=a-' | 'bytes=-n' -> (first, last) inclusive; None = no/ignored Range header.
+    Raises 416 for a range outside the file."""
+    if not header or not header.lower().startswith("bytes=") or "," in header:
+        return None
+    a, _, b = header[6:].strip().partition("-")
+    try:
+        if a == "":
+            n = int(b)
+            first, last = max(0, size - n), size - 1
+        else:
+            first, last = int(a), (int(b) if b else size - 1)
+    except ValueError:
+        return None
+    last = min(last, size - 1)
+    if first > last or first >= size:
+        raise HTTPException(416, "range not satisfiable", headers={"Content-Range": f"bytes */{size}"})
+    return first, last
+
+
+def _file_slice(path: Path, first: int, last: int, chunk: int = 1 << 20):
+    with open(path, "rb") as f:
+        f.seek(first)
+        left = last - first + 1
+        while left > 0:
+            b = f.read(min(chunk, left))
+            if not b:
+                break
+            left -= len(b)
+            yield b
 
 
 class SeparateReq(BaseModel):
@@ -528,8 +649,13 @@ def create_app(settings: Optional[Settings] = None, separate_fn=None) -> FastAPI
             return analyze(p).to_dict()
 
     @app.get("/v1/tracks/{track_id}/stems/{name}.m4a", dependencies=[Depends(auth)])
-    def stem_window(track_id: str, name: str, start: float, end: float):
-        path, meta = srv.window(check_id(track_id), name, start, end)
+    def stem_window(request: Request, track_id: str, name: str, start: Optional[float] = None, end: Optional[float] = None):
+        """start+end: AAC of that window. Neither: the WHOLE stem as one cached m4a, with HTTP Range
+        (Accept-Ranges: bytes, 206) so an interrupted download resumes where it stopped."""
+        if (start is None) != (end is None):
+            raise HTTPException(400, "give both start and end, or neither (whole song)")
+        whole = start is None
+        path, meta = srv.whole(check_id(track_id), name) if whole else srv.window(check_id(track_id), name, start, end)
         headers = {
             "X-Stem-Sample-Rate": str(meta["sample_rate"]),
             "X-Stem-Start-Frame": str(meta["start_frame"]),
@@ -541,7 +667,17 @@ def create_app(settings: Optional[Settings] = None, separate_fn=None) -> FastAPI
             "X-Stem-Sha256": meta["sha256"],
             "Cache-Control": "private, max-age=31536000, immutable",
         }
-        return FileResponse(path, media_type="audio/mp4", headers=headers)
+        if not whole:
+            return FileResponse(path, media_type="audio/mp4", headers=headers)
+        size = path.stat().st_size
+        headers["Accept-Ranges"] = "bytes"
+        rng = _range(request.headers.get("range"), size)
+        if rng is None:
+            headers["Content-Length"] = str(size)
+            return StreamingResponse(_file_slice(path, 0, size - 1), media_type="audio/mp4", headers=headers)
+        first, last = rng
+        headers.update({"Content-Range": f"bytes {first}-{last}/{size}", "Content-Length": str(last - first + 1)})
+        return StreamingResponse(_file_slice(path, first, last), status_code=206, media_type="audio/mp4", headers=headers)
 
     return app
 
