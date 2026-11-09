@@ -1303,6 +1303,8 @@ def suggest_next_tracks(
     scene_anchor: str = "",        # the set's scene while the playing song is an off-scene mistake
     candidates: list[dict] | None = None,   # pick_pool.build_pool(): picks must be one of these (by cid)
     lang_check=None,               # (pick) -> (verdict, reason) against the set's language profile (lang_id)
+    graph_picks: list[dict] | None = None,  # graph_pick.picks_for(): tried first, the LLM only tops up (G10)
+    graph_min: dict | None = None,          # {good, score}: the graph_pick.thresholds() gates
 ) -> list[dict]:
     """
     Call local Ollama (gemma3:4b) to suggest next n tracks.
@@ -1421,6 +1423,21 @@ def suggest_next_tracks(
                     _verify_cache[k] = (time.time(), True)
         return ok
 
+    graph_good: list[dict] = []
+    if graph_picks:      # GRAPHDB G10: the graph's picks pass the same filters; enough of them = no LLM call
+        graph_good, graph_done = _graph_first(
+            graph_picks, graph_min, history, _bare_title(title), _filt, occasion=occasion, camelot=camelot, artist=artist,
+            measured_energy=measured_energy, energy_lo=energy_lo, punjabi_profile=punjabi_profile,
+            scene_genre=scene_genre)
+        if graph_done:
+            suggestions = graph_good[:n]
+            if meta is not None:
+                meta.update(current_profile={}, current_genre=str(genre or "").strip(), model_genre="",
+                            scene_anchor=scene_anchor or "", current_era="", occasion_fit=None, steering="stay",
+                            source="graph")
+            _finalize_picks(suggestions, scene_genre)
+            return suggestions
+
     prio = llm_gate.LOOKAHEAD if lookahead else llm_gate.SUGGEST
     t_start = time.monotonic()
 
@@ -1444,9 +1461,19 @@ def suggest_next_tracks(
     for attempt in range(MAX_JSON_ATTEMPTS):  # ONE bounded retry when the JSON is past repair
         # 0.75: song picks should vary between runs (0.5 replayed the same set from
         # the same seed); the transition PLAN stays at a low temperature.
-        raw = chat_raw(system_msg, user_msg + retry_note,
-                       temperature=SUGGEST_TEMPERATURE if attempt == 0 else 0.4,
-                       max_tokens=mt, priority=prio, kind=kind)
+        try:
+            raw = chat_raw(system_msg, user_msg + retry_note,
+                           temperature=SUGGEST_TEMPERATURE if attempt == 0 else 0.4,
+                           max_tokens=mt, priority=prio, kind=kind)
+        except Exception:
+            if not graph_good:
+                raise
+            # GRAPHDB G10: the LLM only tops up; if it fails, the good graph picks still answer the request.
+            suggestions = graph_good[:n]
+            if meta is not None:
+                meta.update(source="graph")
+            _finalize_picks(suggestions, scene_genre)
+            return suggestions
         try:
             data = _extract_json(raw)
             if _parroted(data, title):
@@ -1667,6 +1694,10 @@ def suggest_next_tracks(
         except ValueError as exc:
             print(f"[suggest] artist retry failed: {exc}", flush=True)
     suggestions = spaced[:n]
+    if graph_good:       # the graph's good picks stay first, the LLM fills the rest
+        have = {pick_pool.key_of(x.get("artist", ""), x.get("title", "")) for x in graph_good}
+        suggestions = (graph_good + [x for x in suggestions
+                                     if pick_pool.key_of(x.get("artist", ""), x.get("title", "")) not in have])[:n]
     if not suggestions:
         # the client backs off and falls back to a library pick on repeated empties; the
         # reply text is what tells a model that answers "[]" from a filter that ate every pick
@@ -1689,7 +1720,47 @@ def suggest_next_tracks(
         wants_move = str(data.get("steering", "")).lower().startswith("move")
         fit = meta["occasion_fit"]
         meta["steering"] = "move" if wants_move and (fit is None or fit < 6) else "stay"
+        if graph_good:
+            meta["source"] = "graph+llm"
 
+    _finalize_picks(suggestions, scene_genre)
+    return suggestions
+
+
+def _graph_first(graph_picks, gates, history, seed, filt, *, occasion, camelot, artist, measured_energy,
+                 energy_lo, punjabi_profile, scene_genre):
+    """The graph's picks through the filters the LLM's picks pass (language, scene, energy window, key, repeats,
+    remix gap), then the real-song check for those the library does not hold (a yt node title can be dirty).
+    (good picks, done): done = enough survived to skip the LLM. Logs one `graph_pick` event."""
+    from app.ui.services import graph_pick
+
+    try:
+        data = {"suggestions": [dict(x) for x in graph_picks], "current_genre": scene_genre, "steering": "stay",
+                "current_profile": {}}
+        kept = filt(data, history, occasion_set=bool((occasion or "").strip()), current_key=camelot,
+                    current_artist=artist, measured_energy=measured_energy, energy_lo=energy_lo,
+                    punjabi_profile=punjabi_profile, scene_genre=scene_genre)
+        kept = [x for x in kept if not x.get("rejected_reason") and _bare_title(x.get("title", "")) != seed]
+        _, fake = _verify_picks([x for x in kept if not x.get("track_id")])
+        if fake:
+            note_rejects(fake, "not a real song (lookup failed)")
+            gone = {id(x) for x in fake}
+            kept = [x for x in kept if id(x) not in gone]
+        d, good = graph_pick.decide(kept, gates)
+        if d["use_graph"]:
+            graph_pick.log_decision("graph", good=d["good"], kept=len(kept), asked=len(graph_picks))
+            return good, True
+        graph_pick.log_decision("llm_topup" if good else "llm_fallback", why=d["why"], good=d["good"],
+                                kept=len(kept), asked=len(graph_picks))
+        return good, False
+    except Exception as exc:
+        print(f"[suggest] graph picks failed, using the LLM: {exc}", flush=True)
+        graph_pick.log_decision("llm_fallback", why="error")
+        return [], False
+
+
+def _finalize_picks(suggestions: list[dict], scene_genre: str) -> None:
+    """Search query, defaults, pick_reason and the pick_reason event of every kept pick (both exits)."""
     for s in suggestions:
         artist_s = s.get("artist", "")
         title_s = s.get("title", "")
@@ -1704,9 +1775,9 @@ def suggest_next_tracks(
         s.setdefault("track_profile", {})
         s["expected_bpm"] = _bpm_or_none(s.get("expected_bpm"))
         s["pick_reason"] = pick_reason(s, scene_genre)
+        if s.get("graph_why"):
+            s["pick_reason"] += "; " + s["graph_why"]
         _note_pick(s)
-
-    return suggestions
 
 
 def pick_reason(s: dict, scene_genre: str = "") -> str:

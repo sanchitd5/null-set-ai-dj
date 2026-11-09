@@ -2952,6 +2952,27 @@ def _autopilot_suggest_impl(req: AutopilotSuggestRequest):
                 exclude=history_display + avoid_display + queue_display + list(earlier), lang_check=lang_check)
         except Exception as exc:       # grounding is best-effort: no pool = free text, verified as before
             print(f"[suggest] candidate pool unavailable: {exc}", flush=True)
+    graph_picks = graph_min = None
+    graph_state = None
+    try:      # graph picks first when DJ_GRAPH_PICKS=on (GRAPHDB G10); every failure leaves the LLM path as is
+        from app.ui.services import graph_pick
+
+        if graph_pick.mode() != "off":
+            graph_state = graph_pick.state_from_request(req, history_display, avoid_display, queue_display, earlier,
+                                                        _track_names, lang_check, analysis.bpm)
+        if graph_pick.mode() == "on":
+            if req.lookahead or req.lead_to:
+                graph_pick.log_decision("llm_fallback", why="off")
+            else:
+                graph_min = graph_pick.thresholds()
+                graph_picks, why = graph_pick.picks_for(
+                    req.track_id, graph_state, 3, lang_check,
+                    seed_key=graph_pick.name_key(f"{artist_part} - {title_part}"), label_of=_vibe_by_name)
+                if why:
+                    graph_pick.log_decision("llm_fallback", why=why)
+                    graph_picks = None
+    except Exception:
+        graph_picks = None
     meta: dict = {}
     try:
         suggestions = suggest_next_tracks(
@@ -2995,18 +3016,17 @@ def _autopilot_suggest_impl(req: AutopilotSuggestRequest):
             scene_anchor=req.scene_anchor.strip(),
             candidates=candidates,
             lang_check=lang_check,
+            graph_picks=graph_picks,
+            graph_min=graph_min,
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"LLM suggest error: {exc}") from exc
     try:      # graph picks, shadow only: logged next to the LLM's, never changes them (GRAPHDB G6)
         from app.ui.services import graph_pick
 
-        if graph_pick.mode() != "off":
-            graph_pick.shadow(
-                req.track_id,
-                graph_pick.state_from_request(req, history_display, avoid_display, queue_display, earlier,
-                                              _track_names, lang_check, analysis.bpm),
-                suggestions, lang_check, seed_key=graph_pick.name_key(f"{artist_part} - {title_part}"))
+        if graph_state is not None and meta.get("source") != "graph":   # a graph answer has no LLM picks to compare
+            graph_pick.shadow(req.track_id, graph_state, suggestions, lang_check,
+                              seed_key=graph_pick.name_key(f"{artist_part} - {title_part}"))
     except Exception:
         pass
     for s in suggestions:
