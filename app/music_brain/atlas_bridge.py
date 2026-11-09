@@ -1,5 +1,7 @@
 """The ONE adapter between the public server and the private atlas builder.
 
+The DJ knowledge wiki (builder/kb/DJ) is private for the same reason; KB_DIR points at it.
+
 The code that builds, scores and seeds the pair atlas (pair_atlas, atlas_store, macros,
 studied_combos, vetoes and their rules/seed data) lives in the private sanchitd5/dj-atlas repo, under
 builder/. That repo is the git submodule at app/music_brain/knowledge, so the builder is at
@@ -18,6 +20,7 @@ from typing import List
 KNOWLEDGE_DIR = Path(__file__).resolve().parent / "knowledge"
 BUILDER_DIR = KNOWLEDGE_DIR / "builder"
 PACKAGE_DIR = BUILDER_DIR / "atlas"
+KB_DIR = BUILDER_DIR / "kb" / "DJ"          # the DJ knowledge wiki (markdown), read by knowledge_parser / dj_knowledge
 
 AVAILABLE = (PACKAGE_DIR / "pair_atlas.py").is_file()
 SKIP_REASON = ("needs_atlas: the private dj-atlas submodule (app/music_brain/knowledge/builder) "

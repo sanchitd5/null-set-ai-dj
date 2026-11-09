@@ -87,7 +87,9 @@ const phraseS = 32 * 60 / 124;   // 8 bars at 124 BPM
   assert.strictEqual(f("Long Blend", { vocalRule: { why: "two voices", recipe: "Bass Swap" } }).recipe, "Bass Swap", "vocal rule: blend");
   assert.strictEqual(f("Mashup → Transition", { stemsBoth: false, keyScore: null }).recipe, "Bass Swap", "unknown key: blend");
   // golden: three owner-liked pairs (rows copied from the real pair atlas, read only)
-  const gold = JSON.parse(fs.readFileSync(path.join(__dirname, "../fixtures/owner_liked_pairs.json"), "utf8"));
+  const goldFile = path.join(__dirname, "../../music_brain/knowledge/builder/tests/fixtures/owner_liked_pairs.json");
+  if (!fs.existsSync(goldFile)) { console.log("skipped the owner-liked golden: needs_atlas (private dj-atlas submodule absent)"); process.exit(0); }
+  const gold = JSON.parse(fs.readFileSync(goldFile, "utf8"));
   const want = { "dd3f0c201c0c0f03>407c498ddd3a6dab": "Long Blend", "407c498ddd3a6dab>c4a392ce13e82bc9": "Stem Merge",
     "c4a392ce13e82bc9>3ef9ad4b3fd01c79": "Echo Out" };
   for (const [k, recipe] of Object.entries(want)) {

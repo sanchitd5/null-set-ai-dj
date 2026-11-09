@@ -26,6 +26,9 @@ FORBIDDEN_PATH = [re.compile(p) for p in (
     r"\.json\.gz$",                        # atlas shards
     r"(^|/)learned_techniques\.json$",     # the learned store
     r"(^|/)set-study-[^/]+$", r"(^|/)set_study_analyze\.py$",
+    r"^DJ/", r"^\.obsidian/",              # the DJ knowledge wiki and its Obsidian config
+    r"^research/",                         # research notes, studies, experiment outputs
+    r"(^|/)owner_liked_[^/]*\.json$", r"(^|/)test_live_fixes_golden\.py$",   # owner data and its golden
 )]
 
 # source files that define the build (a rename would dodge the path patterns)
