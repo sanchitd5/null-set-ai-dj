@@ -21,7 +21,10 @@ from typing import Optional
 
 SIM_ROOT = Path(__file__).resolve().parent
 REPO_ROOT = SIM_ROOT.parent.parent
-FIXTURES_DIR = Path(os.environ.get("SIM_FIXTURES_DIR") or SIM_ROOT / "fixtures")
+from app.music_brain import atlas_bridge   # noqa: E402
+
+# the recorded runs, the track pool and the frozen learned stores are owner data: private dj-atlas submodule
+FIXTURES_DIR = Path(os.environ.get("SIM_FIXTURES_DIR") or atlas_bridge.BUILDER_DIR / "fixtures" / "sim" / "fixtures")
 POOL_DIR = FIXTURES_DIR / "_pool"
 SHARED_DIR = FIXTURES_DIR / "_shared"
 MARKER = b"SIMAUDIO:"

@@ -30,7 +30,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional
 
-from app.music_brain import atlas_bridge
 from app.sim.pool import FIXTURES_DIR, SHARED_DIR, Pool, round_floats
 from app.sim.stubllm import LLM, StubLLM, split_name
 from app.sim.synth import read_tag
@@ -186,8 +185,6 @@ class World:
         before / after a rule change the run sees the same learned store."""
         for fn in SHARED_FILES:
             src = SHARED_DIR / fn
-            if not src.exists():                                       # learned data lives in the private dj-atlas builder
-                src = atlas_bridge.BUILDER_DIR / "fixtures" / "sim" / fn
             if src.exists():                                           # frozen: every run of a panel starts from the same store
                 (self.run_cache / fn).write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
             elif self.mode == "live" and self.library is not None:     # the first recording freezes the user's real store

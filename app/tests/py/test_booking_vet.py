@@ -1,6 +1,6 @@
 """Live set 2026-09-30_154332: FOLLOW SET / macro / studied bookings obey the picks' rules, and the OWNER VETO.
 
-Replay fixture: app/tests/fixtures/live_set_154332.json (songs in play order with their genre labels, the FOLLOW
+Replay fixture: builder/tests/fixtures/live_set_154332.json (dj-atlas) (songs in play order with their genre labels, the FOLLOW
 SET "performing" moves and the transitions, extracted read-only from the session and genre_labels.json).
 """
 import json
@@ -11,8 +11,10 @@ import pytest
 from app.music_brain.atlas import vetoes as vt
 from app.ui.services import booking_vet as bv
 
-ROOT = Path(__file__).resolve().parents[3]
-REPLAY = json.loads((ROOT / "app/tests/fixtures/live_set_154332.json").read_text())
+REPLAY_FILE = Path(__file__).resolve().parents[3] / "app/music_brain/knowledge/builder/tests/fixtures/live_set_154332.json"   # the owner's real set: private
+if not REPLAY_FILE.exists():
+    pytest.skip("needs_atlas: the owner replay fixture lives in the private dj-atlas submodule", allow_module_level=True)
+REPLAY = json.loads(REPLAY_FILE.read_text())
 SONGS = REPLAY["songs"]
 def _seed():
     """The tracked veto seed, loaded when a test runs (the conftest keeps the cache private), never at import."""

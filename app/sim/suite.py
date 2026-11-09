@@ -30,6 +30,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from app.sim import compare, features
+from app.sim.pool import FIXTURES_DIR
 
 SIM = Path(__file__).resolve().parent
 PANEL = SIM / "panel.json"
@@ -152,7 +153,7 @@ def record_panel(panel: list) -> int:
         return 4
     print(f"recording {len(panel)} sets with {ep.backend} {ep.model} @ {ep.base_url}", flush=True)
     for e in panel:
-        fx = SIM / "fixtures" / e["name"] / "run.json"
+        fx = FIXTURES_DIR / e["name"] / "run.json"
         try:
             if json.loads(fx.read_text(encoding="utf-8")).get("source") == "live":
                 print(f"kept {e['name']} (already recorded with the real model; delete its fixture dir to redo)", flush=True)
