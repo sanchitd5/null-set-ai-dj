@@ -2480,6 +2480,7 @@ class AutopilotSuggestRequest(BaseModel):
     # memory so this set's own songs are never "earlier sets" and another tab's
     # set never leaks in; also keeps two tabs from sharing one cached answer.
     set_id: str = ""
+    vetoed: list[str] = Field(default_factory=list, max_length=400)   # G20: songs vetoed this set (track ids / song keys / display names): never returned
     occasion: Optional[str] = None
     history: list[str] = []
     set_position: Optional[float] = None  # 0.0=start, 1.0=end; computed from history if omitted
@@ -2830,6 +2831,137 @@ def _suggest_key(req: "AutopilotSuggestRequest") -> str:
     return json.dumps(req.dict(), sort_keys=True, default=str)
 
 
+def _suggest_ladder_mod():
+    from app.ui.services import suggest_ladder
+    return suggest_ladder
+
+
+def _library_rows() -> list:
+    """Library songs as ladder rows [{track_id, artist, title}] (library order; unnamed songs skipped)."""
+    from app.ui.services.track_identity import clean_identity
+
+    out = []
+    for tid, path in list(_tracks.items()):
+        name = _track_names.get(tid) or (path.stem if path else "")
+        artist, title = clean_identity(name) if name else ("", "")
+        if title:
+            out.append({"track_id": tid, "artist": "" if artist == "Unknown" else artist, "title": title})
+    return out
+
+
+def _neighbour_rows(track_id: str) -> list:
+    try:
+        from app.ui.services import pick_pool
+
+        return pick_pool.atlas_neighbours(track_id, _track_names, CACHE_DIR)
+    except Exception:
+        return []
+
+
+def _suggest_guaranteed(req: "AutopilotSuggestRequest") -> dict:
+    """G20: the suggest answers within SUGGEST_DEADLINE_S and never raises or comes back empty while the library or
+    YouTube has a song. The impl (graph -> YouTube -> LLM top-up -> library ladder) runs in a worker; when it is not done
+    at the LLM budget its partial inputs feed the library ladder here and the worker's late result is dropped."""
+    import traceback
+
+    sl = _suggest_ladder_mod()
+    t0 = time.monotonic()
+    ctx: dict = {"deadline_at": t0 + sl.deadline_s() - 1.0, "reason": ""}
+    box: dict = {}
+
+    def run():
+        try:
+            box["res"] = _autopilot_suggest_impl(req, ctx)
+        except BaseException as exc:      # noqa: BLE001 - logged, turned into the ladder below
+            box["err"] = exc
+            box["tb"] = traceback.format_exc()
+
+    th = _threading.Thread(target=run, daemon=True, name="suggest-impl")
+    th.start()
+    th.join(timeout=sl.llm_budget_s())
+    res = box.get("res")
+    if res is not None and res.get("suggestions"):
+        res.setdefault("pick_source", res.get("source") or "llm")
+        return res
+    if th.is_alive():
+        reason = f"deadline: suggest not done after {sl.llm_budget_s():.0f}s"
+    elif "err" in box:
+        reason = f"suggest error: {box['err']!r}"[:300]
+        print(f"[suggest] impl failed, ladder: {box['err']!r}\n{box.get('tb', '')}", flush=True)
+    else:
+        reason = str((res or {}).get("fallback_reason") or "") or "no pick passed the gates"
+    try:
+        out = _suggest_ladder_late(req, ctx, reason)
+    except Exception as exc:
+        print(f"[suggest] ladder failed: {exc!r}\n{traceback.format_exc()}", flush=True)
+        out = {"suggestions": [], "pick_source": "none", "fallback_reason": f"{reason}; ladder error: {exc}"[:300]}
+    out.setdefault("set_position", round(float((res or {}).get("set_position") or 0.0), 2))
+    out["source"] = out["pick_source"]
+    out["fallback_reason"] = out.get("fallback_reason") or reason
+    return out
+
+
+def _suggest_ladder_late(req: "AutopilotSuggestRequest", ctx: dict, reason: str) -> dict:
+    """The ladder without the LLM, from inputs rebuilt cheaply from the request (the impl may have died or be stuck)."""
+    from app.music_brain.analysis.genre import family_jump
+    from app.ui.services import lang_service
+    from app.ui.services.autopilot_service import yt_fallback
+    from app.ui.services.track_identity import clean_identity
+
+    sl = _suggest_ladder_mod()
+    disp = lambda xs: [" - ".join(clean_identity(h)).removeprefix("Unknown - ") for h in xs]  # noqa: E731
+    history, avoid, queue = disp(req.history), disp(req.avoid), disp(req.queue[:6])
+    display = _track_names.get(req.track_id) or ""
+    artist, title = clean_identity(display) if display else ("", "")
+    earlier: list = []
+    if _set_memory is not None:
+        try:
+            earlier = _set_memory.earlier_sets(history + avoid, set_id=_clean_set_id(req.set_id), limit=400)
+        except Exception:
+            earlier = []
+    lang_check = None
+    try:
+        lprof = lang_service.profile_for(_track_names, history, req.track_id)
+
+        def lang_check(row: dict):
+            return lang_service.check(_track_names, lprof, row.get("track_id"), f"{row.get('artist', '')} - {row.get('title', '')}")
+    except Exception as exc:
+        print(f"[suggest] language profile unavailable: {exc}", flush=True)
+    cur_genre = str(_suggested_genres.get(_genre_key(title), "") or _track_vibe(req.track_id).get("genre") or "") if title else ""
+
+    def gof(r):
+        v = _track_vibe(r["track_id"]) if r.get("track_id") else _vibe_by_name(f"{r.get('artist', '')} - {r.get('title', '')}")
+        return (v or {}).get("genre") or ""
+
+    def yt_rows(remaining: float) -> list:
+        if ctx.get("yt_rows"):
+            return ctx["yt_rows"]
+        from app.ui.services import yt_related
+
+        cap = sl.YT_FETCH_CAP_S if remaining >= sl.YT_FETCH_MIN_REMAINING_S else 0.05   # cache / graph only when short of time
+        return yt_related.candidates(req.track_id, {"artist": "" if artist == "Unknown" else artist, "title": title},
+                                     timeout=cap)[0]
+
+    def graph_rows() -> list:
+        if ctx.get("graph_picks"):
+            return ctx["graph_picks"]
+        from app.ui.services import graph_pick
+
+        st = graph_pick.state_from_request(req, history, avoid, queue, earlier, _track_names, lang_check, None)
+        st["vetoed_keys"] = [k for k in (graph_pick.name_key(v) for v in req.vetoed) if k] + list(req.vetoed)
+        return graph_pick.picks_for(req.track_id, st, 3, lang_check, seed_key=graph_pick.name_key(display) if display else None,
+                                    label_of=_vibe_by_name)[0]
+
+    played = history + avoid + queue + ([display] if display else [])
+    return sl.ladder(
+        deadline_at=ctx["deadline_at"], hard_played=played, earlier=earlier, playing_id=req.track_id,
+        library=_library_rows(), neighbours=_neighbour_rows(req.track_id), cur_genre=cur_genre, genre_of=gof,
+        family_jump=family_jump, lang_check=lang_check, graph_picks=graph_rows, yt_rows=yt_rows,
+        yt_pick=lambda rows: yt_fallback(rows, cur_genre=cur_genre, lang_check=lang_check, genre_of=gof,
+                                         exclude=played + list(earlier)),
+        reason=reason, vetoed=req.vetoed, llm=None)
+
+
 @app.post("/api/autopilot/suggest")
 def autopilot_suggest(req: AutopilotSuggestRequest):
     import time as _time
@@ -2849,31 +2981,21 @@ def autopilot_suggest(req: AutopilotSuggestRequest):
                   if v.get("done_at") and _time.time() - v["done_at"] > SUGGEST_REUSE_S]:
             _suggest_inflight.pop(k, None)
     if not owner:
-        slot["event"].wait(300)
+        slot["event"].wait(_suggest_ladder_mod().deadline_s() + 5)
         if slot["error"] is not None:
             raise slot["error"]
         if slot["result"] is None:
             raise HTTPException(status_code=504, detail="suggest still running")
         return slot["result"]
     try:
-        slot["result"] = _autopilot_suggest_impl(req)
-        return slot["result"]
-    except HTTPException as exc:
-        slot["error"] = exc
-        raise
-    except Exception as exc:
-        # never a 500 to the phone: an empty answer with the reason (the impl's own fallback chain already ran)
-        import traceback
-
-        print(f"[suggest] unexpected error, empty answer: {exc!r}\n{traceback.format_exc()}", flush=True)
-        slot["result"] = {"suggestions": [], "set_position": 0.0, "source": "fallback", "fallback_reason": f"suggest error: {exc}"[:300]}
+        slot["result"] = _suggest_guaranteed(req)
         return slot["result"]
     finally:
         slot["done_at"] = _time.time()
         slot["event"].set()
 
 
-def _autopilot_suggest_impl(req: AutopilotSuggestRequest):
+def _autopilot_suggest_impl(req: AutopilotSuggestRequest, ctx: Optional[dict] = None):
     """Use local LLM (Ollama gemma3:4b by default) to suggest next tracks."""
     import traceback
     import numpy as np
@@ -2987,100 +3109,128 @@ def _autopilot_suggest_impl(req: AutopilotSuggestRequest):
             print(f"[suggest] candidate pool unavailable: {exc}", flush=True)
     graph_picks = graph_min = None
     graph_state = None
-    try:      # graph picks first when DJ_GRAPH_PICKS=on (GRAPHDB G10); every failure leaves the LLM path as is
+    try:      # GRAPHDB: graph picks are the FIRST ladder step (owner 2026-11-10), whatever DJ_GRAPH_PICKS says; failures leave []
         from app.ui.services import graph_pick
 
-        if graph_pick.mode() != "off":
-            graph_state = graph_pick.state_from_request(req, history_display, avoid_display, queue_display, earlier,
-                                                        _track_names, lang_check, analysis.bpm)
-        if graph_pick.mode() == "on":
-            if req.lookahead or req.lead_to:
-                graph_pick.log_decision("llm_fallback", why="off")
-            else:
-                graph_min = graph_pick.thresholds()
-                graph_picks, why = graph_pick.picks_for(
-                    req.track_id, graph_state, 3, lang_check,
-                    seed_key=graph_pick.name_key(f"{artist_part} - {title_part}"), label_of=_vibe_by_name)
-                if why:
-                    graph_pick.log_decision("llm_fallback", why=why)
-                    graph_picks = None
+        graph_state = graph_pick.state_from_request(req, history_display, avoid_display, queue_display, earlier,
+                                                    _track_names, lang_check, analysis.bpm)
+        graph_state["vetoed_keys"] = [k for k in (graph_pick.name_key(v) for v in req.vetoed) if k] + list(req.vetoed)
+        if not req.lead_to:
+            graph_picks, why = graph_pick.picks_for(
+                req.track_id, graph_state, 3, lang_check,
+                seed_key=graph_pick.name_key(f"{artist_part} - {title_part}"), label_of=_vibe_by_name)
+            if why:
+                graph_pick.log_decision("llm_fallback", why=why)
+                graph_picks = None
     except Exception:
         graph_picks = None
+    if ctx is not None:
+        ctx.update(graph_picks=graph_picks, yt_rows=yt_rows)
     meta: dict = {}
-    try:
-        suggestions = suggest_next_tracks(
-            title=title_part,
-            artist=artist_part,
-            bpm=analysis.bpm or 128.0,
-            camelot=camelot,
-            duration=analysis.duration or 0.0,
-            avg_energy=avg_energy,
-            measured_energy=measured_energy,
-            occasion=_occasion_with_note(req.occasion, req.energy_note,
-                                         "; ".join(x for x in (_variety_note(req.variety_run, req.variety_genre),
-                                                               hit_share_note(req.occasion, *_fame_counts(req.history)))
-                                                   if x),
-                                         hook=req.energy_hook),
-            history=req.history + req.avoid + req.queue[:6],
-            set_position=set_position,
-            set_mode=req.set_mode if req.set_mode in SET_MODES else "hybrid",
-            relaxed=bool(req.relaxed) or req.mood == "romance",
-            mood="romance" if req.mood == "romance" else "",
-            meta=meta,
-            genre=genre,
-            history_display=history_display,
-            queue_display=queue_display,
-            avoid_display=avoid_display,
-            lookahead=req.lookahead,
-            earlier_sets=earlier,
-            energy_history=[int(round(v)) for v in req.energy_history[-8:] if 1 <= v <= 10],
-            energy_reset=(req.energy_note == "dip"),
-            # No favourites: memory can't tell user picks from AI picks, so the
-            # AI's own picks became "favourites" and fed back (Fred again.. loop).
-            favourite_artists=[],
-            loudness_dbfs=loudness_dbfs,
-            tempo_target=req.tempo_target,
-            tempo_note=req.tempo_note or "",
-            lead_to=req.lead_to[:160],
-            lead_step=max(0, min(req.lead_step, 12)),
-            lead_steps=max(0, min(req.lead_steps, 12)),
-            lead_bpm=req.lead_bpm,
-            punjabi_profile=req.punjabi_profile,
-            scene_anchor=req.scene_anchor.strip(),
-            candidates=candidates,
-            lang_check=lang_check,
-            graph_picks=graph_picks,
-            graph_min=graph_min,
-        )
-    except Exception as exc:
-        # A suggest never 500s to the phone (prod 18:09-18:10): log it, answer 200 with the fallback chain: graph picks if any,
-        # then the YouTube related songs (below), else an empty list with the reason.
-        import traceback
 
-        print(f"[suggest] LLM suggest error, falling back: {exc!r}\n{traceback.format_exc()}", flush=True)
-        suggestions = [dict(p) for p in (graph_picks or []) if isinstance(p, dict)]
-        meta = dict(meta or {})
-        meta["fallback_reason"] = f"LLM suggest error: {exc}"[:300]
-        meta["source"] = "graph" if suggestions else "fallback"
+    def _llm(remaining_s: float) -> list:
+        nonlocal meta
+        suggestions: list = []
         try:
-            from app.ui.services import session_log
-
-            session_log.log("suggest_error", error=str(exc)[:300], graph_picks=len(suggestions), n_yt=len(yt_rows))
-        except Exception:
-            pass
-    if not suggestions and yt_rows:      # owner R3: nothing passed -> the playing song's YouTube related songs, before a repeat / hold
-        try:
-            from app.ui.services import session_log
-            from app.ui.services.autopilot_service import yt_fallback
-
-            suggestions = yt_fallback(
-                yt_rows, cur_genre=str(genre or meta.get("current_genre") or ""), lang_check=lang_check,
-                genre_of=lambda r: ((_track_vibe(r["track_id"]) if r.get("track_id") else _vibe_by_name(f"{r.get('artist', '')} - {r.get('title', '')}")) or {}).get("genre"),
-                exclude=history_display + avoid_display + queue_display + list(earlier))
-            session_log.log("yt_fallback", seed=f"{artist_part} - {title_part}", n_yt=len(yt_rows), n_picked=len(suggestions),
-                            picked=[f"{s.get('artist', '')} - {s.get('title', '')}" for s in suggestions])
+            suggestions = suggest_next_tracks(
+                title=title_part,
+                artist=artist_part,
+                bpm=analysis.bpm or 128.0,
+                camelot=camelot,
+                duration=analysis.duration or 0.0,
+                avg_energy=avg_energy,
+                measured_energy=measured_energy,
+                occasion=_occasion_with_note(req.occasion, req.energy_note,
+                                             "; ".join(x for x in (_variety_note(req.variety_run, req.variety_genre),
+                                                                   hit_share_note(req.occasion, *_fame_counts(req.history)))
+                                                       if x),
+                                             hook=req.energy_hook),
+                history=req.history + req.avoid + req.queue[:6],
+                set_position=set_position,
+                set_mode=req.set_mode if req.set_mode in SET_MODES else "hybrid",
+                relaxed=bool(req.relaxed) or req.mood == "romance",
+                mood="romance" if req.mood == "romance" else "",
+                meta=meta,
+                genre=genre,
+                history_display=history_display,
+                queue_display=queue_display,
+                avoid_display=avoid_display,
+                lookahead=req.lookahead,
+                earlier_sets=earlier,
+                energy_history=[int(round(v)) for v in req.energy_history[-8:] if 1 <= v <= 10],
+                energy_reset=(req.energy_note == "dip"),
+                # No favourites: memory can't tell user picks from AI picks, so the
+                # AI's own picks became "favourites" and fed back (Fred again.. loop).
+                favourite_artists=[],
+                loudness_dbfs=loudness_dbfs,
+                tempo_target=req.tempo_target,
+                tempo_note=req.tempo_note or "",
+                lead_to=req.lead_to[:160],
+                lead_step=max(0, min(req.lead_step, 12)),
+                lead_steps=max(0, min(req.lead_steps, 12)),
+                lead_bpm=req.lead_bpm,
+                punjabi_profile=req.punjabi_profile,
+                scene_anchor=req.scene_anchor.strip(),
+                candidates=candidates,
+                lang_check=lang_check,
+                graph_picks=None,
+                graph_min=None,
+            )
         except Exception as exc:
-            print(f"[suggest] yt fallback failed: {exc}", flush=True)
+            # A suggest never 500s to the phone (prod 18:09-18:10): log it, answer 200 with the fallback chain: graph picks if any,
+            # then the YouTube related songs (below), else an empty list with the reason.
+            import traceback
+
+            print(f"[suggest] LLM suggest error, falling back: {exc!r}\n{traceback.format_exc()}", flush=True)
+            suggestions = []
+            meta = dict(meta or {})
+            meta["fallback_reason"] = f"LLM suggest error: {exc}"[:300]
+            meta["source"] = "fallback"
+            try:
+                from app.ui.services import session_log
+
+                session_log.log("suggest_error", error=str(exc)[:300], graph_picks=len(graph_picks or []), n_yt=len(yt_rows))
+            except Exception:
+                pass
+        return suggestions
+
+    from app.ui.services import suggest_ladder
+    from app.music_brain.analysis.genre import family_jump as _fj
+    from app.ui.services.autopilot_service import yt_fallback as _ytfb
+
+    played_now = history_display + avoid_display + queue_display + [display]
+    cur_genre = str(genre or "")
+
+    def _gof(r):
+        v = _track_vibe(r["track_id"]) if r.get("track_id") else _vibe_by_name(f"{r.get('artist', '')} - {r.get('title', '')}")
+        return (v or {}).get("genre") or ""
+
+    def _yt_rows(remaining_s: float) -> list:
+        if ctx is not None and ctx.get("yt_rows"):
+            return ctx["yt_rows"]
+        return yt_rows
+
+    res = suggest_ladder.ladder(
+        deadline_at=ctx["deadline_at"] if ctx else time.monotonic() + suggest_ladder.deadline_s(),
+        hard_played=played_now, earlier=earlier, playing_id=req.track_id,
+        library=_library_rows(), neighbours=_neighbour_rows(req.track_id), cur_genre=cur_genre, genre_of=_gof,
+        family_jump=_fj, lang_check=lang_check, graph_picks=lambda: graph_picks or [], yt_rows=_yt_rows,
+        yt_pick=lambda rows: _ytfb(rows, cur_genre=cur_genre or str(meta.get("current_genre") or ""), lang_check=lang_check,
+                                   genre_of=_gof, exclude=played_now + list(earlier)),
+        reason=(ctx or {}).get("reason") or "", vetoed=req.vetoed, llm=_llm)
+    suggestions = res["suggestions"]
+    meta = dict(meta or {})
+    meta["pick_source"] = res["pick_source"]
+    if res["pick_source"] not in ("llm",):
+        meta["source"] = res["pick_source"]
+        meta["fallback_reason"] = (meta.get("fallback_reason") or "") or ("" if res["pick_source"] in ("graph", "yt_fallback") else res["fallback_reason"] or "ladder")
+    try:
+        from app.ui.services import session_log
+
+        session_log.log("suggest_ladder", pick_source=res["pick_source"], n=len(suggestions), n_yt=len(yt_rows),
+                        n_graph=len(graph_picks or []))
+    except Exception:
+        pass
     try:      # graph picks, shadow only: logged next to the LLM's, never changes them (GRAPHDB G6)
         from app.ui.services import graph_pick
 

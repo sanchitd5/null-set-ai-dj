@@ -76,8 +76,9 @@ def suggest_env(monkeypatch, tmp_path):
 def test_llm_exception_answers_200_with_the_youtube_fallback(suggest_env):
     srv = suggest_env
     out = srv.autopilot_suggest(srv.AutopilotSuggestRequest(track_id="seed", set_id="r3a"))
+    # G20 owner order: graph, then YouTube related, then the LLM: a YouTube pick means the LLM is not asked at all
     assert out["suggestions"] and out["suggestions"][0]["source"] == "yt_fallback"
-    assert "LLM exploded" in out["fallback_reason"]
+    assert out["pick_source"] == "yt_fallback"
 
 
 def test_llm_exception_with_nothing_to_fall_back_on_is_an_empty_list_with_a_reason(suggest_env, monkeypatch):
@@ -85,6 +86,8 @@ def test_llm_exception_with_nothing_to_fall_back_on_is_an_empty_list_with_a_reas
 
     srv = suggest_env
     monkeypatch.setattr(yt_related, "candidates", lambda *a, **k: ([], {"source": "empty", "n": 0}))
+    monkeypatch.setattr(srv, "_library_rows", lambda: [])       # G20: an empty library too, else the library ladder answers
+    monkeypatch.setattr(srv, "_neighbour_rows", lambda tid: [])
     srv._suggest_inflight.clear()
     out = srv.autopilot_suggest(srv.AutopilotSuggestRequest(track_id="seed", set_id="r3b"))
     assert out["suggestions"] == [] and "LLM exploded" in out["fallback_reason"]
@@ -92,7 +95,7 @@ def test_llm_exception_with_nothing_to_fall_back_on_is_an_empty_list_with_a_reas
 
 def test_an_unexpected_error_in_the_impl_is_not_a_500(suggest_env, monkeypatch):
     srv = suggest_env
-    monkeypatch.setattr(srv, "_autopilot_suggest_impl", lambda req: (_ for _ in ()).throw(ValueError("filter bug")))
+    monkeypatch.setattr(srv, "_autopilot_suggest_impl", lambda req, ctx=None: (_ for _ in ()).throw(ValueError("filter bug")))
     srv._suggest_inflight.clear()
     out = srv.autopilot_suggest(srv.AutopilotSuggestRequest(track_id="seed", set_id="r3c"))
-    assert out["suggestions"] == [] and "filter bug" in out["fallback_reason"]
+    assert out["suggestions"] and "filter bug" in out["fallback_reason"]   # G20: the ladder still answers a song

@@ -252,6 +252,9 @@ def test_suggest_puts_yt_in_the_pool_and_logs_the_shadow_event(monkeypatch):
         return [pick]
 
     monkeypatch.setattr(engine, "current", lambda: types.SimpleNamespace(suggest=suggest, host=types.SimpleNamespace()))
+    # G20 order is graph, YouTube, then the LLM: no YouTube pick passes here, so the LLM runs and sees the yt pool
+    import app.ui.services.autopilot_service as aps
+    monkeypatch.setattr(aps, "yt_fallback", lambda *a, **k: [])
     out = srv._autopilot_suggest_impl(srv.AutopilotSuggestRequest(track_id="t1", occasion="club", history=[]))
     assert [c["source"] for c in seen["candidates"]] == ["yt"] * 6 and out["suggestions"][0]["title"] == "Y Song1"
     ev = [f for k, f in events if k == "yt_pool"]

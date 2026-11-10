@@ -6,7 +6,7 @@ import app.ui.server as srv
 
 def test_identical_suggest_requests_share_one_llm_call(monkeypatch):
     calls = []
-    def slow_impl(req):
+    def slow_impl(req, ctx=None):
         calls.append(1)
         time.sleep(0.3)
         return {"suggestions": [{"title": "x"}]}
