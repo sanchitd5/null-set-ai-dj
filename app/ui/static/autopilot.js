@@ -443,6 +443,7 @@ var autopilotCore = (function () {
   // Where a candidate came from, for the deck_load / deck_unload session events.
   function candSource(c) {
     if (!c) return "";
+    if (c._fallback === "yt_fallback") return "yt_fallback";
     if (c._fallback) return `${c._fallback} fallback`;
     if (c._macro) return "macro step";
     if (c._follow) return "follow set";
@@ -453,8 +454,11 @@ var autopilotCore = (function () {
   // deck_load / deck_unload event body (events.jsonl): the song, its deck and why.
   function deckEvent(kind, o) {
     const dflt = kind === "deck_load" ? candSource(o.cand) : "rejected after load";
-    return { deck: o.deck || null, song: (o.cand && o.cand.name) || "", track_id: (o.cand && o.cand.track_id) || null,
-             source: candSource(o.cand), reason: String(o.reason || dflt).slice(0, 200) };
+    const ev = { deck: o.deck || null, song: (o.cand && o.cand.name) || "", track_id: (o.cand && o.cand.track_id) || null,
+                 source: candSource(o.cand), reason: String(o.reason || dflt).slice(0, 200) };
+    // HF3: the track id the deck really holds after the load (a different one = mismatch, nothing goes live)
+    if (o.loaded !== undefined) { ev.loaded_id = o.loaded || null; if (o.mismatch) ev.mismatch = true; }
+    return ev;
   }
   // ---- SCENE ANCHOR (owner: "if a decision is made mistakenly, the next song should go back to the
   // original genre") ----
@@ -464,25 +468,34 @@ var autopilotCore = (function () {
   // MISTAKE: the anchor stays and the next selection goes back to it (recover).
   // state: {anchor: {genre, families} | null, prev, recover: {anchor, mistaken} | null}
   // t: {name, genre, families, fallback, vetoed} -> the next state + {mistake, why}
+  // HF2 (= dj-core SceneAnchorBook): one off-scene pick never moves the anchor. The anchor follows a deliberate move
+  // only after SCENE_SHIFT_AFTER consecutive songs agreeing on the same new scene (family overlap); an in-scene
+  // landing, a mistake or a disagreeing song restarts the count. state.shiftTo / state.shiftN carry it.
+  const SCENE_SHIFT_AFTER = 3;
   function sceneAnchorNext(state, t) {
     const s = state || {}, anchor = s.anchor || null, fam = (t && t.families) || [];
-    if (!fam.length) return { anchor, prev: anchor, recover: null, mistake: false, why: "genre unknown: anchor kept" };
+    const keep = { shiftTo: s.shiftTo || null, shiftN: s.shiftN || 0 }, none = { shiftTo: null, shiftN: 0 };
+    if (!fam.length) return Object.assign({ anchor, prev: anchor, recover: null, mistake: false, why: "genre unknown: anchor kept" }, keep);
     const b = { genre: (t && t.genre) || "", families: fam.slice().sort() };
-    if (!anchor || !(anchor.families || []).length) return { anchor: b, prev: anchor, recover: null, mistake: false, why: "anchor set" };
+    if (!anchor || !(anchor.families || []).length) return Object.assign({ anchor: b, prev: anchor, recover: null, mistake: false, why: "anchor set" }, none);
     if (fam.some((f) => anchor.families.includes(f))) {
-      return { anchor: b, prev: anchor, recover: null, mistake: false, why: s.recover ? "back in the scene" : "in the scene" };
+      return Object.assign({ anchor: b, prev: anchor, recover: null, mistake: false, why: s.recover ? "back in the scene" : "in the scene" }, none);
     }
     if (t.fallback || t.vetoed) {
-      return { anchor, prev: anchor, recover: { anchor, mistaken: t.name || "" }, mistake: true,
-               why: `${t.vetoed ? "vetoed pair" : `${t.fallback} fallback`} left ${anchor.genre || anchor.families.join("/")} for ${b.genre || fam.join("/")}` };
+      return Object.assign({ anchor, prev: anchor, recover: { anchor, mistaken: t.name || "" }, mistake: true,
+                 why: `${t.vetoed ? "vetoed pair" : `${t.fallback} fallback`} left ${anchor.genre || anchor.families.join("/")} for ${b.genre || fam.join("/")}` }, none);
     }
-    return { anchor: b, prev: anchor, recover: null, mistake: false, why: "deliberate move: the anchor follows" };
+    const cand = s.shiftTo, n = cand && b.families.some((f) => cand.families.includes(f)) ? (s.shiftN || 0) + 1 : 1;
+    if (n < SCENE_SHIFT_AFTER) {
+      return { anchor, prev: anchor, recover: s.recover || null, mistake: false, why: `off-scene pick ${n}/${SCENE_SHIFT_AFTER}: anchor kept`, shiftTo: b, shiftN: n };
+    }
+    return Object.assign({ anchor: b, prev: anchor, recover: null, mistake: false, why: "deliberate move: the anchor follows" }, none);
   }
   // BAD PAIR on the pair that already landed: the anchor goes back to where it was before it.
   function sceneAnchorBad(state, name) {
     const s = state || {}, anchor = s.prev || s.anchor || null;
     if (!anchor) return Object.assign({}, s, { mistake: false, why: "no anchor yet" });
-    return { anchor, prev: anchor, recover: { anchor, mistaken: name || "" }, mistake: true, why: "BAD PAIR" };
+    return { anchor, prev: anchor, recover: { anchor, mistaken: name || "" }, mistake: true, why: "BAD PAIR", shiftTo: null, shiftN: 0 };
   }
   // Recovery / fallback ranking by scene_rel (server genre.scene_relation), stable: in-scene or same
   // family first, then unknown genre, then cross-family. A row without the field keeps its place class 0.
@@ -617,7 +630,7 @@ var autopilotCore = (function () {
     const kind = cand && cand._macro ? "macro" : cand && (cand._follow || cand._combo) ? "studied" : "candidate_reject";
     const src = cand && cand._macro ? "macro step" : cand && cand._follow ? "follow set" : cand && cand._combo ? "studied combo" : "pick";
     return { kind, decision: v.gate === "veto" ? "owner veto" : "refused", why: `${src} refused (${v.gate}): ${v.why}`,
-             keep: !(v.gate === "repeat" || v.gate === "earlier_set") };
+             keep: !(v.gate === "repeat" || v.gate === "earlier_set" || v.gate === "language") };
   }
   // Mashup → Transition (B's vocal over A's instrumental), narrow: refused on a CLEAR scene mismatch (clash:
   // both genres known, no shared family, render/mashup.py scene_gate; unknown passes) or when B's vocal would
@@ -1181,7 +1194,44 @@ var autopilotCore = (function () {
     }
     return out;
   }
-  const api = { prerenderTargets, readinessNeeds, aTempoAtEntry, deferBudgetS, deferDecision, orderByReadiness, DEFER_MAX_S, DEFER_MIN_LEAD_S, PREFER_READY_JUMP,
+  // ---- HF2 / HF3 / HF4 (phone fixes, = dj-core booking/vet.dart, booking/deadline.dart, PlayerController) ----
+  // POST /api/language/check verdict -> the refusal text, null = the candidate may go on. "block" refuses with the server's reason;
+  // "unverified" (a language-led set, the sung language not identified in time) refuses only when `strict`; ok / unknown / penalty
+  // / no verdict (offline) never refuse (dj-core languageRefusal).
+  function languageRefusal(verdict, reason, strict) {
+    if (verdict === "block") return reason || "language jump";
+    if (verdict === "unverified" && strict) return `language unverified: ${reason ? reason : "sung language not identified in time"}`;
+    return null;
+  }
+  // The deadline's last steps. A set with a pinned scene never crosses the genre family: it repeats a safe earlier in-scene song,
+  // else holds (the playing song extends). Without one the old last resort stays (dj-core deadlineFallback sceneLed).
+  function deadlineTail(sceneLed) { return sceneLed ? ["earlier_in_scene"] : ["library_outside", "atlas_cross"]; }
+  // rows: the vet answer for songs played earlier in this set, most recent first: [{track_id, name, ok, scene_rel}] -> the ones provably
+  // in the scene (never the playing song, never a refused / cross / unknown-label one).
+  function earlierInScene(rows, currentId) {
+    return (rows || []).filter((r) => r && r.track_id && r.track_id !== currentId && r.ok !== false && (r.scene_rel === "scene" || r.scene_rel === "family"));
+  }
+  // HF3: the song shown (card, now playing) must be the file the deck holds. null = ok, else why not.
+  //   booked / held: track ids (booked = the candidate, held = state.trackA/B of the staging deck)
+  function deckIdentity(bookedId, heldId, bookedName, heldName) {
+    if (heldId === undefined) return null;     // a host without deck state: nothing to compare
+    if (!heldId) return `deck holds nothing, not the booked ${bookedName || bookedId}`;
+    if (heldId !== bookedId) return `deck holds ${heldName || heldId}, not the booked ${bookedName || bookedId}`;
+    return null;
+  }
+  // HF3 / HF4 booking invariant, checked before a booking is made and again when it fires: it stands only for the pair it was made
+  // for, and the next song is never the playing one. o: {curId, nextId, activeHeld, stagingHeld, nextName}
+  function bookingMismatch(o) {
+    if (o.nextId && o.nextId === o.curId) return "the next song is the playing song";
+    if (o.activeHeld && o.curId && o.activeHeld !== o.curId) return `the playing deck holds another song than the booking's (${o.activeHeld})`;
+    return deckIdentity(o.nextId, o.stagingHeld, o.nextName, o.stagingHeld);
+  }
+  // HF4: a set started by hand begins with a clean pick state: no hung search, deadline holds, failed-search count, empty streak or
+  // pair reject of an earlier song may keep the new set from asking for its next song.
+  function pickReset() {
+    return { failedSearches: 0, failedFor: null, emptyStreak: 0, deadlineHolds: { id: null, n: 0 } };
+  }
+  const api = { languageRefusal, deadlineTail, earlierInScene, deckIdentity, bookingMismatch, pickReset, SCENE_SHIFT_AFTER, prerenderTargets, readinessNeeds, aTempoAtEntry, deferBudgetS, deferDecision, orderByReadiness, DEFER_MAX_S, DEFER_MIN_LEAD_S, PREFER_READY_JUMP,
     emptyRetryMs, useLibraryFallback, searchPlan, DEADLINE_LEAD_S, preparedWait, PREPARED_LEAD_S, gateWhy, candSource, deckEvent,
     sceneAnchorNext, sceneAnchorBad, sceneOrder, SCENE_ORDER, rankAtlasBackups, crossBackups, measuredWaiver, deadlineStuck, stuckBackups, STUCK_AFTER_HOLDS, macroFallback, backupStale, backupNeedsStems, rememberPairReject, pairRejected, awaitJob, keySafeRecipe, KEY_SAFE_MIN, energyStepOk, hybridWindowKey, highSpans, quantileLinear, median, exitPastHigh, learnedRecipe, vocalRecipe, stemBlendBars, stemBlendFader, phraseWaitS, introBars, FADER_PARK_BARS, homePlan, maskedGlideBars, maskedDropAt, HOME_DROP_PCT, LADDER_STEP_PCT,
     tempoLockableAt, recipeKind, decideRecipe, planSkipReason, WINDOWS, playWindowFor, exitBounds, exitPick, exitTiming, exitHighPush, audibleEnd, entryClamp, SILENT_FLOOR,
@@ -1276,6 +1326,9 @@ function createAutopilotEngine({ host, ai }) {
   }
 
   function stagingDeck() { return activeDeck === "a" ? "b" : "a"; }
+  // the track id deck `id` holds (state.trackA / trackB, set by the one load path); null = nothing
+  // undefined = this host keeps no deck state (the identity check then has nothing to compare)
+  const heldOn = (id) => (host.state ? (id === "a" ? host.state.trackA : host.state.trackB) || null : undefined);
 
   function deckPosition(id) {
     const d = host.decks && host.decks[id];
@@ -2943,7 +2996,34 @@ function createAutopilotEngine({ host, ai }) {
 
   // POST /api/autopilot/vet (app/ui/services/booking_vet.py) for one candidate -> {gate, why} | null.
   // An unreachable server leaves today's behaviour (logged): the live gates below still run.
+  // HF2: the sung language against the set's language profile (POST /api/language/check), for a pick from ANY source and never
+  // waived. A song outside the library with no catalogue genre (suggestion.needs_lang_verify) is identified first (strict, up to 40 s):
+  // one the server could not verify in a language-led set is refused too. Offline / error / unknown song / mixed set: no refusal.
+  const langVerdicts = new Map();
+  async function languageGate(currentId, cand) {
+    if (!cand || !(cand.track_id || cand.name)) return null;
+    const strict = !!(cand.suggestion && cand.suggestion.needs_lang_verify);
+    const key = `${cand.track_id || cand.name}|${history.length}|${history[history.length - 1] || ""}|${strict ? "s" : "p"}`;
+    if (langVerdicts.has(key)) return langVerdicts.get(key);
+    let out = null;
+    try {
+      const res = await fetch("/api/language/check", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ track_id: cand.track_id || null, name: cand.name || "", history: history.slice(-12), strict, verify_s: strict ? 40 : 0 }),
+      });
+      if (res.ok) {
+        const j = await res.json();
+        const why = autopilotCore.languageRefusal(j && j.verdict, j && j.reason, strict);
+        if (why) out = { gate: "language", why };
+      }
+    } catch (e) { console.warn("language check:", e && e.message); }
+    if (langVerdicts.size > 200) langVerdicts.clear();
+    langVerdicts.set(key, out);
+    return out;
+  }
   async function vetCandidate(currentId, cand) {
+    const lang = await languageGate(currentId, cand);
+    if (lang) return lang;
     try {
       const res = await fetch("/api/autopilot/vet", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -3007,7 +3087,8 @@ function createAutopilotEngine({ host, ai }) {
       cand.keep = true;
       return false;
     }
-    if (nextId === currentId || history.includes(nextName)) return false;
+    // a scene-led deadline may repeat a safe earlier in-scene song (cand._repeat); the playing song is never the next
+    if (nextId === currentId || (!cand._repeat && history.includes(nextName))) return false;
     // ONE artist-spacing rule for every path that ends here (suggest pool, combo, macro,
     // atlas, library fallback): "it's going back to playing Fred again". The last round
     // may exceed the window cap, never the gap (artist-spacing.js, = autopilot_service.py).
@@ -3119,7 +3200,13 @@ function createAutopilotEngine({ host, ai }) {
     await loadIntoDeck(stagingDeck(), nextId, nextName, blob);
     // events.jsonl had no trace of a song loaded and backed off (the owner saw Hanumankind do it, 191133)
     stagedLoad = { deck: stagingDeck(), cand };
-    sessionEvent("deck_load", autopilotCore.deckEvent("deck_load", { deck: stagingDeck(), cand }));
+    // HF3 invariant: what the deck holds is the song booked, else nothing goes live. Logged either way (deck, song, track id, loaded id).
+    const heldB = heldOn(stagingDeck()), idMiss = autopilotCore.deckIdentity(nextId, heldB, nextName, heldB);
+    sessionEvent("deck_load", autopilotCore.deckEvent("deck_load", { deck: stagingDeck(), cand, loaded: heldB, mismatch: !!idMiss }));
+    if (idMiss) {
+      host.log.step("candidate_reject", { track_id: nextId, phase: "selection", decision: "deck identity", why: idMiss });
+      throw new Error(idMiss);
+    }
     // tempo gap 2-15 %: render its key-locked tempo stems now, long before the blend
     {
       const oa1 = host.decks && host.decks[activeDeck], sd1 = host.decks && host.decks[stagingDeck()];
@@ -3242,6 +3329,16 @@ function createAutopilotEngine({ host, ai }) {
         new Promise((r) => setTimeout(() => r(null), PREPLAN_WAIT_MS))]).finally(() => { preplanFor = null; });
       if (!active || currentTrackId !== currentId || (gen !== undefined && gen !== prepGen)) return false;
       if (pp) candidate = Object.assign({}, candidate, { preplan: pp });
+    }
+    // HF3 / HF4: the booking awaited (stems, preplan); the pair must still be the one booked (owner hand-load, rival pick)
+    {
+      const miss = autopilotCore.bookingMismatch({ curId: currentId, nextId, nextName, activeHeld: heldOn(activeDeck), stagingHeld: heldOn(stagingDeck()) });
+      if (miss) {
+        console.warn(`[book] dropped ${nextName}: ${miss}`);
+        host.log.step("candidate_reject", { track_id: nextId, phase: "selection", decision: "booking dropped", why: miss });
+        apStatus(`Booking dropped: ${nextName} (${miss})`);
+        return false;
+      }
     }
     const fireAt = scheduleTransition(currentId, nextId, nextName, candidate, blend, minExit, layer);
     scheduledFireAt = fireAt;
@@ -3589,17 +3686,58 @@ function createAutopilotEngine({ host, ai }) {
       return "library";
     }
     if (!active || gen !== prepGen) return null;
-    // last resort: nothing in the scene passed. Library songs of the same family / unknown genre first
-    // (server ranks them), the cross-family ones (and the atlas cross partners) last. Logged as such.
-    const lib = await tryLibraryLockable(currentId, gen, { anchor, outside: true });
-    if (lib) {
-      host.log.step("deadline_fallback", { phase: "selection", decision: `library outside the scene (${lib})`, why: `${reason}: nothing in the scene passed` });
-      return "library";
+    // OWNER R3: nothing passed -> the playing song's YouTube related songs (server yt_related: graph edges, 7-day cache, 3 s
+    // fetch), the ones that are no genre jump by data genre and pass the language check, BEFORE a repeat / hold. Source: yt_fallback.
+    for (const pk of await ytFallbackPicks(currentId)) {
+      if (!active || gen !== prepGen) return null;
+      apStatus(`Nothing passed: trying YouTube related song ${pk.artist} - ${pk.title}`);
+      let c;
+      try {
+        c = pk.track_id ? { track_id: pk.track_id, name: `${pk.artist} - ${pk.title}`, suggestion: pk, ...(await trackInfo(pk.track_id)) }
+          : await downloadSuggestion(Object.assign({ search_query: `${pk.artist} - ${pk.title}` }, pk));
+      } catch (e) {
+        host.log.step("deadline_fallback", { phase: "selection", decision: "yt_fallback download failed", why: `${pk.artist} - ${pk.title}: ${e.message}` });
+        continue;
+      }
+      if (!active || gen !== prepGen) return null;
+      Object.assign(c, { keep: false, _fallback: "yt_fallback", _genre: pk.genre || null });
+      if (await tryCandidate(currentId, c, gen)) {
+        host.log.step("deadline_fallback", { track_id: c.track_id, phase: "selection", decision: "yt_fallback",
+          why: `${reason}: YouTube related song of the playing song${pk.needs_lang_verify ? " (language verified)" : ""}` });
+        return "yt_fallback";
+      }
     }
     if (!active || gen !== prepGen) return null;
-    if (await tryAtlas(b && b.cross, "cross-family")) {
-      host.log.step("deadline_fallback", { phase: "selection", decision: "atlas cross-family", why: `${reason}: nothing in the scene passed` });
-      return "atlas";
+    if (autopilotCore.deadlineTail(!!setScene)[0] === "earlier_in_scene") {
+      // HF2: a pinned set scene is never crossed. Repeat a safe earlier song that is provably in the scene, else hold (the
+      // playing song extends); the outside-the-scene library rows and the atlas cross-family partners are not tried.
+      for (const t of (await earlierInSceneRows(currentId)).slice(0, 4)) {
+        if (!active || gen !== prepGen) return null;
+        apStatus(`Nothing new in the scene passed: repeating ${t.name}`);
+        const info = await trackInfo(t.track_id);
+        if (!active || gen !== prepGen) return null;
+        const c = { track_id: t.track_id, name: t.name, bpm: info.bpm, duration: info.duration, keep: false, fromLibrary: true, _repeat: true,
+                    _fallback: "library", _genre: t.genre || null, _sceneRel: t.scene_rel || null };
+        if (await tryCandidate(currentId, c, gen)) {
+          host.log.step("deadline_fallback", { track_id: t.track_id, phase: "selection", decision: "repeat an earlier song in the scene",
+            why: `${reason}: nothing new in the scene passed, never crossing the scene` });
+          return "library";
+        }
+      }
+      if (!active || gen !== prepGen) return null;
+    } else {
+      // last resort: nothing in the scene passed. Library songs of the same family / unknown genre first
+      // (server ranks them), the cross-family ones (and the atlas cross partners) last. Logged as such.
+      const lib = await tryLibraryLockable(currentId, gen, { anchor, outside: true });
+      if (lib) {
+        host.log.step("deadline_fallback", { phase: "selection", decision: `library outside the scene (${lib})`, why: `${reason}: nothing in the scene passed` });
+        return "library";
+      }
+      if (!active || gen !== prepGen) return null;
+      if (await tryAtlas(b && b.cross, "cross-family")) {
+        host.log.step("deadline_fallback", { phase: "selection", decision: "atlas cross-family", why: `${reason}: nothing in the scene passed` });
+        return "atlas";
+      }
     }
     deadlineHolds = { id: currentId, n: st.n + 1 };
     host.log.step("deadline_fallback", { phase: "selection", decision: "hold",
@@ -3635,6 +3773,38 @@ function createAutopilotEngine({ host, ai }) {
       why: `${held.name}: ${d.book ? "failed its gates once ready" : d.why}` });
     held._preparing = null;
     return null;
+  }
+
+  // POST /api/autopilot/yt_fallback: the playing song's YouTube related songs that pass the data-genre and language gates -> [pick]
+  async function ytFallbackPicks(currentId) {
+    try {
+      const res = await fetch("/api/autopilot/yt_fallback", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ track_id: currentId, history: history.slice(-400), genre: recoverGenre() || (setScene && setScene.genre) || "", limit: 3 }),
+      });
+      if (!res.ok) return [];
+      const j = await res.json();
+      return Array.isArray(j && j.picks) ? j.picks.filter((p) => p && p.title) : [];
+    } catch (e) { console.warn("yt fallback:", e && e.message); return []; }
+  }
+
+  // Songs played earlier in this set (most recent first) that are provably in the set's scene, from the booking vet (scene_rel against the
+  // anchor, else the pinned set scene). [] when the server is unreachable. -> [{track_id, name, scene_rel, genre}]
+  async function earlierInSceneRows(currentId) {
+    const ids = playedIds.filter((id) => id && id !== currentId).slice(-12).reverse();
+    if (!ids.length) return [];
+    try {
+      const res = await fetch("/api/autopilot/vet", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ a_id: currentId, a_name: history[history.length - 1] || "", history: history.slice(-400), set_id: setId || "",
+          punjabi_profile: punjabiMode(), anchor_genre: recoverGenre() || (setScene && setScene.genre) || "",
+          cands: ids.map((id) => ({ track_id: id, name: "", stored: false })) }),
+      });
+      if (!res.ok) return [];
+      const rows = ((await res.json()) || {}).results || [];
+      return autopilotCore.earlierInScene(rows.map((r, i) => Object.assign({ track_id: ids[i] }, r)), currentId)
+        .map((r) => ({ track_id: r.track_id, name: r.name || "", scene_rel: r.scene_rel, genre: r.genre || null }));
+    } catch (e) { console.warn("earlier in scene:", e && e.message); return []; }
   }
 
   // o: {anchor: the scene to hold ("" = the playing song's stored label), outside: the last-resort rows}
@@ -4229,6 +4399,21 @@ function createAutopilotEngine({ host, ai }) {
         return;
       }
       if (executed) return;
+      // HF3 invariant at the fire line: the staging deck must still hold the booked song (an owner hand-load into it meanwhile),
+      // and the playing deck the song it was booked from. Else nothing mixes in silently: drop the booking and book again.
+      const missF = autopilotCore.bookingMismatch({ curId: currentId, nextId, nextName, activeHeld: heldOn(activeDeck), stagingHeld: heldOn(stagingDeck()) });
+      if (missF) {
+        executed = true;
+        clearInterval(tick);
+        if (bookedTick === tick) bookedTick = null;
+        console.warn(`[book] not mixing ${nextName}: ${missF}`);
+        host.log.step("refusal", { track_id: nextId, phase: "execution", decision: "booking dropped", why: missF });
+        sessionEvent("deck_load", autopilotCore.deckEvent("deck_load", { deck: stagingDeck(), cand: { name: nextName, track_id: nextId }, reason: "booking dropped at fire", loaded: heldOn(stagingDeck()), mismatch: true }));
+        apStatus(`Not mixing ${nextName}: ${missF} - booking again`);
+        scheduledNext = null; profileNext = ""; heldPool = [];
+        if (active) prepareTransition(currentTrackId);
+        return;
+      }
       executed = true;
       clearInterval(tick);
       if (bookedTick === tick) bookedTick = null;   // mixing now: superMove.rebook refuses until it lands
@@ -4435,7 +4620,7 @@ function createAutopilotEngine({ host, ai }) {
     const n = autopilotCore.sceneAnchorNext(was, { name, genre: cand && cand._genre, families: (cand && cand._families) || [],
       fallback: (cand && cand._fallback) || null, vetoed: !!badPairPending && badPairPending === name });
     badPairPending = null;
-    sceneState = { anchor: n.anchor, prev: n.prev, recover: n.recover };
+    sceneState = { anchor: n.anchor, prev: n.prev, recover: n.recover, shiftTo: n.shiftTo || null, shiftN: n.shiftN || 0 };
     if (n.mistake) {
       host.log.step("scene_recover", { phase: "selection", decision: "off-scene mistake",
         why: `anchor ${sceneLabel(n.anchor)}; mistaken ${name}: ${n.why}` });
@@ -4459,7 +4644,7 @@ function createAutopilotEngine({ host, ai }) {
       if (mixingPair) badPairPending = p.b_name;            // still blending: counted when it lands
       else {
         const n = autopilotCore.sceneAnchorBad(sceneState, p.b_name);
-        sceneState = { anchor: n.anchor, prev: n.prev, recover: n.recover };
+        sceneState = { anchor: n.anchor, prev: n.prev, recover: n.recover, shiftTo: n.shiftTo || null, shiftN: n.shiftN || 0 };
         if (n.mistake) host.log.step("scene_recover", { phase: "selection", decision: "off-scene mistake",
           why: `anchor ${sceneLabel(n.anchor)}; mistaken ${p.b_name}: BAD PAIR` });
       }
@@ -4627,7 +4812,20 @@ function createAutopilotEngine({ host, ai }) {
   }
 
   // Common reset for any set start.
+  // HF4: a hand start begins with a clean pick state. A search of the old song is abandoned (prepGen), and its failed-search
+  // count, empty streak, deadline holds, pair rejects, ready pool and pending picks go: none may keep the new set from asking for
+  // its next song. The next prepareTransition (startFromCurrent / start) then runs from scratch.
+  function resetPickState() {
+    ++prepGen; prepStartedAt = 0;
+    ({ failedSearches, failedFor, emptyStreak, deadlineHolds } = autopilotCore.pickReset());
+    pairRejects.clear(); langVerdicts.clear();
+    ready.length = 0; heldPool = []; stagedLoad = null; focusCand = null; deferNote = null;
+    aiPicking = false; toppingUp = false; topUpPromise = null;
+    forceJump = false; allowTempoJump = false; dipAsked = false;
+    atlasBackup = null;
+  }
   function resetSetState() {
+    resetPickState();
     setId = newSetId();
     history = [];
     steering = "stay";
@@ -4686,6 +4884,7 @@ function createAutopilotEngine({ host, ai }) {
       modeEl.value = "quick";
       apStatus(`"${occasion}" is a high-energy occasion → QUICK mode`);
     }
+    resetPickState();
     setId = newSetId();
     history = [];
     steering = "stay";

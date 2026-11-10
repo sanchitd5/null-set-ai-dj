@@ -935,6 +935,54 @@ def _filter_suggestions(
     return [max(off_theme, key=lambda t: t[0])[1]] if off_theme else []
 
 
+def yt_fallback(rows, *, cur_genre, genre_of, lang_check=None, exclude=(), limit: int = 3) -> list[dict]:
+    """Last resort before a repeat / hold: the playing song's YouTube related songs (yt_related.candidates rows), best first.
+    A row passes when it is not already heard (`exclude`: display names), is no genre / scene jump by DATA genre
+    (`genre_of(row)` -> catalogue or library label, "" = unknown; the model's own label is never asked), and passes the language
+    check. A song with no data genre is not refused for it but flagged `needs_lang_verify`, so the caller identifies its sung
+    language before it is committed (the HF2 path). Each pick is logged as source `yt_fallback`. [] = none passes: the caller
+    repeats an earlier in-scene song or holds."""
+    out: list[dict] = []
+    played = {" ".join(str(x).lower().split()) for x in exclude}
+    for r in rows or []:
+        if not isinstance(r, dict) or not r.get("title"):
+            continue
+        label = f"{r.get('artist', '')} - {r['title']}".strip(" -")
+        if " ".join(label.lower().split()) in played or " ".join(str(r["title"]).lower().split()) in played:
+            continue
+        if _is_noise_title(label):
+            continue
+        genre = str(genre_of(r) or "")
+        if genre and cur_genre and _family_jump(cur_genre, genre):
+            note_rejects([r], "yt fallback: genre jump")
+            continue
+        if lang_check is not None:
+            try:
+                verdict, why = lang_check(r)
+            except Exception:
+                verdict, why = "ok", ""
+            if verdict in ("block", "penalty"):
+                note_rejects([r], why)
+                continue
+        pick = {"artist": r.get("artist", ""), "title": r["title"], "reason": "YouTube related song of the playing song (fallback)",
+                "source": "yt_fallback", "pool_source": "yt", "genre": genre, "genre_src": "data" if genre else "unknown"}
+        for k in ("track_id", "yt_id"):
+            if r.get(k):
+                pick[k] = r[k]
+        if not genre:
+            pick["needs_lang_verify"] = True
+        out.append(pick)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _is_noise_title(label: str) -> bool:
+    from app.ui.services.download_service import _is_mix, _is_non_music
+
+    return bool(_is_mix(label) or _is_non_music(label))
+
+
 SET_MODES = ("long", "quick", "hybrid")
 SET_MODE_LINES = {
     "long": "LONG (each song plays 3-6 min): pick deep, rolling songs with long intros/outros and "
