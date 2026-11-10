@@ -1512,7 +1512,8 @@ def _song_step(kind: str, track_id: Optional[str], **fields) -> None:
         pass
 
 
-SESSION_EVENT_KINDS = ("track", "ear_flush", "note", "glitch", "move", "deck_load", "deck_unload", "veto")
+# pick_trace / phone_error (R1): the phone's pick + booking trace and caught errors (stack, set id)
+SESSION_EVENT_KINDS = ("track", "ear_flush", "note", "glitch", "move", "deck_load", "deck_unload", "veto", "pick_trace", "phone_error")
 
 
 class SessionEvent(BaseModel):
@@ -1532,6 +1533,10 @@ def post_session_event(ev: SessionEvent):
     # the event's own fields may reuse the log's names (a glitch report has its own "kind"):
     # those are kept as "<name>_" instead of clashing
     fields = {(f"{k}_" if k in ("kind", "t", "at") else k): v for k, v in list(ev.data.items())[:20] if isinstance(k, str)}
+    if ev.kind == "phone_error":     # tokens in an error text never reach the log
+        from app.ui.services.app_crash_api import scrub
+        fields = {k: (scrub(v) if isinstance(v, str) else [scrub(x) if isinstance(x, str) else x for x in v] if isinstance(v, list) else v)
+                  for k, v in fields.items()}
     session_log.log(ev.kind, **fields)
     if ev.kind == "deck_load" and isinstance(fields.get("track_id"), str):
         _kick_yt_related(fields["track_id"])

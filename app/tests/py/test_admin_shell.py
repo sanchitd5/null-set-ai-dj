@@ -164,3 +164,19 @@ def test_audit_keeps_newest(env, tmp_path, monkeypatch):
         log.add(ADMIN, "act", str(i))
     rows = log.recent(100)
     assert [r["target"] for r in rows] == ["7", "6", "5", "4", "3"]
+
+
+def test_phone_trace_timeline(env, monkeypatch):
+    from app.ui.services import session_log
+
+    evs = [{"at": "10:00:01", "kind": "pick_trace", "ev": "pick_start", "set": "phone-1", "song": "<b>x</b>"},
+           {"at": "10:00:02", "kind": "track", "event": "transition_start"},
+           {"at": "10:00:03", "kind": "phone_error", "where": "tick", "set": "phone-1", "error": "boom", "stack": ["#0 a", "#1 b"]}]
+    monkeypatch.setattr(session_log, "read", lambda session=None, limit=500: evs)
+    c = _admin(env)
+    r = c.get("/admin/sessions/trace")
+    assert r.status_code == 200 and "pick_start" in r.text and "phone_error" in r.text and "transition_start" not in r.text
+    assert "<b>x</b>" not in r.text and "&lt;b&gt;x" in r.text      # escaped
+    assert "#0 a | #1 b" in r.text and "<script" not in r.text
+    assert [e["kind"] for e in c.get("/api/admin/sessions/trace").json()["events"]] == ["pick_trace", "phone_error"]
+    assert _client(env[0], env[1], bearer="x").get("/admin/sessions/trace").status_code in (401, 403)
