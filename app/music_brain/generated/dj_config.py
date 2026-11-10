@@ -1,9 +1,9 @@
-# GENERATED from dj-config 7c53c62 - do not edit
-# config-hash: 2e1779c78fa7
+# GENERATED from dj-config 95e0f69-dirty - do not edit
+# config-hash: 8abb3a95649e
 """Generated from dj-config/config/*.json. Do not edit; run dj-config/tool/gen.py."""
 
-SHA = "7c53c62"
-CONFIG_HASH = "2e1779c78fa7"
+SHA = "95e0f69-dirty"
+CONFIG_HASH = "8abb3a95649e"
 
 ARC_TARGET = {"warm-up": 4, "build": 6, "peak": 8, "cool-down": 5}  # level
 BARS_PER_PHRASE = 8  # bars
@@ -85,6 +85,8 @@ OUTPUT_CEIL = 0.998  # linear
 OVERLAP_BARS = {"instant": 4, "standard": 16, "slow": 32}  # bars
 PEAK_KEY_MIN = 0.8  # score
 PEAK_WINDOW = 6  # songs
+PHONE_SNAPSHOT_MOBILE_MAX_MB = 10  # MB
+PHONE_SNAPSHOT_TOP_K = 50  # edges
 PICK_TIMEOUT_MS = 240000  # ms
 PITCH_RANGE_PCT = 8.0  # pct
 PLAN_ASK_WAIT_MS = 20000  # ms
