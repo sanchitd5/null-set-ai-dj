@@ -2470,6 +2470,7 @@ def get_render_audio(filename: str):
 
 class AutopilotSuggestRequest(BaseModel):
     track_id: str
+    hold_settings: dict = Field(default_factory=dict)   # G17: per-device "Merges & holds" override (accepted on every plan/suggest call)
     # One id per set per browser tab (autopilot.js setId). Scopes the cross-set
     # memory so this set's own songs are never "earlier sets" and another tab's
     # set never leaks in; also keeps two tabs from sharing one cached answer.
@@ -3101,6 +3102,11 @@ class MindPlanRequest(BaseModel):
     peak_moves: bool = False        # PEAK MOVES toggle: allow fakeout / peak_roll / beat_boost
     mood: str = Field(default="", max_length=20)   # "romance": gentle recipes and moves only (mind_plan.py)
     big_moment_ok: bool = False     # browser's set-wide big-moment ledger allows one on A
+    # G17: the recipe mix rule layer (app/music_brain/hold_policy.py): recipes so far, whether a Stem Merge fits this pair,
+    # the per-device "Merges & holds" settings (clamped server-side; dj-config values are the defaults)
+    recent_recipes: list[str] = Field(default_factory=list, max_length=80)
+    merge_possible: bool = False
+    hold_settings: dict = Field(default_factory=dict)
 
 
 @app.post("/api/autopilot/plan")

@@ -64,7 +64,7 @@ def validate_set_log(payload: Mapping[str, Any]) -> dict[str, Any]:
     metadata = _object(root.get("metadata"), "metadata")
     allowed_metadata = {
         "session_id", "date", "created_at", "duration_seconds", "total_tracks",
-        "total_transitions", "harmonic_coherence_score", "energy_arc", "location",
+        "total_transitions", "merge_share", "hold_count", "hold_seconds", "harmonic_coherence_score", "energy_arc", "location",
         "audience", "genre", "energy", "recording", "track_a_id", "track_b_id",
     }
     unknown = set(metadata) - allowed_metadata
@@ -82,7 +82,7 @@ def validate_set_log(payload: Mapping[str, Any]) -> dict[str, Any]:
             _number(metadata[key], f"metadata.{key}", integer=True)
             if metadata[key] < 0:
                 raise _error(f"metadata.{key}", "must not be negative")
-    for key in ("harmonic_coherence_score", "energy"):
+    for key in ("harmonic_coherence_score", "energy", "merge_share", "hold_count", "hold_seconds"):
         if key in metadata:
             _number(metadata[key], f"metadata.{key}")
     if "energy_arc" in metadata:
@@ -115,7 +115,7 @@ def validate_set_log(payload: Mapping[str, Any]) -> dict[str, Any]:
     transitions = root.get("transitions", [])
     if not isinstance(transitions, list):
         raise _error("transitions", "must be an array")
-    transition_fields = {"transition_index", "outgoing_track", "incoming_track", "recipe_name", "recipe_category", "mix_start_time", "swap_point_time", "mix_end_time", "bars_length", "performance_type", "steps_log"}
+    transition_fields = {"transition_index", "outgoing_track", "incoming_track", "recipe_name", "recipe_category", "mix_start_time", "swap_point_time", "mix_end_time", "bars_length", "performance_type", "steps_log", "hold_bars", "hold_s"}
     for i, transition in enumerate(transitions):
         transition = _object(transition, f"transitions[{i}]")
         unknown = set(transition) - transition_fields
@@ -128,7 +128,7 @@ def validate_set_log(payload: Mapping[str, Any]) -> dict[str, Any]:
         _number(transition["transition_index"], f"transitions[{i}].transition_index", integer=True)
         for key in ("outgoing_track", "incoming_track", "recipe_name"):
             _text(transition[key], f"transitions[{i}].{key}")
-        for key in ("mix_start_time", "swap_point_time", "mix_end_time", "bars_length"):
+        for key in ("mix_start_time", "swap_point_time", "mix_end_time", "bars_length", "hold_bars", "hold_s"):
             if key in transition:
                 _number(transition[key], f"transitions[{i}].{key}")
         if "steps_log" in transition:

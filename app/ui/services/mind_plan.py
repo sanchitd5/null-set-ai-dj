@@ -24,6 +24,7 @@ from functools import lru_cache
 from typing import Any, Optional
 
 from app.music_brain.render.blend import track_drop_lines
+from app.music_brain import hold_policy as HOLD
 from app.music_brain.generated import dj_config as DJ
 from app.ui.services import llm_capture, llm_gate
 from app.ui.services.autopilot_service import STRICT_RETRY, _extract_json, chat_raw, failure_reason, note_retry
@@ -317,6 +318,11 @@ def build_facts(a: dict, b: dict, candidates: list[dict], ctx: dict) -> dict:
         "peak_moves": bool(ctx.get("peak_moves")),
         "big_moment_ok": bool(ctx.get("big_moment_ok")),
         "layer_possible": layer_possible(a, b, ctx) and ctx.get("mood") != "romance",
+        # G17: the recipe mix. recent_recipes = the set's recipes so far (oldest first), merge_possible = the browser/phone says a
+        # Stem Merge passes key / BPM / vocal-clash for this pair, hold_settings = the per-device override (clamped here).
+        "recent_recipes": [str(r)[:40] for r in (ctx.get("recent_recipes") or [])[-60:] if isinstance(r, str)],
+        "merge_possible": bool(ctx.get("merge_possible")),
+        "hold_settings": HOLD.settings(ctx.get("hold_settings")),
     }
 
 
@@ -550,7 +556,28 @@ def validate_plan(raw: Any, facts: dict) -> dict:
     if layer and style == "instant":
         dropped.append("layer: instant-swap recipe")
         layer = False
+    # G17 rule layer: Stem Merge share and the accent cap hold even when the model disagrees
+    mix_note = ""
+    prefer_merge = False
+    if chosen is not None:
+        hs = facts.get("hold_settings") or HOLD.settings()
+        recipe, why = HOLD.enforce_recipe_mix(chosen["recipe"], facts.get("recent_recipes") or [], bool(facts.get("merge_possible")), hs)
+        if why:
+            if recipe == HOLD.STEM_MERGE:
+                prefer_merge = True
+                chosen["recipe"] = HOLD.STEM_MERGE   # the client books the merge (its planner re-checks every gate)
+            else:
+                alt = next((i for i, c in enumerate(cands) if not HOLD.is_accent(c["recipe"])), None)
+                if alt is not None and alt != idx:
+                    repaired.append(f"candidate {idx} -> {alt} (recipe mix: {why})")
+                    idx = alt
+                    chosen = dict(cands[idx])
+                    if exit_t is not None:
+                        chosen["a_time"] = exit_t
+            mix_note = why
     return {
+        "prefer_merge": prefer_merge,
+        "recipe_mix": mix_note,
         "layer": layer,
         "layer_reason": str(raw.get("layer_reason") or "")[:200] if layer else "",
         "candidate_index": idx,
@@ -580,6 +607,14 @@ def build_prompt(facts: dict) -> str:
             "16-64 bars: next song under this one with lows cut, bass handed over on a phrase line, "
             "then this one unwound slowly. Use it only when both grooves can ride together; "
             "a layer is the exception, not every song.")
+    hs = facts.get("hold_settings") or HOLD.settings()
+    seen = facts.get("recent_recipes") or []
+    lines.append(
+        f"RECIPE MIX (set rule): Stem Merge (the long merge-hold) should be at least {round(100 * hs['stem_merge_share'])}% of the "
+        f"set's transitions, so prefer it whenever it fits"
+        f"{' (it fits this pair)' if facts.get('merge_possible') else ' (it does not fit this pair)'}; Backspin, Echo Out and "
+        f"Bass Swap are accents: at most {round(100 * hs['accent_cap'])}% of transitions and never twice in a row. "
+        f"Recent recipes: {', '.join(seen[-5:]) or 'none'}. The rule layer enforces this if you disagree.")
     lines += [
         "",
         "Match candidates (index: recipe, score, overlap):",

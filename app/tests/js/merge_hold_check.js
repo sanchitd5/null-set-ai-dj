@@ -14,7 +14,7 @@ const base = () => ({ gap: 0.01, keyScore: 0.9, roomBars: 64, barS: BAR, aT: 0, 
   const hp = sm.holdPlan(base());
   assert.ok(hp.ok, hp.reason);
   assert.strictEqual(hp.M % 8, 0);
-  assert.ok(hp.M >= 8 && hp.M <= 48);
+  assert.ok(hp.M >= 8 && hp.M <= 64);
   assert.strictEqual(hp.holdBars, hp.M - 2);
   assert.strictEqual(hp.phases.merge_start.bars, 2);
   assert.strictEqual(hp.phases.hold.from_bar, 2);

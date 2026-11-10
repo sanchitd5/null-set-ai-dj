@@ -14,6 +14,7 @@
 //
 // All times on the audio clock. Pure schedules are exported for node checks.
 if (typeof DJ_CONFIG === "undefined" && typeof require === "function") require("./generated/dj_config.js");   // node: browsers load it via index.html
+if (typeof HoldPolicy === "undefined" && typeof require === "function") require("./hold-policy.js");   // G17: node (the global HoldPolicy is set by the module itself)
 (function (root) {
   "use strict";
 
@@ -578,6 +579,12 @@ if (typeof DJ_CONFIG === "undefined" && typeof require === "function") require("
     const loopS = L * c.barA;
     // the loop plays passes + 1 times: the last pass fades under B's drop, so A's live song never returns
     while (passes >= 1 && ((passes + 1) * loopS) / (c.rate || 1) > ARTIST_SLICE_MAX_S) passes--;
+    // G17: an in-song hold target (bars, hold-policy inSongHoldBars) loops the figure more times, up to the slice cap and the room left in A
+    if (c.holdBars > 0 && passes >= 1) {
+      let want = Math.ceil(c.holdBars / L);
+      while (want > passes && (((want + 1) * loopS) / (c.rate || 1) > ARTIST_SLICE_MAX_S || !(c.aLeftBars >= (want + 1) * L + 1))) want--;
+      passes = Math.max(passes, want);
+    }
     if (passes < 1) return no("slice_cap", `a ${L}-bar loop is longer than the ${ARTIST_SLICE_MAX_S} s slice cap`);
     const M = L * passes;
     if (!(c.aLeftBars >= (passes + 1) * L + 1)) return no("a_ends", `${Math.floor(c.aLeftBars || 0)} bars left in A (need ${(passes + 1) * L + 1})`);
@@ -898,12 +905,22 @@ if (typeof DJ_CONFIG === "undefined" && typeof require === "function") require("
     if (o.gap != null && o.gap > HOLD_TEMPO_CAP) return no("tempo", `tempo gap ${(o.gap * 100).toFixed(1)} % over the ${HOLD_TEMPO_CAP * 100} % cap`);
     if (o.keyScore != null && o.keyScore < HOLD_KEY_MIN) return no("key", `camelot ${o.keyScore} < ${HOLD_KEY_MIN}`);
     if (!o.eA || !o.eB) return no("stems", "stem energy unmeasured");
-    const kMax = Math.min(HOLD_MAX_PHRASES, Math.floor((o.roomBars - HANDOVER_BARS - HOLD_ROOM_BARS) / HOLD_PHRASE_BARS));
-    if (kMax < 1) return no("room", `${Math.round(o.roomBars)} bars left, need ${HOLD_PHRASE_BARS + HANDOVER_BARS + HOLD_ROOM_BARS}`);
+    // G17: long holds. M runs on the hold-policy grid (16 bars), BPM-scaled toward MERGE_HOLD_TARGET_S inside the settings' min..max;
+    // a song without that much room falls back to whole 8-bar phrases (the old behaviour). A stored move keeps its own length.
+    const HP = root.HoldPolicy || HoldPolicy, minBars = o.holdMin != null ? o.holdMin : HP.MERGE_HOLD_MIN_BARS, maxBars = o.holdMax != null ? o.holdMax : HP.MERGE_HOLD_MAX_BARS;
+    const roomM = Math.floor((o.roomBars - HANDOVER_BARS - HOLD_ROOM_BARS) / HOLD_PHRASE_BARS) * HOLD_PHRASE_BARS;
+    const targetBars = o.barS > 0 ? HP.mergeHoldBars(o.barS, o.roomBars, HP.settings({ merge_hold_bars: minBars === maxBars ? minBars : 0 })) : minBars;
+    if (roomM < HOLD_PHRASE_BARS) return no("room", `${Math.round(o.roomBars)} bars left, need ${HOLD_PHRASE_BARS + HANDOVER_BARS + HOLD_ROOM_BARS}`);
+    const grid = HP.HOLD_ALIGN_BARS, longMs = [];
+    for (let m = grid; m <= Math.min(maxBars, roomM); m += grid) longMs.push(m);
+    if (o.preferM > 0 && o.preferM % HOLD_PHRASE_BARS === 0 && o.preferM <= roomM && !longMs.includes(o.preferM)) longMs.push(o.preferM);
+    longMs.sort((x, y) => x - y);
+    const candMs = longMs.length ? longMs : [];
+    if (!candMs.length) for (let m = HOLD_PHRASE_BARS; m <= Math.min(roomM, grid - HOLD_PHRASE_BARS); m += HOLD_PHRASE_BARS) candMs.push(m);
     const aBars = regionsToBars(o.aVox, o.aT, o.barA), bBars = regionsToBars(o.bVox, o.bT, o.barB);
     const cands = [], tried = [];
-    for (let k = 1; k <= kMax; k++) {
-      const M = k * HOLD_PHRASE_BARS;
+    for (const M of candMs) {
+      const k = M / HOLD_PHRASE_BARS;
       const ranked = mergeRank({ eA: meanArr(o.eA, 0, M), eB: meanArr(o.eB, 0, M), keyScore: o.keyScore, bRap: o.bRap });
       if (!ranked.length) { tried.push({ M, gate: "no_combo" }); continue; }
       // a stored move (macro step) asks for its combo: it still passes every gate below
@@ -912,15 +929,17 @@ if (typeof DJ_CONFIG === "undefined" && typeof require === "function") require("
       const plan = mergeTransitionPlan(M, pick.combo, false);
       const sub = subOwnerCheck(plan, M);
       if (!sub.ok) { tried.push({ M, gate: "sub_owner", overlap: sub.overlapBars }); continue; }
-      const lv = o.aud ? gates(plan, mergeFader(M), plan.total, { eOut: o.eA, eIn: o.eB, aOut: o.aud.aA, aIn: o.aud.aB }, o.minRun || 1)
-                       : levelCheck({ events: plan.events, fader: mergeFader(M), dir: 1, span: plan.total, eOut: o.eA, eIn: o.eB });
+      // G17 gain fix: held stems are level-matched (quiet ones lifted toward the loudest, capped) before the vet; the master floor check still runs on the matched levels
+      const lm = o.levelMatch === false ? null : HP.levelMatch(o.eA, o.eB, pick.combo, M), vA = lm ? lm.eA : o.eA, vB = lm ? lm.eB : o.eB;
+      const lv = o.aud ? gates(plan, mergeFader(M), plan.total, { eOut: vA, eIn: vB, aOut: o.aud.aA, aIn: o.aud.aB }, o.minRun || 1)
+                       : levelCheck({ events: plan.events, fader: mergeFader(M), dir: 1, span: plan.total, eOut: vA, eIn: vB });
       if (!lv.ok) { tried.push({ M, gate: "level", reason: lv.reason }); continue; }
       // both voices singing through the handover is the clash the plan can only hide
       const ov = overlapBars(aBars, bBars, M, M + HANDOVER_BARS) / HANDOVER_BARS;
       if (ov > 0.5) { tried.push({ M, gate: "vocal_clash", overlap: Math.round(ov * 100) / 100 }); continue; }
-      // longer holds win up to 4 phrases (diminishing after), a handover in a vocal gap wins ties
-      const score = 10 * Math.min(k, 4) - 30 * ov + 0.1 * pick.score + (ov === 0 ? 5 : 0);
-      cands.push({ k, M, pick, ranked, ov, sub, score: Math.round(score * 10) / 10 });
+      // holds win up to the target length (BPM-scaled), past it they lose a little; a handover in a vocal gap wins ties
+      const score = 10 * Math.min(M, targetBars) / HP.HOLD_ALIGN_BARS - 0.5 * Math.max(0, M - targetBars) / HP.HOLD_ALIGN_BARS - 30 * ov + 0.1 * pick.score + (ov === 0 ? 5 : 0);
+      cands.push({ k, M, trim: lm ? lm.trim : null, pick, ranked, ov, sub, score: Math.round(score * 10) / 10 });
     }
     if (!cands.length) {
       const last = tried[tried.length - 1] || {};
@@ -929,7 +948,7 @@ if (typeof DJ_CONFIG === "undefined" && typeof require === "function") require("
     cands.sort((x, y) => y.score - x.score || y.M - x.M);
     const b = (o.preferM && cands.find((c) => c.M === o.preferM)) || cands[0], barS = o.barS || 0;   // stored hold length when clean
     return {
-      ok: true, M: b.M, holdBars: b.M - MERGE_START_BARS, holdPhrases: b.k, pick: b.pick, ranked: b.ranked, tried,
+      ok: true, M: b.M, holdBars: b.M - MERGE_START_BARS, holdPhrases: b.k, trim: b.trim, pick: b.pick, ranked: b.ranked, tried,
       phases: {
         merge_start: { at_bar: 0, bars: MERGE_START_BARS, combo: b.pick.label },
         hold: { from_bar: MERGE_START_BARS, to_bar: b.M, bars: b.M - MERGE_START_BARS, phrases: b.k, seconds: Math.round((b.M - MERGE_START_BARS) * barS * 10) / 10 },
@@ -1398,6 +1417,22 @@ if (typeof DJ_CONFIG === "undefined" && typeof require === "function") require("
     return plan.total * barS;
   }
 
+  // G17 hold safety: end a running merge hold early. Forget the merge's booked stem moves, book the handover on `endBar` (a phrase line,
+  // bars from t0) instead of M. -> seconds from t0 until the merge is done (endBar + 8 bars).
+  function endMergeHold(outId, innId, t0, endBar, M, pick) {
+    const out = host.decks[outId], inn = host.decks[innId];
+    if (!out || !inn || !pick) return 0;
+    const barS = 240 / (out.bpm || 128) / ((out._playbackRate && out._playbackRate()) || 1);
+    cancel(outId); cancel(innId);
+    const plan = mergeTransitionPlan(endBar, pick.combo, camelotClash(out, inn));
+    for (const e of plan.events) {
+      if (e.bar < endBar - 0.25 - 1e-6 || e.start) continue;              // the merge start already played
+      book(e.deck === "out" ? out : inn, t0 + e.bar * barS, e.stems, Math.max(minStemRamp("stem", barS, false, e.deck === "out" ? out : inn), e.ramp * barS));
+    }
+    note(outId, `MERGE HOLD ended early · ${endBar} of ${M} bars`, "the hold ends on the phrase line");
+    return plan.total * barS;
+  }
+
   // ---- artist moves in the mashup slot (S1 filter_loop, S9 drums_host): measured fits -------------------------
   // Refusal lines once per deck, phrase and reason; toggles ap-artist-<id> (all on by default).
   const artistSaid = new Map();
@@ -1477,7 +1512,8 @@ if (typeof DJ_CONFIG === "undefined" && typeof require === "function") require("
       if (ln) bLine = Math.round((ln.e - Math.max(ln.s, ve.entry)) / beatB);
     }
     const plan = filterLoopPlan({ pA: p, barA, rate, bpmEff: od.bpm * rate, before: e, aLeftBars: od.buffer ? (od.buffer.duration - p) / barA : 0,
-      centroidHz: centroidHz(od, p - 4 * barA, p), bLineBeats: bLine, v });
+      centroidHz: centroidHz(od, p - 4 * barA, p), bLineBeats: bLine, v,
+      holdBars: (() => { const hs = HoldPolicy.settings(host.holdSettings); return hs.inSongHolds ? hs.inSongMax : 0; })() });
     return plan.ok ? plan : refuse(plan.gate, plan.reason);
   }
   // ---- on demand (AI ACTIONS "filter_loop" / "drums_host"): the loaded pair, now, on the host's next 8-bar line.
@@ -1648,7 +1684,7 @@ if (typeof DJ_CONFIG === "undefined" && typeof require === "function") require("
   setTimeout(() => { const aa = host.mod.aiActions; if (aa && typeof aa.register === "function") for (const id of Object.keys(onDemand)) aa.register(id, onDemand[id]); }, 0);
   host.bus.on("ai-action", (e) => { const id = e && e.detail && e.detail.id; if (onDemand[id]) onDemand[id](); });
 
-  const api = { core, mergeTransition, hookDrop, breakdown, handoff, instrumental, reset, audioAt, vocalShare, stemBlend, remix, REMIX_LABEL, mashupBreak, stemBridge, mashupTransition,
+  const api = { core, mergeTransition, endMergeHold, hookDrop, breakdown, handoff, instrumental, reset, audioAt, vocalShare, stemBlend, remix, REMIX_LABEL, mashupBreak, stemBridge, mashupTransition,
                      filterLoopFits, drumsHostFits, artistRunNow, runNow: artistRunNow, onDemand,
                      bridgeFader, stemEnergyBars, remixEnergy, eqIntro };
   host.mod.stemMoves = api;       // the rail UI below reads deck state; other engine code reaches this module through host.mod
