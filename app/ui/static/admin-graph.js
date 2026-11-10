@@ -53,6 +53,7 @@
     if (!s || s.available === false) { box.textContent = 'No graph.db yet. Rebuild it from the Jobs page.'; return; }
     var parts = ['rev ' + s.rev, 'built ' + fmtTime(s.built_at), s.nodes + ' nodes', s.edges + ' edges'];
     if (s.trending) parts.push(s.trending + ' trending');
+    if (s.fanout) parts.push(s.fanout.below + ' of ' + s.fanout.eligible + ' played/seeded songs below ' + s.fanout.target + ' related');
     var ek = s.edge_kinds || {};
     Object.keys(ek).sort().forEach(function (k) { parts.push(k + ' ' + ek[k]); });
     box.textContent = parts.join(' | ');

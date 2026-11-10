@@ -1,9 +1,9 @@
-# GENERATED from dj-config 767068d-dirty - do not edit
-# config-hash: 9e24dd04bd4a
+# GENERATED from dj-config 7c53c62 - do not edit
+# config-hash: 2e1779c78fa7
 """Generated from dj-config/config/*.json. Do not edit; run dj-config/tool/gen.py."""
 
-SHA = "767068d-dirty"
-CONFIG_HASH = "9e24dd04bd4a"
+SHA = "7c53c62"
+CONFIG_HASH = "2e1779c78fa7"
 
 ARC_TARGET = {"warm-up": 4, "build": 6, "peak": 8, "cool-down": 5}  # level
 BARS_PER_PHRASE = 8  # bars
@@ -28,6 +28,7 @@ EQ_KILL_DB = -26.0  # dB
 EQ_LOW_HZ = 120  # Hz
 EQ_MID_HZ = 1000  # Hz
 EQ_MID_Q = 0.7
+FANOUT_MIN = 20  # songs
 FX_CRUSHER_LEVELS = 8  # levels
 FX_CRUSHER_TONE_HZ = 6000  # Hz
 FX_DRY_LAW = 0.85  # ratio

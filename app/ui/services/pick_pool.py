@@ -8,6 +8,8 @@ Candidates, best first:
   1. atlas neighbours of the playing song (library songs the pair atlas already scored against it),
   2. verified catalogue songs: YouTube searches (artist's songs, the scene's songs) whose every hit
      passes pick_identity at HIGH, so the lookup is already done. Cached per seed.
+  3. YouTube's related songs of the playing song (G16, `source: "yt"`, yt_related.py). Not verified: a pick from
+     here goes through the same lookup and gates as a free-text one.
 """
 from __future__ import annotations
 
@@ -115,14 +117,17 @@ def _by_language(rows: list[dict], lang_check) -> list[dict]:
 
 
 def build_pool(*, atlas: list[dict], cat: list[dict], exclude: Iterable[str], seed_title: str, lang_check=None,
-               limit: int = MAX_POOL) -> list[dict]:
+               limit: int = MAX_POOL, yt: list[dict] | None = None) -> list[dict]:
     """Merge, drop the playing / played / rejected songs, number them C1..Cn. Library entries first
-    (about half the slots), the rest catalogue, so the model sees both. lang_check(row) -> (verdict, reason):
+    (about half the slots), then up to a quarter YouTube related songs (`yt`), the rest catalogue, so the model sees
+    all three; unused slots go to whichever source has more. lang_check(row) -> (verdict, reason):
     a song in a language the set is not in is dropped ("block") or sent to the back ("penalty")."""
     skip = {_bare(str(x).split(" - ", 1)[-1]) for x in exclude}
     skip.add(_bare(seed_title))
     if lang_check is not None:
         atlas, cat = _by_language(atlas, lang_check), _by_language(cat, lang_check)
+        yt = _by_language(yt or [], lang_check)
+    yt = yt or []
     seen, pool = set(), []
 
     def take(rows: list[dict], cap: int) -> None:
@@ -136,8 +141,10 @@ def build_pool(*, atlas: list[dict], cat: list[dict], exclude: Iterable[str], se
             n += 1
 
     take(atlas, limit // 2)
+    take(yt, limit // 4)
     take(cat, limit - len(pool))
     take(atlas, limit - len(pool))
+    take(yt, limit - len(pool))
     for i, r in enumerate(pool, 1):
         r["cid"] = f"C{i}"
     return pool

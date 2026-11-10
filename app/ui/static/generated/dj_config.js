@@ -1,5 +1,5 @@
-// GENERATED from dj-config 767068d-dirty - do not edit
-// config-hash: 9e24dd04bd4a
+// GENERATED from dj-config 7c53c62 - do not edit
+// config-hash: 2e1779c78fa7
 (function (root) {
   "use strict";
   const values = {
@@ -26,6 +26,7 @@
     "EQ_LOW_HZ": 120,
     "EQ_MID_HZ": 1000,
     "EQ_MID_Q": 0.7,
+    "FANOUT_MIN": 20,
     "FX_CRUSHER_LEVELS": 8,
     "FX_CRUSHER_TONE_HZ": 6000,
     "FX_DRY_LAW": 0.85,
@@ -128,6 +129,6 @@
   };
   root.DJ_CONFIG = Object.freeze(values);
   root.DJ_CONFIG_LIVE = Object.freeze(live);
-  root.DJ_CONFIG_META = Object.freeze({ sha: "767068d-dirty", hash: "9e24dd04bd4a" });
+  root.DJ_CONFIG_META = Object.freeze({ sha: "7c53c62", hash: "2e1779c78fa7" });
   if (typeof module !== "undefined" && module.exports) module.exports = root.DJ_CONFIG;
 })(typeof window !== "undefined" ? window : globalThis);

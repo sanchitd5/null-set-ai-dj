@@ -542,6 +542,21 @@ def _analysis_miss(track_id: str, path) -> dict:
     return {**analyze_track(path).to_dict(), "art_url": album_art.art_url(track_id), "language": lang_id.public(lang_id.get(track_id))}
 
 
+def _kick_yt_related(track_id: str) -> None:
+    """A song was loaded: start fetching YouTube's related list for it, so the next suggest has it (G16)."""
+    try:
+        from app.ui.services import yt_related
+
+        name = _track_names.get(track_id)
+        if name:
+            from app.ui.services.track_identity import clean_identity
+
+            artist, title = clean_identity(name)
+            yt_related.kick(track_id, {"artist": "" if artist == "Unknown" else artist, "title": title})
+    except Exception:
+        pass
+
+
 @app.get("/api/tracks/{track_id}/analysis")
 async def get_analysis(track_id: str):
     from starlette.concurrency import run_in_threadpool
@@ -549,6 +564,7 @@ async def get_analysis(track_id: str):
 
     path = await run_in_threadpool(_track_path, track_id)
     hit = await run_in_threadpool(analyzer.cached_analysis, path)   # stored record: ~ms, no heavy slot
+    _kick_yt_related(track_id)
     if hit is not None:
         return {**hit.to_dict(), "art_url": album_art.art_url(track_id), "language": lang_id.public(lang_id.get(track_id))}
     return await _analysis_miss(track_id, path)
@@ -1517,6 +1533,8 @@ def post_session_event(ev: SessionEvent):
     # those are kept as "<name>_" instead of clashing
     fields = {(f"{k}_" if k in ("kind", "t", "at") else k): v for k, v in list(ev.data.items())[:20] if isinstance(k, str)}
     session_log.log(ev.kind, **fields)
+    if ev.kind == "deck_load" and isinstance(fields.get("track_id"), str):
+        _kick_yt_related(fields["track_id"])
     from app.ui.services import song_log
     _host().session_event(ev.kind, fields)   # transitions / glitches also land on the song
     return {"ok": True, "session": session_log.SESSION_ID}
@@ -2939,18 +2957,21 @@ def _autopilot_suggest_impl(req: AutopilotSuggestRequest):
     except Exception as exc:
         print(f"[suggest] language profile unavailable: {exc}", flush=True)
     candidates: list = []
+    yt_rows: list = []
+    yt_info = None
     if not req.lead_to:
         try:
-            from app.music_brain.atlas import atlas_store
-            from app.ui.services import pick_pool
+            from app.ui.services import pick_pool, yt_related     # atlas_neighbours imports the atlas itself
             host = engine.current().host
             search = getattr(host, "search_songs", None)
             seed = pick_pool.key_of(artist_part, title_part)
             qs = [f"{artist_part} songs"] + ([f"best {genre} songs"] if genre else [])
             cat = pick_pool.catalogue(seed, qs, search) if search else []
             atl = pick_pool.atlas_neighbours(req.track_id, _track_names, CACHE_DIR)
+            # G16: YouTube's related songs of the playing song, a third source; never waits long, never raises
+            yt_rows, yt_info = yt_related.candidates(req.track_id, {"artist": artist_part, "title": title_part})
             candidates = pick_pool.build_pool(
-                atlas=atl, cat=cat, seed_title=title_part,
+                atlas=atl, cat=cat, seed_title=title_part, yt=yt_rows,
                 exclude=history_display + avoid_display + queue_display + list(earlier), lang_check=lang_check)
         except Exception as exc:       # grounding is best-effort: no pool = free text, verified as before
             print(f"[suggest] candidate pool unavailable: {exc}", flush=True)
@@ -3031,6 +3052,17 @@ def _autopilot_suggest_impl(req: AutopilotSuggestRequest):
                               seed_key=graph_pick.name_key(f"{artist_part} - {title_part}"))
     except Exception:
         pass
+    if yt_info is not None:      # G16 shadow log: how many YouTube related songs the pool had and whether one was picked
+        try:
+            from app.ui.services import session_log
+
+            picked = [s for s in suggestions if isinstance(s, dict) and s.get("pool_source") == "yt"]
+            session_log.log("yt_pool", seed=f"{artist_part} - {title_part}", source=yt_info["source"],
+                            n_yt=len(yt_rows), in_pool=sum(1 for c in candidates if c.get("source") == "yt"),
+                            n_pool=len(candidates), picked=bool(picked), n_picked=len(picked),
+                            lookahead=bool(req.lookahead))
+        except Exception:
+            pass
     for s in suggestions:
         if s.get("title") and s.get("genre"):
             _set_label(_suggested_genres, _genre_key(s["title"]), s["genre"])
