@@ -1,0 +1,14 @@
+{"t": 1794288882.492, "at": "16:34:42", "kind": "deck_load", "deck": "a", "song": "Shubh - Cheques", "track_id": "0e6e34551d89ccb9", "reason": "set started from this song"}
+{"t": 1794288897.684, "at": "16:34:57", "kind": "yt_pool", "seed": "Shubh - Cheques", "n_yt": 25, "in_pool": 4, "n_pool": 16, "picked": false, "n_picked": 0, "lookahead": false}
+{"t": 1794288942.849, "at": "16:35:42", "kind": "suggest_reject", "song": "Shubh - So Supreme", "reason": "free-text pick (not a candidate id)"}
+{"t": 1794288942.968, "at": "16:35:42", "kind": "suggest_reject", "song": "Shubh - One Love", "reason": "artist played too recently"}
+{"t": 1794288942.97, "at": "16:35:42", "kind": "suggest_reject", "song": "Shubh - King Shit", "reason": "artist played too recently"}
+{"t": 1794288942.971, "at": "16:35:42", "kind": "suggest_reject", "song": "Shubh - Sohniye", "reason": "artist played too recently"}
+{"t": 1794288942.973, "at": "16:35:42", "kind": "suggest_reject", "song": "Shubh - Elevated", "reason": "artist played too recently"}
+{"t": 1794288948.52, "at": "16:35:48", "kind": "suggest_reject", "song": "Boris Brejcha - Cello Tears (Intro Edit)", "reason": "genre jump (2)"}
+{"t": 1794288948.536, "at": "16:35:48", "kind": "suggest_reject", "song": "Lana Del Rey - Summertime Sadness", "reason": "genre jump (2)"}
+{"t": 1794288948.538, "at": "16:35:48", "kind": "suggest_reject", "song": "Pale Waves - She's My Religion", "reason": "genre jump (2)"}
+{"t": 1794288948.54, "at": "16:35:48", "kind": "suggest_reject", "song": "Daft Punk - Teachers", "reason": "genre jump (2)"}
+{"t": 1794289036.898, "at": "16:37:16", "kind": "track", "event": "transition_start", "from": "Cheques", "to": "Gasolina (Bhangra Remix)", "recipe": "Echo Out", "out": "a", "in": "b", "seconds": 16.0, "a_pos": 151.56}
+{"t": 1794289055.611, "at": "16:37:35", "kind": "track", "event": "transition_end", "now_playing": "Gasolina (Bhangra Remix)", "deck": "b", "set_songs": 2}
+{"t": 1794289330.064, "at": "16:42:10", "kind": "track", "event": "transition_start", "from": "Cheques", "to": "Sidhu Moose Wala ｜ The Kidd ｜ Moosetape", "recipe": "Bass Swap", "out": "b", "in": "a", "seconds": 42.7, "a_pos": 133.2}
