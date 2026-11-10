@@ -45,6 +45,7 @@ try:
     from app.music_brain.atlas import vetoes as vt
 except ImportError:       # private atlas builder absent (see atlas_bridge): no owner vetoes to apply
     vt = None
+from app.music_brain.pick_accept import accept_candidate
 from app.ui.services.set_memory import _key as memory_key
 
 
@@ -63,10 +64,10 @@ def vet_one(a_name: str, b_name: str, *, a_genre: Optional[str] = None, a_era: O
         return {"gate": "veto", "why": why}
     # a label that maps to no family ("indie": Beedi -> We Are The People) or no label at all ("CC" after
     # Oh Ho Ho Ho, session 2026-10-11_200026) is off-scene too: a pinned set books only songs known to fit
-    off_set = not genre_families(b_genre) or family_jump(set_genre, b_genre)
-    if set_genre and genre_families(set_genre) and off_set \
-            and not (sp.selection_active(punjabi_profile, set_genre) and sp.in_scene_pair(set_genre, b_genre)):
-        return {"gate": "set_scene", "why": f"leaves the set's {set_genre} scene ({b_genre})"}
+    # G23: the scene gate of the one acceptance function (no song state is given, so only the scene gate can refuse)
+    ok, why = accept_candidate({"ids": [b_name], "genre": b_genre}, {"scene_genre": set_genre, "punjabi_profile": punjabi_profile})
+    if not ok:
+        return {"gate": "set_scene", "why": why}
     if anchor_genre and family_jump(anchor_genre, b_genre) and not family_jump(a_genre, b_genre) \
             and genre_families(a_genre):
         return {"gate": "scene_anchor", "why": f"continues the off-scene {a_genre} instead of going back to "

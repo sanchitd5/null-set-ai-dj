@@ -2481,6 +2481,9 @@ class AutopilotSuggestRequest(BaseModel):
     # set never leaks in; also keeps two tabs from sharing one cached answer.
     set_id: str = ""
     vetoed: list[str] = Field(default_factory=list, max_length=400)   # G20: songs vetoed this set (track ids / song keys / display names): never returned
+    # G23: the phone's set state for the one acceptance function (app/music_brain/pick_accept.py): played, vetoed,
+    # scene_genre, punjabi_profile, language_strict, max_length_s, playing_ids. Unioned with / overriding the fields above.
+    set_state: Optional[dict] = None
     # HF7: ids the phone would refuse anyway (played this set, too long / not music, queued, refused for this pick):
     # treated like `vetoed`, so the 3 picks are all acceptable. set_genre: the set's pinned scene (accepted, informational).
     exclude_ids: list[str] = Field(default_factory=list, max_length=800)
@@ -2966,7 +2969,7 @@ def _suggest_ladder_late(req: "AutopilotSuggestRequest", ctx: dict, reason: str)
         family_jump=family_jump, lang_check=lang_check, graph_picks=graph_rows, yt_rows=yt_rows,
         yt_pick=lambda rows: yt_fallback(rows, cur_genre=cur_genre, lang_check=lang_check, genre_of=gof,
                                          exclude=played + list(earlier)),
-        reason=reason, vetoed=req.vetoed, llm=None)
+        reason=reason, vetoed=req.vetoed, llm=None, set_state=req.set_state)
 
 
 @app.post("/api/autopilot/suggest")
@@ -3224,7 +3227,7 @@ def _autopilot_suggest_impl(req: AutopilotSuggestRequest, ctx: Optional[dict] = 
         family_jump=_fj, lang_check=lang_check, graph_picks=lambda: graph_picks or [], yt_rows=_yt_rows,
         yt_pick=lambda rows: _ytfb(rows, cur_genre=cur_genre or str(meta.get("current_genre") or ""), lang_check=lang_check,
                                    genre_of=_gof, exclude=played_now + list(earlier)),
-        reason=(ctx or {}).get("reason") or "", vetoed=req.vetoed, llm=_llm)
+        reason=(ctx or {}).get("reason") or "", vetoed=req.vetoed, llm=_llm, set_state=req.set_state)
     suggestions = res["suggestions"]
     meta = dict(meta or {})
     meta["pick_source"] = res["pick_source"]
