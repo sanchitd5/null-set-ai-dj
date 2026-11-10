@@ -1,5 +1,6 @@
 """The jobs that exist today, registered with the job runner (job_registry.py) at server startup.
 
+    cache_audit          manual: flags library files that are probably not the song they are named after (HF9)
     sync_compact         cron "30 3 * * *": folds old op-log entries away (DJ_SYNC_KEEP_DAYS)
     quarantine_cleanup   cron "15 4 * * *" (server local time); a fire missed while down runs once at startup
     lang_id              external: lang_service keeps its own worker; the page shows status and can pause / resume it
@@ -9,6 +10,7 @@
 """
 from __future__ import annotations
 
+import time
 from typing import Callable
 
 from app.ui.services.job_registry import JobContext, JobSpec, Registry
@@ -20,6 +22,13 @@ def _quarantine(ctx: JobContext) -> dict:
     if r["audio"] or r["notes"]:
         ctx.log(f"removed {r['audio']} audio, {r['notes']} notes, {r['bytes']} bytes")
     return r
+
+
+def _cache_audit(ctx: JobContext) -> dict:
+    from app.ui import server
+    from app.music_brain.config import CACHE_DIR
+    from app.ui.services import cache_audit
+    return cache_audit.run(dict(server._tracks), dict(server._track_names), CACHE_DIR, time.time(), ctx.log)
 
 
 def _graph_rebuild(ctx: JobContext) -> dict:
@@ -44,6 +53,8 @@ def register_builtin(reg: Registry) -> None:
 
     reg.register(JobSpec("quarantine_cleanup", "Quarantine cleanup", fn=_quarantine, kind="manual",
                          schedule="15 4 * * *"))
+    reg.register(JobSpec("cache_audit", "Song cache audit (flags suspect files, deletes nothing)", fn=_cache_audit,
+                         kind="manual"))
     reg.register(JobSpec("sync_compact", "Op-log compaction", fn=_sync_compact, kind="manual",
                          schedule="30 3 * * *"))
     reg.register(JobSpec("lang_id", "Language id backfill", kind="external", status_fn=lang_service.status,

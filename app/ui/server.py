@@ -23,7 +23,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from fastapi import FastAPI, Form, HTTPException, Query, UploadFile
+from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from app.ui.services.ranged_file import RangedFileResponse
 from fastapi.staticfiles import StaticFiles
@@ -334,15 +334,25 @@ async def download_from_url(req: DownloadRequest):
 
 
 def _reuse_existing(url: str) -> Optional[List[dict]]:
-    """A search URL for "Artist - Title" that the library already holds (same recording, remix markers
-    included, aliases resolved): the existing track, so no second upload of it is downloaded."""
-    from app.ui.services import dedup_songs
+    """A song the library already holds, so no second upload of it is downloaded: a search URL for
+    "Artist - Title" (same recording, remix markers included, aliases resolved) or a watch URL of a YouTube
+    video that was downloaded before (the file id is a hash of the bytes, so a second download of the same
+    video would otherwise become a second, different-looking track). Files flagged by the cache audit never match."""
+    from app.ui.services import cache_audit, dedup_songs
 
+    def _usable(i: str) -> bool:
+        return i in _tracks and _tracks[i].exists()
+
+    vid = cache_audit.video_id_of(url)
+    if vid:
+        bad = set(cache_audit.bad_ids(CACHE_DIR))
+        tid = album_art.track_for_video(vid, lambda i: _usable(i) and i not in bad)
+        if tid:
+            return [{"track_id": tid, "filename": _tracks[tid].name, "display_name": _track_names.get(tid) or vid}]
     wanted = dedup_songs.wanted_from_url(url)
     if not wanted:
         return None
-    tid = dedup_songs.find_existing(
-        wanted, _track_names, exists=lambda i: i in _tracks and _tracks[i].exists(), cache=CACHE_DIR)
+    tid = dedup_songs.find_existing(wanted, _track_names, exists=_usable, cache=CACHE_DIR)
     if not tid:
         return None
     return [{"track_id": tid, "filename": _tracks[tid].name, "display_name": _track_names.get(tid) or wanted}]
@@ -434,6 +444,57 @@ def post_download_job(req: DownloadJobRequest):
         reuse_fn=_reuse_existing,
         analyze_fn=lambda tid: analyze_track(_track_path(tid)),
     )
+    return {"job_id": job_id}
+
+
+@app.get("/api/library/bad")
+def get_library_bad():
+    """Ids of server files the cache audit flagged as not the song they are named after. The phone drops its own
+    cached copy of each (it never touches songs it downloaded itself)."""
+    from app.ui.services import cache_audit
+
+    return {"ids": cache_audit.bad_ids(CACHE_DIR)}
+
+
+@app.get("/api/admin/cache-audit")
+def get_cache_audit(email: str = Depends(_admin.require_admin)):
+    """The last `cache_audit` job result: suspect files (flag only), with name, class, detail and status."""
+    from app.ui.services import cache_audit
+
+    flags = cache_audit.load(CACHE_DIR)
+    rows = [{"track_id": t, "name": _track_names.get(t) or t, **f} for t, f in sorted(flags.items())]
+    return {"summary": cache_audit.summary(flags), "items": rows}
+
+
+@app.post("/api/admin/cache-audit/{track_id}/refetch")
+def post_cache_audit_refetch(track_id: str, request: Request, email: str = Depends(_admin.require_admin)):
+    """Download a flagged song again from its source video. The flagged file stays; the flag records the new id."""
+    from app.ui.services import cache_audit, download_jobs
+
+    flag = cache_audit.load(CACHE_DIR).get(track_id)
+    if not flag:
+        raise HTTPException(status_code=404, detail="not flagged")
+    vid = flag.get("video") or album_art._video_id(track_id)
+    if not vid:
+        raise HTTPException(status_code=409, detail="no source video on record for this file")
+    url = f"https://www.youtube.com/watch?v={vid}"
+
+    def _register(paths: List[Path]) -> List[dict]:
+        res = _register_downloaded(paths, source_url=url)
+        new = next((r["track_id"] for r in res if r["track_id"] != track_id), None)
+        cache_audit.mark(CACHE_DIR, track_id, status="refetched", new_id=new)
+        return res
+
+    job_id = download_jobs.start_job(
+        url, (_track_names.get(track_id) or vid)[:120], UPLOAD_DIR,
+        download_fn=_host().download_to_dir, register_fn=_register, reuse_fn=None,
+        analyze_fn=lambda tid: analyze_track(_track_path(tid)),
+    )
+    _admin.audit().add(email, "cache_refetch", track_id, vid)
+    if "text/html" in request.headers.get("accept", ""):          # the admin page's form: back to the list
+        from fastapi.responses import RedirectResponse
+
+        return RedirectResponse("/admin/cache-audit", status_code=303)
     return {"job_id": job_id}
 
 
