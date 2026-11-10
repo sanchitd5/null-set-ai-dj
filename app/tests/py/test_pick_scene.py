@@ -58,7 +58,9 @@ def test_pick_in_a_far_writing_system_is_dropped_but_a_native_one_stays():
 
 
 def test_a_set_already_in_that_writing_system_keeps_its_scene():
-    far = _s("ਓਰਿਨ ਪਾਈਕ", "ਗਲਾਸ ਹਾਰਬਰ", hop=0)
+    # In-scene label: this test is about the writing system only (a genre jump is never a last resort in a
+    # pinned scene, and the model's own jump label rejects).
+    far = _s("ਓਰਿਨ ਪਾਈਕ", "ਗਲਾਸ ਹਾਰਬਰ", hop=0, genre="punjabi")
     data = {"steering": "stay", "current_genre": "punjabi", "suggestions": [far]}
     out = _filter_suggestions(data, [], current_artist="ਮੇਨ ਐਕਟ", current_title="Glass Harbor")
     assert len(out) == 1

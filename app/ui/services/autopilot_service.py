@@ -866,6 +866,12 @@ def _filter_suggestions(
         hop = _num(s.get("genre_hop"))
         if _family_jump(cur_genre, s.get("genre")):
             hop = max(hop or 0.0, 2.0)
+        # The model's own genre label can REJECT a song outside the library (it admits the jump) but never pass
+        # one: only data genre clears the gate (HF2). Without this every admitted jump slipped through.
+        llm_genre = s.get("genre_llm")
+        if llm_genre and _family_jump(cur_genre, llm_genre) and not (
+                sp_active and _scene_profile.in_scene_pair(cur_genre, llm_genre)):
+            hop = max(hop or 0.0, 2.0)
         if sp_active and _scene_profile.in_scene_pair(cur_genre, s.get("genre")):
             hop = 0.0  # one scene under the profile (note s7), not a genre jump
         scene = scene_of(cur_genre)
