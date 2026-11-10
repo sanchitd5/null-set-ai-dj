@@ -90,6 +90,7 @@ def ladder(*, deadline_at: float, hard_played: Sequence[str], earlier: Sequence[
     for k in ("max_length_s", "punjabi_profile", "language_strict", "cur_era"):
         if ss.get(k) is not None:
             base_state[k] = ss[k]
+    pinned = str(ss.get("scene_genre") or "").strip()      # HF10: the set's pinned scene binds EVERY step (graph, YouTube, LLM, library)
     heard_earlier = {_norm(x) for x in earlier}
     scene_hooks = PickHooks(lambda scene, genre, profile: bool(genre) and bool(family_jump(scene, genre)),
                             lambda a, b: None)
@@ -103,13 +104,14 @@ def ladder(*, deadline_at: float, hard_played: Sequence[str], earlier: Sequence[
         if r.get("duration_s") is not None:
             cand["duration_s"] = r["duration_s"]
         state = dict(base_state, relax=list(relax))
+        scene_genre = scene_genre or pinned
         if scene_genre:
             state["scene_genre"] = scene_genre
-            cand["genre"] = str(genre_of(r) or "")
+            cand["genre"] = str(r.get("genre") or genre_of(r) or "")
         return accept_candidate(cand, state, hooks=scene_hooks)[0]
 
     def hard_ok(r: dict, allow_penalty: bool = False) -> bool:
-        return accept(r, ("language_penalty", "scene") if allow_penalty else ("scene",))
+        return accept(r, ("language_penalty",) if allow_penalty else ())
 
     def fresh(r: dict) -> bool:
         return _norm(_label(r)) not in heard_earlier
@@ -121,12 +123,14 @@ def ladder(*, deadline_at: float, hard_played: Sequence[str], earlier: Sequence[
         return s
 
     def take(rows: Sequence[dict], source: str, why: str, *, need_fresh=False, scene=False,
-             allow_penalty=False) -> list:
+             allow_penalty=False, last_resort=False) -> list:
         out, seen = [], set()
         for r in rows:
             if not isinstance(r, dict) or not r.get("title"):
                 continue
             relax = ("language_penalty",) if allow_penalty else ()
+            if last_resort:
+                relax = (*relax, "scene")
             if not accept(r, relax, cur_genre if scene and cur_genre else None):
                 continue
             key = _norm(_label(r))
@@ -179,7 +183,7 @@ def ladder(*, deadline_at: float, hard_played: Sequence[str], earlier: Sequence[
                                           need_fresh=True)),
         ("library_lru", lambda: _lru(library, earlier, take)),
         ("library_any", lambda: take(library, "library_any", "Any library song not played this set",
-                                     allow_penalty=True)),
+                                     allow_penalty=True, last_resort=True)),     # never empty: only here may a pinned scene give way
     ]
     for name, fn in library_steps:
         try:

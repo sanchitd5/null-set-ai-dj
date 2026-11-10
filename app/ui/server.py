@@ -437,14 +437,32 @@ def post_download_job(req: DownloadJobRequest):
 
     if detect_source(req.url) == "unknown":
         raise HTTPException(status_code=400, detail="Unsupported URL.")
-    job_id = download_jobs.start_job(
-        req.url, req.label[:120], UPLOAD_DIR,
+    return {"job_id": _start_download_job(req.url, req.label)}
+
+
+def _start_download_job(url: str, label: str) -> str:
+    from app.ui.services import download_jobs
+
+    return download_jobs.start_job(
+        url, label[:120], UPLOAD_DIR,
         download_fn=_host().download_to_dir,
-        register_fn=lambda paths: _register_downloaded(paths, source_url=req.url),
+        register_fn=lambda paths: _register_downloaded(paths, source_url=url),
         reuse_fn=_reuse_existing,
         analyze_fn=lambda tid: analyze_track(_track_path(tid)),
     )
-    return {"job_id": job_id}
+
+
+def _prefetch_picks(suggestions: list) -> None:
+    """HF10: the moment the ladder answers, the server starts downloading every pick whose audio it lacks (YouTube id known),
+    so the phone only waits for the job. Each such pick gets `download_job_id`. A start that fails leaves the pick as it was."""
+    for p in suggestions[:6]:
+        if not isinstance(p, dict) or p.get("track_id") or not re.fullmatch(r"[\w-]{11}", str(p.get("yt_id") or "")):
+            continue
+        try:
+            label = f"{p.get('artist', '')} - {p.get('title', '')}".strip(" -")
+            p["download_job_id"] = _start_download_job(f"https://www.youtube.com/watch?v={p['yt_id']}", label)
+        except Exception as exc:                       # noqa: BLE001 - the phone starts its own download
+            print(f"[suggest] prefetch failed for {p.get('title')!r}: {exc!r}", flush=True)
 
 
 @app.get("/api/library/bad")
@@ -2933,6 +2951,8 @@ def _suggest_guaranteed(req: "AutopilotSuggestRequest") -> dict:
     import traceback
 
     sl = _suggest_ladder_mod()
+    if req.set_genre and not (req.set_state or {}).get("scene_genre"):
+        req.set_state = {**(req.set_state or {}), "scene_genre": req.set_genre}      # HF10: the pinned scene gates every ladder step
     if req.exclude_ids:
         req.vetoed = list(dict.fromkeys([*req.vetoed, *req.exclude_ids]))[:1200]   # HF7: one hard gate for both lists
     t0 = time.monotonic()
@@ -2953,6 +2973,7 @@ def _suggest_guaranteed(req: "AutopilotSuggestRequest") -> dict:
     if res is not None and res.get("suggestions"):
         res.setdefault("pick_source", res.get("source") or "llm")
         res["suggestions"] = sl.prefer_library(res["suggestions"])    # HF7: library picks first, `on_server` on each
+        _prefetch_picks(res["suggestions"])
         return res
     if th.is_alive():
         reason = f"deadline: suggest not done after {sl.llm_budget_s():.0f}s"
@@ -2966,6 +2987,7 @@ def _suggest_guaranteed(req: "AutopilotSuggestRequest") -> dict:
     except Exception as exc:
         print(f"[suggest] ladder failed: {exc!r}\n{traceback.format_exc()}", flush=True)
         out = {"suggestions": [], "pick_source": "none", "fallback_reason": f"{reason}; ladder error: {exc}"[:300]}
+    _prefetch_picks(out.get("suggestions") or [])
     out.setdefault("set_position", round(float((res or {}).get("set_position") or 0.0), 2))
     out["source"] = out["pick_source"]
     out["fallback_reason"] = out.get("fallback_reason") or reason
