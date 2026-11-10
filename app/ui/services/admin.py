@@ -32,7 +32,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from app.ui.services import set_lease
 
 MAX_AUDIT = 5000
-NAV = [("Sessions", "/admin/sessions"), ("Jobs", "/admin/jobs"), ("Graph", "/admin/graph")]   # later admin pages append here
+NAV = [("Sessions", "/admin/sessions"), ("Phone trace", "/admin/sessions/trace"), ("Jobs", "/admin/jobs"), ("Graph", "/admin/graph")]   # later admin pages append here
 _PAGE_CSP = "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'"
 STEPS = (
     """CREATE TABLE admin_audit (id INTEGER PRIMARY KEY, at REAL NOT NULL, actor TEXT NOT NULL,
@@ -203,6 +203,44 @@ router = APIRouter()
 @router.get("/admin/sessions", response_class=HTMLResponse)
 def admin_sessions(email: str = Depends(require_admin)):
     return _page("Sessions", _sessions_body(), email)
+
+
+def _trace_events(session: Optional[str], limit: int = 2000) -> list:
+    from app.ui.services import session_log
+
+    evs = session_log.read(session, max(1, min(limit, 5000)))
+    return [e for e in evs if e.get("kind") in ("pick_trace", "phone_error")]
+
+
+@router.get("/admin/sessions/trace", response_class=HTMLResponse)
+def admin_trace_page(session: Optional[str] = None, email: str = Depends(require_admin)):
+    """The phone's pick / booking trace and caught errors of one server session, oldest first."""
+    e = html.escape
+    try:
+        evs = _trace_events(session)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="bad session id")
+    skip = ("t", "at", "kind", "ev", "source", "set", "stack")
+    rows = ""
+    for ev in evs:
+        detail = e(" ".join(f"{k}={v}" for k, v in ev.items() if k not in skip))
+        if ev.get("stack"):
+            detail += "<br><small class=\"muted\">" + e(" | ".join(str(x) for x in ev["stack"])) + "</small>"
+        rows += (f"<tr><td data-label=\"Time\">{e(str(ev.get('at', '')))}</td>"
+                 f"<td data-label=\"Event\">{e(str(ev.get('ev') or ev.get('kind')))}</td>"
+                 f"<td data-label=\"Set\">{e(str(ev.get('set', '')))}</td><td data-label=\"Detail\">{detail}</td></tr>")
+    body = ("<p class=\"muted\">pick_trace and phone_error events of this server session"
+            + (f" ({e(session)})" if session else " (current)") + "; add ?session=&lt;id&gt; for another.</p>"
+            f"<table><tr><th>Time</th><th>Event</th><th>Set</th><th>Detail</th></tr>{rows}</table>")
+    return _page("Phone pick trace", body, email, refresh=10)
+
+
+@router.get("/api/admin/sessions/trace")
+def admin_trace_api(session: Optional[str] = None, email: str = Depends(require_admin)) -> dict:
+    try:
+        return {"events": _trace_events(session)}
+    except ValueError:
+        raise HTTPException(status_code=400, detail="bad session id")
 
 
 @router.get("/api/admin/me")

@@ -35,3 +35,18 @@ def test_batch_is_capped_and_needs_auth(api_token, monkeypatch):
     assert not logged
     server.AUTH_GUARD.limiter.reset()
     assert TestClient(server.app, auth=False).post("/api/session/events", json={"events": []}).status_code in (401, 403)
+
+
+def test_pick_trace_and_phone_error_kinds_are_stored_and_errors_scrubbed(api_token, monkeypatch):
+    c, logged, _ = _client(api_token, monkeypatch)
+    r = c.post("/api/session/events", json={"events": [
+        {"kind": "pick_trace", "data": {"ev": "pick_start", "set": "phone-1", "song": "Some Song", "source": "phone"}},
+        {"kind": "phone_error", "data": {"where": "tick", "set": "phone-1", "error": "GET /x?token=abc123 Bearer sekret.value",
+                                          "stack": ["#0 a (x.dart:1)", "#1 b ?access_token=zzz"]}},
+    ]})
+    assert r.json()["ok"] == 2 and r.json()["skipped"] == 0
+    assert [k for k, _ in logged] == ["pick_trace", "phone_error"]
+    assert logged[0][1]["ev"] == "pick_start" and logged[0][1]["set"] == "phone-1"
+    err = logged[1][1]
+    assert "abc123" not in err["error"] and "sekret" not in err["error"]
+    assert "zzz" not in err["stack"][1] and err["stack"][0] == "#0 a (x.dart:1)"
