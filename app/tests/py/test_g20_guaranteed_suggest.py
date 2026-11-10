@@ -156,3 +156,12 @@ def test_vetoed_by_song_key():
 def test_vetoed_survives_last_resort_step():
     r = run(lang_check=lambda row: ("penalty", "x"), vetoed=["t1", "t2", "t3", "t4"])
     assert [p["track_id"] for p in r["suggestions"]] == ["t5"] and r["pick_source"] == "library_any"
+
+
+def test_hf7_library_picks_first_and_on_server_flag():
+    yt = [{"artist": "Y0", "title": "Yt0", "yt_id": "v0"}]
+    r = run(graph_picks=lambda: yt + gp(2))
+    s = r["suggestions"]
+    assert [p["on_server"] for p in s] == [True, True, False]
+    assert s[2]["yt_id"] == "v0"
+    assert sl.prefer_library([])  == []
