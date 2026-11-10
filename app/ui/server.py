@@ -2961,8 +2961,7 @@ def _autopilot_suggest_impl(req: AutopilotSuggestRequest):
     yt_info = None
     if not req.lead_to:
         try:
-            from app.music_brain.atlas import atlas_store
-            from app.ui.services import pick_pool, yt_related
+            from app.ui.services import pick_pool, yt_related     # atlas_neighbours imports the atlas itself
             host = engine.current().host
             search = getattr(host, "search_songs", None)
             seed = pick_pool.key_of(artist_part, title_part)
