@@ -141,7 +141,7 @@ def ladder(*, deadline_at: float, hard_played: Sequence[str], earlier: Sequence[
         return out
 
     def done(picks: list, source: str) -> dict:
-        return {"suggestions": picks, "pick_source": source, "fallback_reason": reason}
+        return {"suggestions": prefer_library(picks), "pick_source": source, "fallback_reason": reason}
 
     def collect(fn, source):
         try:
@@ -190,6 +190,15 @@ def ladder(*, deadline_at: float, hard_played: Sequence[str], earlier: Sequence[
         if got:
             return done(got, name)
     return {"suggestions": [], "pick_source": "none", "fallback_reason": f"{reason}; no song available"[:300]}
+
+
+def prefer_library(picks: Sequence[dict]) -> list:
+    """HF7: picks with audio on the server (a track_id) first, the rest keep their order (stable), and every pick says
+    whether its audio is on the server (`on_server`), so the phone fetches the file instead of waiting for a download."""
+    out = sorted((dict(p) for p in picks), key=lambda p: 0 if p.get("track_id") else 1)
+    for p in out:
+        p["on_server"] = bool(p.get("track_id"))
+    return out
 
 
 def _pool_key(r: dict) -> str:

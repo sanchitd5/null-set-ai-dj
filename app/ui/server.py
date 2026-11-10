@@ -2484,6 +2484,10 @@ class AutopilotSuggestRequest(BaseModel):
     # G23: the phone's set state for the one acceptance function (app/music_brain/pick_accept.py): played, vetoed,
     # scene_genre, punjabi_profile, language_strict, max_length_s, playing_ids. Unioned with / overriding the fields above.
     set_state: Optional[dict] = None
+    # HF7: ids the phone would refuse anyway (played this set, too long / not music, queued, refused for this pick):
+    # treated like `vetoed`, so the 3 picks are all acceptable. set_genre: the set's pinned scene (accepted, informational).
+    exclude_ids: list[str] = Field(default_factory=list, max_length=800)
+    set_genre: str = Field(default="", max_length=80)
     occasion: Optional[str] = None
     history: list[str] = []
     set_position: Optional[float] = None  # 0.0=start, 1.0=end; computed from history if omitted
@@ -2868,6 +2872,8 @@ def _suggest_guaranteed(req: "AutopilotSuggestRequest") -> dict:
     import traceback
 
     sl = _suggest_ladder_mod()
+    if req.exclude_ids:
+        req.vetoed = list(dict.fromkeys([*req.vetoed, *req.exclude_ids]))[:1200]   # HF7: one hard gate for both lists
     t0 = time.monotonic()
     ctx: dict = {"deadline_at": t0 + sl.deadline_s() - 1.0, "reason": ""}
     box: dict = {}
@@ -2885,6 +2891,7 @@ def _suggest_guaranteed(req: "AutopilotSuggestRequest") -> dict:
     res = box.get("res")
     if res is not None and res.get("suggestions"):
         res.setdefault("pick_source", res.get("source") or "llm")
+        res["suggestions"] = sl.prefer_library(res["suggestions"])    # HF7: library picks first, `on_server` on each
         return res
     if th.is_alive():
         reason = f"deadline: suggest not done after {sl.llm_budget_s():.0f}s"
