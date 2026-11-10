@@ -104,8 +104,8 @@ def test_suggest_scene_anchor_recovers(monkeypatch):
     from app.ui.services import autopilot_service as svc
     seen = []
     reply = {"current_genre": "deep house", "suggestions": [
-        {"artist": "Joy Orbison", "title": "flight fm", "genre": "house", "occasion_fit": 8, "search_query": "q1"},
-        {"artist": "Hanumankind", "title": "Big Dawgs", "genre": "hip hop", "occasion_fit": 8, "search_query": "q2"}]}
+        {"artist": "Joy Orbison", "title": "flight fm", "genre": "house", "data_genre": "house", "occasion_fit": 8, "search_query": "q1"},
+        {"artist": "Hanumankind", "title": "Big Dawgs", "genre": "hip hop", "data_genre": "hip hop", "occasion_fit": 8, "search_query": "q2"}]}
     monkeypatch.setattr(svc, "chat_raw", lambda s, u, **k: seen.append(u) or json.dumps(reply))
     monkeypatch.setattr(svc, "_verify_picks", lambda picks: (picks, []))
     meta = {}

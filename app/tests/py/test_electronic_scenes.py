@@ -135,8 +135,8 @@ def test_mashup_gate_refuses_trance_to_downtempo():
 def test_suggestion_filter_drops_trance_to_downtempo(monkeypatch):
     import app.ui.services.autopilot_service as svc
     reply = {"current_genre": "trance", "suggestions": [
-        {"artist": "Bonobo", "title": "Me And You", "genre": "downtempo", "genre_hop": 0},
-        {"artist": "Argy", "title": "Dreamstates", "genre": "trance", "genre_hop": 0}]}
+        {"artist": "Bonobo", "title": "Me And You", "genre": "downtempo", "data_genre": "downtempo", "genre_hop": 0},
+        {"artist": "Argy", "title": "Dreamstates", "genre": "trance", "data_genre": "trance", "genre_hop": 0}]}
     monkeypatch.setattr(svc, "chat_raw", lambda *a, **k: json.dumps(reply))
     out = svc.suggest_next_tracks("The Sound of Goodbye", "Above & Beyond", 136.0, "8A", 400.0, 0.5, "", [])
     assert [s["title"] for s in out] == ["Dreamstates"]

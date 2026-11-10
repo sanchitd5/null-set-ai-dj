@@ -174,3 +174,23 @@ def profile_for(names: Dict[str, str], history: Sequence[str], playing_id: Optio
 def check(names: Dict[str, str], profile: dict, track_id: Optional[str] = None,
           name: Optional[str] = None) -> Tuple[str, str]:
     return lang_id.verdict(record_for(names, track_id, name), profile)
+
+
+def verify(names: Dict[str, str], profile: dict, track_id: Optional[str] = None, name: Optional[str] = None,
+           wait_s: float = 0.0, strict: bool = False) -> Tuple[str, str]:
+    """check() plus, for a language-led set (profile "pure"), an audio check before the song is committed: a song
+    whose sung language is unknown is queued for language id (urgent) and waited for up to wait_s seconds.
+    strict + led set + still no record = ("unverified", reason): the caller drops the pick. Without strict, or
+    for a mixed set, this is exactly check()."""
+    verdict, why = check(names, profile, track_id, name)
+    if verdict != "unknown" or not strict or not profile.get("pure"):
+        return verdict, why
+    if track_id and wait_s > 0 and lang_id.available():
+        queue(track_id, urgent=True)
+        end = time.monotonic() + wait_s
+        while time.monotonic() < end:
+            time.sleep(0.5)
+            verdict, why = check(names, profile, track_id, name)
+            if verdict != "unknown":
+                return verdict, why
+    return "unverified", f"language unverified: set is {profile.get('top')}, this song's sung language is not known"

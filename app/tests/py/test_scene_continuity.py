@@ -31,7 +31,7 @@ def test_mashup_is_a_bounded_last_resort():
     data = {"current_genre": "melodic techno", "suggestions": [
         _sugg("Bjork", "EVIL x YOU (bjork X Melanie Martinez MashMIX)")]}
     kept = _filter_suggestions(data, ["Anyma - Atoma"])
-    assert len(kept) == 1
+    assert kept == []      # no scene-leaving last resort (HF2): the caller repeats / extends instead
 
 
 def test_open_format_scene_keeps_mashups():

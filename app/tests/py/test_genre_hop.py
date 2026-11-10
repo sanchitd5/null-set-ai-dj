@@ -35,8 +35,8 @@ def test_move_without_occasion_does_not_license_jump():
 
 def test_family_jump_overrides_low_self_rating():
     # the real case: Afusic "Pal Pal" -> Fred again.. "Delilah", model said hop 1
-    delilah = dict(_s("Delilah", 1), genre="UK garage / electronic")
-    near = dict(_s("Near", 1), genre="Urdu pop")
+    delilah = dict(_s("Delilah", 1), genre="UK garage / electronic", data_genre="UK garage / electronic")
+    near = dict(_s("Near", 1), genre="Urdu pop", data_genre="Urdu pop")
     data = {"steering": "stay", "current_genre": "Pakistani pop / Urdu pop", "suggestions": [delilah, near]}
     assert [s["title"] for s in _filter_suggestions(data, [])] == ["Near"]
 
@@ -45,9 +45,9 @@ def test_all_jumps_triggers_one_retry(monkeypatch):
     import json
     import app.ui.services.autopilot_service as svc
     jump = {"current_genre": "Urdu pop", "steering": "move", "suggestions": [
-        {"artist": "Fred again..", "title": "Jungle", "genre": "UK garage", "genre_hop": 1}]}
+        {"artist": "Fred again..", "title": "Jungle", "genre": "UK garage", "data_genre": "UK garage", "genre_hop": 1}]}
     step = {"current_genre": "Urdu pop", "suggestions": [
-        {"artist": "AP Dhillon", "title": "With You", "genre": "Punjabi pop", "genre_hop": 1}]}
+        {"artist": "AP Dhillon", "title": "With You", "genre": "Punjabi pop", "data_genre": "Punjabi pop", "genre_hop": 1}]}
     replies, prompts = iter([json.dumps(jump), json.dumps(step)]), []
     monkeypatch.setattr(svc, "chat_raw", lambda s, u, **k: (prompts.append(u), next(replies))[1])
     out = svc.suggest_next_tracks("Pal Pal", "Afusic", 100.0, "8A", 200.0, 0.5, "", [])
@@ -195,13 +195,13 @@ def test_era_parsing_and_gap():
 
 def test_era_jump_dropped_unless_moving():
     data = {"current_genre": "eurodance", "current_era": "1990s", "suggestions": [
-        {"artist": "Bicep", "title": "Glue", "genre": "dance", "era": "2010s", "genre_hop": 0, "occasion_fit": 8},
-        {"artist": "Vengaboys", "title": "Boom, Boom, Boom, Boom!!", "genre": "eurodance", "era": "1990s",
+        {"artist": "Bicep", "title": "Glue", "genre": "dance", "data_genre": "dance", "era": "2010s", "genre_hop": 0, "occasion_fit": 8},
+        {"artist": "Vengaboys", "title": "Boom, Boom, Boom, Boom!!", "genre": "eurodance", "data_genre": "eurodance", "era": "1990s",
          "genre_hop": 0, "occasion_fit": 8}]}
     assert [s["title"] for s in _filter_suggestions(data, [])] == ["Boom, Boom, Boom, Boom!!"]
     only_jump = {**data, "suggestions": data["suggestions"][:1]}
     kept = _filter_suggestions(only_jump, [])
-    assert [s["title"] for s in kept] == ["Glue"] and kept[0]["rejected_reason"].startswith("era jump")
+    assert kept == []      # inside a scene the smallest-jump last resort is gone: the caller repeats / extends instead
     assert [s["title"] for s in _filter_suggestions(data, [], allow_genre_change=True)] == ["Glue", "Boom, Boom, Boom, Boom!!"]
 
 

@@ -687,6 +687,8 @@ class LanguageCheckRequest(BaseModel):
     track_id: Optional[str] = None
     name: Optional[str] = None          # "Artist - Title" when the song is not (yet) in the library
     history: List[str] = []             # songs played in this set, oldest first (the playing song last)
+    strict: bool = False                # language-led set: an unknown language is identified first, else "unverified"
+    verify_s: float = Field(default=0.0, ge=0.0, le=60.0)   # how long strict may wait for the language id
 
 
 @app.get("/api/tracks/{track_id}/language")
@@ -707,8 +709,8 @@ def post_language_check(req: LanguageCheckRequest):
     from app.ui.services import lang_service
 
     prof = lang_service.profile_for(_track_names, req.history[-12:])
-    verdict, reason = lang_service.check(_track_names, prof, req.track_id, req.name)
-    if verdict in ("block", "penalty"):
+    verdict, reason = lang_service.verify(_track_names, prof, req.track_id, req.name, req.verify_s, req.strict)
+    if verdict in ("block", "penalty", "unverified"):
         from app.ui.services.autopilot_service import note_rejects
 
         note_rejects([{"artist": "", "title": req.name or _track_names.get(req.track_id or "", "")}], reason)
