@@ -732,6 +732,7 @@ from app.music_brain.analysis.genre import MAX_ERA_GAP, era_gap  # noqa: E402
 from app.music_brain.analysis import scene_profile as _scene_profile  # noqa: E402
 from app.music_brain.analysis.genre import genre_scenes as _genre_scenes  # noqa: E402
 from app.music_brain.generated import dj_config as DJ  # noqa: E402
+from app.music_brain.pick_accept import accept_candidate  # noqa: E402
 
 # Scene continuity (owner: Anyma "Atoma" went to "EVIL x YOU (bjork X Melanie
 # Martinez MashMIX)"). A mashup / bootleg / "A x B" title inside a coherent
@@ -943,12 +944,12 @@ def yt_fallback(rows, *, cur_genre, genre_of, lang_check=None, exclude=(), limit
     language before it is committed (the HF2 path). Each pick is logged as source `yt_fallback`. [] = none passes: the caller
     repeats an earlier in-scene song or holds."""
     out: list[dict] = []
-    played = {" ".join(str(x).lower().split()) for x in exclude}
+    heard = list(exclude)
     for r in rows or []:
         if not isinstance(r, dict) or not r.get("title"):
             continue
         label = f"{r.get('artist', '')} - {r['title']}".strip(" -")
-        if " ".join(label.lower().split()) in played or " ".join(str(r["title"]).lower().split()) in played:
+        if not accept_candidate({"ids": [label, r["title"]]}, {"played": heard})[0]:      # G23: already heard
             continue
         if _is_noise_title(label):
             continue

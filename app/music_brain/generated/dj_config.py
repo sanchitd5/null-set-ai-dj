@@ -1,9 +1,9 @@
-# GENERATED from dj-config bd025d3 - do not edit
-# config-hash: 05f15bc489b2
+# GENERATED from dj-config 685842b-dirty - do not edit
+# config-hash: fbfce8e240d1
 """Generated from dj-config/config/*.json. Do not edit; run dj-config/tool/gen.py."""
 
-SHA = "bd025d3"
-CONFIG_HASH = "05f15bc489b2"
+SHA = "685842b-dirty"
+CONFIG_HASH = "fbfce8e240d1"
 
 ACCENT_MAX_SHARE = 0.2  # fraction
 ACCENT_RECIPES = ["Backspin (Spinback)", "Echo Out", "Bass Swap"]  # list
@@ -97,6 +97,7 @@ PEAK_KEY_MIN = 0.8  # score
 PEAK_WINDOW = 6  # songs
 PHONE_SNAPSHOT_MOBILE_MAX_MB = 10  # MB
 PHONE_SNAPSHOT_TOP_K = 0  # edges
+PICK_RULES = {"version": 1, "max_track_secs": 421, "max_era_gap": 1, "genre_resolution": {"doc": "Owner rule: the artist decides the genre. Credited artists are tried in credit order (the first, primary one wins); each artist's genre is its graph genre, else the majority of its labelled library songs (ties: first seen), else trusted platform metadata. No artist genre at all: the song's own data label. Else unknown (the language-verify path). Never the LLM's label.", "artist_steps": ["graph_genre", "library_majority", "platform_genre"], "song_step": "data_genre"}, "gates": [{"id": "playing", "hard": True, "reason": "playing now"}, {"id": "played", "hard": True, "reason": "already played this set"}, {"id": "vetoed", "hard": True, "reason": "owner veto"}, {"id": "not_music", "hard": True, "reason": "Not mixed (too long / not music)"}, {"id": "length_unknown", "hard": True, "reason": "Length unknown (not read yet)"}, {"id": "too_long", "hard": True, "reason": "Too long · {dur} (limit {limit})"}, {"id": "language_block", "hard": True, "reason": "{why}", "why_default": "language jump"}, {"id": "language_unverified", "hard": True, "reason": "language unverified: {why}", "why_default": "sung language not identified in time"}, {"id": "language_penalty", "hard": False, "reason": "{why}", "why_default": "language penalty"}, {"id": "scene", "hard": False, "reason": "leaves the set's {scene} scene ({genre})", "genre_default": "no label"}, {"id": "era_jump", "hard": False, "reason": "era jump ({era} after {cur_era})"}]}  # mixed
 PICK_TIMEOUT_MS = 240000  # ms
 PITCH_RANGE_PCT = 8.0  # pct
 PLAN_ASK_WAIT_MS = 20000  # ms
