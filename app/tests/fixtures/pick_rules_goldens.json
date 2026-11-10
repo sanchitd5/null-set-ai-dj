@@ -1,7 +1,208 @@
 {
- "_generated": "GENERATED from dj-config bd025d3-dirty - do not edit",
- "config_hash": "0833cb0435fa",
+ "_generated": "GENERATED from dj-config 685842b-dirty - do not edit",
+ "config_hash": "fbfce8e240d1",
  "files": {
+  "genre": {
+   "kind": "resolve_genre",
+   "doc": "Owner rule: the artist decides the genre. input -> resolveGenre verdict.",
+   "cases": [
+    {
+     "name": "graph genre of the artist wins over the song's own label",
+     "input": {
+      "artists": [
+       {
+        "name": "artist one",
+        "graph_genre": "house"
+       }
+      ],
+      "data_genre": "metal"
+     },
+     "expect": {
+      "genre": "house",
+      "source": "graph"
+     }
+    },
+    {
+     "name": "library majority when the graph has nothing",
+     "input": {
+      "artists": [
+       {
+        "name": "artist one",
+        "library_genres": [
+         "techno",
+         "house",
+         "techno",
+         "  ",
+         "techno"
+        ]
+       }
+      ],
+      "data_genre": "metal"
+     },
+     "expect": {
+      "genre": "techno",
+      "source": "library"
+     }
+    },
+    {
+     "name": "library tie: first seen wins (an artist spanning scenes)",
+     "input": {
+      "artists": [
+       {
+        "name": "artist one",
+        "library_genres": [
+         "house",
+         "techno",
+         "techno",
+         "house"
+        ]
+       }
+      ],
+      "data_genre": null
+     },
+     "expect": {
+      "genre": "house",
+      "source": "library"
+     }
+    },
+    {
+     "name": "platform metadata after the library",
+     "input": {
+      "artists": [
+       {
+        "name": "artist one",
+        "platform_genre": "trance"
+       }
+      ],
+      "data_genre": "metal"
+     },
+     "expect": {
+      "genre": "trance",
+      "source": "platform"
+     }
+    },
+    {
+     "name": "graph beats library beats platform",
+     "input": {
+      "artists": [
+       {
+        "name": "artist one",
+        "graph_genre": "house",
+        "library_genres": [
+         "techno"
+        ],
+        "platform_genre": "trance"
+       }
+      ],
+      "data_genre": null
+     },
+     "expect": {
+      "genre": "house",
+      "source": "graph"
+     }
+    },
+    {
+     "name": "no artist genre: the song's data label",
+     "input": {
+      "artists": [
+       {
+        "name": "artist one"
+       }
+      ],
+      "data_genre": "disco"
+     },
+     "expect": {
+      "genre": "disco",
+      "source": "data"
+     }
+    },
+    {
+     "name": "no artist, no data label: unknown",
+     "input": {
+      "artists": [
+       {
+        "name": "artist one"
+       }
+      ],
+      "data_genre": null
+     },
+     "expect": {
+      "genre": null,
+      "source": "unknown"
+     }
+    },
+    {
+     "name": "empty data label is unknown",
+     "input": {
+      "artists": [],
+      "data_genre": ""
+     },
+     "expect": {
+      "genre": null,
+      "source": "unknown"
+     }
+    },
+    {
+     "name": "primary credited artist wins over a featured one",
+     "input": {
+      "artists": [
+       {
+        "name": "primary",
+        "graph_genre": "house"
+       },
+       {
+        "name": "featured",
+        "graph_genre": "metal"
+       }
+      ],
+      "data_genre": null
+     },
+     "expect": {
+      "genre": "house",
+      "source": "graph"
+     }
+    },
+    {
+     "name": "a primary artist with no genre falls to the next credited artist",
+     "input": {
+      "artists": [
+       {
+        "name": "primary"
+       },
+       {
+        "name": "featured",
+        "graph_genre": "metal"
+       }
+      ],
+      "data_genre": "disco"
+     },
+     "expect": {
+      "genre": "metal",
+      "source": "graph"
+     }
+    },
+    {
+     "name": "blank labels are ignored",
+     "input": {
+      "artists": [
+       {
+        "name": "artist one",
+        "graph_genre": "  ",
+        "library_genres": [
+         "",
+         "jazz"
+        ]
+       }
+      ],
+      "data_genre": null
+     },
+     "expect": {
+      "genre": "jazz",
+      "source": "library"
+     }
+    }
+   ]
+  },
   "hard": {
    "doc": "pick_rules golden vectors (G23): candidate + set state -> acceptCandidate verdict. needs_hooks: needs the host's genre family / era functions (not run by the JS check).",
    "cases": [
@@ -760,6 +961,38 @@
      "expect": {
       "ok": true,
       "reason": null
+     },
+     "needs_hooks": true
+    },
+    {
+     "name": "scene gate uses the artist's genre, not the song's label",
+     "candidate": {
+      "ids": [
+       "song c"
+      ],
+      "duration_s": 200,
+      "genre": "house",
+      "genre_inputs": {
+       "artists": [
+        {
+         "name": "artist one",
+         "graph_genre": "metal"
+        }
+       ],
+       "data_genre": "house"
+      }
+     },
+     "state": {
+      "playing_ids": [
+       "song p"
+      ],
+      "played": [],
+      "vetoed": [],
+      "scene_genre": "house"
+     },
+     "expect": {
+      "ok": false,
+      "reason": "leaves the set's house scene (metal)"
      },
      "needs_hooks": true
     }

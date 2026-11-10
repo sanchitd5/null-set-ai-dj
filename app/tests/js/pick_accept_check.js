@@ -3,11 +3,18 @@ const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
 require("../../ui/static/generated/dj_config.js");
-const { acceptCandidate } = require("../../ui/static/pick_accept.js");
+const { acceptCandidate, resolveGenre } = require("../../ui/static/pick_accept.js");
 
 const goldens = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "fixtures", "pick_rules_goldens.json"), "utf8"));
 let ran = 0, bad = 0;
 for (const [file, body] of Object.entries(goldens.files)) {
+  if (body.kind === "resolve_genre") {
+    for (const c of body.cases) {
+      ran++;
+      try { assert.deepStrictEqual(resolveGenre(c.input), c.expect); } catch (e) { bad++; console.error(`FAIL genre: ${c.name}`); }
+    }
+    continue;
+  }
   for (const c of body.cases) {
     if (c.needs_hooks) continue;
     const got = acceptCandidate(c.candidate, c.state);

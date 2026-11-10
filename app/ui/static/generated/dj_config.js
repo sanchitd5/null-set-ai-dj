@@ -1,5 +1,5 @@
-// GENERATED from dj-config bd025d3-dirty - do not edit
-// config-hash: 0833cb0435fa
+// GENERATED from dj-config 685842b-dirty - do not edit
+// config-hash: fbfce8e240d1
 (function (root) {
   "use strict";
   const values = {
@@ -95,7 +95,7 @@
     "PEAK_WINDOW": 6,
     "PHONE_SNAPSHOT_MOBILE_MAX_MB": 10,
     "PHONE_SNAPSHOT_TOP_K": 0,
-    "PICK_RULES": {"version": 1, "max_track_secs": 421, "max_era_gap": 1, "gates": [{"id": "playing", "hard": true, "reason": "playing now"}, {"id": "played", "hard": true, "reason": "already played this set"}, {"id": "vetoed", "hard": true, "reason": "owner veto"}, {"id": "not_music", "hard": true, "reason": "Not mixed (too long / not music)"}, {"id": "length_unknown", "hard": true, "reason": "Length unknown (not read yet)"}, {"id": "too_long", "hard": true, "reason": "Too long · {dur} (limit {limit})"}, {"id": "language_block", "hard": true, "reason": "{why}", "why_default": "language jump"}, {"id": "language_unverified", "hard": true, "reason": "language unverified: {why}", "why_default": "sung language not identified in time"}, {"id": "language_penalty", "hard": false, "reason": "{why}", "why_default": "language penalty"}, {"id": "scene", "hard": false, "reason": "leaves the set's {scene} scene ({genre})", "genre_default": "no label"}, {"id": "era_jump", "hard": false, "reason": "era jump ({era} after {cur_era})"}]},
+    "PICK_RULES": {"version": 1, "max_track_secs": 421, "max_era_gap": 1, "genre_resolution": {"doc": "Owner rule: the artist decides the genre. Credited artists are tried in credit order (the first, primary one wins); each artist's genre is its graph genre, else the majority of its labelled library songs (ties: first seen), else trusted platform metadata. No artist genre at all: the song's own data label. Else unknown (the language-verify path). Never the LLM's label.", "artist_steps": ["graph_genre", "library_majority", "platform_genre"], "song_step": "data_genre"}, "gates": [{"id": "playing", "hard": true, "reason": "playing now"}, {"id": "played", "hard": true, "reason": "already played this set"}, {"id": "vetoed", "hard": true, "reason": "owner veto"}, {"id": "not_music", "hard": true, "reason": "Not mixed (too long / not music)"}, {"id": "length_unknown", "hard": true, "reason": "Length unknown (not read yet)"}, {"id": "too_long", "hard": true, "reason": "Too long · {dur} (limit {limit})"}, {"id": "language_block", "hard": true, "reason": "{why}", "why_default": "language jump"}, {"id": "language_unverified", "hard": true, "reason": "language unverified: {why}", "why_default": "sung language not identified in time"}, {"id": "language_penalty", "hard": false, "reason": "{why}", "why_default": "language penalty"}, {"id": "scene", "hard": false, "reason": "leaves the set's {scene} scene ({genre})", "genre_default": "no label"}, {"id": "era_jump", "hard": false, "reason": "era jump ({era} after {cur_era})"}]},
     "PICK_TIMEOUT_MS": 240000,
     "PITCH_RANGE_PCT": 8.0,
     "PLAN_ASK_WAIT_MS": 20000,
@@ -153,6 +153,6 @@
   };
   root.DJ_CONFIG = Object.freeze(values);
   root.DJ_CONFIG_LIVE = Object.freeze(live);
-  root.DJ_CONFIG_META = Object.freeze({ sha: "bd025d3-dirty", hash: "0833cb0435fa" });
+  root.DJ_CONFIG_META = Object.freeze({ sha: "685842b-dirty", hash: "fbfce8e240d1" });
   if (typeof module !== "undefined" && module.exports) module.exports = root.DJ_CONFIG;
 })(typeof window !== "undefined" ? window : globalThis);

@@ -71,6 +71,37 @@ def _why(reason, gate: dict) -> str:
     return reason if reason else gate["why_default"]
 
 
+def _label(v) -> Optional[str]:
+    s = str(v if v is not None else "").strip()
+    return s or None
+
+
+def resolve_genre(inp: dict) -> dict:
+    """Owner rule: the artist decides the genre (PICK_RULES.genre_resolution). Credit order, primary first; per artist its
+    graph genre, else the majority of its labelled library songs (ties: first seen), else platform metadata; no artist genre at
+    all: the song's own data label; else unknown. Never the LLM's label. source: graph|library|platform|data|unknown."""
+    for a in (inp or {}).get("artists") or []:
+        g = _label(a.get("graph_genre"))
+        if g:
+            return {"genre": g, "source": "graph"}
+        counts: dict = {}
+        for x in a.get("library_genres") or []:
+            lab = _label(x)
+            if lab:
+                counts[lab] = counts.get(lab, 0) + 1
+        if counts:
+            best = next(iter(counts))
+            for k, n in counts.items():
+                if n > counts[best]:
+                    best = k
+            return {"genre": best, "source": "library"}
+        p = _label(a.get("platform_genre"))
+        if p:
+            return {"genre": p, "source": "platform"}
+    d = _label((inp or {}).get("data_genre"))
+    return {"genre": d, "source": "data"} if d else {"genre": None, "source": "unknown"}
+
+
 def accept_candidate(candidate: dict, state: dict, rules: Optional[dict] = None,
                      hooks: Optional[PickHooks] = None) -> Tuple[bool, Optional[str]]:
     r = rules if rules is not None else _cfg.PICK_RULES
@@ -85,6 +116,7 @@ def accept_candidate(candidate: dict, state: dict, rules: Optional[dict] = None,
     dur = float(dur) if dur is not None else None
     v, lreason = c.get("lang_verdict"), c.get("lang_reason")
     profile = s.get("punjabi_profile") or "off"
+    genre = resolve_genre(c["genre_inputs"])["genre"] if c.get("genre_inputs") else c.get("genre")
     for g in r["gates"]:
         gid = g["id"]
         if g.get("hard") is not True and gid in relax:
@@ -115,8 +147,8 @@ def accept_candidate(candidate: dict, state: dict, rules: Optional[dict] = None,
             vars_["why"] = _why(lreason, g)
         elif gid == "scene":
             scene = s.get("scene_genre")
-            refuse = bool(scene) and bool(hooks.leaves_scene(scene, c.get("genre"), profile))
-            vars_ = {"scene": scene or "", "genre": c.get("genre") or g["genre_default"]}
+            refuse = bool(scene) and bool(hooks.leaves_scene(scene, genre, profile))
+            vars_ = {"scene": scene or "", "genre": genre or g["genre_default"]}
         elif gid == "era_jump":
             gap = hooks.era_gap(s.get("cur_era"), c.get("era"))
             refuse = gap is not None and gap > r["max_era_gap"]

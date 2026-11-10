@@ -14,9 +14,32 @@
   const fmt = (t, v) => t.replace(/\{(\w+)\}/g, (m, k) => (k in v ? v[k] : m));
   const why = (reason, gate) => (reason ? reason : gate.why_default);
 
+  const label = (v) => { const s = String(v == null ? "" : v).trim(); return s || null; };
+
+  // Owner rule: the artist decides the genre (PICK_RULES.genre_resolution). Credit order, primary first; per artist graph genre,
+  // else library majority (ties: first seen), else platform metadata; no artist genre: the song's data label; else unknown.
+  function resolveGenre(input) {
+    for (const a of (input && input.artists) || []) {
+      const g = label(a.graph_genre);
+      if (g) return { genre: g, source: "graph" };
+      const counts = new Map();
+      for (const x of a.library_genres || []) { const l = label(x); if (l) counts.set(l, (counts.get(l) || 0) + 1); }
+      if (counts.size) {
+        let best = null;
+        for (const [k, n] of counts) if (best === null || n > counts.get(best)) best = k;
+        return { genre: best, source: "library" };
+      }
+      const p = label(a.platform_genre);
+      if (p) return { genre: p, source: "platform" };
+    }
+    const d = label(input && input.data_genre);
+    return d ? { genre: d, source: "data" } : { genre: null, source: "unknown" };
+  }
+
   function acceptCandidate(candidate, state, rules, hooks) {
     const r = rules || root.DJ_CONFIG.PICK_RULES;
     const c = candidate || {}, s = state || {};
+    const genre = c.genre_inputs ? resolveGenre(c.genre_inputs).genre : (c.genre == null ? null : c.genre);
     const ids = (c.ids || []).map(norm);
     const playing = toSet(s.playing_ids), played = toSet(s.played), vetoed = toSet(s.vetoed);
     const relax = new Set((s.relax || []).map(String));
@@ -44,8 +67,8 @@
         case "scene": {
           if (!hooks || !hooks.leavesScene) break;       // no genre tables: skipped
           const scene = s.scene_genre;
-          refuse = !!scene && !!hooks.leavesScene(scene, c.genre == null ? null : c.genre, profile);
-          vars = { scene: scene || "", genre: c.genre || g.genre_default };
+          refuse = !!scene && !!hooks.leavesScene(scene, genre, profile);
+          vars = { scene: scene || "", genre: genre || g.genre_default };
           break;
         }
         case "era_jump": {
@@ -62,7 +85,7 @@
     return { ok: true, reason: null };
   }
 
-  const api = { acceptCandidate };
+  const api = { acceptCandidate, resolveGenre };
   root.PickAccept = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof window !== "undefined" ? window : globalThis);
