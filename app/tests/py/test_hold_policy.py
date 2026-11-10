@@ -78,6 +78,7 @@ def _facts(recent, merge_possible, recipes=("Echo Out", "Long Blend")):
 def test_plan_rule_layer_prefers_merge_and_caps_accents():
     out = mind_plan.validate_plan({"candidate": 0, "exit": 100.0}, _facts(["Long Blend"], True))
     assert out["prefer_merge"] is True and "merge share" in out["recipe_mix"]
+    assert out["candidate"]["recipe"] == "Stem Merge"   # a phone that reports merge_possible books the merge
     out = mind_plan.validate_plan({"candidate": 0, "exit": 100.0}, _facts(["Stem Merge"] * 3 + ["Echo Out"], False))
     assert out["candidate"]["recipe"] == "Long Blend" and out["candidate_index"] == 1
     out = mind_plan.validate_plan({"candidate": 0, "exit": 100.0}, _facts(["Stem Merge"] * 4, False))
@@ -105,3 +106,15 @@ def test_set_log_accepts_hold_fields():
         assert "unrecognized" not in str(exc), exc
         return
     assert out["transitions"][0]["hold_bars"] == 62
+
+
+def test_level_match_lifts_a_dropout_bin_but_not_a_dead_stem():
+    n = 40
+    loud = [0.45] * n
+    e_a = {"drums": [0.0] + loud[1:], "bass": [0.0] + loud[1:], "vocals": [0.3] * n, "other": [0.3] * n}
+    e_b = {s: [0.3] * n for s in ("drums", "bass", "vocals", "other")}
+    lm = hp.level_match(e_a, e_b, {"drums": "a", "bass": "a", "vocals": "b", "other": "b"}, 32)
+    assert lm["eA"]["drums"][0] > 0.1 and lm["eA"]["drums"][1] == 0.45
+    dead = {s: [0.0] * n for s in ("drums", "bass", "vocals", "other")}
+    lm = hp.level_match(dead, dead, {"drums": "a", "bass": "a", "vocals": "b", "other": "b"}, 32)
+    assert all(v == 0 for v in lm["eA"]["drums"])

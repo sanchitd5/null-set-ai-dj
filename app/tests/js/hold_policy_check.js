@@ -64,4 +64,34 @@ assert.strictEqual(HP.holdEndReason({ userAction: true, energyNow: 1, energyAtSt
 assert.strictEqual(HP.holdEndBar(17), 24);
 const tl = HP.holdTelemetry([{ recipe: "Stem Merge", holdBars: 30, holdS: 56.2 }, { recipe: "Stem Merge", holdBars: 62, holdS: 85.3, early: "vocal clash" }, { recipe: "Echo Out" }, { recipe: "Long Blend" }]);
 assert.deepStrictEqual([tl.merge_share, tl.hold_count, tl.hold_seconds, tl.early_ends], [0.5, 2, 141.5, 1]);
+
+// running hold ends early on the next phrase line (bars from the line, polled like the console's 250 ms interval)
+{
+  const run = (o) => {
+    const g = HP.holdGuard(2, 32, 8);
+    for (let b = 0; b < 32; b += 0.25) {
+      const r = g.check({ bar: b, vocalClash: o.clash != null && b >= o.clash, energy: o.drop != null && b >= o.drop ? 0.3 : 1, userAction: o.touch != null && b >= o.touch });
+      if (r != null && b >= r) return [r, g.reason];
+    }
+    return null;
+  };
+  assert.strictEqual(run({}), null);
+  assert.deepStrictEqual(run({ clash: 10 }), [16, "vocal clash"]);
+  assert.deepStrictEqual(run({ drop: 17 }), [24, "energy drop"]);
+  assert.deepStrictEqual(run({ touch: 8 }), [8, "user action"]);
+  const g = HP.holdGuard(2, 32, 8);
+  assert.strictEqual(g.check({ bar: 25, vocalClash: true, energy: 1 }), null);               // the next line is the hold's own end
+}
+
+// "no stem audible at 0.06": a dropout bin of a held stem no longer refuses, a fully dead window still does
+{
+  const base = (o) => ({ gap: 0.01, keyScore: 0.9, roomBars: 100, barS: 2, aT: 0, bT: 0, barA: 2, barB: 2, aVox: [], bVox: [], ...o });
+  const eA = env(80, (s, i) => (s === "drums" || s === "bass" ? (i < 1 ? 0 : 0.45) : 0.3)), eB = env(80, (s) => (s === "vocals" || s === "other" ? 0.3 : 0.45));
+  const off = sm.holdPlan(base({ eA, eB, levelMatch: false })), on = sm.holdPlan(base({ eA, eB }));
+  assert.strictEqual(off.ok, false);
+  assert.strictEqual(off.tried[0].reason, "no stem audible at 0.06");
+  assert.ok(on.ok, on.reason);
+  const dead = env(80, () => 0);
+  assert.strictEqual(sm.holdPlan(base({ eA: dead, eB: dead })).ok, false);
+}
 console.log("hold_policy_check ok");

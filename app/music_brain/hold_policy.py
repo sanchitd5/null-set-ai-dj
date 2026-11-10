@@ -23,6 +23,7 @@ INSONG_HOLDS_ON = True
 ACCENT_RECIPES = ("Backspin (Spinback)", "Echo Out", "Bass Swap")
 STEM_MERGE = "Stem Merge"
 
+_SILENT_BIN, _DROPOUT_FLOOR = 0.002, 0.5
 _MERGE_BARS_RANGE = (16, 128)
 _INSONG_BARS_RANGE = (8, 64)
 _STEMS = ("drums", "bass", "vocals", "other")
@@ -119,8 +120,13 @@ def level_match(e_a: dict, e_b: dict, combo: dict, bars: int, max_boost_db: floa
     target = max(rel.values(), default=0.0)
     trim = {n: (_clamp(target / rel[n], 1, cap) if n in rel else 1.0) for n in _STEMS}
 
+    def lift(k: str, arr: list) -> list:
+        # a dropout bin (silent while the stem's section is loud) is matched to a fraction of the stem's own level
+        floor = rel.get(k, 0.0) * _SHARE[k] * trim[k] * _DROPOUT_FLOOR
+        return [floor if v <= _SILENT_BIN else v * trim[k] for v in arr]
+
     def scaled(src: dict, deck: str) -> dict:
-        return {k: ([v * trim[k] for v in src[k]] if k in _STEMS and combo.get(k) == deck and isinstance(src[k], list) else src[k])
+        return {k: (lift(k, src[k]) if k in _STEMS and combo.get(k) == deck and isinstance(src[k], list) else src[k])
                 for k in src}
 
     return {"eA": scaled(e_a, "a"), "eB": scaled(e_b, "b"), "trim": trim}

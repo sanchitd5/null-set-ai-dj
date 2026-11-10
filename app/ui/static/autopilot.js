@@ -1601,7 +1601,10 @@ function createAutopilotEngine({ host, ai }) {
     if (gap > 0.02 && !(idk.tempoStems && Math.abs(idk.tempoStems.bpm / aEff - 1) < 0.01)) return null;
     const barS = 240 / aEff;
     const aLeft = od.buffer ? (od.buffer.duration - od._currentPosition()) / od._playbackRate() : 0;
-    const M = ve.vocal32 >= 0.7 && aLeft >= 44 * barS ? 32 : aLeft >= 26 * barS ? 16 : 0;
+    let M = ve.vocal32 >= 0.7 && aLeft >= 44 * barS ? 32 : aLeft >= 26 * barS ? 16 : 0;
+    // G17: the merge (M + 8 handover + 2 spare) never runs past B's end either
+    const bRoom = idk.buffer && idk.buffer.duration > 0 ? (idk.buffer.duration - ve.entry) / (240 / idk.bpm) : Infinity;
+    if (M && bRoom < M + 10) M = bRoom >= 26 ? 16 : 0;
     return M ? { entry: ve.entry, M, rap: !!ve.rap, gap } : null;
   }
   // Mean RMS per stem over [songT, songT + bars) of deck d (null: no decoded stems).
@@ -1706,7 +1709,7 @@ function createAutopilotEngine({ host, ai }) {
   // clean stems, one sub-bass owner and the level floor. -> {plan} | {gate, why, tried}.
   // bFallback: B's start when the vocal-entry fetch has not landed (measured stems decide).
   // prefer (a forced plan's stored merge): {entry, M, label}; B enters on the stored line
-  function planHold(od, idk, aT, bFallback, sm, prefer = null) {
+  function planHold(od, idk, aT, bFallback, sm, prefer = null, bounds = null) {
     const no = (gate, why) => ({ gate, why, tried: [] });
     if (!sm.core.holdPlan) return no("module", "no holdPlan");
     if (!od.stemsReady || !idk.stems || !od.bpm || !idk.bpm) {
@@ -1722,8 +1725,9 @@ function createAutopilotEngine({ host, ai }) {
         : `gap ${(gap * 100).toFixed(1)} % needs key-locked tempo stems at A's tempo, B has none`);
     }
     const barA = 240 / od.bpm, barB = 240 / idk.bpm, barS = 240 / aEff;
-    const roomBars = od.buffer ? (od.buffer.duration - aT) / barA : 0;
-    const hs = HoldPolicy.settings(host.holdSettings), n = Math.max(1, Math.min(Math.floor(hs.mergeMax / 8), Math.floor((roomBars - 10) / 8))) * 8 + 10;
+    const roomA = od.buffer ? (od.buffer.duration - aT) / barA : 0;
+    const roomBars = idk.buffer && idk.buffer.duration > 0 ? Math.min(roomA, (idk.buffer.duration - entry) / barB) : roomA;   // G17: B's room too
+    const hs = HoldPolicy.settings(host.holdSettings), hMin = bounds ? bounds.min : hs.mergeMin, hMax = bounds ? bounds.max : hs.mergeMax, n = Math.max(1, Math.min(Math.floor(hMax / 8), Math.floor((roomBars - 10) / 8))) * 8 + 10;
     const cs = host.mod.djMind && host.mod.djMind.core && host.mod.djMind.core.camelotScore;
     const ka = od.analysis && od.analysis.key && od.analysis.key.camelot, kb = idk.analysis && idk.analysis.key && idk.analysis.key.camelot;
     const eA = sm.stemEnergyBars(od, aT, barA, n), eB = sm.stemEnergyBars(idk, entry, barB, n);
@@ -1731,7 +1735,7 @@ function createAutopilotEngine({ host, ai }) {
       gap, keyScore: cs && ka && kb ? cs(ka, kb) : null, roomBars, barS, aT, bT: entry, barA, barB, bRap: !!(ve && ve.rap), eA, eB,
       aVox: od.analysis && od.analysis.vocal_active_regions, bVox: idk.analysis && idk.analysis.vocal_active_regions,
       aud: (() => { const aA = sm.stemEnergyBars(od, aT, barA, n, "audible"), aB = sm.stemEnergyBars(idk, entry, barB, n, "audible"); return aA && aB ? { aA, aB } : null; })(),
-      preferM: prefer && prefer.M, preferLabel: prefer && prefer.label, holdMin: hs.mergeMin, holdMax: hs.mergeMax,
+      preferM: prefer && prefer.M, preferLabel: prefer && prefer.label, holdMin: hMin, holdMax: hMax,
     });
     if (!hp.ok) return hp;
     return { plan: { entry, M: hp.M, rap: !!(ve && ve.rap), gap, ranked: hp.ranked, pick: hp.pick, aT, heard: false, hold: hp, phases: hp.phases, holdE: { eA, eB },
@@ -1741,10 +1745,10 @@ function createAutopilotEngine({ host, ai }) {
   // it (the reason is logged for the sim), the classic fixed-length merge below; then the
   // silent ear re-ranks the top 3 in the background (offline clips, nothing plays) before
   // the transition fires. Stored on B's deck as _mergePlan.
-  function planMerge(aId, bId, od, idk, aT, bFallback = null, prefer = null) {
+  function planMerge(aId, bId, od, idk, aT, bFallback = null, prefer = null, bounds = null) {
     const sm = host.mod.stemMoves;
     if (!sm || !sm.core.mergeRank) return null;
-    const hd = planHold(od, idk, aT, bFallback, sm, prefer);
+    const hd = planHold(od, idk, aT, bFallback, sm, prefer, bounds);
     let plan = hd.plan || null;
     if (!plan) {
       const mf = mergeFits(od, idk);
@@ -1839,11 +1843,46 @@ function createAutopilotEngine({ host, ai }) {
     // B was booked; then B takes every stem on the line, 8-bar crossfade.
     // The crossfader runs stem-moves' mergeFader, the curve the booking checked
     // (rawFader: B-ward units -> this direction's fader values).
+    let mergeFaderTimer = null;
     const runMergeFader = (sm, M, barS) => {
       for (const s of sm.core.rawFader(sm.core.mergeFader(M), out)) {
         if (s.bar === 0) { rampParam(xfEl, s.from, s.to, s.bars * barS * 1000); continue; }
-        later(Math.max(0, (xT0 + s.bar * barS - audioCtx.currentTime) * 1000), () => rampParam(xfEl, s.from, s.to, s.bars * barS * 1000));
+        mergeFaderTimer = later(Math.max(0, (xT0 + s.bar * barS - audioCtx.currentTime) * 1000), () => rampParam(xfEl, s.from, s.to, s.bars * barS * 1000));
       }
+    };
+    // G17 hold safety: a long merge hold ends early, on the next phrase line, on a vocal clash at the handover (measured live), an
+    // energy drop of the merged music, or a hand on the console (HoldPolicy.holdGuard). The handover is re-booked on that line.
+    const guardMergeHold = (sm, M, barS, pick) => {
+      const od = host.decks[out], idk = host.decks[inn];
+      if (!od || !idk || !pick || !(M > 8)) return;
+      const guard = HoldPolicy.holdGuard(2, M, 8), barA = 240 / (od.bpm || 128), barB = 240 / (idk.bpm || 128);
+      let touched = false, live = true, base = null;
+      // a hand on the console: any key press, or a seek of either deck (the playhead leaves its own course by over a second)
+      if (host.bus && host.bus.on) host.bus.on("keydown", () => { if (live) touched = true; });
+      const stop = () => { live = false; clearInterval(iv); };
+      const iv = setInterval(() => {
+        const bar = (audioCtx.currentTime - xT0) / barS;
+        if (bar >= M - 0.5 || !od.playing) return stop();
+        if (bar < 0) return;
+        const nowS = audioCtx.currentTime, rate = od._playbackRate ? od._playbackRate() : 1;
+        if (!base) base = { t: nowS, a: od._currentPosition(), b: idk._currentPosition() };
+        else if (Math.abs(od._currentPosition() - (base.a + (nowS - base.t) * rate)) > 1 || Math.abs(idk._currentPosition() - (base.b + (nowS - base.t) * (idk._playbackRate ? idk._playbackRate() : 1))) > 1) touched = true;
+        const left = M - bar, aTM = od._currentPosition() + left * barA, bTM = idk._currentPosition() + left * barB;
+        const ov = sm.core.overlapBars(sm.core.regionsToBars(od.analysis && od.analysis.vocal_active_regions, aTM, barA),
+          sm.core.regionsToBars(idk.analysis && idk.analysis.vocal_active_regions, bTM, barB), 0, 8) / 8;
+        const eA = sm.stemEnergyBars(od, od._currentPosition(), barA, 1), eB = sm.stemEnergyBars(idk, idk._currentPosition(), barB, 1);
+        let p = 0;
+        if (eA && eB) for (const n of ["drums", "bass", "vocals", "other"]) { const v = (pick.combo[n] === "a" ? eA : eB)[n][0] || 0; p += v * v; }
+        const end = guard.check({ bar, vocalClash: ov > 0.5, energy: Math.sqrt(p), userAction: touched });
+        if (end == null) return;
+        stop();
+        console.info(`merge hold ended early at bar ${end} of ${M} (${guard.reason})`);
+        if (mergeFaderTimer != null) clearTimeout(mergeFaderTimer);
+        const segs = sm.core.rawFader(sm.core.mergeFader(end), out), s = segs[1];
+        later(Math.max(0, (xT0 + end * barS - audioCtx.currentTime) * 1000), () => rampParam(xfEl, s.from, s.to, s.bars * barS * 1000));
+        sm.endMergeHold(out, inn, xT0, end, M, pick);
+      }, 250);
+      runTimers.push(iv);
     };
     {
       const smM = host.mod.stemMoves, odM = host.decks && host.decks[out], idM = host.decks && host.decks[inn];
@@ -1863,6 +1902,7 @@ function createAutopilotEngine({ host, ai }) {
         }
         if (secs > 0) {
           runMergeFader(smM, M, 240 / (odM.bpm || 128) / odM._playbackRate());
+          if (phases) guardMergeHold(smM, M, 240 / (odM.bpm || 128) / odM._playbackRate(), mp.pick);
           executedMove = "Stem Merge";
           if (phases) {
             const barS = 240 / (odM.bpm || 128) / odM._playbackRate();
@@ -4921,7 +4961,9 @@ function createAutopilotEngine({ host, ai }) {
     if (!mergesOn()) return { ok: false, why: "off: MERGE is off (ap-merge-toggle)" };
     lastMergeGate = null;
     const bFallback = ((idk.analysis && idk.analysis.phrase_boundaries_8bar) || [0])[0] || 0;
-    const mp = planMerge(o.aId, o.bId, od, idk, o.aT, bFallback);
+    // G17: the on-demand MERGE -> HOLD is an in-song hold: the in-song length setting (16-32 bars by default, user range 8-64)
+    const hs = HoldPolicy.settings(host.holdSettings);
+    const mp = planMerge(o.aId, o.bId, od, idk, o.aT, bFallback, null, hs.inSongHolds ? { min: hs.inSongMin, max: hs.inSongMax } : null);
     if (!mp) {
       const g = lastMergeGate;
       return { ok: false, why: g ? `${g.gate}: ${g.why}` : "merge: no plan for this pair" };

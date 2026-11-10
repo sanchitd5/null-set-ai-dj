@@ -14,6 +14,7 @@ if (typeof DJ_CONFIG === "undefined" && typeof require === "function") require("
   const STEM_MERGE = "Stem Merge";
   const STEMS = ["drums", "bass", "vocals", "other"];
   const SHARE = { drums: 0.45, bass: 0.45, vocals: 0.35, other: 0.35 };
+  const SILENT_BIN = 0.002, DROPOUT_FLOOR = 0.5;
   const MERGE_BARS_RANGE = [16, 128], INSONG_BARS_RANGE = [8, 64];
 
   const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
@@ -95,9 +96,11 @@ if (typeof DJ_CONFIG === "undefined" && typeof require === "function") require("
     const target = Math.max(0, ...Object.values(rel));
     const trim = {};
     for (const n of STEMS) trim[n] = rel[n] ? clamp(target / rel[n], 1, cap) : 1;
+    // a dropout bin (silent while the stem's section is loud) is matched to a fraction of the stem's own level; a stem silent over the whole window stays silent
+    const lift = (k, arr) => arr.map((v) => (v <= SILENT_BIN ? (rel[k] || 0) * SHARE[k] * trim[k] * DROPOUT_FLOOR : v * trim[k]));
     const scaled = (src, deck) => {
       const out = {};
-      for (const k of Object.keys(src)) out[k] = STEMS.includes(k) && combo[k] === deck && Array.isArray(src[k]) ? src[k].map((v) => v * trim[k]) : src[k];
+      for (const k of Object.keys(src)) out[k] = STEMS.includes(k) && combo[k] === deck && Array.isArray(src[k]) ? lift(k, src[k]) : src[k];
       return out;
     };
     return { eA: scaled(eA, "a"), eB: scaled(eB, "b"), trim };
@@ -112,6 +115,27 @@ if (typeof DJ_CONFIG === "undefined" && typeof require === "function") require("
   }
   const holdEndBar = (bar, phraseBars) => { const p = phraseBars || 8; return Math.floor((bar + p - 1e-9) / p) * p; };
 
+  // Watches one running long hold (bars counted from the line). check({bar, vocalClash, energy, userAction}) -> the phrase-grid bar the
+  // hold must end at, or null while it runs on; once decided it stays decided. A boundary at or past the hold's own end is no early end.
+  function holdGuard(fromBar, toBar, phraseBars) {
+    let energyAtStart = null;
+    const g = {
+      endBar: null, reason: null,
+      check(o) {
+        if (g.endBar != null) return g.endBar;
+        if (o.bar < fromBar || o.bar >= toBar) return null;
+        if (energyAtStart == null) energyAtStart = o.energy;
+        const why = holdEndReason({ vocalClash: o.vocalClash, energyNow: o.energy, energyAtStart, userAction: o.userAction });
+        if (!why) return null;
+        const end = holdEndBar(o.bar, phraseBars);
+        if (end >= toBar) return null;
+        g.reason = why;
+        return (g.endBar = end);
+      },
+    };
+    return g;
+  }
+
   // Per-set telemetry from the set log: [{ recipe, holdBars, holdS, early }] -> merge share, hold count, hold seconds.
   function holdTelemetry(log) {
     const n = log.length, merges = log.filter((t) => t.recipe === STEM_MERGE).length, holds = log.filter((t) => t.holdBars > 0);
@@ -125,7 +149,7 @@ if (typeof DJ_CONFIG === "undefined" && typeof require === "function") require("
 
   const core = { MERGE_HOLD_MIN_BARS, MERGE_HOLD_MAX_BARS, MERGE_HOLD_TARGET_S, HOLD_ALIGN_BARS, INSONG_HOLD_MIN_BARS, INSONG_HOLD_MAX_BARS,
     INSONG_HOLDS_ON, STEM_MERGE_SHARE_MIN, ACCENT_MAX_SHARE, ACCENT_RECIPES, STEM_MATCH_MAX_BOOST_DB, HOLD_END_ENERGY_DROP,
-    settings, mergeHoldBars, inSongHoldBars, isAccent, enforceRecipeMix, levelMatch, holdEndReason, holdEndBar, holdTelemetry };
+    settings, mergeHoldBars, inSongHoldBars, isAccent, enforceRecipeMix, levelMatch, holdEndReason, holdEndBar, holdGuard, holdTelemetry };
   if (typeof module !== "undefined" && module.exports) module.exports = core;
   root.HoldPolicy = core;
 })(typeof window !== "undefined" ? window : globalThis);

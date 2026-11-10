@@ -565,6 +565,7 @@ def validate_plan(raw: Any, facts: dict) -> dict:
         if why:
             if recipe == HOLD.STEM_MERGE:
                 prefer_merge = True
+                chosen["recipe"] = HOLD.STEM_MERGE   # the client books the merge (its planner re-checks every gate)
             else:
                 alt = next((i for i, c in enumerate(cands) if not HOLD.is_accent(c["recipe"])), None)
                 if alt is not None and alt != idx:
