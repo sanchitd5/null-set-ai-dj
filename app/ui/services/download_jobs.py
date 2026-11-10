@@ -56,6 +56,19 @@ def _prune() -> None:
         _jobs.pop(j["id"], None)
 
 
+def _length_gate(paths: List[Path]) -> None:
+    """A file outside 90 s - 9 min never enters the library: it goes to the pick quarantine (kept, not played)
+    and the job fails. Before HF9 the check ran after registration, so the clip / album stayed in the library."""
+    from app.ui.services import download_service
+
+    for path in paths:
+        secs = download_service._duration_secs(path)
+        if secs is not None and not (MIN_SONG_SECS <= secs < MAX_SONG_SECS):
+            why = f"length {secs / 60:.1f} min (songs must be 1.5-9 min)"
+            download_service._quarantine(path, path.stem, why, {"title": path.stem, "duration": secs})
+            raise RuntimeError(f"length check failed: {why}; kept in quarantine, not added to the library")
+
+
 def start_job(
     url: str,
     label: str,
@@ -92,6 +105,7 @@ def start_job(
                     progress=lambda stage, pct=None: _update(job_id, stage=stage, percent=pct),
                 )
                 _update(job_id, stage="registering", percent=None)
+                _length_gate(paths)
                 tracks = register_fn(paths)
             for t in tracks:
                 _update(job_id, stage="analyzing", percent=None)

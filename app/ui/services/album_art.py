@@ -167,6 +167,19 @@ def _video_id(track_id: str) -> Optional[str]:
         return None
 
 
+def track_for_video(video_id: str, usable: Callable[[str], bool] = lambda _t: True) -> Optional[str]:
+    """The library track already downloaded from this YouTube video (oldest id first for a stable answer), or None.
+    `usable` filters out ids that are gone or flagged as wrong."""
+    try:
+        data = json.loads((art_dir() / "sources.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    for tid in sorted(t for t, v in data.items() if v == video_id):
+        if usable(tid):
+            return tid
+    return None
+
+
 # ---------------------------------------------------------------- identity / matching
 @dataclass(frozen=True)
 class Ident:

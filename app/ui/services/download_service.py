@@ -512,9 +512,8 @@ def _ytdlp(url: str, output_dir: Path, progress: Optional[Progress] = None,
         )
     _log_resolve(song, official_only, trace, delivered)
     clean = _reject_non_tracks(new_files, check_live=is_search)
-    if song:
-        for path in clean:
-            _post_check(song, delivered, path)
+    for path in clean:
+        _post_check(song, delivered, path)       # no pick (a pasted / phone-chosen video): length vs listing only
     return clean
 
 
@@ -548,24 +547,27 @@ def _post_check(song, info: dict, path: Path) -> None:
     (decoded length, final title / channel / artist metadata). A contradiction moves the file to
     <cache>/_pick_quarantine/ with a note, logs it and fails the download, so it is never played."""
     try:
-        artist = song[3] if len(song) > 3 else " ".join(song[0])
-        if not artist or not info.get("title"):
-            return
         secs = _duration_secs(path)
         listed = info.get("duration")
-        meta = info.get("artists") or info.get("artist") or info.get("creator")
-        meta = [meta] if isinstance(meta, str) else [str(x) for x in (meta or [])]
-        v = pick_identity.judge(artist, song[2], str(info.get("title")), channel=info.get("channel") or "",
-                                uploader=info.get("uploader") or "", artists=meta, duration=secs,
-                                max_secs=MAX_TRACK_SECS)
-        why = None if v.ok else v.reason
+        why = None
+        if song:
+            artist = song[3] if len(song) > 3 else " ".join(song[0])
+            if artist and info.get("title"):
+                meta = info.get("artists") or info.get("artist") or info.get("creator")
+                meta = [meta] if isinstance(meta, str) else [str(x) for x in (meta or [])]
+                v = pick_identity.judge(artist, song[2], str(info.get("title")), channel=info.get("channel") or "",
+                                        uploader=info.get("uploader") or "", artists=meta, duration=secs,
+                                        max_secs=MAX_TRACK_SECS)
+                why = None if v.ok else v.reason
+        else:
+            artist = ""
         if why is None and secs is not None and listed and abs(secs - float(listed)) > max(DURATION_SLACK_S, 0.1 * float(listed)):
             why = f"file is {secs:.0f}s but the listing said {float(listed):.0f}s"
     except Exception:
         return                                   # a failing check must not lose a good download
     if why is None:
         return
-    _quarantine(path, f"{artist} - {song[2]}", why, info)
+    _quarantine(path, f"{artist} - {song[2]}" if song else str(info.get("title") or path.stem), why, info)
     raise RuntimeError(f"Downloaded file does not match the pick ({why}); kept in quarantine, not played.")
 
 
