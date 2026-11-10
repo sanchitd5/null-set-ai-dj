@@ -1,0 +1,14 @@
+{"t": 1794289741.645, "at": "16:49:01", "kind": "deck_load", "deck": "a", "song": "Shubh - Supreme", "track_id": "d861a40f8bfe9485", "reason": "set started from this song"}
+{"t": 1794289754.788, "at": "16:49:14", "kind": "suggest_reject", "song": "Culoe de Song - Webaba", "reason": "genre jump (2)"}
+{"t": 1794289754.79, "at": "16:49:14", "kind": "suggest_reject", "song": "Hugel - Jamaican (Bam Bam) (Sammy Flash Afro House Remix)", "reason": "genre jump (2)"}
+{"t": 1794289754.791, "at": "16:49:14", "kind": "suggest_reject", "song": "Jind Universe - High On You", "reason": "free-text pick (not a candidate id)"}
+{"t": 1794289754.8, "at": "16:49:14", "kind": "yt_pool", "seed": "Shubh - Supreme", "n_yt": 25, "in_pool": 4, "n_pool": 16, "picked": false, "n_picked": 0, "lookahead": false}
+{"t": 1794289774.448, "at": "16:49:34", "kind": "suggest_reject", "song": " - Yousif - No Costume", "reason": "language jump: en not in set (hi 100%)"}
+{"t": 1794289786.259, "at": "16:49:46", "kind": "suggest_reject", "song": "Shubh - Balenci", "reason": "artist played too recently"}
+{"t": 1794289793.315, "at": "16:49:53", "kind": "suggest_reject", "song": "Hugel - Jamaican (Bam Bam) (Sammy Flash Afro House Remix)", "reason": "genre jump (2)"}
+{"t": 1794289866.423, "at": "16:51:06", "kind": "deck_load", "deck": "a", "song": "We Rollin (Official Audio) - Shubh", "track_id": "1fd5189051951e18", "reason": "set started from this song"}
+{"t": 1794289866.427, "at": "16:51:06", "kind": "deck_load", "deck": "b", "song": "We Rollin (Official Audio) - Shubh", "track_id": "1fd5189051951e18", "reason": "queued next by hand"}
+{"t": 1794289866.433, "at": "16:51:06", "kind": "track", "event": "transition_start", "from": "Supreme", "to": "Simplicite [LUNATIQUE]", "recipe": "Echo Out", "out": "a", "in": "b", "seconds": 16.0, "a_pos": 123.2}
+{"t": 1794289920.653, "at": "16:52:00", "kind": "track", "event": "transition_start", "from": "Shubh", "to": "Shubh", "recipe": "Build-to-Drop Transition", "out": "a", "in": "b", "seconds": 16.0, "a_pos": 46.18}
+{"t": 1794290084.568, "at": "16:54:44", "kind": "track", "event": "transition_end", "now_playing": "Shubh", "deck": "b", "set_songs": 2}
+{"t": 1794290272.195, "at": "16:57:52", "kind": "deck_load", "deck": "b", "song": "Diljit Dosanjh - Case GHOST ｜ Intense, Raj Ranjodh", "track_id": "a699eec7308875a2", "reason": "set started from this song"}

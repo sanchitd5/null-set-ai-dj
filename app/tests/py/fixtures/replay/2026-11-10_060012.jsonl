@@ -1,0 +1,17 @@
+{"t": 1794250896.175, "at": "06:01:36", "kind": "deck_load", "deck": "b", "song": "Coke Studio Season 9｜ Afreen Afreen｜ Rahat Fateh Ali Khan & Momina Mustehsan", "track_id": "e9628f5f4cfbc375", "reason": "set started from this song"}
+{"t": 1794250919.156, "at": "06:01:59", "kind": "track", "event": "transition_end", "now_playing": "Prelude", "deck": "a", "set_songs": 3}
+{"t": 1794250933.057, "at": "06:02:13", "kind": "suggest_reject", "song": "CKay - Love Nwantiti (Ah Ah Ah)", "reason": "genre jump (2)"}
+{"t": 1794250933.273, "at": "06:02:13", "kind": "suggest_reject", "song": "Tourist - Run", "reason": "genre jump (2)"}
+{"t": 1794250939.89, "at": "06:02:19", "kind": "deck_load", "deck": "a", "song": "Coke Studio Season 9｜ Afreen Afreen｜ Rahat Fateh Ali Khan & Momina Mustehsan", "track_id": "e9628f5f4cfbc375", "reason": "set started from this song"}
+{"t": 1794250940.025, "at": "06:02:20", "kind": "suggest_reject", "song": "C12 - Noor - Aarzu", "reason": "free-text pick (not a candidate id)"}
+{"t": 1794250940.454, "at": "06:02:20", "kind": "pick_reason", "song": "An-Known - Tonelabira", "reason": "genre Urdu pop (set: Urdu pop); era 2020s; real-song check on", "side_hop": false}
+{"t": 1794250940.593, "at": "06:02:20", "kind": "deck_load", "deck": "a", "song": "Coke Studio Season 9｜ Afreen Afreen｜ Rahat Fateh Ali Khan & Momina Mustehsan", "track_id": "e9628f5f4cfbc375", "reason": "set started from this song"}
+{"t": 1794250961.563, "at": "06:02:41", "kind": "suggest_reject", "song": " - ilan Bluestone - 43", "reason": "language jump: en not in set (hi 100%)"}
+{"t": 1794250961.736, "at": "06:02:41", "kind": "suggest_reject", "song": " - Anyma - In My Mind", "reason": "language jump: en not in set (hi 100%)"}
+{"t": 1794250962.331, "at": "06:02:42", "kind": "suggest_reject", "song": " - Lane 8 - Little Voices", "reason": "language jump: en not in set (hi 100%)"}
+{"t": 1794250962.503, "at": "06:02:42", "kind": "suggest_reject", "song": " - Lost Frequencies - Are You With Me in the Live Lounge", "reason": "language jump: en not in set (hi 100%)"}
+{"t": 1794250963.569, "at": "06:02:43", "kind": "suggest_reject", "song": " - Bittermind - Resonance", "reason": "language jump: en not in set (hi 100%)"}
+{"t": 1794250963.744, "at": "06:02:43", "kind": "suggest_reject", "song": " - Martin Garrix - Animals", "reason": "language jump: en not in set (hi 100%)"}
+{"t": 1794251069.273, "at": "06:04:29", "kind": "track", "event": "transition_start", "from": "Coke Studio Season 9｜ Afreen Afreen｜ Rahat Fateh Ali Khan & Momina Mustehsan", "to": "Tonelabira", "recipe": "Stem Bridge", "out": "a", "in": "b", "seconds": 16.0, "a_pos": 373.41}
+{"t": 1794251079.617, "at": "06:04:39", "kind": "track", "event": "transition_end", "now_playing": "Tonelabira", "deck": "b", "set_songs": 4}
+{"t": 1794251095.094, "at": "06:04:55", "kind": "suggest_reject", "song": "AUR - Phool | پھول", "reason": "writing system far from the set"}

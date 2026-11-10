@@ -1,0 +1,27 @@
+{"t": 1794248391.498, "at": "05:19:51", "kind": "deck_load", "deck": "a", "song": "Coke Studio Season 9｜ Afreen Afreen｜ Rahat Fateh Ali Khan & Momina Mustehsan", "track_id": "e9628f5f4cfbc375", "reason": "set started from this song"}
+{"t": 1794248407.002, "at": "05:20:07", "kind": "suggest_reject", "song": "Nora En Pure - Morning Dew", "reason": "genre jump (2)"}
+{"t": 1794248407.004, "at": "05:20:07", "kind": "suggest_reject", "song": "Daft Punk - Rollin' & Scratchin'", "reason": "era jump (2001 after 2020s)"}
+{"t": 1794248407.005, "at": "05:20:07", "kind": "suggest_reject", "song": "An-Known - Tonelabira", "reason": "genre jump (2)"}
+{"t": 1794248407.007, "at": "05:20:07", "kind": "suggest_reject", "song": "Adriatique - Racer", "reason": "genre jump (2)"}
+{"t": 1794248407.008, "at": "05:20:07", "kind": "suggest_reject", "song": "Lane 8 - Fingerprint (OCULA Remix)", "reason": "language jump: en not in set (hi 100%)"}
+{"t": 1794248407.041, "at": "05:20:07", "kind": "pick_reason", "song": "Nora En Pure - Morning Dew", "reason": "genre melodic house (set: Urdu pop); era 2020s; in the library; real-song check on", "side_hop": false}
+{"t": 1794248446.144, "at": "05:20:46", "kind": "deck_load", "deck": "a", "song": "Coke Studio Season 9｜ Afreen Afreen｜ Rahat Fateh Ali Khan & Momina Mustehsan", "track_id": "e9628f5f4cfbc375", "reason": "set started from this song"}
+{"t": 1794248460.769, "at": "05:21:00", "kind": "suggest_reject", "song": "Noor - Aarzu", "reason": "energy gap 9"}
+{"t": 1794248460.964, "at": "05:21:00", "kind": "suggest_reject", "song": "AUR - Phool | پھول", "reason": "writing system far from the set"}
+{"t": 1794248461.179, "at": "05:21:01", "kind": "suggest_reject", "song": "Adriatique - Racer", "reason": "genre jump (2)"}
+{"t": 1794248461.373, "at": "05:21:01", "kind": "suggest_reject", "song": "CKay - Love Nwantiti (Ah Ah Ah)", "reason": "genre jump (2)"}
+{"t": 1794248464.624, "at": "05:21:04", "kind": "deck_load", "deck": "a", "song": "Coke Studio Season 9｜ Afreen Afreen｜ Rahat Fateh Ali Khan & Momina Mustehsan", "track_id": "e9628f5f4cfbc375", "reason": "set started from this song"}
+{"t": 1794248468.775, "at": "05:21:08", "kind": "suggest_reject", "song": "Noor - Aarzu", "reason": "energy gap 9"}
+{"t": 1794248469.0, "at": "05:21:08", "kind": "suggest_reject", "song": "AUR - Phool | پھول", "reason": "writing system far from the set"}
+{"t": 1794248469.271, "at": "05:21:09", "kind": "suggest_reject", "song": "Talwiinder - KAMMO JI (Prod. Parth Parashar) ｜ Punjabi Lofi", "reason": "energy gap 9"}
+{"t": 1794248469.569, "at": "05:21:09", "kind": "suggest_reject", "song": "High On You - Jind Universe ｜ Latest Punjabi Love Song 2024", "reason": "energy gap 9"}
+{"t": 1794248469.841, "at": "05:21:09", "kind": "suggest_reject", "song": "C11 - Noor - Aarzu", "reason": "energy gap 9"}
+{"t": 1794248470.148, "at": "05:21:10", "kind": "pick_reason", "song": "Adriatique - Racer", "reason": "genre melodic house (set: Urdu pop); era 2010s; in the library; real-song check on", "side_hop": false}
+{"t": 1794248522.264, "at": "05:22:02", "kind": "track", "event": "transition_start", "from": "Coke Studio Season 9｜ Afreen Afreen｜ Rahat Fateh Ali Khan & Momina Mustehsan", "to": "Run", "recipe": "Stem Merge", "out": "a", "in": "b", "seconds": 46.9, "a_pos": 93.84, "merge_bars": 16, "merge_kind": "hold"}
+{"t": 1794248549.09, "at": "05:22:29", "kind": "track", "event": "transition_start", "from": "Coke Studio Season 9｜ Afreen Afreen｜ Rahat Fateh Ali Khan & Momina Mustehsan", "to": "Run", "recipe": "Stem Merge", "out": "a", "in": "b", "seconds": 46.9, "a_pos": 107.19, "merge_bars": 16, "merge_kind": "hold"}
+{"t": 1794248637.743, "at": "05:23:57", "kind": "track", "event": "transition_end", "now_playing": "Run", "deck": "b", "set_songs": 2}
+{"t": 1794248642.54, "at": "05:24:02", "kind": "suggest_reject", "song": "Fred Again.. - Jungle (ON_1 Remix)", "reason": "language jump: en not in set (hi 100%)"}
+{"t": 1794248642.592, "at": "05:24:02", "kind": "pick_reason", "song": "Boris Brejcha - Last Call (Original) [set cut NpL_bT5vgmU #2]", "reason": "genre melodic house (set: electronic); era 2020s; in the library; real-song check on", "side_hop": false}
+{"t": 1794248647.993, "at": "05:24:07", "kind": "suggest_reject", "song": " - ilan Bluestone - 43", "reason": "language jump: en not in set (hi 100%)"}
+{"t": 1794248648.163, "at": "05:24:08", "kind": "suggest_reject", "song": " - Sultan + Shepard - ID · set cut #61", "reason": "language jump: en not in set (hi 100%)"}
+{"t": 1794248721.369, "at": "05:25:21", "kind": "track", "event": "transition_start", "from": "Run", "to": "Prelude", "recipe": "Stem Merge", "out": "b", "in": "a", "seconds": 45.7, "a_pos": 159.58, "merge_bars": 16, "merge_kind": "classic"}
