@@ -23,6 +23,8 @@ import os
 import time
 from typing import Callable, Optional, Sequence
 
+from app.music_brain.pick_accept import PickHooks, accept_candidate
+
 DEADLINE_ENV = "SUGGEST_DEADLINE_S"
 LLM_BUDGET_ENV = "SUGGEST_LLM_BUDGET_S"
 DEFAULT_DEADLINE_S = 15.0
@@ -57,36 +59,57 @@ def _label(row: dict) -> str:
     return f"{row.get('artist', '')} - {row.get('title', '')}".strip(" -")
 
 
-def _verdict(lang_check: Optional[Callable], row: dict) -> str:
+def _lang(lang_check: Optional[Callable], row: dict) -> tuple:
+    """(verdict, why) of the language check; ("ok", "") when there is none or it fails."""
     if lang_check is None:
-        return "ok"
+        return "ok", ""
     try:
-        return lang_check(row)[0]
+        v, why = lang_check(row)
+        return v, why
     except Exception:
-        return "ok"            # a gate bug must not empty the answer
+        return "ok", ""        # a gate bug must not empty the answer
 
 
 def ladder(*, deadline_at: float, hard_played: Sequence[str], earlier: Sequence[str], playing_id: str,
            library: Sequence[dict], neighbours: Sequence[dict], cur_genre: str, genre_of: Callable[[dict], str],
            family_jump: Callable[[str, str], bool], lang_check: Optional[Callable],
            graph_picks: Callable[[], list], yt_rows: Callable[[float], list], yt_pick: Callable[[list], list],
-           reason: str, vetoed: Sequence[str] = (), llm: Optional[Callable[[float], list]] = None, n: int = TARGET_PICKS, clock: Callable[[], float] = time.monotonic) -> dict:
+           reason: str, vetoed: Sequence[str] = (), llm: Optional[Callable[[float], list]] = None, n: int = TARGET_PICKS, clock: Callable[[], float] = time.monotonic,
+           set_state: Optional[dict] = None) -> dict:
     """{suggestions, pick_source, fallback_reason}. `library`: [{track_id, artist, title}] in library order;
     `neighbours`: the same shape, best atlas pair first; `earlier`: names heard in earlier sets, newest first;
-    graph_picks() / yt_rows(remaining_s) are lazy so a step runs only when reached. Never raises."""
-    played = {_norm(x) for x in hard_played}
+    graph_picks() / yt_rows(remaining_s) are lazy so a step runs only when reached. `set_state`: the phone's set state
+    (played, vetoed, scene_genre, punjabi_profile, language_strict, max_length_s, playing_ids), merged with the args;
+    every acceptance decision goes through pick_accept.accept_candidate (G23). Never raises."""
+    ss = dict(set_state or {})
+    base_state = {
+        "playing_ids": [x for x in [playing_id, *(ss.get("playing_ids") or [])] if x],
+        "played": [*hard_played, *(ss.get("played") or [])],
+        "vetoed": [x for x in [*vetoed, *(ss.get("vetoed") or [])] if x],     # track ids, song keys or display names
+    }
+    for k in ("max_length_s", "punjabi_profile", "language_strict", "cur_era"):
+        if ss.get(k) is not None:
+            base_state[k] = ss[k]
     heard_earlier = {_norm(x) for x in earlier}
-    vetoes = {_norm(x) for x in vetoed if x}          # owner vetoes this set: track ids, song keys or display names
+    scene_hooks = PickHooks(lambda scene, genre, profile: bool(genre) and bool(family_jump(scene, genre)),
+                            lambda a, b: None)
+
+    def accept(r: dict, relax: Sequence[str] = (), scene_genre: Optional[str] = None) -> bool:
+        verdict, why = _lang(lang_check, r)
+        cand = {"ids": [x for x in (r.get("track_id"), r.get("graph_key"), _label(r), r.get("title"), _pool_key(r)) if x],
+                "lang_verdict": verdict, "lang_reason": why}
+        if r.get("not_music") is True:
+            cand["not_music"] = True
+        if r.get("duration_s") is not None:
+            cand["duration_s"] = r["duration_s"]
+        state = dict(base_state, relax=list(relax))
+        if scene_genre:
+            state["scene_genre"] = scene_genre
+            cand["genre"] = str(genre_of(r) or "")
+        return accept_candidate(cand, state, hooks=scene_hooks)[0]
 
     def hard_ok(r: dict, allow_penalty: bool = False) -> bool:
-        if r.get("track_id") and r["track_id"] == playing_id:
-            return False
-        if vetoes and _vetoed(r, vetoes):
-            return False
-        if _norm(_label(r)) in played or _norm(r.get("title")) in played:
-            return False
-        v = _verdict(lang_check, r)
-        return v != "block" and (allow_penalty or v != "penalty")
+        return accept(r, ("language_penalty", "scene") if allow_penalty else ("scene",))
 
     def fresh(r: dict) -> bool:
         return _norm(_label(r)) not in heard_earlier
@@ -101,17 +124,16 @@ def ladder(*, deadline_at: float, hard_played: Sequence[str], earlier: Sequence[
              allow_penalty=False) -> list:
         out, seen = [], set()
         for r in rows:
-            if not isinstance(r, dict) or not r.get("title") or not hard_ok(r, allow_penalty):
+            if not isinstance(r, dict) or not r.get("title"):
+                continue
+            relax = ("language_penalty",) if allow_penalty else ()
+            if not accept(r, relax, cur_genre if scene and cur_genre else None):
                 continue
             key = _norm(_label(r))
             if key in seen:
                 continue
             if need_fresh and not fresh(r):
                 continue
-            if scene and cur_genre:
-                g = str(genre_of(r) or "")
-                if g and family_jump(cur_genre, g):
-                    continue
             seen.add(key)
             out.append(mk(r, source, why))
             if len(out) >= n:
@@ -170,15 +192,13 @@ def ladder(*, deadline_at: float, hard_played: Sequence[str], earlier: Sequence[
     return {"suggestions": [], "pick_source": "none", "fallback_reason": f"{reason}; no song available"[:300]}
 
 
-def _vetoed(r: dict, vetoes: set) -> bool:
-    if _norm(r.get("track_id")) in vetoes or _norm(r.get("graph_key")) in vetoes or _norm(_label(r)) in vetoes:
-        return True
+def _pool_key(r: dict) -> str:
     try:
         from app.ui.services import pick_pool
 
-        return _norm(pick_pool.key_of(r.get("artist", ""), r.get("title", ""))) in vetoes
+        return pick_pool.key_of(r.get("artist", ""), r.get("title", ""))
     except Exception:
-        return False
+        return ""
 
 
 def _lru(library: Sequence[dict], earlier: Sequence[str], take: Callable) -> list:

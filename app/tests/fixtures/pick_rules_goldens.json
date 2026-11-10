@@ -1,0 +1,769 @@
+{
+ "_generated": "GENERATED from dj-config bd025d3-dirty - do not edit",
+ "config_hash": "0833cb0435fa",
+ "files": {
+  "hard": {
+   "doc": "pick_rules golden vectors (G23): candidate + set state -> acceptCandidate verdict. needs_hooks: needs the host's genre family / era functions (not run by the JS check).",
+   "cases": [
+    {
+     "name": "plain pick passes",
+     "candidate": {
+      "ids": [
+       "song c"
+      ],
+      "duration_s": 200
+     },
+     "state": {
+      "playing_ids": [
+       "song p"
+      ],
+      "played": [],
+      "vetoed": []
+     },
+     "expect": {
+      "ok": true,
+      "reason": null
+     }
+    },
+    {
+     "name": "the playing song, id spelling differs",
+     "candidate": {
+      "ids": [
+       "  Song   P "
+      ],
+      "duration_s": 200
+     },
+     "state": {
+      "playing_ids": [
+       "song p"
+      ],
+      "played": [],
+      "vetoed": []
+     },
+     "expect": {
+      "ok": false,
+      "reason": "playing now"
+     }
+    },
+    {
+     "name": "playing matched by any id",
+     "candidate": {
+      "ids": [
+       "track-9",
+       "song p"
+      ],
+      "duration_s": 200
+     },
+     "state": {
+      "playing_ids": [
+       "song p"
+      ],
+      "played": [],
+      "vetoed": []
+     },
+     "expect": {
+      "ok": false,
+      "reason": "playing now"
+     }
+    },
+    {
+     "name": "already played this set (real refusal: played song picked again)",
+     "candidate": {
+      "ids": [
+       "song c"
+      ],
+      "duration_s": 200
+     },
+     "state": {
+      "playing_ids": [
+       "song p"
+      ],
+      "played": [
+       "song c",
+       "song x"
+      ],
+      "vetoed": []
+     },
+     "expect": {
+      "ok": false,
+      "reason": "already played this set"
+     }
+    },
+    {
+     "name": "played matched on a second id",
+     "candidate": {
+      "ids": [
+       "track-1",
+       "song c"
+      ],
+      "duration_s": 200
+     },
+     "state": {
+      "playing_ids": [
+       "song p"
+      ],
+      "played": [
+       "track-1"
+      ],
+      "vetoed": []
+     },
+     "expect": {
+      "ok": false,
+      "reason": "already played this set"
+     }
+    },
+    {
+     "name": "owner veto",
+     "candidate": {
+      "ids": [
+       "song c"
+      ],
+      "duration_s": 200
+     },
+     "state": {
+      "playing_ids": [
+       "song p"
+      ],
+      "played": [],
+      "vetoed": [
+       "song c"
+      ]
+     },
+     "expect": {
+      "ok": false,
+      "reason": "owner veto"
+     }
+    },
+    {
+     "name": "played beats veto (gate order)",
+     "candidate": {
+      "ids": [
+       "song c"
+      ],
+      "duration_s": 200
+     },
+     "state": {
+      "playing_ids": [
+       "song p"
+      ],
+      "played": [
+       "song c"
+      ],
+      "vetoed": [
+       "song c"
+      ]
+     },
+     "expect": {
+      "ok": false,
+      "reason": "already played this set"
+     }
+    },
+    {
+     "name": "not music flag (real refusal: not a song)",
+     "candidate": {
+      "ids": [
+       "song c"
+      ],
+      "duration_s": 200,
+      "not_music": true
+     },
+     "state": {
+      "playing_ids": [
+       "song p"
+      ],
+      "played": [],
+      "vetoed": []
+     },
+     "expect": {
+      "ok": false,
+      "reason": "Not mixed (too long / not music)"
+     }
+    },
+    {
+     "name": "length unknown",
+     "candidate": {
+      "ids": [
+       "song c"
+      ],
+      "duration_s": 0
+     },
+     "state": {
+      "playing_ids": [
+       "song p"
+      ],
+      "played": [],
+      "vetoed": []
+     },
+     "expect": {
+      "ok": false,
+      "reason": "Length unknown (not read yet)"
+     }
+    },
+    {
+     "name": "length absent (server pick outside the library) passes",
+     "candidate": {
+      "ids": [
+       "song c"
+      ]
+     },
+     "state": {
+      "playing_ids": [
+       "song p"
+      ],
+      "played": [],
+      "vetoed": []
+     },
+     "expect": {
+      "ok": true,
+      "reason": null
+     }
+    },
+    {
+     "name": "7:00 passes",
+     "candidate": {
+      "ids": [
+       "song c"
+      ],
+      "duration_s": 420
+     },
+     "state": {
+      "playing_ids": [
+       "song p"
+      ],
+      "played": [],
+      "vetoed": []
+     },
+     "expect": {
+      "ok": true,
+      "reason": null
+     }
+    },
+    {
+     "name": "7:01 too long (real refusal: hour-long upload)",
+     "candidate": {
+      "ids": [
+       "song c"
+      ],
+      "duration_s": 421
+     },
+     "state": {
+      "playing_ids": [
+       "song p"
+      ],
+      "played": [],
+      "vetoed": []
+     },
+     "expect": {
+      "ok": false,
+      "reason": "Too long · 7 min (limit 7 min)"
+     }
+    },
+    {
+     "name": "hour-long set",
+     "candidate": {
+      "ids": [
+       "song c"
+      ],
+      "duration_s": 3600
+     },
+     "state": {
+      "playing_ids": [
+       "song p"
+      ],
+      "played": [],
+      "vetoed": []
+     },
+     "expect": {
+      "ok": false,
+      "reason": "Too long · 60 min (limit 7 min)"
+     }
+    },
+    {
+     "name": "owner's max length from the state",
+     "candidate": {
+      "ids": [
+       "song c"
+      ],
+      "duration_s": 300
+     },
+     "state": {
+      "playing_ids": [
+       "song p"
+      ],
+      "played": [],
+      "vetoed": [],
+      "max_length_s": 241
+     },
+     "expect": {
+      "ok": false,
+      "reason": "Too long · 5 min (limit 4 min)"
+     }
+    },
+    {
+     "name": "too long reports 8:30 as 9 min (round half up)",
+     "candidate": {
+      "ids": [
+       "song c"
+      ],
+      "duration_s": 510
+     },
+     "state": {
+      "playing_ids": [
+       "song p"
+      ],
+      "played": [],
+      "vetoed": []
+     },
+     "expect": {
+      "ok": false,
+      "reason": "Too long · 9 min (limit 7 min)"
+     }
+    },
+    {
+     "name": "language block carries the verdict's reason",
+     "candidate": {
+      "ids": [
+       "song c"
+      ],
+      "duration_s": 200,
+      "lang_verdict": "block",
+      "lang_reason": "language jump: sung in a language outside the set"
+     },
+     "state": {
+      "playing_ids": [
+       "song p"
+      ],
+      "played": [],
+      "vetoed": []
+     },
+     "expect": {
+      "ok": false,
+      "reason": "language jump: sung in a language outside the set"
+     }
+    },
+    {
+     "name": "language block with no reason",
+     "candidate": {
+      "ids": [
+       "song c"
+      ],
+      "duration_s": 200,
+      "lang_verdict": "block"
+     },
+     "state": {
+      "playing_ids": [
+       "song p"
+      ],
+      "played": [],
+      "vetoed": []
+     },
+     "expect": {
+      "ok": false,
+      "reason": "language jump"
+     }
+    },
+    {
+     "name": "unverified passes when not strict",
+     "candidate": {
+      "ids": [
+       "song c"
+      ],
+      "duration_s": 200,
+      "lang_verdict": "unverified"
+     },
+     "state": {
+      "playing_ids": [
+       "song p"
+      ],
+      "played": [],
+      "vetoed": []
+     },
+     "expect": {
+      "ok": true,
+      "reason": null
+     }
+    },
+    {
+     "name": "unverified refused when strict",
+     "candidate": {
+      "ids": [
+       "song c"
+      ],
+      "duration_s": 200,
+      "lang_verdict": "unverified"
+     },
+     "state": {
+      "playing_ids": [
+       "song p"
+      ],
+      "played": [],
+      "vetoed": [],
+      "language_strict": true
+     },
+     "expect": {
+      "ok": false,
+      "reason": "language unverified: sung language not identified in time"
+     }
+    },
+    {
+     "name": "unverified strict with reason",
+     "candidate": {
+      "ids": [
+       "song c"
+      ],
+      "duration_s": 200,
+      "lang_verdict": "unverified",
+      "lang_reason": "no vocals found"
+     },
+     "state": {
+      "playing_ids": [
+       "song p"
+      ],
+      "played": [],
+      "vetoed": [],
+      "language_strict": true
+     },
+     "expect": {
+      "ok": false,
+      "reason": "language unverified: no vocals found"
+     }
+    },
+    {
+     "name": "language ok / unknown never refuse",
+     "candidate": {
+      "ids": [
+       "song c"
+      ],
+      "duration_s": 200,
+      "lang_verdict": "ok"
+     },
+     "state": {
+      "playing_ids": [
+       "song p"
+      ],
+      "played": [],
+      "vetoed": []
+     },
+     "expect": {
+      "ok": true,
+      "reason": null
+     }
+    },
+    {
+     "name": "language penalty refuses",
+     "candidate": {
+      "ids": [
+       "song c"
+      ],
+      "duration_s": 200,
+      "lang_verdict": "penalty",
+      "lang_reason": "off the set's language"
+     },
+     "state": {
+      "playing_ids": [
+       "song p"
+      ],
+      "played": [],
+      "vetoed": []
+     },
+     "expect": {
+      "ok": false,
+      "reason": "off the set's language"
+     }
+    },
+    {
+     "name": "language penalty relaxed at the last ladder step",
+     "candidate": {
+      "ids": [
+       "song c"
+      ],
+      "duration_s": 200,
+      "lang_verdict": "penalty",
+      "lang_reason": "off the set's language"
+     },
+     "state": {
+      "playing_ids": [
+       "song p"
+      ],
+      "played": [],
+      "vetoed": [],
+      "relax": [
+       "language_penalty"
+      ]
+     },
+     "expect": {
+      "ok": true,
+      "reason": null
+     }
+    },
+    {
+     "name": "hard gates are never relaxed",
+     "candidate": {
+      "ids": [
+       "song c"
+      ],
+      "duration_s": 200
+     },
+     "state": {
+      "playing_ids": [
+       "song p"
+      ],
+      "played": [
+       "song c"
+      ],
+      "vetoed": [],
+      "relax": [
+       "played",
+       "vetoed",
+       "language_block",
+       "too_long"
+      ]
+     },
+     "expect": {
+      "ok": false,
+      "reason": "already played this set"
+     }
+    },
+    {
+     "name": "language block is hard even when named in relax",
+     "candidate": {
+      "ids": [
+       "song c"
+      ],
+      "duration_s": 200,
+      "lang_verdict": "block"
+     },
+     "state": {
+      "playing_ids": [
+       "song p"
+      ],
+      "played": [],
+      "vetoed": [],
+      "relax": [
+       "language_block"
+      ]
+     },
+     "expect": {
+      "ok": false,
+      "reason": "language jump"
+     }
+    }
+   ]
+  },
+  "soft": {
+   "doc": "pick_rules golden vectors (G23): candidate + set state -> acceptCandidate verdict. needs_hooks: needs the host's genre family / era functions (not run by the JS check).",
+   "cases": [
+    {
+     "name": "no scene pinned: any genre passes",
+     "candidate": {
+      "ids": [
+       "song c"
+      ],
+      "duration_s": 200,
+      "genre": "metal"
+     },
+     "state": {
+      "playing_ids": [
+       "song p"
+      ],
+      "played": [],
+      "vetoed": []
+     },
+     "expect": {
+      "ok": true,
+      "reason": null
+     },
+     "needs_hooks": true
+    },
+    {
+     "name": "same family stays in the scene",
+     "candidate": {
+      "ids": [
+       "song c"
+      ],
+      "duration_s": 200,
+      "genre": "deep house"
+     },
+     "state": {
+      "playing_ids": [
+       "song p"
+      ],
+      "played": [],
+      "vetoed": [],
+      "scene_genre": "house"
+     },
+     "expect": {
+      "ok": true,
+      "reason": null
+     },
+     "needs_hooks": true
+    },
+    {
+     "name": "leaves the scene (real refusal: left the pinned scene)",
+     "candidate": {
+      "ids": [
+       "song c"
+      ],
+      "duration_s": 200,
+      "genre": "metal"
+     },
+     "state": {
+      "playing_ids": [
+       "song p"
+      ],
+      "played": [],
+      "vetoed": [],
+      "scene_genre": "house"
+     },
+     "expect": {
+      "ok": false,
+      "reason": "leaves the set's house scene (metal)"
+     },
+     "needs_hooks": true
+    },
+    {
+     "name": "scene pinned and the pick has no label",
+     "candidate": {
+      "ids": [
+       "song c"
+      ],
+      "duration_s": 200
+     },
+     "state": {
+      "playing_ids": [
+       "song p"
+      ],
+      "played": [],
+      "vetoed": [],
+      "scene_genre": "house"
+     },
+     "expect": {
+      "ok": false,
+      "reason": "leaves the set's house scene (no label)"
+     },
+     "needs_hooks": true
+    },
+    {
+     "name": "scene relaxed down the ladder",
+     "candidate": {
+      "ids": [
+       "song c"
+      ],
+      "duration_s": 200,
+      "genre": "metal"
+     },
+     "state": {
+      "playing_ids": [
+       "song p"
+      ],
+      "played": [],
+      "vetoed": [],
+      "scene_genre": "house",
+      "relax": [
+       "scene"
+      ]
+     },
+     "expect": {
+      "ok": true,
+      "reason": null
+     },
+     "needs_hooks": true
+    },
+    {
+     "name": "era within a decade passes",
+     "candidate": {
+      "ids": [
+       "song c"
+      ],
+      "duration_s": 200,
+      "era": "2000s"
+     },
+     "state": {
+      "playing_ids": [
+       "song p"
+      ],
+      "played": [],
+      "vetoed": [],
+      "cur_era": "1990s"
+     },
+     "expect": {
+      "ok": true,
+      "reason": null
+     },
+     "needs_hooks": true
+    },
+    {
+     "name": "era jump",
+     "candidate": {
+      "ids": [
+       "song c"
+      ],
+      "duration_s": 200,
+      "era": "2020s"
+     },
+     "state": {
+      "playing_ids": [
+       "song p"
+      ],
+      "played": [],
+      "vetoed": [],
+      "cur_era": "1990s"
+     },
+     "expect": {
+      "ok": false,
+      "reason": "era jump (2020s after 1990s)"
+     },
+     "needs_hooks": true
+    },
+    {
+     "name": "era unknown passes",
+     "candidate": {
+      "ids": [
+       "song c"
+      ],
+      "duration_s": 200
+     },
+     "state": {
+      "playing_ids": [
+       "song p"
+      ],
+      "played": [],
+      "vetoed": [],
+      "cur_era": "1990s"
+     },
+     "expect": {
+      "ok": true,
+      "reason": null
+     },
+     "needs_hooks": true
+    },
+    {
+     "name": "era relaxed",
+     "candidate": {
+      "ids": [
+       "song c"
+      ],
+      "duration_s": 200,
+      "era": "2020s"
+     },
+     "state": {
+      "playing_ids": [
+       "song p"
+      ],
+      "played": [],
+      "vetoed": [],
+      "cur_era": "1990s",
+      "relax": [
+       "era_jump"
+      ]
+     },
+     "expect": {
+      "ok": true,
+      "reason": null
+     },
+     "needs_hooks": true
+    }
+   ]
+  }
+ }
+}
