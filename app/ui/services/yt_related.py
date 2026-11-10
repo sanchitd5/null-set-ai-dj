@@ -279,3 +279,26 @@ def _merge(first: list[dict], second: list[dict]) -> list[dict]:
             seen.add(k)
             out.append(r)
     return out
+
+
+def for_video(vid: str, seed: Optional[dict] = None, timeout: float = FETCH_TIMEOUT_S) -> tuple[list[dict], dict]:
+    """(rows, info) of one YouTube video's related songs, from the cache or a fetch the caller waits `timeout` s for
+    (G21, the phone's graph of a song that has no graph node yet). info: {source: cache | fetch | empty | timeout |
+    cooling | no_id, n}; a timed-out fetch keeps running and fills the cache, so the next call is a cache hit.
+    Never raises."""
+    if not vid:
+        return [], {"source": "no_id", "n": 0}
+    try:
+        hit = cached(vid)
+        if hit is not None:
+            return hit, {"source": "cache", "n": len(hit)}
+        fut = _start(vid, dict(seed or {}))
+        if fut is None:
+            return [], {"source": "cooling", "n": 0}
+        try:
+            rows = fut.result(timeout=timeout)
+        except FutureTimeout:
+            return [], {"source": "timeout", "n": 0}
+        return rows, {"source": "fetch" if rows else "empty", "n": len(rows)}
+    except Exception:
+        return [], {"source": "empty", "n": 0}
