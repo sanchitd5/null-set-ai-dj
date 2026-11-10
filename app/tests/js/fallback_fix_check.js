@@ -84,10 +84,17 @@ assert.strictEqual(gateWhy({ gate: "key" }), "refused");
   // unknown genre: the anchor stays
   const unk = sceneAnchorNext(st, { name: "?", families: [] });
   assert.deepStrictEqual(unk.anchor, st.anchor);
-  // a deliberate move outside (a pick / a bridge): the anchor moves
-  const moved = sceneAnchorNext(st, Object.assign({}, S.joy));
+  // a deliberate move outside (a pick / a bridge): one song never moves the anchor (HF2), three agreeing in a row do
+  const one = sceneAnchorNext(st, Object.assign({}, S.joy));
+  assert.strictEqual(one.mistake, false);
+  assert.strictEqual(one.anchor.genre, "trap");
+  assert.strictEqual(one.why, "off-scene pick 1/3: anchor kept");
+  const two = sceneAnchorNext(one, Object.assign({}, S.joy));
+  assert.strictEqual(two.anchor.genre, "trap");
+  const moved = sceneAnchorNext(two, Object.assign({}, S.joy));
   assert.strictEqual(moved.mistake, false);
   assert.strictEqual(moved.anchor.genre, "house");
+  assert.strictEqual(moved.why, "deliberate move: the anchor follows");
   // THE SESSION: Four Tet brought in by the deadline's library fallback -> an off-scene mistake
   const pg = sceneAnchorNext(st, S.playing);
   const ft = sceneAnchorNext(pg, Object.assign({ fallback: "library" }, S.fourTet));

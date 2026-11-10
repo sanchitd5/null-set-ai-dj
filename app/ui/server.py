@@ -2857,8 +2857,12 @@ def autopilot_suggest(req: AutopilotSuggestRequest):
         slot["error"] = exc
         raise
     except Exception as exc:
-        slot["error"] = HTTPException(status_code=500, detail=f"LLM suggest error: {exc}")
-        raise
+        # never a 500 to the phone: an empty answer with the reason (the impl's own fallback chain already ran)
+        import traceback
+
+        print(f"[suggest] unexpected error, empty answer: {exc!r}\n{traceback.format_exc()}", flush=True)
+        slot["result"] = {"suggestions": [], "set_position": 0.0, "source": "fallback", "fallback_reason": f"suggest error: {exc}"[:300]}
+        return slot["result"]
     finally:
         slot["done_at"] = _time.time()
         slot["event"].set()
@@ -3044,7 +3048,34 @@ def _autopilot_suggest_impl(req: AutopilotSuggestRequest):
             graph_min=graph_min,
         )
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"LLM suggest error: {exc}") from exc
+        # A suggest never 500s to the phone (prod 18:09-18:10): log it, answer 200 with the fallback chain: graph picks if any,
+        # then the YouTube related songs (below), else an empty list with the reason.
+        import traceback
+
+        print(f"[suggest] LLM suggest error, falling back: {exc!r}\n{traceback.format_exc()}", flush=True)
+        suggestions = [dict(p) for p in (graph_picks or []) if isinstance(p, dict)]
+        meta = dict(meta or {})
+        meta["fallback_reason"] = f"LLM suggest error: {exc}"[:300]
+        meta["source"] = "graph" if suggestions else "fallback"
+        try:
+            from app.ui.services import session_log
+
+            session_log.log("suggest_error", error=str(exc)[:300], graph_picks=len(suggestions), n_yt=len(yt_rows))
+        except Exception:
+            pass
+    if not suggestions and yt_rows:      # owner R3: nothing passed -> the playing song's YouTube related songs, before a repeat / hold
+        try:
+            from app.ui.services import session_log
+            from app.ui.services.autopilot_service import yt_fallback
+
+            suggestions = yt_fallback(
+                yt_rows, cur_genre=str(genre or meta.get("current_genre") or ""), lang_check=lang_check,
+                genre_of=lambda r: ((_track_vibe(r["track_id"]) if r.get("track_id") else _vibe_by_name(f"{r.get('artist', '')} - {r.get('title', '')}")) or {}).get("genre"),
+                exclude=history_display + avoid_display + queue_display + list(earlier))
+            session_log.log("yt_fallback", seed=f"{artist_part} - {title_part}", n_yt=len(yt_rows), n_picked=len(suggestions),
+                            picked=[f"{s.get('artist', '')} - {s.get('title', '')}" for s in suggestions])
+        except Exception as exc:
+            print(f"[suggest] yt fallback failed: {exc}", flush=True)
     try:      # graph picks, shadow only: logged next to the LLM's, never changes them (GRAPHDB G6)
         from app.ui.services import graph_pick
 
@@ -3084,6 +3115,49 @@ def _autopilot_suggest_impl(req: AutopilotSuggestRequest):
                result=[{k: s.get(k) for k in ("artist", "title", "reason", "why") if k in s}
                        for s in suggestions[:8] if isinstance(s, dict)])
     return {"suggestions": suggestions, "set_position": round(set_position, 2), **meta}
+
+
+class YtFallbackRequest(BaseModel):
+    track_id: str                                   # the playing song
+    history: List[str] = Field(default_factory=list, max_length=400)   # display names played this set, the playing one last
+    genre: str = Field(default="", max_length=80)   # the set's scene (anchor) when the playing song's stored label is unknown
+    limit: int = Field(default=3, ge=1, le=6)
+
+
+@app.post("/api/autopilot/yt_fallback")
+def autopilot_yt_fallback(req: YtFallbackRequest):
+    """Owner R3, the deadline fallback's step before a repeat / hold: the playing song's YouTube related songs
+    (graph edges -> 7-day cache -> on-demand fetch, 3 s cap) that are no genre jump by data genre and pass the language
+    check. Each pick carries source `yt_fallback`; one with no data genre carries needs_lang_verify (strict language check
+    before it is committed). {picks: []} = none passes."""
+    from app.ui.services import lang_service, yt_related
+    from app.ui.services.autopilot_service import yt_fallback
+
+    from app.ui.services.track_identity import clean_identity
+
+    display = _track_names.get(req.track_id) or ""
+    artist, title = clean_identity(display) if display else ("", "")
+    rows, info = yt_related.candidates(req.track_id, {"artist": "" if artist == "Unknown" else artist, "title": title})
+    lang_check = None
+    try:
+        lprof = lang_service.profile_for(_track_names, req.history[-12:], req.track_id)
+
+        def lang_check(row: dict) -> tuple[str, str]:
+            return lang_service.check(_track_names, lprof, row.get("track_id"), f"{row.get('artist', '')} - {row.get('title', '')}")
+    except Exception as exc:
+        print(f"[yt_fallback] language profile unavailable: {exc}", flush=True)
+    cur_genre = req.genre.strip() or (_track_vibe(req.track_id).get("genre") or "")
+    picks = yt_fallback(
+        rows, cur_genre=cur_genre, lang_check=lang_check, limit=req.limit, exclude=req.history,
+        genre_of=lambda r: ((_track_vibe(r["track_id"]) if r.get("track_id") else _vibe_by_name(f"{r.get('artist', '')} - {r.get('title', '')}")) or {}).get("genre"))
+    try:
+        from app.ui.services import session_log
+
+        session_log.log("yt_fallback", seed=display, source=info.get("source"), n_yt=len(rows), n_picked=len(picks),
+                        picked=[f"{p['artist']} - {p['title']}" for p in picks])
+    except Exception:
+        pass
+    return {"picks": picks, "source": info.get("source"), "n_yt": len(rows)}
 
 
 class MindPlanRequest(BaseModel):
