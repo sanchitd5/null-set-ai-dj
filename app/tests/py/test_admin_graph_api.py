@@ -58,6 +58,7 @@ def test_stats(env, graph):  # noqa: F811
     s = _admin(env).get("/api/admin/graph/stats").json()
     assert s["rev"] == 7 and s["nodes"] == 4 and s["edges"] == 3 and s["edge_kinds"]["measured"] == 1
     assert sorted(s["langs"]) == ["en", "es"]
+    assert s["fanout"]["target"] == 20 and s["fanout"]["below"] <= s["fanout"]["eligible"]     # G16
 
 
 def test_search_by_name_and_yt_id_then_detail(env, graph):  # noqa: F811
