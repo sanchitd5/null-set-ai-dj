@@ -1,10 +1,12 @@
-# GENERATED from dj-config 95e0f69-dirty - do not edit
-# config-hash: 8abb3a95649e
+# GENERATED from dj-config 687b9d7 - do not edit
+# config-hash: 05f15bc489b2
 """Generated from dj-config/config/*.json. Do not edit; run dj-config/tool/gen.py."""
 
-SHA = "95e0f69-dirty"
-CONFIG_HASH = "8abb3a95649e"
+SHA = "687b9d7"
+CONFIG_HASH = "05f15bc489b2"
 
+ACCENT_MAX_SHARE = 0.2  # fraction
+ACCENT_RECIPES = ["Backspin (Spinback)", "Echo Out", "Bass Swap"]  # list
 ARC_TARGET = {"warm-up": 4, "build": 6, "peak": 8, "cool-down": 5}  # level
 BARS_PER_PHRASE = 8  # bars
 BEATS_PER_BAR = 4  # beats
@@ -60,7 +62,12 @@ GENRE_FAMILIES = {"south_asian": ["punjabi", "bhangra", "desi", "bollywood", "hi
 GLITCH_COUNTER_EVERY_S = 1.0  # s
 GLITCH_REPORT_GAP_S = 8  # s
 GRAPH_PARAMS = {"kind_weight": {"measured": 1.0, "played_ok": 0.8, "coplay": 0.5, "yt_upnext": 0.5, "yt_related": 0.4, "similar": 0.5, "predicted": 0.3, "skipped": -0.8}, "per_kind": 30, "hops": 2, "hop2_seeds": 8, "hop2_decay": 0.5, "conf_n": 5, "artist_weight": 0.3, "lang_penalty": -0.4, "cooldown_penalty": -0.5, "cooldown_n": 4, "novelty_bonus": 0.1, "min_score": 0.2, "min_good": 5}  # mixed
+HOLD_ALIGN_BARS = 16  # bars
+HOLD_END_ENERGY_DROP = 0.5  # fraction
 HOLD_KEY_MIN = 0.8  # score
+INSONG_HOLDS_ON = True  # bool
+INSONG_HOLD_MAX_BARS = 32  # bars
+INSONG_HOLD_MIN_BARS = 16  # bars
 KEYLOCK_RANGE_PCT = 8.0  # pct
 KEY_CONFIDENCE_MIN = 0.6  # score
 KEY_SAFE_MIN = 0.6  # score
@@ -78,6 +85,9 @@ MAX_KEYLOCK_STRETCH = 0.08  # fraction
 MAX_RATE_STRETCH = 0.06  # fraction
 MAX_TEMPO_PCT_PER_BAR = 0.25  # pct/bar
 MERGE_AUDITION_BUDGET_MS = 90000  # ms
+MERGE_HOLD_MAX_BARS = 64  # bars
+MERGE_HOLD_MIN_BARS = 32  # bars
+MERGE_HOLD_TARGET_S = 90  # s
 MERGE_KEY_OK = 0.8  # score
 MICRO_STEPS = 32  # steps
 NEIGHBOUR_FAMILIES = ["bass|dnb", "bass|edm", "bass|electronic", "bass|house", "bass|melodic", "bass|trance", "breaks|dnb", "breaks|electronic", "breaks|house", "chill|electronic", "chill|melodic", "dnb|electronic", "edm|electronic", "edm|house", "edm|melodic", "edm|trance", "electronic|house", "electronic|melodic", "electronic|techno", "electronic|trance", "hiphop|rnb", "house|melodic", "house|techno", "house|trance", "melodic|techno", "melodic|trance", "techno|trance"]
@@ -86,7 +96,7 @@ OVERLAP_BARS = {"instant": 4, "standard": 16, "slow": 32}  # bars
 PEAK_KEY_MIN = 0.8  # score
 PEAK_WINDOW = 6  # songs
 PHONE_SNAPSHOT_MOBILE_MAX_MB = 10  # MB
-PHONE_SNAPSHOT_TOP_K = 50  # edges
+PHONE_SNAPSHOT_TOP_K = 0  # edges
 PICK_TIMEOUT_MS = 240000  # ms
 PITCH_RANGE_PCT = 8.0  # pct
 PLAN_ASK_WAIT_MS = 20000  # ms
@@ -101,6 +111,8 @@ SLEEP_FADE_S = 60.0  # s
 STEM_BOOKING_WINDOW_S = 45  # s
 STEM_FILL_CHUNK_S = 240  # s
 STEM_HOLD_EDGE_S = 0.02  # s
+STEM_MATCH_MAX_BOOST_DB = 12  # dB
+STEM_MERGE_SHARE_MIN = 0.6  # fraction
 STEM_RETRY_AFTER_S = 60  # s
 STEM_SLICE_EDGE_S = 0.008  # s
 STEM_WINDOW_MAX_S = 600  # s
@@ -114,20 +126,29 @@ XF_CENTER_BOOST_DB = 1.5  # dB
 
 # Entries a server may override at runtime, with the bounds both sides enforce.
 LIVE = {
+    "ACCENT_MAX_SHARE": {"min": 0, "max": 1, "unit": "fraction"},
     "BOOK_AFTER_LOAD_S": {"min": 0, "max": 60, "unit": "s"},
     "BYPASS_KEY_SCORE": {"min": 0, "max": 1, "unit": "score"},
     "ENERGY_MATCH_TOL": {"min": 0, "max": 10, "unit": "levels"},
     "ENERGY_MIN_RAW": {"min": 0, "max": 1, "unit": "ratio"},
     "FX_WET_DEFAULT": {"min": 0, "max": 1, "unit": "ratio"},
     "GLITCH_REPORT_GAP_S": {"min": 1, "max": 60, "unit": "s"},
+    "HOLD_END_ENERGY_DROP": {"min": 0.1, "max": 1, "unit": "fraction"},
+    "INSONG_HOLD_MAX_BARS": {"min": 8, "max": 64, "unit": "bars"},
+    "INSONG_HOLD_MIN_BARS": {"min": 8, "max": 64, "unit": "bars"},
     "KEY_CONFIDENCE_MIN": {"min": 0, "max": 1, "unit": "score"},
     "KEY_SAFE_MIN": {"min": 0, "max": 1, "unit": "score"},
     "MERGE_AUDITION_BUDGET_MS": {"min": 10000, "max": 300000, "unit": "ms"},
+    "MERGE_HOLD_MAX_BARS": {"min": 16, "max": 128, "unit": "bars"},
+    "MERGE_HOLD_MIN_BARS": {"min": 16, "max": 128, "unit": "bars"},
+    "MERGE_HOLD_TARGET_S": {"min": 20, "max": 300, "unit": "s"},
     "PICK_TIMEOUT_MS": {"min": 30000, "max": 600000, "unit": "ms"},
     "PLAN_MAX_WAIT_MS": {"min": 5000, "max": 120000, "unit": "ms"},
     "PLAN_MIN_WAIT_MS": {"min": 1000, "max": 60000, "unit": "ms"},
     "PREPLAN_WAIT_MS": {"min": 5000, "max": 120000, "unit": "ms"},
     "SESSION_PAUSE_CLOSE_MIN": {"min": 1, "max": 240, "unit": "min"},
+    "STEM_MATCH_MAX_BOOST_DB": {"min": 0, "max": 24, "unit": "dB"},
+    "STEM_MERGE_SHARE_MIN": {"min": 0, "max": 1, "unit": "fraction"},
     "UNCERTAIN_CLASH_SCORE": {"min": 0, "max": 1, "unit": "score"},
     "VOCAL_CLASH_CUTOFF": {"min": 0, "max": 1, "unit": "ratio"},
     "XF_CENTER_BOOST_DB": {"min": 0, "max": 3, "unit": "dB"},
