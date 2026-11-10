@@ -109,3 +109,12 @@ def test_ground_matches_artist_repeated_in_title_and_first_credit():
     ok, free = pp.ground(picks, pool)
     assert [p["title"] for p in ok] == ["Track Alpha (Official Audio)", "Track Beta"]
     assert [p["title"] for p in free] == ["Track Invented"]
+
+
+def test_ground_accepts_artist_and_title_swapped():
+    """Prod 2026-11-10: the model answered "Aarzu - Noor" for the pool row "Noor - Aarzu" and the right pick was
+    rejected as free text."""
+    pool = pp.build_pool(atlas=[{"artist": "Noor", "title": "Aarzu", "source": "library", "track_id": "t1"}],
+                         cat=[], exclude=[], seed_title="Seed")
+    ok, free = pp.ground([{"artist": "Aarzu", "title": "Noor"}], pool)
+    assert not free and ok[0]["artist"] == "Noor" and ok[0]["title"] == "Aarzu" and ok[0]["track_id"] == "t1"

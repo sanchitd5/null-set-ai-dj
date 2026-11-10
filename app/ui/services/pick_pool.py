@@ -209,7 +209,9 @@ def ground(picks: list[dict], pool: list[dict]) -> tuple[list[dict], list[dict]]
         emb = _embedded_cid(p)
         c = by_id.get(str(p.get("cid") or "").strip().lower()) or by_id.get(emb)
         if not c:
-            for k in _key_variants(p.get("artist", ""), p.get("title", "")):
+            # the model sometimes swaps artist and title ("Aarzu - Noor" for the pool's "Noor - Aarzu")
+            for k in (_key_variants(p.get("artist", ""), p.get("title", ""))
+                      + _key_variants(p.get("title", ""), p.get("artist", ""))):
                 c = by_key.get(k)
                 if c:
                     break
