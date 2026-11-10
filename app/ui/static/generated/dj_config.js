@@ -1,5 +1,5 @@
-// GENERATED from dj-config 7c53c62 - do not edit
-// config-hash: 2e1779c78fa7
+// GENERATED from dj-config 95e0f69-dirty - do not edit
+// config-hash: 8abb3a95649e
 (function (root) {
   "use strict";
   const values = {
@@ -83,6 +83,8 @@
     "OVERLAP_BARS": {"instant": 4, "standard": 16, "slow": 32},
     "PEAK_KEY_MIN": 0.8,
     "PEAK_WINDOW": 6,
+    "PHONE_SNAPSHOT_MOBILE_MAX_MB": 10,
+    "PHONE_SNAPSHOT_TOP_K": 50,
     "PICK_TIMEOUT_MS": 240000,
     "PITCH_RANGE_PCT": 8.0,
     "PLAN_ASK_WAIT_MS": 20000,
@@ -129,6 +131,6 @@
   };
   root.DJ_CONFIG = Object.freeze(values);
   root.DJ_CONFIG_LIVE = Object.freeze(live);
-  root.DJ_CONFIG_META = Object.freeze({ sha: "7c53c62", hash: "2e1779c78fa7" });
+  root.DJ_CONFIG_META = Object.freeze({ sha: "95e0f69-dirty", hash: "8abb3a95649e" });
   if (typeof module !== "undefined" && module.exports) module.exports = root.DJ_CONFIG;
 })(typeof window !== "undefined" ? window : globalThis);
