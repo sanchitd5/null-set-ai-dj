@@ -1,5 +1,5 @@
-// GENERATED from dj-config 95e0f69-dirty - do not edit
-// config-hash: 8abb3a95649e
+// GENERATED from dj-config 312d680 - do not edit
+// config-hash: a25f4903f46b
 (function (root) {
   "use strict";
   const values = {
@@ -84,7 +84,7 @@
     "PEAK_KEY_MIN": 0.8,
     "PEAK_WINDOW": 6,
     "PHONE_SNAPSHOT_MOBILE_MAX_MB": 10,
-    "PHONE_SNAPSHOT_TOP_K": 50,
+    "PHONE_SNAPSHOT_TOP_K": 0,
     "PICK_TIMEOUT_MS": 240000,
     "PITCH_RANGE_PCT": 8.0,
     "PLAN_ASK_WAIT_MS": 20000,
@@ -131,6 +131,6 @@
   };
   root.DJ_CONFIG = Object.freeze(values);
   root.DJ_CONFIG_LIVE = Object.freeze(live);
-  root.DJ_CONFIG_META = Object.freeze({ sha: "95e0f69-dirty", hash: "8abb3a95649e" });
+  root.DJ_CONFIG_META = Object.freeze({ sha: "312d680", hash: "a25f4903f46b" });
   if (typeof module !== "undefined" && module.exports) module.exports = root.DJ_CONFIG;
 })(typeof window !== "undefined" ? window : globalThis);
