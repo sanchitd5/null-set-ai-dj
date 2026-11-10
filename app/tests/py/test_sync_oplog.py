@@ -139,3 +139,27 @@ def test_compact_drops_only_old_applied_ops_and_raises_the_floor(log):
     assert rows["k1"]["n"] == 3                                                         # materialised before the delete
     assert log.head() == 4 and log.floor() == 2
     assert log.compact(30, now=NOW)["deleted"] == 0
+
+
+def test_reserved_device_id_is_rejected_for_clients_and_open_to_server_code(log):
+    r = log.ingest([mk("r1"), mk("r2")], "server", "user:u1", now=NOW)
+    assert r["accepted"] == [] and [x["why"] for x in r["rejected"]] == ["reserved device id"] * 2
+    assert log.ingest([mk("r3")], " Server ", "user:u1", now=NOW)["accepted"] == []        # case and spaces fold
+    assert log.head() == 0
+    assert log.ingest_server([mk("s1")], now=NOW)["accepted"] == ["s1"]
+    assert log.since({"global"}, 0)[0]["device"] == "server"
+
+
+def test_a_device_field_in_the_op_body_is_never_stored(log):
+    log.ingest([mk("d1") | {"device": "server"}], "dev1", "user:u1", now=NOW)
+    assert log.since({"global"}, 0)[0]["device"] == "dev1"
+
+
+def test_apply_pass_is_bounded_by_the_head_it_started_with(log, monkeypatch):
+    seen = []
+    log.ingest([mk("e1"), mk("e2")], "d", "user:u", now=NOW)
+    log.register_applier("edge", lambda op: seen.append(op["op_id"]))
+    monkeypatch.setattr(log, "head", lambda: 1)           # an op past the head the pass started with waits
+    assert log.apply_pending() == 1 and seen == ["e1"]
+    monkeypatch.undo()
+    assert log.apply_pending() == 1 and seen == ["e1", "e2"]

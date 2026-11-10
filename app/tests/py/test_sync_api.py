@@ -267,3 +267,17 @@ def test_stream_requires_auth_and_pings(env, monkeypatch):
         assert fr[0][0] == "hello" and fr[1][0] == "ping"
         await a.close()
     run(go())
+
+
+def test_reserved_device_id_is_refused_on_every_path(env, tmp_path):
+    from app.music_brain.learning import phone_learn as pl
+    c = user(env, "1", "a@example.com")
+    assert post(c, [mk("x1")], device="server").status_code == 422
+    assert c.get("/api/sync/ops?device_id=server").status_code == 422
+    body = {"v": 1, "device_id": "server", "device_name": "x", "set_id": "s-1",
+            "items": [{"id": "s:1", "kind": "op", "at": "2026-11-09T20:00:00Z",
+                       "data": {k: v for k, v in mk("i").items() if k != "op_id"}}]}
+    assert pl.ingest(body, tmp_path)["rejected"][0]["why"] == "reserved device id"
+    assert env[2].head() == 0
+    r = post(c, [mk("x2") | {"device": "server"}]).json()                      # a body field never sets the device
+    assert r["accepted"] == ["x2"] and env[2].since({"global"}, 0)[0]["device"] == "dev1"

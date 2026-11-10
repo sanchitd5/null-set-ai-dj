@@ -55,6 +55,21 @@ STEPS = (
 )
 
 
+# Device ids only server code may stamp on an op. The appliers trust ops from these (e.g. the graph's yt edges), so a
+# client body or a learn-outbox item can never carry one: `ingest` rejects every op of such a device unless the
+# caller passes server=True (OpLog.ingest_server).
+SERVER_DEVICE = "server"
+RESERVED_DEVICES = frozenset({SERVER_DEVICE})
+
+# Held for a whole apply pass over every table, and by anything that must copy the materialised rows (the graph
+# snapshot): a copy never sees one table applied further than another.
+PASS_LOCK = threading.RLock()
+
+
+def is_reserved_device(device_id) -> bool:
+    return isinstance(device_id, str) and device_id.strip().lower() in RESERVED_DEVICES
+
+
 class OpLog:
     def __init__(self, path: Path):
         self.path = Path(path)
@@ -117,7 +132,11 @@ class OpLog:
         return [_row(r) for r in self._conn().execute(sql, args).fetchall()]
 
     # ------------------------------------------------------------------ write
-    def ingest(self, ops, device_id: str, user_scope: str, now: Optional[float] = None) -> dict:
+    def ingest_server(self, ops, now: Optional[float] = None) -> dict:
+        """Ingest ops written by server code itself: device SERVER_DEVICE, global or owner scope as the ops say."""
+        return self.ingest(ops, SERVER_DEVICE, "user:owner", now, server=True)
+
+    def ingest(self, ops, device_id: str, user_scope: str, now: Optional[float] = None, server: bool = False) -> dict:
         """Validate and store a batch. -> {"accepted": [ids], "duplicate": [ids], "rejected": [{op_id, why}],
         "head": N}. One bad op never fails the batch. The scope comes from the auth layer (`user_scope`), the
         op's own scope field only chooses between that and global, and only where WRITE_POLICY allows."""
@@ -127,6 +146,12 @@ class OpLog:
         out: dict = {"accepted": [], "duplicate": [], "rejected": []}
         if not isinstance(ops, list) or len(ops) > MAX_BATCH:
             raise ValueError(f"ops: a list of at most {MAX_BATCH}")
+        if not server and is_reserved_device(device_id):
+            for raw in ops:
+                oid = raw.get("op_id") if isinstance(raw, dict) else None
+                out["rejected"].append({"op_id": str(oid)[:120], "why": "reserved device id"})
+            out["head"] = self.head()
+            return out
         todo = []
         seen: Set[str] = set()
         for raw in ops:
@@ -195,15 +220,18 @@ class OpLog:
 
     def apply_pending(self, batch: int = 500) -> int:
         """Replay ops after each table's applied cursor through its applier, in seq order. A failing applier stops
-        that table (its cursor stays) and is retried on the next call. -> ops applied."""
+        that table (its cursor stays) and is retried on the next call. -> ops applied.
+        One pass is bounded by the head at its start and runs under PASS_LOCK, so when it ends every table has every op
+        up to that head and a snapshot taken under the lock (graph.db meta.seq) skips no op of any table."""
         n = 0
-        with self._apply_lock:
+        with PASS_LOCK, self._apply_lock:
             conn = self._conn()
+            top = self.head()
             for tbl, fn in list(self._appliers.items()):
                 while True:
                     cur = self.applied(tbl)
-                    rows = conn.execute(f"SELECT {_COLS} FROM op WHERE tbl = ? AND seq > ? ORDER BY seq LIMIT ?",
-                                        (tbl, cur, batch)).fetchall()
+                    rows = conn.execute(f"SELECT {_COLS} FROM op WHERE tbl = ? AND seq > ? AND seq <= ? "
+                                        "ORDER BY seq LIMIT ?", (tbl, cur, top, batch)).fetchall()
                     if not rows:
                         break
                     try:
