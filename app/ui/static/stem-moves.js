@@ -14,6 +14,7 @@
 //
 // All times on the audio clock. Pure schedules are exported for node checks.
 if (typeof DJ_CONFIG === "undefined" && typeof require === "function") require("./generated/dj_config.js");   // node: browsers load it via index.html
+if (typeof HoldPolicy === "undefined" && typeof require === "function") require("./hold-policy.js");   // G17: node (the global HoldPolicy is set by the module itself)
 (function (root) {
   "use strict";
 
@@ -898,12 +899,22 @@ if (typeof DJ_CONFIG === "undefined" && typeof require === "function") require("
     if (o.gap != null && o.gap > HOLD_TEMPO_CAP) return no("tempo", `tempo gap ${(o.gap * 100).toFixed(1)} % over the ${HOLD_TEMPO_CAP * 100} % cap`);
     if (o.keyScore != null && o.keyScore < HOLD_KEY_MIN) return no("key", `camelot ${o.keyScore} < ${HOLD_KEY_MIN}`);
     if (!o.eA || !o.eB) return no("stems", "stem energy unmeasured");
-    const kMax = Math.min(HOLD_MAX_PHRASES, Math.floor((o.roomBars - HANDOVER_BARS - HOLD_ROOM_BARS) / HOLD_PHRASE_BARS));
-    if (kMax < 1) return no("room", `${Math.round(o.roomBars)} bars left, need ${HOLD_PHRASE_BARS + HANDOVER_BARS + HOLD_ROOM_BARS}`);
+    // G17: long holds. M runs on the hold-policy grid (16 bars), BPM-scaled toward MERGE_HOLD_TARGET_S inside the settings' min..max;
+    // a song without that much room falls back to whole 8-bar phrases (the old behaviour). A stored move keeps its own length.
+    const HP = root.HoldPolicy || HoldPolicy, minBars = o.holdMin != null ? o.holdMin : HP.MERGE_HOLD_MIN_BARS, maxBars = o.holdMax != null ? o.holdMax : HP.MERGE_HOLD_MAX_BARS;
+    const roomM = Math.floor((o.roomBars - HANDOVER_BARS - HOLD_ROOM_BARS) / HOLD_PHRASE_BARS) * HOLD_PHRASE_BARS;
+    const targetBars = o.barS > 0 ? HP.mergeHoldBars(o.barS, o.roomBars, HP.settings({ merge_hold_bars: minBars === maxBars ? minBars : 0 })) : minBars;
+    if (roomM < HOLD_PHRASE_BARS) return no("room", `${Math.round(o.roomBars)} bars left, need ${HOLD_PHRASE_BARS + HANDOVER_BARS + HOLD_ROOM_BARS}`);
+    const grid = HP.HOLD_ALIGN_BARS, longMs = [];
+    for (let m = grid; m <= Math.min(maxBars, roomM); m += grid) longMs.push(m);
+    if (o.preferM > 0 && o.preferM % HOLD_PHRASE_BARS === 0 && o.preferM <= roomM && !longMs.includes(o.preferM)) longMs.push(o.preferM);
+    longMs.sort((x, y) => x - y);
+    const candMs = longMs.length ? longMs : [];
+    if (!candMs.length) for (let m = HOLD_PHRASE_BARS; m <= Math.min(roomM, grid - HOLD_PHRASE_BARS); m += HOLD_PHRASE_BARS) candMs.push(m);
     const aBars = regionsToBars(o.aVox, o.aT, o.barA), bBars = regionsToBars(o.bVox, o.bT, o.barB);
     const cands = [], tried = [];
-    for (let k = 1; k <= kMax; k++) {
-      const M = k * HOLD_PHRASE_BARS;
+    for (const M of candMs) {
+      const k = M / HOLD_PHRASE_BARS;
       const ranked = mergeRank({ eA: meanArr(o.eA, 0, M), eB: meanArr(o.eB, 0, M), keyScore: o.keyScore, bRap: o.bRap });
       if (!ranked.length) { tried.push({ M, gate: "no_combo" }); continue; }
       // a stored move (macro step) asks for its combo: it still passes every gate below
@@ -912,15 +923,17 @@ if (typeof DJ_CONFIG === "undefined" && typeof require === "function") require("
       const plan = mergeTransitionPlan(M, pick.combo, false);
       const sub = subOwnerCheck(plan, M);
       if (!sub.ok) { tried.push({ M, gate: "sub_owner", overlap: sub.overlapBars }); continue; }
-      const lv = o.aud ? gates(plan, mergeFader(M), plan.total, { eOut: o.eA, eIn: o.eB, aOut: o.aud.aA, aIn: o.aud.aB }, o.minRun || 1)
-                       : levelCheck({ events: plan.events, fader: mergeFader(M), dir: 1, span: plan.total, eOut: o.eA, eIn: o.eB });
+      // G17 gain fix: held stems are level-matched (quiet ones lifted toward the loudest, capped) before the vet; the master floor check still runs on the matched levels
+      const lm = o.levelMatch === false ? null : HP.levelMatch(o.eA, o.eB, pick.combo, M), vA = lm ? lm.eA : o.eA, vB = lm ? lm.eB : o.eB;
+      const lv = o.aud ? gates(plan, mergeFader(M), plan.total, { eOut: vA, eIn: vB, aOut: o.aud.aA, aIn: o.aud.aB }, o.minRun || 1)
+                       : levelCheck({ events: plan.events, fader: mergeFader(M), dir: 1, span: plan.total, eOut: vA, eIn: vB });
       if (!lv.ok) { tried.push({ M, gate: "level", reason: lv.reason }); continue; }
       // both voices singing through the handover is the clash the plan can only hide
       const ov = overlapBars(aBars, bBars, M, M + HANDOVER_BARS) / HANDOVER_BARS;
       if (ov > 0.5) { tried.push({ M, gate: "vocal_clash", overlap: Math.round(ov * 100) / 100 }); continue; }
-      // longer holds win up to 4 phrases (diminishing after), a handover in a vocal gap wins ties
-      const score = 10 * Math.min(k, 4) - 30 * ov + 0.1 * pick.score + (ov === 0 ? 5 : 0);
-      cands.push({ k, M, pick, ranked, ov, sub, score: Math.round(score * 10) / 10 });
+      // holds win up to the target length (BPM-scaled), past it they lose a little; a handover in a vocal gap wins ties
+      const score = 10 * Math.min(M, targetBars) / HP.HOLD_ALIGN_BARS - 0.5 * Math.max(0, M - targetBars) / HP.HOLD_ALIGN_BARS - 30 * ov + 0.1 * pick.score + (ov === 0 ? 5 : 0);
+      cands.push({ k, M, trim: lm ? lm.trim : null, pick, ranked, ov, sub, score: Math.round(score * 10) / 10 });
     }
     if (!cands.length) {
       const last = tried[tried.length - 1] || {};
@@ -929,7 +942,7 @@ if (typeof DJ_CONFIG === "undefined" && typeof require === "function") require("
     cands.sort((x, y) => y.score - x.score || y.M - x.M);
     const b = (o.preferM && cands.find((c) => c.M === o.preferM)) || cands[0], barS = o.barS || 0;   // stored hold length when clean
     return {
-      ok: true, M: b.M, holdBars: b.M - MERGE_START_BARS, holdPhrases: b.k, pick: b.pick, ranked: b.ranked, tried,
+      ok: true, M: b.M, holdBars: b.M - MERGE_START_BARS, holdPhrases: b.k, trim: b.trim, pick: b.pick, ranked: b.ranked, tried,
       phases: {
         merge_start: { at_bar: 0, bars: MERGE_START_BARS, combo: b.pick.label },
         hold: { from_bar: MERGE_START_BARS, to_bar: b.M, bars: b.M - MERGE_START_BARS, phrases: b.k, seconds: Math.round((b.M - MERGE_START_BARS) * barS * 10) / 10 },

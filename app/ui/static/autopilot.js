@@ -8,6 +8,7 @@
 
 // Pure transition maths, no DOM / audio (node-checked: app/tests/js/autopilot_check.js).
 if (typeof DJ_CONFIG === "undefined" && typeof require === "function") require("./generated/dj_config.js");   // node: browsers load it via index.html
+if (typeof HoldPolicy === "undefined" && typeof require === "function") require("./hold-policy.js");   // G17
 var autopilotCore = (function () {
   const MASHUP_KINDS = new Set(["blend", "filter", "loop"]);
   // Stem blend length in real bars. barS = seconds per bar at A's live tempo,
@@ -1722,7 +1723,7 @@ function createAutopilotEngine({ host, ai }) {
     }
     const barA = 240 / od.bpm, barB = 240 / idk.bpm, barS = 240 / aEff;
     const roomBars = od.buffer ? (od.buffer.duration - aT) / barA : 0;
-    const n = Math.max(1, Math.min(sm.core.HOLD_MAX_PHRASES, Math.floor((roomBars - 10) / 8))) * 8 + 10;
+    const hs = HoldPolicy.settings(host.holdSettings), n = Math.max(1, Math.min(Math.floor(hs.mergeMax / 8), Math.floor((roomBars - 10) / 8))) * 8 + 10;
     const cs = host.mod.djMind && host.mod.djMind.core && host.mod.djMind.core.camelotScore;
     const ka = od.analysis && od.analysis.key && od.analysis.key.camelot, kb = idk.analysis && idk.analysis.key && idk.analysis.key.camelot;
     const eA = sm.stemEnergyBars(od, aT, barA, n), eB = sm.stemEnergyBars(idk, entry, barB, n);
@@ -1730,7 +1731,7 @@ function createAutopilotEngine({ host, ai }) {
       gap, keyScore: cs && ka && kb ? cs(ka, kb) : null, roomBars, barS, aT, bT: entry, barA, barB, bRap: !!(ve && ve.rap), eA, eB,
       aVox: od.analysis && od.analysis.vocal_active_regions, bVox: idk.analysis && idk.analysis.vocal_active_regions,
       aud: (() => { const aA = sm.stemEnergyBars(od, aT, barA, n, "audible"), aB = sm.stemEnergyBars(idk, entry, barB, n, "audible"); return aA && aB ? { aA, aB } : null; })(),
-      preferM: prefer && prefer.M, preferLabel: prefer && prefer.label,
+      preferM: prefer && prefer.M, preferLabel: prefer && prefer.label, holdMin: hs.mergeMin, holdMax: hs.mergeMax,
     });
     if (!hp.ok) return hp;
     return { plan: { entry, M: hp.M, rap: !!(ve && ve.rap), gap, ranked: hp.ranked, pick: hp.pick, aT, heard: false, hold: hp, phases: hp.phases, holdE: { eA, eB },

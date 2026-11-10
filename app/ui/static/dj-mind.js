@@ -45,6 +45,7 @@
 // .eq-knob inputs. The pure core (decide & helpers) runs under node for tests.
 
 if (typeof DJ_CONFIG === "undefined" && typeof require === "function") require("./generated/dj_config.js");   // node: browsers load it via index.html
+if (typeof HoldPolicy === "undefined" && typeof require === "function") require("./hold-policy.js");   // G17
 (function (root) {
   "use strict";
 
@@ -1239,14 +1240,17 @@ if (typeof DJ_CONFIG === "undefined" && typeof require === "function") require("
     const sm = host.mod.stemMoves;
     if (!sm || !d.stemsReady || !toggleOn("ap-remix-toggle")) return false;
     const entryPhrase = phraseAt(d.analysis && d.analysis.downbeat_times, d._mindEntry || 0, bar);
-    if ((phrase - entryPhrase) % 2 !== 0) return false;                  // 16-bar lines only
+    // G17: len = the in-song hold (16-32 bars by default, hold-policy inSongHoldBars; 16 = the old line); lines every len bars, whole 16-bar lines
+    const hs = HoldPolicy.settings(host.holdSettings), len = hs.inSongHolds ? hs.inSongMax : 16;
+    const spacing = Math.max(2, Math.floor((Math.ceil(len / 8) + 1) / 2) * 2);
+    if ((phrase - entryPhrase) % spacing !== 0) return false;
     const [lineT] = phraseBounds(d.analysis && d.analysis.downbeat_times, phrase, bar);
     if (Math.abs(pos - lineT) > bar / 2) return false;
     const exitT = plan ? plan.fireAt : d.buffer.duration;
     const r = d._remix || (d._remix = { used: [], count: 0, lastAtBar: null });
     const atBar = (lineT - (d._mindEntry || 0)) / bar;
     const kind = sm.core.remixPick({
-      vocal: sm.vocalShare(d.analysis && d.analysis.vocal_active_regions, lineT, lineT + 16 * bar),
+      vocal: sm.vocalShare(d.analysis && d.analysis.vocal_active_regions, lineT, lineT + len * bar),
       used: r.used, count: r.count, barsOnTrack: atBar, barsLeft: (exitT - lineT) / bar, lastAtBar: r.lastAtBar, atBar,
       energy: sm.remixEnergy(d, lineT, bar),
       othersCarry: !!(d._othersCarry && d._othersCarry()),     // a drum break only while the other deck plays too
@@ -1256,13 +1260,13 @@ if (typeof DJ_CONFIG === "undefined" && typeof require === "function") require("
     // the sung line into it; refused like any other remix gate (nothing this section)
     const dlc = root.dropLineCore;
     if (kind === "vocal_hold" && dlc) {
-      const busy = dlc.deckBusy(d, lineT + 12 * bar, lineT + 16 * bar);
+      const busy = dlc.deckBusy(d, lineT + len * 0.75 * bar, lineT + len * bar);
       if (busy) { console.info(`remix: vocal_hold refused (${busy.gate}): ${busy.reason}`); return false; }
     }
-    if (!sm.remix(d, lineT, kind, 16)) return false;
+    if (!sm.remix(d, lineT, kind, len)) return false;
     r.used.push(kind); r.count++; r.lastAtBar = atBar;
-    busyUntil = nowS() + (16 * bar) / ((d._playbackRate && d._playbackRate()) || 1);
-    say({ action: "stem_remix", source: "STEMS", why: `REMIX: ${sm.REMIX_LABEL[kind]} in this 16-bar section` }, pos);
+    busyUntil = nowS() + (len * bar) / ((d._playbackRate && d._playbackRate()) || 1);
+    say({ action: "stem_remix", source: "STEMS", why: `REMIX: ${sm.REMIX_LABEL[kind]} in this ${len}-bar section` }, pos);
     return true;
   }
 
@@ -1458,6 +1462,7 @@ if (typeof DJ_CONFIG === "undefined" && typeof require === "function") require("
           recent_moves: log.slice(-4).map((l) => l.action),
           remix_used: remixUsed.slice(),
           mashup_possible: !!win.mashupPossible,
+          recent_recipes: (host.recipeLog || []).slice(-60), merge_possible: !!win.mergePossible, hold_settings: host.holdSettings || {},
           subdrop_last_track: subdropTrackIdx === trackIdx - 1,
           peak_moves: peakOn(),
           mood: host.session && host.session.romance ? "romance" : "",
