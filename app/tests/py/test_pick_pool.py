@@ -94,3 +94,18 @@ def test_ground_embedded_cid_does_not_eat_real_names():
     pool = _pool()
     ok, free = pp.ground([{"artist": "C3PO", "title": "Song"}], pool)
     assert not ok and free[0]["artist"] == "C3PO"
+
+
+def test_ground_matches_artist_repeated_in_title_and_first_credit():
+    pool = pp.build_pool(
+        atlas=[], exclude=[], seed_title="Seed",
+        cat=[{"artist": "Solo One", "title": "Track Alpha (Official Audio)", "source": "catalogue"},
+             {"artist": "Duo A, Guest B", "title": "Track Beta", "source": "catalogue"},
+             {"artist": "Other", "title": "Track Gamma", "source": "catalogue"},
+             {"artist": "Other", "title": "Track Delta", "source": "catalogue"}])
+    picks = [{"artist": "Solo One", "title": "Solo One - Track Alpha"},
+             {"artist": "Duo A", "title": "Track Beta"},
+             {"artist": "Solo One", "title": "Track Invented"}]
+    ok, free = pp.ground(picks, pool)
+    assert [p["title"] for p in ok] == ["Track Alpha (Official Audio)", "Track Beta"]
+    assert [p["title"] for p in free] == ["Track Invented"]

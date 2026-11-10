@@ -180,15 +180,39 @@ def _embedded_cid(p: dict) -> str:
     return found
 
 
+_CREDIT_SPLIT = re.compile(r"\s*(?:,|&|\band\b|\bx\b|\bfeat\.?|\bft\.?|\bwith\b)\s*", re.I)
+
+
+def _key_variants(artist: str, title: str) -> list[str]:
+    """Spellings of one pick that name the same row: as written, with the artist repeated in the title removed
+    ("Artist - Title" written into the title field), and with only the first credited artist (guests dropped)."""
+    artist, title = str(artist or ""), str(title or "")
+    out = [key_of(artist, title)]
+    prefix = key_of(artist, "")
+    if " - " in title and prefix.rstrip("|") and key_of(title.split(" - ", 1)[0], "") == prefix:
+        out.append(key_of(artist, title.split(" - ", 1)[1]))
+    first = _CREDIT_SPLIT.split(artist, maxsplit=1)[0]
+    if first and first != artist:
+        out.append(key_of(first, title))
+    return out
+
+
 def ground(picks: list[dict], pool: list[dict]) -> tuple[list[dict], list[dict]]:
     """(grounded, free_text). A pick is grounded by its cid, else by an exact artist+title match."""
     by_id = {c["cid"].lower(): c for c in pool}
     by_key = {key_of(c["artist"], c["title"]): c for c in pool}
+    for c in pool:                              # a pool row credited "A, B" also answers to "A"
+        for k in _key_variants(c["artist"], c["title"])[1:]:
+            by_key.setdefault(k, c)
     ok, free, used = [], [], set()
     for p in picks:
         emb = _embedded_cid(p)
-        c = by_id.get(str(p.get("cid") or "").strip().lower()) or by_id.get(emb) or by_key.get(
-            key_of(p.get("artist", ""), p.get("title", "")))
+        c = by_id.get(str(p.get("cid") or "").strip().lower()) or by_id.get(emb)
+        if not c:
+            for k in _key_variants(p.get("artist", ""), p.get("title", "")):
+                c = by_key.get(k)
+                if c:
+                    break
         if not c or c["cid"] in used:
             free.append(p)
             continue
