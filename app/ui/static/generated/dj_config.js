@@ -1,4 +1,4 @@
-// GENERATED from dj-config 687b9d7 - do not edit
+// GENERATED from dj-config bd025d3 - do not edit
 // config-hash: 05f15bc489b2
 (function (root) {
   "use strict";
@@ -152,6 +152,6 @@
   };
   root.DJ_CONFIG = Object.freeze(values);
   root.DJ_CONFIG_LIVE = Object.freeze(live);
-  root.DJ_CONFIG_META = Object.freeze({ sha: "687b9d7", hash: "05f15bc489b2" });
+  root.DJ_CONFIG_META = Object.freeze({ sha: "bd025d3", hash: "05f15bc489b2" });
   if (typeof module !== "undefined" && module.exports) module.exports = root.DJ_CONFIG;
 })(typeof window !== "undefined" ? window : globalThis);

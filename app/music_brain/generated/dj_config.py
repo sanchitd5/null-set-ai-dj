@@ -1,8 +1,8 @@
-# GENERATED from dj-config 687b9d7 - do not edit
+# GENERATED from dj-config bd025d3 - do not edit
 # config-hash: 05f15bc489b2
 """Generated from dj-config/config/*.json. Do not edit; run dj-config/tool/gen.py."""
 
-SHA = "687b9d7"
+SHA = "bd025d3"
 CONFIG_HASH = "05f15bc489b2"
 
 ACCENT_MAX_SHARE = 0.2  # fraction
