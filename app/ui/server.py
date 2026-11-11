@@ -491,6 +491,24 @@ def get_library_lyric_verdicts():
     return {"verdicts": out}
 
 
+@app.get("/api/library/song/{track_id}/files")
+def get_library_song_files(track_id: str):
+    """What the song's folder holds as text (G25): {meta, lyrics, asr}. The phone mirrors it into its own song folder."""
+    from app.music_brain import song_store
+
+    if track_id not in _tracks:
+        raise HTTPException(404, "unknown track")
+
+    def text(p):
+        try:
+            return p.read_text(encoding="utf-8")
+        except OSError:
+            return ""
+
+    return {"meta": song_store.read_meta(track_id), "lyrics": text(song_store.lyrics_path(track_id)),
+            "asr": text(song_store.asr_path(track_id))}
+
+
 @app.get("/api/admin/cache-audit")
 def get_cache_audit(email: str = Depends(_admin.require_admin)):
     """The last `cache_audit` job result: suspect files (flag only), with name, class, detail and status."""

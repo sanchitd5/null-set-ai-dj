@@ -208,3 +208,18 @@ def test_migrate_recopies_a_truncated_target_and_resumes(cache):
     assert res["moved"] == 1 and dst.read_bytes() == b"audio-bytes" * 100
     res = song_migrate.run(tracks, dry_run=False, hash_fn=lambda p: "HASH1")
     assert res["planned"] == 2 and res["moved"] == 2
+
+
+# ---- HTTP
+def test_library_verdicts_and_files_routes(cache, monkeypatch):
+    from app.tests.py.testclient_compat import TestClient
+    from app.ui import server
+
+    monkeypatch.setitem(server._tracks, "t9", cache / "t9.flac")
+    ss.update_meta("t9", verdict="verified", score=0.8)
+    ss.write_text(ss.lyrics_path("t9"), "words\n")
+    c = TestClient(server.app)
+    assert c.get("/api/library/lyric-verdicts").json()["verdicts"]["t9"] == {"verdict": "verified", "score": 0.8}
+    j = c.get("/api/library/song/t9/files").json()
+    assert j["lyrics"] == "words\n" and j["asr"] == "" and j["meta"]["verdict"] == "verified"
+    assert c.get("/api/library/song/nope/files").status_code == 404
