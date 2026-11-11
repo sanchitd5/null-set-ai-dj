@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from app.music_brain import atlas_bridge
+from app.music_brain import atlas_bridge, djcore_bridge
 
 # Auth stays ON in tests: a throwaway account store (owner password + one device token) and
 # session secret, set before app.ui.server is imported, so the owner's real store and .env
@@ -166,7 +166,13 @@ _NEEDS_KB_WIKI = {"test_key_scoring.py", "test_knowledge_parser.py", "test_match
 
 
 def pytest_collection_modifyitems(config, items):
-    """Tests marked needs_atlas skip, with the reason, when the dj-atlas builder is absent."""
+    """Tests marked needs_atlas skip, with the reason, when the dj-atlas builder is absent; tests marked needs_djcore skip
+    when the dj-core service executable is absent (dj-core CI runs the same goldens through the exe)."""
+    if not djcore_bridge.available():
+        skip_dj = pytest.mark.skip(reason=djcore_bridge.SKIP_REASON)
+        for item in items:
+            if "needs_djcore" in item.keywords:
+                item.add_marker(skip_dj)
     if atlas_bridge.AVAILABLE:
         return
     skip = pytest.mark.skip(reason=atlas_bridge.SKIP_REASON)
@@ -194,6 +200,13 @@ def pytest_make_collect_report(collector):
 def pytest_runtest_makereport(item, call):
     """The same for a test that imports an atlas module inside the test body."""
     outcome = yield
+    if (call.excinfo is not None and isinstance(call.excinfo.value, djcore_bridge.DjCoreUnavailable)
+            and not djcore_bridge.available()):
+        # a test that reaches a dj-core decision with no service executable installed: skip, never a silent fallback
+        rep = outcome.get_result()
+        rep.outcome = "skipped"
+        rep.longrepr = (str(item.path), item.location[1] or 0, "Skipped: " + djcore_bridge.SKIP_REASON)
+        return
     if call.excinfo is not None and atlas_bridge.is_atlas_import_error(call.excinfo.value):
         rep = outcome.get_result()
         rep.outcome = "skipped"

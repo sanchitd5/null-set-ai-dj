@@ -61,3 +61,15 @@ and `touch /etc/nullset-cd.disabled` first or the next run deploys the same comm
 
 Environment overrides (`NULLSET_CD_*`: APP_DIR, BRANCH, REPO, API, HEALTH_URL, STATE_DIR, LOG_FILE, ...) are listed at the
 top of the script; the tests use them.
+
+## dj-core service executable
+
+All pick decisions run in the dj-core service `dj-core-svc` (see `app/music_brain/djcore_bridge.py`). It is built from the
+private dj-core repo, so it never lives in this repo. The server pipeline builds it from dj-core `main`, runs the dj-core
+service goldens against the built binary, and installs it as the one current binary at `/opt/null-set-ai-dj/bin/dj-core-svc`
+(atomic rename; the previous binary is kept as `dj-core-svc.prev`; `dj-core-svc.version` holds the dj-core commit and the
+sha256). It then restarts `nullset-dj` so the bridge picks up the new child. The server starts the binary from `DJ_CORE_SVC`
+(default `/opt/null-set-ai-dj/bin/dj-core-svc`).
+
+Rollback: `mv dj-core-svc.prev dj-core-svc` in that directory and restart `nullset-dj`. Without the binary the bridge
+raises `DjCoreUnavailable` and logs `[djcore] ERROR ...`; there is no Python fallback.

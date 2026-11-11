@@ -73,6 +73,7 @@ def suggest_env(monkeypatch, tmp_path):
     return srv
 
 
+@pytest.mark.needs_djcore
 def test_llm_exception_answers_200_with_the_youtube_fallback(suggest_env):
     srv = suggest_env
     out = srv.autopilot_suggest(srv.AutopilotSuggestRequest(track_id="seed", set_id="r3a"))
@@ -93,6 +94,7 @@ def test_llm_exception_with_nothing_to_fall_back_on_is_an_empty_list_with_a_reas
     assert out["suggestions"] == [] and "LLM exploded" in out["fallback_reason"]
 
 
+@pytest.mark.needs_djcore
 def test_an_unexpected_error_in_the_impl_is_not_a_500(suggest_env, monkeypatch):
     srv = suggest_env
     monkeypatch.setattr(srv, "_autopilot_suggest_impl", lambda req, ctx=None: (_ for _ in ()).throw(ValueError("filter bug")))

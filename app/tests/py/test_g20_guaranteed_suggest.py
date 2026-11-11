@@ -1,9 +1,13 @@
 """G20: guaranteed suggest. Fakes only: no network, no LLM, no library files."""
+import pytest
 import time
 
 from app.ui.services import suggest_ladder as sl
 
 LIB = [{"track_id": f"t{i}", "artist": f"Art{i}", "title": f"Song{i}"} for i in range(6)]
+
+
+pytestmark = pytest.mark.needs_djcore   # the ladder asks the dj-core service for every acceptance decision
 
 
 def run(**kw):
