@@ -116,7 +116,16 @@ def ladder(*, deadline_at: float, hard_played: Sequence[str], earlier: Sequence[
     def fresh(r: dict) -> bool:
         return _norm(_label(r)) not in heard_earlier
 
+    def labelled(r: dict) -> dict:
+        # HF11: every reply carries the genre the ladder judged it by. The phone gates on the reply's label, so a pick
+        # accepted here by its artist's genre was refused there as "no label" under a pinned scene.
+        if r.get("genre"):
+            return r
+        g = genre_of(r)
+        return dict(r, genre=str(g)) if g else r
+
     def mk(r: dict, source: str, why: str) -> dict:
+        r = labelled(r)
         s = {k: r[k] for k in ("artist", "title", "track_id", "yt_id", "genre", "era") if r.get(k)}
         s.update(reason=why, source=source, pick_source=source, fallback_reason=reason,
                  pool_source=r.get("pool_source") or ("library" if r.get("track_id") else "yt"))
@@ -149,7 +158,7 @@ def ladder(*, deadline_at: float, hard_played: Sequence[str], earlier: Sequence[
 
     def collect(fn, source):
         try:
-            return [dict(p, pick_source=p.get("pick_source") or source, fallback_reason=reason)
+            return [dict(labelled(p), pick_source=p.get("pick_source") or source, fallback_reason=reason)
                     for p in fn() if isinstance(p, dict) and hard_ok(p)]
         except Exception as exc:        # a failing step falls through to the next
             print(f"[suggest] ladder step {source} failed: {exc!r}", flush=True)

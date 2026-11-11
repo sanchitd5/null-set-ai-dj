@@ -182,3 +182,13 @@ def test_pinned_scene_refuses_unknown_genre_and_era_jump_like_dj_core():
     assert r["pick_source"] != "graph"
     ok = [{"artist": "K", "title": "SameEra", "track_id": "k1", "genre": "house", "era": "1990s"}]
     assert run(graph_picks=lambda: ok, set_state=ss)["pick_source"] == "graph"
+
+
+def test_hf11_reply_carries_the_genre_the_ladder_resolved():
+    """HF11: a graph pick without its own label is accepted by the artist's genre; the reply must carry that genre,
+    or the phone (which gates on the reply) refuses it as 'no label' under a pinned scene."""
+    ss = {"scene_genre": "melodic techno"}
+    rows = [{"artist": "M", "title": "Unlabelled", "track_id": "m1"}]
+    r = run(graph_picks=lambda: rows, set_state=ss, genre_of=lambda row: "melodic techno")
+    assert r["pick_source"] == "graph"
+    assert all(s.get("genre") == "melodic techno" for s in r["suggestions"])
