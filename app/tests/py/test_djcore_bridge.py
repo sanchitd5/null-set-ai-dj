@@ -96,3 +96,31 @@ def test_threads_share_one_child(fake):
     [t.start() for t in ts]
     [t.join() for t in ts]
     assert not errs and all(out) and len(out) == 20
+
+
+def test_pin_selects_versioned_build_and_refuses_wrong_checksum(tmp_path, monkeypatch):
+    import hashlib
+    from app.music_brain import djcore_bridge as b
+    exe = tmp_path / "versions" / "abc123"
+    exe.parent.mkdir()
+    exe.write_bytes(b"#!/bin/sh\n")
+    exe.chmod(0o755)
+    good = hashlib.sha256(exe.read_bytes()).hexdigest()
+    pin = tmp_path / "dj-core-svc.version"
+    pin.write_text(f"# comment\nsha=abc123\nsha256={good}\n")
+    monkeypatch.delenv("DJ_CORE_SVC", raising=False)
+    monkeypatch.setattr(b, "PIN_FILE", str(pin))
+    monkeypatch.setattr(b, "VERSIONS_DIR", str(tmp_path / "versions"))
+    assert b.binary_path() == str(exe)
+    b.check_pinned(str(exe))
+    pin.write_text("sha=abc123\nsha256=" + "0" * 64 + "\n")
+    with pytest.raises(b.DjCoreUnavailable):
+        b.check_pinned(str(exe))
+    pin.unlink()
+    assert b.binary_path() == b.DEFAULT_BIN
+
+
+def test_repo_pin_is_well_formed():
+    from app.music_brain import djcore_bridge as b
+    pin = b.read_pin()
+    assert len(pin.get("sha", "")) == 40 and len(pin.get("sha256", "")) == 64

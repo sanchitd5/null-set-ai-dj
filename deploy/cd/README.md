@@ -65,11 +65,13 @@ top of the script; the tests use them.
 ## dj-core service executable
 
 All pick decisions run in the dj-core service `dj-core-svc` (see `app/music_brain/djcore_bridge.py`). It is built from the
-private dj-core repo, so it never lives in this repo. The server pipeline builds it from dj-core `main`, runs the dj-core
-service goldens against the built binary, and installs it as the one current binary at `/opt/null-set-ai-dj/bin/dj-core-svc`
-(atomic rename; the previous binary is kept as `dj-core-svc.prev`; `dj-core-svc.version` holds the dj-core commit and the
-sha256). It then restarts `nullset-dj` so the bridge picks up the new child. The server starts the binary from `DJ_CORE_SVC`
-(default `/opt/null-set-ai-dj/bin/dj-core-svc`).
+private dj-core repo, so the binary never lives in this repo; only its version does. `deploy/dj-core-svc.version` pins the
+dj-core commit (`sha`) and the checksum of its build (`sha256`).
 
-Rollback: `mv dj-core-svc.prev dj-core-svc` in that directory and restart `nullset-dj`. Without the binary the bridge
-raises `DjCoreUnavailable` and logs `[djcore] ERROR ...`; there is no Python fallback.
+The server pipeline builds dj-core `main`, runs the dj-core service goldens against the built binary and installs it on the
+host as `/opt/null-set-ai-dj/bin/versions/<sha>` (builds are kept; an installed build is never rebuilt). A pin bump is a normal
+PR that changes `deploy/dj-core-svc.version`. The bridge starts `bin/versions/<pinned sha>` and refuses it when its sha256 is
+not the pinned one. `DJ_CORE_SVC` overrides the path (tests, local runs) and is not checksum-checked.
+
+Rollback: the CD rollback of a server commit also restores the previous pin, and the previous build is still installed.
+Without a usable binary the bridge raises `DjCoreUnavailable` and logs `[djcore] ERROR ...`; there is no Python fallback.

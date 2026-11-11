@@ -1,8 +1,11 @@
 """The ONE adapter between the public server and the dj-core decision service.
 
 All pick / mix rules live in dj-core (private repo). The server never keeps a second implementation of them: it spawns the
-compiled `dj-core-svc` executable (built and published by dj-core CI, dropped on the host by the deploy, path in the env var
-DJ_CORE_SVC, default /opt/null-set-ai-dj/bin/dj-core-svc) and talks JSON lines over its stdin / stdout:
+compiled `dj-core-svc` executable and talks JSON lines over its stdin / stdout. Which build runs is pinned in this repo:
+deploy/dj-core-svc.version names the dj-core commit and the sha256 of its build. The server pipeline installs every build on the
+host as bin/versions/<commit>; the bridge starts the pinned one and refuses it when its sha256 differs from the pin. Rolling
+back a server commit therefore rolls back the dj-core build too. DJ_CORE_SVC overrides the path (tests, local runs) and skips
+the checksum check.
 
     request  {"id": n, "fn": "<name>", "args": {...}}
     response {"id": n, "ok": true, "result": ...}  or  {"id": n, "ok": false, "error": "..."}
@@ -24,7 +27,9 @@ import time
 from typing import Any, List, Optional
 
 PROTOCOL = 1                                  # the wire version this client speaks; the service says its own in its hello line
-DEFAULT_BIN = "/opt/null-set-ai-dj/bin/dj-core-svc"
+DEFAULT_BIN = "/opt/null-set-ai-dj/bin/dj-core-svc"       # used only when no pin is present
+VERSIONS_DIR = "/opt/null-set-ai-dj/bin/versions"
+PIN_FILE = os.path.join(os.path.dirname(__file__), "..", "..", "deploy", "dj-core-svc.version")
 SKIP_REASON = "needs_djcore: the dj-core service executable is not installed (set DJ_CORE_SVC to a dj-core-svc build)"
 CALL_TIMEOUT_S = 5.0                          # a decision is ~0.1 ms; anything near this is a hung child
 START_TIMEOUT_S = 10.0
@@ -39,8 +44,44 @@ class DjCoreError(RuntimeError):
     """The service answered {"ok": false}: the call itself was rejected (bad args, unknown fn)."""
 
 
+def read_pin(path: Optional[str] = None) -> dict:
+    """{"sha": dj-core commit, "sha256": checksum of its build} from deploy/dj-core-svc.version ({} when absent)."""
+    pin = {}
+    try:
+        with open(path or PIN_FILE, encoding="utf-8") as fh:
+            for line in fh:
+                k, sep, v = line.strip().partition("=")
+                if sep and not k.startswith("#"):
+                    pin[k.strip()] = v.strip()
+    except OSError:
+        return {}
+    return pin if pin.get("sha") and pin.get("sha256") else {}
+
+
 def binary_path() -> str:
-    return os.environ.get("DJ_CORE_SVC") or DEFAULT_BIN
+    env = os.environ.get("DJ_CORE_SVC")
+    if env:
+        return env
+    pin = read_pin()
+    return os.path.join(VERSIONS_DIR, pin["sha"]) if pin else DEFAULT_BIN
+
+
+def _sha256(path: str) -> str:
+    import hashlib
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for block in iter(lambda: fh.read(1 << 20), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def check_pinned(path: str) -> None:
+    """Refuse the pinned build when its checksum is not the pinned one (other paths, e.g. DJ_CORE_SVC, are not checked)."""
+    pin = read_pin()
+    if not pin or os.environ.get("DJ_CORE_SVC") or path != os.path.join(VERSIONS_DIR, pin["sha"]):
+        return
+    if _sha256(path) != pin["sha256"]:
+        raise DjCoreUnavailable(f"dj-core service {path} does not match the pinned sha256 in deploy/dj-core-svc.version")
 
 
 def available() -> bool:
@@ -109,6 +150,11 @@ class DjCoreBridge:
         path = self.path
         if not os.access(path, os.X_OK):
             raise DjCoreUnavailable(f"dj-core service not found or not executable: {path} (set DJ_CORE_SVC)")
+        try:
+            check_pinned(path)
+        except DjCoreUnavailable:
+            self._failed_at = time.monotonic()
+            raise
         child = None
         try:
             child = _Child(path)
