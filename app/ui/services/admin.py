@@ -359,6 +359,12 @@ _JOBS_HEAD = ('<style>form.sched{margin-top:8px}form.sched label{display:block;m
               'margin:4px 0;font-size:13px}</style><script src="/admin-jobs.js" defer></script>')
 
 
+def _verdict_text(tid: str) -> str:
+    from app.music_brain import song_store
+    v = song_store.verdict(tid)
+    return "" if not v else v["verdict"] + (f" ({v['score']})" if v.get("score") is not None else "")
+
+
 def _cache_audit_body() -> str:
     from app.music_brain.config import CACHE_DIR
     from app.ui import server
@@ -368,9 +374,16 @@ def _cache_audit_body() -> str:
     flags = cache_audit.load(CACHE_DIR)
     names = server._track_names
     s = cache_audit.summary(flags)
+    from app.music_brain import song_store
+    checked: dict = {}
+    for t in server._tracks:
+        v = song_store.verdict(t)
+        if v:
+            checked.setdefault(v["verdict"], []).append(t)
     head = (f'<p>{s["flagged"]} suspect files {e(str(s["by_class"]))}. Flag only: nothing is deleted. Re-fetch downloads the '
             f'song again from its source video; the flagged file stays. Run the scan from <a href="/admin/jobs">Jobs</a> '
-            f'(cache_audit).</p>')
+            f'(cache_audit). Lyric check (lyric_check job): '
+            f'{e(", ".join(f"{k} {len(v)}" for k, v in sorted(checked.items())) or "no song checked yet")}.</p>')
     rows = []
     for tid, f in sorted(flags.items()):
         refetch = (f'<form method="post" action="/api/admin/cache-audit/{e(tid)}/refetch"><button type="submit">Re-fetch</button></form>'
@@ -379,8 +392,9 @@ def _cache_audit_body() -> str:
         rows.append(f'<tr><td data-label="Song">{e(names.get(tid) or tid)}<br><span class="muted">{e(tid)}</span></td>'
                     f'<td data-label="Why">{e(", ".join(f.get("classes", [])))}<br><span class="muted">{e(str(f.get("detail") or ""))}</span></td>'
                     f'<td data-label="Source">{e(str(f.get("video") or ""))}</td>'
+                    f'<td data-label="Lyrics">{e(_verdict_text(tid))}</td>'
                     f'<td data-label="Status">{e(str(f.get("status") or ""))}{new}</td><td data-label="">{refetch}</td></tr>')
-    return head + ("<table><tr><th>Song</th><th>Why</th><th>Source video</th><th>Status</th><th></th></tr>"
+    return head + ("<table><tr><th>Song</th><th>Why</th><th>Source video</th><th>Lyrics</th><th>Status</th><th></th></tr>"
                    f"{''.join(rows)}</table>" if rows else "<p>Nothing flagged.</p>")
 
 
