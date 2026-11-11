@@ -450,10 +450,8 @@ def song(session: Optional[str], nn: int, limit: int = MAX_STEPS) -> Optional[di
 def _default_resolvers() -> None:
     """Outside the server (the CLI): uploads by content id, cached analysis and stems."""
     def path(tid: str) -> Optional[Path]:
-        from app.music_brain.config import CACHE_DIR
-        for p in (CACHE_DIR / "uploads").glob(f"{tid}.*"):
-            return p
-        return None
+        from app.music_brain import song_store
+        return song_store.audio_path(tid)
 
     def analysis(p: Path) -> dict:
         from app.music_brain.analysis.analyzer import analyze

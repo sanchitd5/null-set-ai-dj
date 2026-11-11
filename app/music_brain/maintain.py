@@ -38,6 +38,8 @@ import time
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence
 
+from app.music_brain import song_store
+
 STEPS = ("stems", "flac", "labels", "review", "atlas", "export")
 MAX_TRACK_S = 15 * 60          # longer files are full albums / DJ sets: never separated
 DEFAULT_PORT = 8000            # start.sh PORT default
@@ -98,7 +100,7 @@ def _counts(cache: Path) -> dict:
     out = {"tracks": len(tracks), "tracks_without_stems": sum(1 for t in tracks if not t["stems"])}
     ft, fast, voc = ss.DEMUCS_MODEL, ss.FAST_MODEL, f"{ss.FAST_MODEL}_vocals"
     st = {"ft_only": 0, "fast_only": 0, "both": 0, "fast_vocals_on_4stem": 0}
-    for vs in stem_hashes(Path(cache) / "stems").values():
+    for vs in stem_hashes(song_store.stems_root_for(cache)).values():
         kind = "both" if ft in vs and fast in vs else "ft_only" if ft in vs else "fast_only" if fast in vs else "other"
         st[kind] = st.get(kind, 0) + 1
         st["fast_vocals_on_4stem"] += voc in vs and (ft in vs or fast in vs)
@@ -156,18 +158,18 @@ def separate_one(path: str) -> None:
     stem_service.separate(path)
 
 
-def stem_hashes(stems_dir: Path) -> Dict[str, List[str]]:
-    """{audio hash: [variant, ...]} from the stem folder names <sha256>_<model>[_<two_stems>]."""
+def stem_hashes(stems_dir: Optional[Path]) -> Dict[str, List[str]]:
+    """{song key: [variant, ...]} of every stem folder: the key is the 16-hex song id for a song folder
+    (songs/<id>/stems/<variant>) or the audio sha256 for an old flat <sha256>_<variant>[_<two_stems>] folder.
+    stems_dir None: the live cache (song folders and flat); a path: only that flat directory."""
     out: Dict[str, List[str]] = {}
-    if Path(stems_dir).is_dir():
-        for d in sorted(Path(stems_dir).iterdir()):
-            h, sep, variant = d.name.partition("_")
-            if d.is_dir() and sep and len(h) == 64:
-                out.setdefault(h, []).append(variant)
+    for h, d in song_store.iter_stem_variants(stems_dir):
+        if len(h) in (16, 64):
+            out.setdefault(h, []).append(song_store.variant_of(d, h))
     return out
 
 
-def cleanup_non_ft(stems_dir: Path, dry_run: bool, out_of_time=lambda: False) -> dict:
+def cleanup_non_ft(stems_dir: Optional[Path], dry_run: bool, out_of_time=lambda: False) -> dict:
     """(a) every song that already has a complete htdemucs_ft set loses its non-ft folders."""
     from app.music_brain.audio import stem_service as ss
 
@@ -184,11 +186,12 @@ def cleanup_non_ft(stems_dir: Path, dry_run: bool, out_of_time=lambda: False) ->
             out["folders"].extend(r["removed"])
             out["bytes"] += r["bytes"]
         out["errors"].extend(r.get("errors") or [])
-    trash = Path(stems_dir).parent / "stems_trash"        # leftovers of a crash mid-delete
-    if not dry_run and trash.is_dir():
-        import shutil
-        for d in trash.iterdir():
-            shutil.rmtree(d, ignore_errors=True)
+    import shutil
+    trashes = [song_store.songs_dir() / "_trash"] if stems_dir is None else [Path(stems_dir).parent / "stems_trash"]
+    for trash in trashes:                                  # leftovers of a crash mid-delete
+        if not dry_run and trash.is_dir():
+            for d in trash.iterdir():
+                shutil.rmtree(d, ignore_errors=True)
     out["gb"] = round(out["bytes"] / 1e9, 2)
     return out
 
@@ -200,7 +203,7 @@ def step_stems(ctx: dict) -> dict:
     from app.music_brain.atlas import pair_atlas as pa
     from app.music_brain.audio import stem_service as ss
 
-    stems_dir = Path(ctx["cache"]) / "stems"
+    stems_dir = song_store.stems_root_for(ctx["cache"])
     out = {"cleanup": cleanup_non_ft(stems_dir, ctx["dry_run"], ctx["out_of_time"])}
     missing, upgrade, long_ = [], [], []
     for t in pa.Library(ctx["cache"]).tracks():

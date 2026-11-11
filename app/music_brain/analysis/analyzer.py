@@ -22,12 +22,12 @@ import numpy as np
 
 from app.music_brain.audio import audio_io
 
+from app.music_brain import song_store
 from app.music_brain.config import (
     ANALYSIS_CACHE_DIR,
     BEATS_PER_BAR,
     BEATS_PER_PHRASE,
     DEMUCS_MODEL,
-    STEMS_CACHE_DIR,
     VOCAL_PRESENCE_THRESHOLD_DBFS,
 )
 
@@ -415,10 +415,10 @@ ANALYSIS_VERSION = 6
 
 def _stems_for(digest: str) -> Optional[dict]:
     """{name: path} of the cached Demucs stems for a content hash, or None."""
-    from app.music_brain.audio.audio_io import read_manifest
+    from app.music_brain import song_store
 
     try:
-        return read_manifest(STEMS_CACHE_DIR / f"{digest}_{DEMUCS_MODEL}")
+        return song_store.stem_set(digest, DEMUCS_MODEL)
     except Exception:  # noqa: BLE001 -- a broken stem cache falls back to the mix rule
         return None
 

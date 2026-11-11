@@ -239,6 +239,11 @@ def _label_system() -> str:
             "\"genre\": \"<genre>\", \"era\": \"<decade>\"}]}")
 
 
+def _names_file(cache: Path) -> Path:
+    from app.music_brain import song_store
+    return song_store.names_file(cache)
+
+
 def library_titles(cache_dir: Optional[Path] = None) -> Dict[str, str]:
     """{title key: display name} for every library song: uploads/_names.json, a duplicate
     id resolved to its canonical id (track_aliases.json) so a song counts once."""
@@ -246,7 +251,7 @@ def library_titles(cache_dir: Optional[Path] = None) -> Dict[str, str]:
     from app.ui.services.dedup_songs import load_aliases, resolve_alias
     cache = Path(cache_dir or CACHE_DIR)
     try:
-        names = json.loads((cache / "uploads" / "_names.json").read_text(encoding="utf-8"))
+        names = json.loads(_names_file(cache).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
     if not isinstance(names, dict):

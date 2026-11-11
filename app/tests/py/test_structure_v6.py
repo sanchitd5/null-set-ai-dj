@@ -118,7 +118,7 @@ def test_reanalyse_command_is_idempotent(tmp_path, monkeypatch):
     from app.music_brain.analysis import reanalyse
 
     monkeypatch.setattr(config, "ANALYSIS_CACHE_DIR", tmp_path)
-    monkeypatch.setattr(analyzer, "STEMS_CACHE_DIR", tmp_path / "stems")
+    monkeypatch.setattr(analyzer.song_store, "songs_dir", lambda cache=None: tmp_path / "songs")
     (tmp_path / "abc.v5.json").write_text(json.dumps(_v5_record()))
     (tmp_path / "bad.v5.json").write_text("{not json")
     dry = reanalyse.run(True, jobs=1, dry=True)
@@ -133,7 +133,7 @@ def test_upgrade_v5_to_v6_on_disk(tmp_path, monkeypatch):
     audio = tmp_path / "song.mp3"
     audio.write_bytes(b"not really audio")
     monkeypatch.setattr(analyzer, "ANALYSIS_CACHE_DIR", tmp_path)
-    monkeypatch.setattr(analyzer, "STEMS_CACHE_DIR", tmp_path / "stems")
+    monkeypatch.setattr(analyzer.song_store, "songs_dir", lambda cache=None: tmp_path / "songs")
     digest = analyzer._file_hash(audio)
     v5 = tmp_path / f"{digest}.v5.json"
     v5.write_text(json.dumps(_v5_record()))

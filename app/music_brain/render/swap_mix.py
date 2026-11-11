@@ -273,7 +273,9 @@ def select_chain(cache_dir: str, n: int = 12, lanes: Optional[Dict[str, int]] = 
             continue
         if any(w in name.lower() for w in ("unreleased", "set cut")):
             continue
-        st = [s for s in glob.glob(f"{cache_dir}/stems/{tid}*_htdemucs_ft") if os.path.exists(s + "/bass.flac")]
+        from app.music_brain import song_store
+        st = [str(d) for d in (song_store.songs_dir(cache_dir) / tid / "stems" / "htdemucs_ft",) if (d / "bass.flac").exists()] or \
+             [s for s in glob.glob(f"{cache_dir}/stems/{tid}*_htdemucs_ft") if os.path.exists(s + "/bass.flac")]
         an = glob.glob(f"{cache_dir}/analysis/{tid}*.v6.json") or glob.glob(f"{cache_dir}/analysis/{tid}*.v5.json")
         if st and an:
             f = json.loads(feat or "{}")

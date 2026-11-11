@@ -66,6 +66,11 @@ def curve(seed: int, n: int = 240) -> list:
     return [round(float(v), 4) for v in base]
 
 
+def ss_names(cache: Path) -> Path:
+    from app.music_brain import song_store
+    return song_store.names_file(cache)
+
+
 def make_track(cache: Path, tid: str, name: str, *, seed: int, dur: float = 240.0, bpm: float = 120.0,
                key: str = "8A", stems: bool = False, keylock: bool = False, size: int = 100,
                shift: int = 0, mtime: float = 1000.0) -> str:
@@ -253,7 +258,7 @@ def test_apply_moves_the_duplicate_to_quarantine_with_manifest_and_alias_map(lib
     kinds = {x["kind"] for x in man["groups"][0]["moved"]}
     assert {"songs", "stems", "analysis", "waveforms"} <= kinds
     assert all({"original", "quarantined", "size", "id"} <= set(x) for x in man["groups"][0]["moved"])
-    assert B not in json.loads((lib / "uploads" / "_names.json").read_text())
+    assert B not in json.loads(ss_names(lib).read_text())
     fame = json.loads((lib / "fame.json").read_text())
     assert B not in fame and A in fame and C in fame
     from app.ui.services import set_memory as sm

@@ -31,7 +31,8 @@ def _set(stems_dir: Path, h: str, variant: str, names=ss.FOUR_STEM_NAMES) -> Pat
 def stems(tmp_path, monkeypatch):
     d = tmp_path / "stems"
     d.mkdir()
-    monkeypatch.setattr(ss, "STEMS_CACHE_DIR", d)
+    import app.music_brain.config as cfg
+    monkeypatch.setattr(cfg, "CACHE_DIR", tmp_path)        # the old flat cache <tmp>/stems is the read fallback
     return d
 
 
@@ -64,18 +65,22 @@ def test_dry_run_prune_reports_without_deleting(stems):
 
 
 def test_stem_worker_finish_prunes_only_for_an_ft_set(stems):
-    fast = _set(stems, H, "htdemucs")
-    ft_dir = stems / f"{H}_htdemucs_ft"
-    ft_dir.mkdir()
+    fast = ss.song_store.stems_dir(H[:16], "htdemucs")                        # the song folder holds the fast set
+    fast.mkdir(parents=True)
+    write_manifest(fast, {})
+    for n in ss.FOUR_STEM_NAMES:
+        (fast / f"{n}.flac").write_bytes(b"x")
+    ft_dir = ss.song_store.stems_dir(H[:16], "htdemucs_ft")     # a new set lands in the song folder
+    ft_dir.mkdir(parents=True)
     paths = {n: str(ft_dir / f"{n}.flac") for n in ss.FOUR_STEM_NAMES}
     for p in paths.values():
         Path(p).write_bytes(b"x")
     ss.StemWorker.finish({"stems": paths})
-    assert not fast.exists() and ss.complete_ft(H, stems)
+    assert not fast.exists() and ss.complete_ft(H)
     h2 = "ef" * 32
     other = _set(stems, h2, "htdemucs_vocals", ss.TWO_STEM_NAMES)
-    d2 = stems / f"{h2}_htdemucs"
-    d2.mkdir()
+    d2 = ss.song_store.stems_dir(h2[:16], "htdemucs")
+    d2.mkdir(parents=True)
     p2 = {n: str(d2 / f"{n}.flac") for n in ss.FOUR_STEM_NAMES}
     for p in p2.values():
         Path(p).write_bytes(b"x")

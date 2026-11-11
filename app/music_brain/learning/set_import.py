@@ -101,8 +101,8 @@ def plan_tracks(cache_dir: Path, set_id: str, tracks: List[dict], set_audio: Opt
 
     cache_dir = Path(cache_dir)
     names = sc.library_names(cache_dir)
-    uploads = {p.stem for p in (cache_dir / "uploads").glob("*") if not p.name.startswith("_")} \
-        if (cache_dir / "uploads").is_dir() else set()
+    from app.music_brain import song_store
+    uploads = set(song_store.library_audio(cache_dir))
     res = sc.Resolver({k: v for k, v in names.items() if k in uploads}, ds.load_aliases(cache_dir))
     rows, seen = [], {}
     rev = {n: tid for tid, n in names.items() if tid in uploads}

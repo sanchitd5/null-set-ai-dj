@@ -4,7 +4,7 @@ plan maths the live console needs to play one from any of its songs.
 A variant is a whole build_plan plan (JSON: songs with their cores, parts and output clock, 8-bar sections).
 Variants ship WITH THE APP: one file per variant in app/music_brain/supermove/variants/<name>.json, tracked in
 git, read once at start (load_all). No database, no runtime writes: adding a variant = committing a file.
-Track ids are content hashes; stems_dir is relative to the cache dir ("stems/<hash>_htdemucs_ft").
+Track ids are content hashes; stems_dir is relative to the cache dir ("songs/<id>/stems/htdemucs_ft"; "stems/<hash>_htdemucs_ft" in the old flat layout).
 
     from app.music_brain import supermove as smv
     smv.list_variants();  smv.load_variant("v1", start=2)
@@ -117,7 +117,10 @@ def portable(plan: dict) -> dict:
     for s in out.get("songs") or []:
         d = s.get("stems_dir")
         if d and Path(d).is_absolute():
-            s["stems_dir"] = f"stems/{Path(d).name}"
+            dp = Path(d)
+            # new layout: <cache>/songs/<id>/stems/<model>; old flat layout: <cache>/stems/<hash>_<model>
+            new_layout = dp.parent.name == "stems" and dp.parent.parent.parent.name == "songs"
+            s["stems_dir"] = f"songs/{dp.parent.parent.name}/stems/{dp.name}" if new_layout else f"stems/{dp.name}"
     raw = json.dumps(out, ensure_ascii=False)
     if re.search(r'"(/Users|/home|[A-Za-z]:\\\\)', raw):
         raise ValueError("variant holds an absolute path")

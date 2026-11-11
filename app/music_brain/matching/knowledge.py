@@ -307,8 +307,8 @@ class _Resolver:
 
         self.ds, self.cache, self.tracked = ds, cache, tracked_names
         self.aliases = ds.load_aliases(cache)
-        up = cache / "uploads"
-        have = {p.stem for p in up.glob("*") if not p.name.startswith("_")} if up.is_dir() else set()
+        from app.music_brain import song_store
+        have = set(song_store.library_audio(cache))
         self.local = {k: v for k, v in sc.library_names(cache).items() if k in have}
         self.by_name: Dict[str, List[str]] = {}
         self.idents = []
@@ -346,10 +346,15 @@ def seed(cache_dir: Optional[Path] = None, src: Optional[Path] = None,
     return knowledge_sync.sync(cache_dir, src, dry_run=dry_run, log=log)
 
 
+def _names_file(cache: Path) -> Path:
+    from app.music_brain import song_store
+    return song_store.names_file(cache)
+
+
 def _stamp(cache: Path, src: Path) -> str:
     h = hashlib.sha256()
     files = sorted(q for q in src.rglob("*") if q.is_file()) if src.is_dir() else []
-    for q in files + [cache / "uploads" / "_names.json", cache / "track_aliases.json"]:
+    for q in files + [_names_file(cache), cache / "track_aliases.json"]:
         try:
             st = q.stat()
             h.update(f"{q.name}:{st.st_size}:{st.st_mtime_ns};".encode())

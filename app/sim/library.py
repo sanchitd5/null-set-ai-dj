@@ -52,11 +52,12 @@ class MainLibrary:
         return out
 
     def _stems_for(self, h: str) -> Optional[dict]:
+        from app.music_brain import song_store
         for model in ("htdemucs_ft", "htdemucs"):
-            d = self.cache / "stems" / f"{h}_{model}"
-            paths = {n: stem_file(d, n) for n in ("drums", "bass", "vocals", "other")}   # .flac, else .wav
-            if all(p is not None for p in paths.values()):
-                return {k: str(v) for k, v in paths.items()}
+            for d in (song_store.songs_dir(self.cache) / h[:16] / "stems" / model, self.cache / "stems" / f"{h}_{model}"):
+                paths = {n: stem_file(d, n) for n in ("drums", "bass", "vocals", "other")}   # .flac, else .wav
+                if all(p is not None for p in paths.values()):
+                    return {k: str(v) for k, v in paths.items()}
         return None
 
     def tracks(self) -> list:
@@ -67,10 +68,13 @@ class MainLibrary:
         from app.ui.services.download_service import _is_live, _is_mix, _is_non_music
 
         try:
-            names = json.loads((self.cache / "uploads" / "_names.json").read_text(encoding="utf-8"))
+            from app.music_brain import song_store
+            names = json.loads(song_store.names_file(self.cache).read_text(encoding="utf-8"))
         except (OSError, ValueError):
             names = {}
         hashes = self._analysis_hashes()
+        from app.music_brain import song_store
+        lib_audio = song_store.library_audio(self.cache)
         out = []
         for tid in sorted(names):
             name, h = names[tid], hashes.get(tid)
@@ -78,7 +82,7 @@ class MainLibrary:
                 continue
             if _is_mix(name) or _is_live(name) or _is_non_music(name):
                 continue
-            audio = next(iter(sorted((self.cache / "uploads").glob(f"{tid}.*"))), None)
+            audio = lib_audio.get(tid)
             stems = self._stems_for(h)
             if audio is None or stems is None or not (self.cache / "analysis" / f"{h}.vibe.json").exists():
                 continue

@@ -29,6 +29,7 @@ from app.ui.services.ranged_file import RangedFileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from app.music_brain import song_store
 from app.music_brain.analysis import lang_id
 from app.music_brain.analysis.analyzer import analyze as analyze_track
 from app.music_brain.audio import audio_io
@@ -61,8 +62,7 @@ def separate_stems(path, **kw):
 def _load_audio(path, **kw):
     return _host().load_audio(path, **kw)
 
-UPLOAD_DIR = CACHE_DIR / "uploads"
-UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+song_store.songs_dir().mkdir(parents=True, exist_ok=True)
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 from app.ui.services import auth as _auth  # noqa: E402 -- after load_dotenv: DJ_SESSION_SECRET may come from .env
@@ -142,12 +142,11 @@ _knowledge = KnowledgeParser()
 _matcher = RecipeMatcher(_knowledge)
 
 # In-memory registry: track_id -> absolute file path. Rebuilt on restart
-# from UPLOAD_DIR's contents (see _load_registry_from_disk below).
+# from the song folders (song_store.library_audio, see _load_registry_from_disk below).
 _tracks: Dict[str, Path] = {}
 # Display names (track_id -> original filename stem). Persisted to a sidecar so
 # a server restart doesn't collapse every track to its content hash (which then
 # leaks into the autopilot LLM prompt as "Unknown - 065028eaec446431").
-TRACK_NAMES_FILE = UPLOAD_DIR / "_names.json"
 _track_names: Dict[str, str] = {}
 
 
@@ -155,14 +154,13 @@ _AUDIO_SUFFIXES = {".mp3", ".wav", ".flac", ".m4a", ".ogg", ".aiff", ".aif", ".o
 
 
 def _load_registry_from_disk() -> None:
-    # Audio only: aborted yt-dlp runs used to leave .webp thumbnails and .part
-    # files here, which then showed up (and crashed analysis) as "tracks".
-    for path in UPLOAD_DIR.glob("*"):
-        if path.is_file() and not path.name.startswith("_") and path.suffix.lower() in _AUDIO_SUFFIXES:
-            _tracks[path.stem] = path
-    if TRACK_NAMES_FILE.exists():
+    # Audio only, one file per song folder (songs/<id>/audio.<ext>); aborted yt-dlp runs leave their .webp
+    # thumbnails and .part files in songs/_incoming/, which is never listed.
+    _tracks.update(song_store.library_audio())
+    names_file = song_store.names_file()
+    if names_file.exists():
         try:
-            loaded = json.loads(TRACK_NAMES_FILE.read_text(encoding="utf-8"))
+            loaded = json.loads(names_file.read_text(encoding="utf-8"))
             if isinstance(loaded, dict):
                 _track_names.update({k: v for k, v in loaded.items() if isinstance(v, str)})
         except (json.JSONDecodeError, OSError):
@@ -175,12 +173,21 @@ def _remember_track_name(track_id: str, name: str) -> None:
         return
     _track_names[track_id] = name
     try:
-        TRACK_NAMES_FILE.write_text(json.dumps(_track_names, indent=2), encoding="utf-8")
+        song_store.names_file(for_write=True).write_text(json.dumps(_track_names, indent=2), encoding="utf-8")
     except OSError:
         pass
 
 
 _load_registry_from_disk()
+
+
+def _song_stem(path: Path) -> str:
+    """The track id of a song file: its folder name for songs/<id>/audio.<ext>, else the file stem (flat layout)."""
+    return path.parent.name if path.stem == "audio" and path.parent.parent == song_store.songs_dir() else path.stem
+
+
+def _song_filename(track_id: str, path: Path) -> str:
+    return f"{track_id}{path.suffix}"
 
 
 def _track_path(track_id: str) -> Path:
@@ -306,11 +313,11 @@ async def download_from_url(req: DownloadRequest):
         )
 
     # Download into a private temp dir so thumbnails / .part files from a failed
-    # or filtered run never land in UPLOAD_DIR; only the final audio is moved over.
+    # or filtered run never land in a song folder; only the final audio is moved over.
     existing = _reuse_existing(req.url)
     if existing:                          # same song already in the library: no second upload
         return {"source": source, "tracks": existing, "reused": True}
-    tmp_dir = UPLOAD_DIR / f"_dl_{uuid.uuid4().hex}"
+    tmp_dir = song_store.incoming_dir() / f"_dl_{uuid.uuid4().hex}"
     try:
         try:
             # Off the event loop: a YouTube fetch can take a minute and
@@ -348,19 +355,19 @@ def _reuse_existing(url: str) -> Optional[List[dict]]:
         bad = set(cache_audit.bad_ids(CACHE_DIR))
         tid = album_art.track_for_video(vid, lambda i: _usable(i) and i not in bad)
         if tid:
-            return [{"track_id": tid, "filename": _tracks[tid].name, "display_name": _track_names.get(tid) or vid}]
+            return [{"track_id": tid, "filename": _song_filename(tid, _tracks[tid]), "display_name": _track_names.get(tid) or vid}]
     wanted = dedup_songs.wanted_from_url(url)
     if not wanted:
         return None
     tid = dedup_songs.find_existing(wanted, _track_names, exists=_usable, cache=CACHE_DIR)
     if not tid:
         return None
-    return [{"track_id": tid, "filename": _tracks[tid].name, "display_name": _track_names.get(tid) or wanted}]
+    return [{"track_id": tid, "filename": _song_filename(tid, _tracks[tid]), "display_name": _track_names.get(tid) or wanted}]
 
 
 def _register_downloaded(paths: List[Path], names: Optional[List[str]] = None, move: bool = True,
                          queue: bool = True, source_url: Optional[str] = None) -> List[dict]:
-    """Move downloaded audio into UPLOAD_DIR under its content-hash id. names: display names
+    """Move downloaded audio into its song folder (songs/<id>/audio.<ext>) under its content-hash id. names: display names
     (default the file stems); move=False copies (pair_atlas import-set keeps the study's file);
     queue=False leaves the separation to the console (import-set: stems cached by content)."""
     results = []
@@ -368,12 +375,7 @@ def _register_downloaded(paths: List[Path], names: Optional[List[str]] = None, m
         original_name = names[i] if names and i < len(names) and names[i] else path.stem
         data = path.read_bytes()
         track_id = hashlib.sha256(data).hexdigest()[:16]
-        dest = UPLOAD_DIR / f"{track_id}{path.suffix}"
-        if not dest.exists():
-            if move:
-                shutil.move(str(path), dest)
-            else:
-                shutil.copy2(str(path), dest)
+        dest = song_store.adopt_audio(path, track_id, move=move)
         _tracks[track_id] = dest
         _remember_track_name(track_id, original_name)
         if queue:
@@ -381,7 +383,7 @@ def _register_downloaded(paths: List[Path], names: Optional[List[str]] = None, m
         if source_url:
             album_art.remember_source(track_id, source_url)   # YouTube video id, for the thumbnail step
         album_art.enqueue(track_id)       # cover lookup, background
-        results.append({"track_id": track_id, "filename": dest.name, "display_name": original_name})
+        results.append({"track_id": track_id, "filename": _song_filename(track_id, dest), "display_name": original_name})
     return results
 
 
@@ -444,7 +446,7 @@ def _start_download_job(url: str, label: str) -> str:
     from app.ui.services import download_jobs
 
     return download_jobs.start_job(
-        url, label[:120], UPLOAD_DIR,
+        url, label[:120], song_store.incoming_dir(),
         download_fn=_host().download_to_dir,
         register_fn=lambda paths: _register_downloaded(paths, source_url=url),
         reuse_fn=_reuse_existing,
@@ -542,7 +544,7 @@ def post_cache_audit_refetch(track_id: str, request: Request, email: str = Depen
         return res
 
     job_id = download_jobs.start_job(
-        url, (_track_names.get(track_id) or vid)[:120], UPLOAD_DIR,
+        url, (_track_names.get(track_id) or vid)[:120], song_store.incoming_dir(),
         download_fn=_host().download_to_dir, register_fn=_register, reuse_fn=None,
         analyze_fn=lambda tid: analyze_track(_track_path(tid)),
     )
@@ -577,8 +579,7 @@ async def upload_track(file: UploadFile):
     suffix = Path(file.filename or "track").suffix or ".mp3"
     contents = await file.read()
     track_id = hashlib.sha256(contents).hexdigest()[:16]
-    dest = UPLOAD_DIR / f"{track_id}{suffix}"
-    dest.write_bytes(contents)
+    dest = song_store.store_bytes(contents, track_id, suffix)
     _tracks[track_id] = dest
     if file.filename:
         _remember_track_name(track_id, Path(file.filename).stem)
@@ -612,7 +613,7 @@ def list_tracks():
     from app.ui.services.download_service import _is_live, _is_mix
 
     def _entry(tid, p):
-        name = _track_names.get(tid) or _name_from_tags(tid, p) or p.stem
+        name = _track_names.get(tid) or _name_from_tags(tid, p) or _song_stem(p)
         # not_a_song: live/event recordings and mixes already in the library
         # (downloaded before those filters existed); the autopilot skips them.
         return {"track_id": tid, "path": str(p), "display_name": name,
@@ -739,7 +740,7 @@ def _cached_vocal_regions(track_id: str) -> Optional[list]:
     audio_hash = stem_service.file_hash(_track_path(track_id))
     # ft 4-stem first: once it exists the fast 2-stem copy is pruned (stem_service.prune_non_ft)
     for model, two in ((DEMUCS_MODEL, None), (MASHUP_DEMUCS_MODEL, "vocals"), (DEMUCS_MODEL, "vocals")):
-        stems = stem_service._load_from_cache(stem_service._cache_dir_for(audio_hash, model, two))
+        stems = stem_service.load_set(audio_hash, model, two)
         if not stems or not stems.get("vocals"):
             continue
         if (model, two) == (MASHUP_DEMUCS_MODEL, "vocals"):
@@ -1210,7 +1211,7 @@ def _art_identity(tid: str):
     p = _tracks.get(tid)
     if p is None or not p.exists():
         return None
-    name = _track_names.get(tid) or p.stem
+    name = _track_names.get(tid) or _song_stem(p)
     return None if (_is_mix(name) or _is_live(name)) else (p, name)
 
 
@@ -1339,7 +1340,7 @@ def get_library_lockable(bpm: float, key: str = "", exclude: str = "", limit: in
     for tid, path in list(_tracks.items()):
         if tid in skip:
             continue
-        name = _track_names.get(tid) or path.stem
+        name = _track_names.get(tid) or _song_stem(path)
         if _is_mix(name) or _is_live(name):
             continue
         lib_key = _genre_key(clean_identity(name)[1])
@@ -1549,7 +1550,7 @@ def _hook_drops(track_id: str, top_n: int = 3, ai_call: bool = False) -> list:
     from app.music_brain.learning.set_learner import load_learned
 
     path = _track_path(track_id)
-    name = _track_names.get(track_id) or _name_from_tags(track_id, path) or path.stem
+    name = _track_names.get(track_id) or _name_from_tags(track_id, path) or _song_stem(path)
     miss = _hook_drop_miss.get(track_id)
     if miss and time.time() - miss < HOOK_MISS_TTL_S:
         return []                 # no lyrics a moment ago: don't re-ask LRCLIB or reload stems
@@ -2355,14 +2356,12 @@ def _vocals_cached(track_id: str) -> bool:
     if track_id in _vocal_regions:
         return True
     from app.music_brain.render.mashup import MASHUP_DEMUCS_MODEL
-    from app.music_brain.audio.stem_service import _cache_dir_for, _load_from_cache, file_hash
-
-    from app.music_brain.audio.stem_service import complete_ft
+    from app.music_brain.audio.stem_service import complete_ft, file_hash, load_set
 
     try:
         h = file_hash(Path(_track_path(track_id)))
         return (complete_ft(h) is not None
-                or _load_from_cache(_cache_dir_for(h, MASHUP_DEMUCS_MODEL, "vocals")) is not None)
+                or load_set(h, MASHUP_DEMUCS_MODEL, "vocals") is not None)
     except Exception:
         return False
 
@@ -2807,7 +2806,7 @@ def _track_vibe(track_id: str) -> Dict[str, Optional[str]]:
     from app.ui.services.track_identity import clean_identity
 
     path = _tracks.get(track_id)
-    name = _track_names.get(track_id) or (path.stem if path else "")
+    name = _track_names.get(track_id) or (_song_stem(path) if path else "")
     if not name:
         return {"genre": None, "era": None}
     key = _genre_key(clean_identity(name)[1])
@@ -2840,7 +2839,7 @@ def _vetoes() -> list:
 
 def _name_of(track_id: str) -> str:
     path = _tracks.get(track_id)
-    return _track_names.get(track_id) or (path.stem if path else "")
+    return _track_names.get(track_id) or (_song_stem(path) if path else "")
 
 
 class VetoRequest(BaseModel):
@@ -2966,7 +2965,7 @@ def _library_rows() -> list:
 
     out = []
     for tid, path in list(_tracks.items()):
-        name = _track_names.get(tid) or (path.stem if path else "")
+        name = _track_names.get(tid) or (_song_stem(path) if path else "")
         artist, title = clean_identity(name) if name else ("", "")
         if title:
             out.append({"track_id": tid, "artist": "" if artist == "Unknown" else artist, "title": title})
@@ -3160,7 +3159,7 @@ def _autopilot_suggest_impl(req: AutopilotSuggestRequest, ctx: Optional[dict] = 
 
     from app.ui.services.track_identity import clean_identity, credited_artists
 
-    display = _track_names.get(req.track_id, path.stem)
+    display = _track_names.get(req.track_id, _song_stem(path))
     # Primary artist + clean title only: featured artists and "(Official Video)"
     # noise confuse the model.
     artist_part, title_part = clean_identity(display)

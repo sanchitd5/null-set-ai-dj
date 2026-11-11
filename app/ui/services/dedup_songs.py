@@ -228,18 +228,16 @@ def _analysis_version(name: str) -> int:
 def scan(cache: Path) -> Dict[str, Track]:
     """Every uploaded track with its derived files (read-only)."""
     cache = Path(cache)
-    up = cache / "uploads"
-    names = _read_json(up / "_names.json") or {}
+    from app.music_brain import song_store
+    names = _read_json(song_store.names_file(cache)) or {}
     tracks: Dict[str, Track] = {}
-    if up.is_dir():
-        for p in sorted(up.iterdir()):
-            if p.is_file() and not p.name.startswith("_") and p.suffix.lower() in AUDIO_SUFFIXES:
-                try:
-                    st = p.stat()
-                except OSError:
-                    continue
-                name = names.get(p.stem) if isinstance(names.get(p.stem), str) else ""
-                tracks[p.stem] = Track(p.stem, name or p.stem, p, st.st_size, st.st_mtime)
+    for tid, p in sorted(song_store.library_audio(cache).items()):
+        try:
+            st = p.stat()
+        except OSError:
+            continue
+        name = names.get(tid) if isinstance(names.get(tid), str) else ""
+        tracks[tid] = Track(tid, name or tid, p, st.st_size, st.st_mtime)
     for t in tracks.values():
         t.files["songs"] = [t.upload]
         t.sizes["songs"] = t.size
@@ -264,14 +262,12 @@ def scan(cache: Path) -> Dict[str, Track]:
         if isinstance(data, dict):
             tracks[tid].analysis = data
     # stems: <hash>_<model>[_vocals]
-    sdir = cache / "stems"
-    if sdir.is_dir():
-        for p in sdir.iterdir():
-            h = p.name.split("_")[0]
-            t = tracks.get(h[:16])
-            if t is not None and len(h) >= 16:
-                t.full_hash = t.full_hash or h
-                t.files["stems"].append(p)
+    for h, p in song_store.iter_stem_variants(cache=cache):
+        t = tracks.get(h[:16])
+        if t is not None and len(h) >= 16:
+            t.full_hash = t.full_hash or h
+        if t is not None:
+            t.files["stems"].append(p)
     # waveforms: <id>-v1-4.json, <id>.json
     wdir = cache / "waveforms"
     if wdir.is_dir():
@@ -601,7 +597,7 @@ def _write_json_atomic(path: Path, data) -> None:
     os.replace(tmp, path)
 
 
-_SKIP_SCAN = {"uploads", "analysis", "stems", "keylock", "waveforms", "lyrics", QUARANTINE, "sets", "previews",
+_SKIP_SCAN = {"uploads", "songs", "analysis", "stems", "keylock", "waveforms", "lyrics", QUARANTINE, "sets", "previews",
               "recordings", "renders", "samples", "sources"}
 
 
@@ -725,13 +721,12 @@ def build_report(cache: Path, tracks: Dict[str, Track], groups: List[Group], rev
 
 
 def _orphan_stems(cache: Path, tracks: Dict[str, Track]) -> Tuple[int, int]:
-    sdir = Path(cache) / "stems"
+    from app.music_brain import song_store
     n = size = 0
-    if sdir.is_dir():
-        for p in sdir.iterdir():
-            if p.name.split("_")[0][:16] not in tracks:
-                n += 1
-                size += _size(p)
+    for h, p in song_store.iter_stem_variants(cache=cache):
+        if h[:16] not in tracks:
+            n += 1
+            size += _size(p)
     return n, size
 
 
@@ -819,14 +814,16 @@ def apply(cache: Path, groups: List[Group], only: Optional[str] = None, stamp: O
 def _remap_state(cache: Path, g: Group, entry: dict) -> None:
     """_names.json: drop the duplicate names.  fame.json: keep the canonical entry (adopt a duplicate's
     when the canonical has none).  Every edit is recorded for --restore."""
-    names_p, fame_p = cache / "uploads" / "_names.json", cache / "fame.json"
+    from app.music_brain import song_store
+    names_p, fame_p = song_store.names_file(cache), cache / "fame.json"    # edited where it is now
+    names_rel = str(names_p.relative_to(cache)) if names_p.is_relative_to(cache) else names_p.name
     names, fame = _read_json(names_p), _read_json(fame_p)
     dups = [d.id for d in g.duplicates if d.id in entry["duplicates"]]
     if isinstance(names, dict):
         for d in dups:
             if d in names:
-                entry["edits"].append({"file": "uploads/_names.json", "key": d, "old": names.pop(d), "new": None})
-        if any(e["file"] == "uploads/_names.json" for e in entry["edits"]):
+                entry["edits"].append({"file": names_rel, "key": d, "old": names.pop(d), "new": None})
+        if any(e["file"] == names_rel for e in entry["edits"]):
             _write_json_atomic(names_p, names)
     if isinstance(fame, dict):
         changed = False

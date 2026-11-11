@@ -517,44 +517,45 @@ def for_stem(vocal_path, force: bool = False, vocal_regions=None, backend: Optio
 
 
 def vocal_stems(stems_dir: Optional[Path] = None) -> List[Tuple[str, str]]:
-    """(song audio hash, vocal stem path) for every cached stem set, one per song,
-    htdemucs_ft first (the stem the rest of the app reads)."""
-    from app.music_brain.config import STEMS_CACHE_DIR
-
-    return _best_vocals(Path(stems_dir or STEMS_CACHE_DIR), "*_*")
+    """(song id or audio hash, vocal stem path) for every cached stem set, one per song,
+    htdemucs_ft first (the stem the rest of the app reads). Song folders first, then the old flat cache."""
+    return _best_vocals(stems_dir, None)
 
 
 def vocal_for_song(song_path, stems_dir: Optional[Path] = None) -> Optional[str]:
     """The cached vocal stem of a song file (never separates), or None."""
     from app.music_brain.audio.stem_service import file_hash
-    from app.music_brain.config import STEMS_CACHE_DIR
 
-    got = _best_vocals(Path(stems_dir or STEMS_CACHE_DIR), f"{file_hash(Path(song_path))}_*")
+    got = _best_vocals(stems_dir, file_hash(Path(song_path)))
     return got[0][1] if got else None
 
 
 def current_vocal(song_hash: str, stems_dir: Optional[Path] = None) -> Optional[str]:
     """The song's best vocal stem right now (ft first), or None when its stems are gone."""
-    from app.music_brain.config import STEMS_CACHE_DIR
-
-    got = _best_vocals(Path(stems_dir or STEMS_CACHE_DIR), f"{song_hash}_*")
+    got = _best_vocals(stems_dir, song_hash)
     return got[0][1] if got else None
 
 
-def _best_vocals(root: Path, pattern: str) -> List[Tuple[str, str]]:
+def _best_vocals(root: Optional[Path], only: Optional[str]) -> List[Tuple[str, str]]:
+    """root None: the song folders and the old flat cache; a path: only that flat stem cache. only: one song
+    (its audio sha256 or its 16-hex id)."""
+    from app.music_brain import song_store
     from app.music_brain.audio.stem_service import read_manifest
     from app.music_brain.config import DEMUCS_MODEL
 
     best: Dict[str, Tuple[int, str]] = {}
-    for d in sorted(root.glob(pattern)) if root.is_dir() else []:
-        h, _, kind = d.name.partition("_")
+    for h, d in song_store.iter_stem_variants(root):
+        if only and not (h == only or (len(h) == 16 and only.startswith(h))):
+            continue
+        kind = song_store.variant_of(d, h)
         st = read_manifest(d) or {}
         v = st.get("vocals")
         if not v or not Path(v).is_file():
             continue
         rank = 0 if kind == DEMUCS_MODEL else 1
-        if h not in best or rank < best[h][0]:
-            best[h] = (rank, v)
+        k = h[:16]                                   # a song in its folder and in the flat cache counts once
+        if k not in best or rank < best[k][0]:
+            best[k] = (rank, v)
     return [(h, v) for h, (_, v) in sorted(best.items())]
 
 

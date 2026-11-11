@@ -251,7 +251,7 @@ def test_upload_verifies_hash_and_caps_size(srv, track):
     assert srv.req("HEAD", f"/v1/tracks/{tid}")[0] == 200
     st, _, b = srv.req("GET", f"/v1/tracks/{tid}")
     assert json.loads(b) == {"id": tid, "separated": False, "model": srv.settings.model}
-    assert (srv.cache / "uploads" / f"{tid}.mp3").read_bytes() == body     # the console's track store
+    assert (srv.cache / "songs" / tid / "audio.mp3").read_bytes() == body     # the console's song folder
     srv.settings.max_upload = 10
     big = b"y" * 100
     assert srv.req("POST", f"/v1/tracks?id={hashlib.sha256(big).hexdigest()[:16]}&ext=mp3", big)[0] == 413
@@ -304,7 +304,7 @@ def test_analysis_route_uses_the_console_analyzer(srv, track, monkeypatch):
     srv.req("POST", f"/v1/tracks?id={tid}&ext=mp3", body)
     st, _, b = srv.req("GET", f"/v1/tracks/{tid}/analysis")
     assert st == 200 and json.loads(b) == {"bpm": 124.0, "key": "8A"}
-    assert seen and seen[0].name == f"{tid}.mp3"
+    assert seen and seen[0].parent.name == tid and seen[0].name == "audio.mp3"
 
 
 def test_window_needs_split_first(srv, track):

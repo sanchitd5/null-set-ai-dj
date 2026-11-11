@@ -7,7 +7,7 @@ STEM_SERVER_TOKEN= line of the env file named by STEM_SERVER_TOKEN_FILE (the ste
 its own local worker (a laptop with no stem server), unchanged.
 
 Both processes share the cache (data/cache): a split lands in stems/<sha256>_htdemucs_ft and the console
-reads it from there. Library tracks outside uploads/ are linked into stem_links/<id><ext> for the server.
+reads it from there. Library tracks outside the song folders are linked into stem_links/<id><ext> for the server.
 """
 
 from __future__ import annotations
@@ -69,10 +69,10 @@ def _req(method: str, path: str, body: Optional[dict] = None) -> tuple[int, dict
 
 
 def link(track_id: str, path: Path, cache_dir: Path) -> None:
-    """Make a track the server can find by id: uploads/<id>.* already is; anything else (a library
+    """Make a track the server can find by id: songs/<id>/audio.*  already is; anything else (a library
     file) gets stem_links/<id><ext> -> the file. The server checks sha256(bytes)[:16] == id itself."""
     path = Path(path).resolve()
-    if path.parent == (Path(cache_dir) / "uploads").resolve():
+    if path.parent == (Path(cache_dir) / "songs" / track_id).resolve():
         return
     d = Path(cache_dir) / "stem_links"
     d.mkdir(parents=True, exist_ok=True)
