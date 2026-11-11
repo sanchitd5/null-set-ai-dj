@@ -1,5 +1,7 @@
 """The jobs that exist today, registered with the job runner (job_registry.py) at server startup.
 
+    lyric_check          manual, idle only: faster-whisper on each vocal stem vs the song's lyrics -> verdict in the song folder (G25)
+    song_migrate         manual: moves flat song files into per-song folders; dry run unless the setting is turned off (G25)
     cache_audit          manual: flags library files that are probably not the song they are named after (HF9)
     sync_compact         cron "30 3 * * *": folds old op-log entries away (DJ_SYNC_KEEP_DAYS)
     quarantine_cleanup   cron "15 4 * * *" (server local time); a fire missed while down runs once at startup
@@ -13,7 +15,7 @@ from __future__ import annotations
 import time
 from typing import Callable
 
-from app.ui.services.job_registry import JobContext, JobSpec, Registry
+from app.ui.services.job_registry import JobContext, JobSpec, Registry, SettingSpec
 
 
 def _quarantine(ctx: JobContext) -> dict:
@@ -29,6 +31,26 @@ def _cache_audit(ctx: JobContext) -> dict:
     from app.music_brain.config import CACHE_DIR
     from app.ui.services import cache_audit
     return cache_audit.run(dict(server._tracks), dict(server._track_names), CACHE_DIR, time.time(), ctx.log)
+
+
+def _lyric_check(ctx: JobContext) -> dict:
+    from app.ui import server
+    from app.ui.services import lyric_check_job
+    from app.music_brain import song_store
+    from app.music_brain.config import CACHE_DIR
+    from app.ui.services import cache_audit
+    out = lyric_check_job.run(dict(server._tracks), dict(server._track_names), ctx, limit=int(ctx.setting("limit")),
+                              force=bool(ctx.setting("force")))
+    verdicts = {t: v for t in server._tracks if (v := song_store.verdict(t))}
+    out["flags"] = cache_audit.apply_verdicts(CACHE_DIR, verdicts, time.time())
+    return out
+
+
+def _song_migrate(ctx: JobContext) -> dict:
+    from app.ui import server
+    from app.ui.services import song_migrate
+    return song_migrate.run(dict(server._tracks), dry_run=bool(ctx.setting("dry_run")), log=ctx.log,
+                            should_stop=ctx.should_stop, limit=int(ctx.setting("limit")))
 
 
 def _graph_rebuild(ctx: JobContext) -> dict:
@@ -55,6 +77,11 @@ def register_builtin(reg: Registry) -> None:
                          schedule="15 4 * * *"))
     reg.register(JobSpec("cache_audit", "Song cache audit (flags suspect files, deletes nothing)", fn=_cache_audit,
                          kind="manual"))
+    reg.register(JobSpec("lyric_check", "Lyric check (vocal stem vs lyrics, verdict per song)", fn=_lyric_check, kind="manual",
+                         idle_only=True, settings={"limit": SettingSpec("int", 0, 0, 100000), "force": SettingSpec("bool", False)}))
+    reg.register(JobSpec("song_migrate", "Move song files into per-song folders (dry run by default, deletes nothing)",
+                         fn=_song_migrate, kind="manual",
+                         settings={"dry_run": SettingSpec("bool", True), "limit": SettingSpec("int", 0, 0, 1000000)}))
     reg.register(JobSpec("sync_compact", "Op-log compaction", fn=_sync_compact, kind="manual",
                          schedule="30 3 * * *"))
     reg.register(JobSpec("lang_id", "Language id backfill", kind="external", status_fn=lang_service.status,

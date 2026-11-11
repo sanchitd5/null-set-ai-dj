@@ -10,6 +10,7 @@ Classes (each one is a way a wrong file got into the cache, see wt/HF9_AUDIT.md)
                     content-hash id differs per download): every copy after the oldest is flagged, `of` = the kept id
   bad_length        shorter than 90 s or 9 min and longer: a clip, a spoken video, a full album or a set
   not_a_track       the name says mix / set / live / interview / full album
+  lyric_mismatch    the lyric check (G25, lyric_check job) found the vocal stem does not sing this song's lyrics
 """
 from __future__ import annotations
 
@@ -47,7 +48,8 @@ def probe(path: Path) -> dict:
 
 
 def scan(tracks: Dict[str, Path], names: Dict[str, str], known_sources: Dict[str, str],
-         probe_fn: Callable[[Path], dict] = probe, shape_fn: Optional[Callable[[str], bool]] = None) -> dict:
+         probe_fn: Callable[[Path], dict] = probe, shape_fn: Optional[Callable[[str], bool]] = None,
+         verdicts: Optional[Dict[str, dict]] = None) -> dict:
     """{track_id: {"classes": [...], "detail": str, "video": id|None, "of": id|None}} for every suspect file.
     known_sources: track id -> video id already on record (art/sources.json); the file's own tag fills the rest."""
     if shape_fn is None:
@@ -76,6 +78,9 @@ def scan(tracks: Dict[str, Path], names: Dict[str, str], known_sources: Dict[str
             add(tid, "bad_length", f"{dur:.0f}s", vid)
         if shape_fn(name):
             add(tid, "not_a_track", name[:80], vid)
+        v = (verdicts or {}).get(tid)
+        if v and v.get("verdict") == "mismatch":
+            add(tid, "lyric_mismatch", f"lyric score {v.get('score')}", vid)
         if vid:
             try:
                 seen.setdefault(vid, []).append((path.stat().st_mtime, tid))
@@ -145,6 +150,28 @@ def mark(cache: Path, track_id: str, **fields) -> bool:
     return True
 
 
+def apply_verdicts(cache: Path, verdicts: Dict[str, dict], now: float) -> dict:
+    """Fold lyric-check verdicts into the flags without a full scan: a mismatch adds the lyric_mismatch class, a song
+    whose verdict is no longer a mismatch loses it (the flag goes when no class is left)."""
+    with _lock:
+        data = load(cache)
+        for tid, v in verdicts.items():
+            f = data.get(tid)
+            if v.get("verdict") == "mismatch":
+                if f is None:
+                    f = data[tid] = {"classes": [], "detail": "", "video": None, "of": None, "status": "open", "at": now,
+                                     "new_id": None}
+                if "lyric_mismatch" not in f["classes"]:
+                    f["classes"].append("lyric_mismatch")
+                    f["detail"] = "; ".join(x for x in (f.get("detail"), f"lyric score {v.get('score')}") if x)
+            elif f is not None and "lyric_mismatch" in f["classes"]:
+                f["classes"].remove("lyric_mismatch")
+                if not f["classes"]:
+                    del data[tid]
+        _save(cache, data)
+    return summary(data)
+
+
 def bad_ids(cache: Path) -> list:
     """Ids the phone must drop from its own cache."""
     return sorted(t for t, f in load(cache).items() if f.get("status") in BAD_STATUSES)
@@ -174,7 +201,10 @@ def run(tracks: Dict[str, Path], names: Dict[str, str], cache: Path, now: float,
     if added:
         log(f"recorded {added} missing source video ids")
     sources = {t: v for t in tracks if (v := album_art._video_id(t))}
-    found = scan(tracks, names, sources)
+    from app.music_brain import song_store
+
+    verdicts = {t: v for t in tracks if (v := song_store.verdict(t))}
+    found = scan(tracks, names, sources, verdicts=verdicts)
     res = merge(cache, found, now)
     log(f"{res['flagged']} suspect files {res['by_class']}")
     return res

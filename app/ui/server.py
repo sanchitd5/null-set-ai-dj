@@ -474,13 +474,51 @@ def get_library_bad():
     return {"ids": cache_audit.bad_ids(CACHE_DIR)}
 
 
+@app.get("/api/library/lyric-verdicts")
+def get_library_lyric_verdicts():
+    """{track id: {verdict, score}} of every server song the lyric check (G25) has judged. The phone shows a small
+    'lyrics verified' tick for `verified` and skips `mismatch` songs."""
+    from app.music_brain import song_store
+
+    out = {}
+    for t in list(_tracks):
+        try:
+            v = song_store.verdict(t)
+        except ValueError:
+            continue
+        if v:
+            out[t] = v
+    return {"verdicts": out}
+
+
+@app.get("/api/library/song/{track_id}/files")
+def get_library_song_files(track_id: str):
+    """What the song's folder holds as text (G25): {meta, lyrics, asr}. The phone mirrors it into its own song folder."""
+    from app.music_brain import song_store
+
+    if track_id not in _tracks:
+        raise HTTPException(404, "unknown track")
+
+    def text(p):
+        try:
+            return p.read_text(encoding="utf-8")
+        except OSError:
+            return ""
+
+    return {"meta": song_store.read_meta(track_id), "lyrics": text(song_store.lyrics_path(track_id)),
+            "asr": text(song_store.asr_path(track_id))}
+
+
 @app.get("/api/admin/cache-audit")
 def get_cache_audit(email: str = Depends(_admin.require_admin)):
     """The last `cache_audit` job result: suspect files (flag only), with name, class, detail and status."""
     from app.ui.services import cache_audit
 
     flags = cache_audit.load(CACHE_DIR)
-    rows = [{"track_id": t, "name": _track_names.get(t) or t, **f} for t, f in sorted(flags.items())]
+    from app.music_brain import song_store
+
+    rows = [{"track_id": t, "name": _track_names.get(t) or t, "lyrics": song_store.verdict(t), **f}
+            for t, f in sorted(flags.items())]
     return {"summary": cache_audit.summary(flags), "items": rows}
 
 
