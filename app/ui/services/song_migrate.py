@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import errno
 import os
 import shutil
 import time
@@ -66,20 +67,27 @@ def _done(m: dict) -> bool:
 
 
 def _move(m: dict) -> dict:
-    """Copy-verify-link one file. Returns the manifest row. Raises on any mismatch, leaving the old path untouched."""
+    """Rename-verify-link one file (no data copy). Returns the manifest row.
+
+    The data pool is mergerfs over several disks, one of them kernel-exfat, where bulk writes wedge the host's
+    writeback (see the bench memory "exfat writeback wedge"). So a file is moved by rename only: a metadata change on
+    its own disk, no bytes written. A rename that would cross disks (EXDEV) is not done here (no copy fallback): the
+    row is raised as skipped and the old path stays untouched."""
     src, dst = Path(m["src"]), Path(m["dst"])
     real = Path(os.path.realpath(src))
-    row = {**m, "size": real.stat().st_size, "sha256": _sha(real)}
-    if not (dst.is_file() and dst.stat().st_size == row["size"] and _sha(dst) == row["sha256"]):
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        tmp = dst.with_name(f".{dst.name}.part{os.getpid()}")
-        try:
-            shutil.copy2(real, tmp)
-            if tmp.stat().st_size != row["size"] or _sha(tmp) != row["sha256"]:
-                raise OSError(f"copy of {src} does not verify")
-            os.replace(tmp, dst)
-        finally:
-            tmp.unlink(missing_ok=True)
+    row = {**m, "size": real.stat().st_size}
+    if dst.is_file() and not src.is_symlink() and dst.stat().st_size == row["size"] and os.path.samefile(real, dst):
+        return row
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        os.rename(real, dst)
+    except OSError as exc:
+        if exc.errno == errno.EXDEV:
+            raise OSError(f"skipped (cross-disk rename, no copy by design): {src}") from exc
+        raise
+    if dst.stat().st_size != row["size"]:
+        os.rename(dst, real)                # put it back; never leave a short file
+        raise OSError(f"size changed while moving {src}")
     return row
 
 
