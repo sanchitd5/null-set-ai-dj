@@ -192,7 +192,7 @@ def test_migrate_moves_links_and_is_idempotent(cache):
     got = ss.stem_files("t1", "htdemucs_ft", audio_hash="HASH1")
     assert set(got) == {"vocals", "drums"} and got["vocals"].parent == ss.stems_dir("t1", "htdemucs_ft")
     man = json.loads(Path(res["manifest"]).read_text())
-    assert len(man["moves"]) == 3 and all(m["sha256"] for m in man["moves"])
+    assert len(man["moves"]) == 3 and all(m["size"] > 0 for m in man["moves"])   # rename-only: same inode, size recorded
     again = song_migrate.run(tracks, dry_run=False, hash_fn=lambda p: "HASH1")           # nothing left to do
     assert again["planned"] == 0 and again["moved"] == 0
     from app.music_brain.audio.audio_io import read_manifest
@@ -223,3 +223,21 @@ def test_library_verdicts_and_files_routes(cache, monkeypatch):
     j = c.get("/api/library/song/t9/files").json()
     assert j["lyrics"] == "words\n" and j["asr"] == "" and j["meta"]["verdict"] == "verified"
     assert c.get("/api/library/song/nope/files").status_code == 404
+
+
+def test_migrate_never_copies_across_disks(tmp_path, monkeypatch):
+    """Rename only (exfat writeback safety): a cross-disk rename (EXDEV) is skipped, never copied, old path untouched."""
+    import errno as _errno
+    from app.ui.services import song_migrate as sm
+    src = tmp_path / "flat.m4a"
+    src.write_bytes(b"x" * 64)
+    dst = tmp_path / "songs" / "t9" / "audio.m4a"
+
+    def exdev(a, b):
+        raise OSError(_errno.EXDEV, "cross-device")
+    monkeypatch.setattr(sm.os, "rename", exdev)
+    copied = []
+    monkeypatch.setattr(sm.shutil, "copy2", lambda *a, **k: copied.append(a))
+    with pytest.raises(OSError, match="skipped"):
+        sm._move({"kind": "audio", "src": str(src), "dst": str(dst)})
+    assert src.read_bytes() == b"x" * 64 and not dst.exists() and not copied
