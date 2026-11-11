@@ -118,8 +118,9 @@ def portable(plan: dict) -> dict:
         d = s.get("stems_dir")
         if d and Path(d).is_absolute():
             dp = Path(d)
-            s["stems_dir"] = (f"songs/{dp.parent.parent.name}/stems/{dp.name}" if dp.parent.name == "stems"
-                              else f"stems/{dp.name}")
+            # new layout: <cache>/songs/<id>/stems/<model>; old flat layout: <cache>/stems/<hash>_<model>
+            new_layout = dp.parent.name == "stems" and dp.parent.parent.parent.name == "songs"
+            s["stems_dir"] = f"songs/{dp.parent.parent.name}/stems/{dp.name}" if new_layout else f"stems/{dp.name}"
     raw = json.dumps(out, ensure_ascii=False)
     if re.search(r'"(/Users|/home|[A-Za-z]:\\\\)', raw):
         raise ValueError("variant holds an absolute path")
