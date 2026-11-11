@@ -165,3 +165,16 @@ def test_hf7_library_picks_first_and_on_server_flag():
     assert [p["on_server"] for p in s] == [True, True, False]
     assert s[2]["yt_id"] == "v0"
     assert sl.prefer_library([])  == []
+
+
+def test_pinned_scene_refuses_unknown_genre_and_era_jump_like_dj_core():
+    """DUP0: the ladder uses the default pick hooks (same as dj-core / pick_rules goldens), not its own."""
+    ss = {"scene_genre": "house", "cur_era": "1990s"}
+    unlabeled = [{"artist": "U", "title": "NoLabel", "track_id": "u1"}]
+    r = run(graph_picks=lambda: unlabeled, set_state=ss)
+    assert r["pick_source"] != "graph"
+    jump = [{"artist": "J", "title": "NewEra", "track_id": "j1", "genre": "house", "era": "2020s"}]
+    r = run(graph_picks=lambda: jump, set_state=ss)
+    assert r["pick_source"] != "graph"
+    ok = [{"artist": "K", "title": "SameEra", "track_id": "k1", "genre": "house", "era": "1990s"}]
+    assert run(graph_picks=lambda: ok, set_state=ss)["pick_source"] == "graph"
