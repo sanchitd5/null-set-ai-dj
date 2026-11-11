@@ -1,10 +1,14 @@
 """HF10: a pinned scene binds every ladder step; the server starts downloads for picks it lacks. Fakes only."""
+import pytest
 import time
 
 from app.ui import server
 from app.ui.services import suggest_ladder as sl
 
 LIB = [{"track_id": f"t{i}", "artist": f"Art{i}", "title": f"Song{i}"} for i in range(4)]
+
+
+pytestmark = pytest.mark.needs_djcore   # the ladder asks the dj-core service for every acceptance decision
 
 
 def run(**kw):

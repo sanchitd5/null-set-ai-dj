@@ -224,6 +224,7 @@ def test_a_grounded_yt_pick_is_marked_pool_source_yt():
 
 
 # ---------------------------------------------------------------------------------------------- the suggest route
+@pytest.mark.needs_djcore
 def test_suggest_puts_yt_in_the_pool_and_logs_the_shadow_event(monkeypatch):
     import types
     from pathlib import Path

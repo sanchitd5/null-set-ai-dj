@@ -61,3 +61,26 @@ and `touch /etc/nullset-cd.disabled` first or the next run deploys the same comm
 
 Environment overrides (`NULLSET_CD_*`: APP_DIR, BRANCH, REPO, API, HEALTH_URL, STATE_DIR, LOG_FILE, ...) are listed at the
 top of the script; the tests use them.
+
+## dj-core service executable (not part of nullset-cd.sh yet)
+
+All pick decisions run in the dj-core service `dj-core-svc` (see `app/music_brain/djcore_bridge.py`). It is built from the private
+dj-core repo, so this public repo only pins it: `deploy/dj-core-svc.pin` = `DJ_CORE_SHA` (the dj-core commit) and
+`DJ_CORE_SHA256` (of the exe). dj-core CI publishes `dj-core-svc-<sha>` and `dj-core-svc-<sha>.sha256` as assets of the release
+`svc-<sha>` on every green main. The server starts the exe from `DJ_CORE_SVC` (default `/opt/null-set-ai-dj/bin/dj-core-svc`).
+
+Fetch step for the CD script (to add later; the script is not changed by this PR). The token is a read-only token for the
+dj-core repo that the owner places on CT116 (`/etc/nullset-cd/dj-core.token`, mode 0600); nobody else handles it:
+
+    . /opt/null-set-ai-dj/deploy/dj-core-svc.pin
+    cur=$(sha256sum /opt/null-set-ai-dj/bin/dj-core-svc 2>/dev/null | cut -d' ' -f1)
+    if [ -n "$DJ_CORE_SHA" ] && [ "$cur" != "$DJ_CORE_SHA256" ]; then
+      GH_TOKEN=$(cat /etc/nullset-cd/dj-core.token) gh release download "svc-$DJ_CORE_SHA" --repo sanchitd5/dj-core \
+        --pattern "dj-core-svc-$DJ_CORE_SHA" --output /opt/null-set-ai-dj/bin/dj-core-svc.new --clobber
+      echo "$DJ_CORE_SHA256  /opt/null-set-ai-dj/bin/dj-core-svc.new" | sha256sum -c - \
+        && chmod 0755 /opt/null-set-ai-dj/bin/dj-core-svc.new && mv -f /opt/null-set-ai-dj/bin/dj-core-svc.new /opt/null-set-ai-dj/bin/dj-core-svc
+    fi
+
+Restart `nullset-dj` after a changed exe (the bridge keeps the old child alive). A pin bump rolls back together with the server
+checkout: `git reset --hard pre-cd-<ts>` restores the previous pin, then the same fetch step restores the previous exe.
+Without the exe the bridge raises `DjCoreUnavailable` and logs `[djcore] ERROR ...`; there is no Python fallback.
