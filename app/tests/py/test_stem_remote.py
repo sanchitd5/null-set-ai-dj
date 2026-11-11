@@ -150,8 +150,8 @@ def test_token_from_the_servers_env_file(monkeypatch, tmp_path):
 
 def test_library_tracks_are_linked_uploads_are_not(tmp_path):
     cache = tmp_path / "cache"
-    (cache / "uploads").mkdir(parents=True)
-    up = cache / "uploads" / "0123456789abcdef.mp3"
+    (cache / "songs" / "0123456789abcdef").mkdir(parents=True)
+    up = cache / "songs" / "0123456789abcdef" / "audio.mp3"
     up.write_bytes(b"x")
     stem_remote.link("0123456789abcdef", up, cache)
     assert not (cache / "stem_links").exists()

@@ -1352,7 +1352,7 @@ def _learn_set(source: str, tracklist: Optional[str], download: bool, store_path
                log: Callable[[str], None], jobs: int, ai: bool, prog,
                split_s: float = 0.0, keep_files: bool = True) -> dict:
     import librosa
-    from app.music_brain.config import STEMS_CACHE_DIR
+    from app.music_brain import song_store
     from app.music_brain.learning.learn_cleanup import Tidy
 
     set_path, set_id, desc = fetch_set(source)
@@ -1364,7 +1364,7 @@ def _learn_set(source: str, tracklist: Optional[str], download: bool, store_path
     if len(parts) > 1:
         log(f"{duration / 60:.0f} min set: learning in {len(parts)} parts of about {split_s / 60:.0f} min")
     ck = _Checkpoint(SETS_DIR / set_id, _plan_key(entries, split_s, parts), log)
-    tidy = None if keep_files else Tidy(set_id, CACHE_DIR, SETS_DIR, STEMS_CACHE_DIR, log=log)
+    tidy = None if keep_files else Tidy(set_id, CACHE_DIR, SETS_DIR, song_store.songs_dir(), log=log)
     results: List[dict] = []
     for k, part in enumerate(parts):
         prog.update(part=k + 1, parts=len(parts))

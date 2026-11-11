@@ -76,8 +76,8 @@ def test_garbage_gives_clear_oserror(tmp_path):
 def test_upload_keeps_m4a_and_serves_it(beat_m4a, tmp_path, monkeypatch):
     from app.ui import server
 
-    monkeypatch.setattr(server, "UPLOAD_DIR", tmp_path / "up")
-    (tmp_path / "up").mkdir()
+    import app.music_brain.config as cfg
+    monkeypatch.setattr(cfg, "CACHE_DIR", tmp_path / "up")
     monkeypatch.setattr(server, "_queue_stems", lambda *a, **k: None)
     client = TestClient(server.app)
     with open(beat_m4a, "rb") as f:
@@ -86,7 +86,7 @@ def test_upload_keeps_m4a_and_serves_it(beat_m4a, tmp_path, monkeypatch):
     tid = res.json()["track_id"]
     stored = server._tracks[tid]
     assert stored.suffix == ".m4a" and stored.read_bytes() == beat_m4a.read_bytes()
-    assert not list((tmp_path / "up").glob("*.flac"))
+    assert not list((tmp_path / "up").rglob("*.flac")) and stored == tmp_path / "up" / "songs" / tid / "audio.m4a"
     assert audio_io.audio_info(stored)[3] > 19
     from app.music_brain.analysis.analyzer import analyze
 

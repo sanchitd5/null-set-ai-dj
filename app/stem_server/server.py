@@ -36,6 +36,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
+from app.music_brain import song_store
 from app.music_brain.audio import stem_service
 from app.music_brain.config import CACHE_DIR, DEMUCS_MODEL
 from app.stem_server import windows
@@ -61,8 +62,10 @@ class Settings:
         self.model = env.get("STEM_SERVER_MODEL", DEMUCS_MODEL)
         self.max_upload = int(float(env.get("STEM_SERVER_MAX_UPLOAD_MB", "200")) * (1 << 20))
         cache = Path(env.get("AIDJ_CACHE_DIR") or CACHE_DIR).expanduser().resolve()
-        self.uploads = cache / "uploads"                # the console's track store (server.py UPLOAD_DIR)
-        self.stems = cache / "stems"                    # the console's stem cache (config.STEMS_CACHE_DIR)
+        self.cache = cache
+        self.songs = cache / "songs"                    # the console's song folders (song_store): audio + stems per song
+        self.uploads = cache / "uploads"                # old flat track store, read-only fallback (G26: TODO 2026-12-15 remove)
+        self.stems = cache / "stems"                    # old flat stem cache, read-only fallback
         self.windows = cache / "stem_windows"           # encoded AAC windows (derived, safe to delete)
         # The console's library tracks live outside uploads/: it links them here as <id>.<ext> (a symlink
         # to the real file). The sha256 check on every first use still binds the id to the bytes.
@@ -155,12 +158,25 @@ class StemServer:
         self.last_gpu: Optional[dict] = None  # the GPU decisions of the last split (also on each job)
         self.current: Optional[Job] = None
         self._restoring = False
-        for d in (self.s.uploads, self.s.windows):
+        for d in (self.s.songs / "_incoming", self.s.windows):
             d.mkdir(parents=True, exist_ok=True)
         threading.Thread(target=self._worker, daemon=True, name="stem-gpu").start()
 
     # ---- tracks ---------------------------------------------------------------------------------
+    def stem_dir(self, h: str, model: str) -> Path:
+        """Where a song's stem set lives: its folder songs/<id>/stems/<model>."""
+        return self.s.songs / h[:16] / "stems" / model
+
+    def stem_manifest(self, h: str, model: str) -> Optional[Dict[str, str]]:
+        """The set in the song folder, else in the old flat cache."""
+        return (stem_service.read_manifest(self.stem_dir(h, model))
+                or stem_service.read_manifest(self.s.stems / f"{h}_{model}"))
+
     def track_path(self, track_id: str) -> Optional[Path]:
+        if re.fullmatch(r"[0-9a-f]{16}", track_id):
+            p = song_store._folder_audio(str(self.s.songs / track_id))
+            if p is not None:
+                return p
         for d in (self.s.uploads, self.s.links):
             for p in sorted(d.glob(f"{track_id}.*")):
                 if p.is_file() and p.suffix.lstrip(".").lower() in AUDIO_EXTS:
@@ -190,10 +206,9 @@ class StemServer:
         """(stems, set folder, model) of the best complete 4-stem set in the shared cache."""
         h = self.full_hash(track_id, p)
         for m in self.models():
-            d = self.s.stems / f"{h}_{m}"
-            st = stem_service.read_manifest(d)
+            st = self.stem_manifest(h, m)
             if st and all(st.get(n) and os.path.exists(st[n]) for n in FOUR):
-                return st, d, m
+                return st, Path(next(iter(st.values()))).parent, m
         return None
 
     def ready_stems(self, track_id: str, p: Path) -> Optional[Dict[str, str]]:
@@ -203,7 +218,7 @@ class StemServer:
     def own_ready(self, track_id: str, p: Path) -> bool:
         """The song has a complete set of THIS server's model (htdemucs_ft): nothing left to split.
         A cheaper set (the console's old htdemucs backfill) is still served meanwhile (ready_set)."""
-        st = stem_service.read_manifest(self.s.stems / f"{self.full_hash(track_id, p)}_{self.s.model}")
+        st = self.stem_manifest(self.full_hash(track_id, p), self.s.model)
         return bool(st and all(st.get(n) and os.path.exists(st[n]) for n in FOUR))
 
     # ---- jobs -----------------------------------------------------------------------------------
@@ -347,7 +362,7 @@ class StemServer:
         if self.gpu is None:
             self.gpu = gpu.GpuWorker(self.s.rss_limit, self.s.scope_mem)
         h = self.full_hash(j.id, j.path)
-        out = self.s.stems / f"{h}_{self.s.model}"
+        out = self.stem_dir(h, self.s.model)
         j.model = self.s.model
 
         def progress(p: float, device: Optional[str] = None) -> None:
@@ -368,7 +383,7 @@ class StemServer:
                 raise RuntimeError(f"{name}.flac has {frames} frames, the mix {info['frames']}")
         stem_service.write_manifest(out, stems)
         if self.s.model == stem_service.DEMUCS_MODEL:
-            stem_service._auto_prune(h, self.s.stems)
+            stem_service._auto_prune(h, song_store.stems_root_for(self.s.cache))
         print(f"[stem-server] {j.id} {self.s.model} on {j.device}: {info['frames'] / 44100:.0f} s of audio in "
               f"{info['seconds']} s (batch {info.get('batch')}, peak RSS {info.get('peak_rss_mb')} MB"
               f"{', ' + j.note if j.note else ''})", file=sys.stderr, flush=True)
@@ -586,7 +601,8 @@ def create_app(settings: Optional[Settings] = None, separate_fn=None) -> FastAPI
         existing = srv.track_path(id)
         if existing is not None:
             return {"id": id, "stored": False}
-        tmp = s.uploads / f"_up_{uuid.uuid4().hex}.{ext}"   # '_' prefix: the console never lists it
+        tmp = s.songs / "_incoming" / f"_up_{uuid.uuid4().hex}.{ext}"   # '_incoming': never listed as a song
+        tmp.parent.mkdir(parents=True, exist_ok=True)
         h, n = hashlib.sha256(), 0
         try:
             with open(tmp, "wb") as f:
@@ -600,7 +616,9 @@ def create_app(settings: Optional[Settings] = None, separate_fn=None) -> FastAPI
                 raise HTTPException(400, "empty body")
             if h.hexdigest()[:16] != id:
                 raise HTTPException(422, "sha256 of the body does not match id")
-            os.replace(tmp, s.uploads / f"{id}.{ext}")
+            dest = s.songs / id / f"audio.{ext}"
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(tmp, dest)
         finally:
             tmp.unlink(missing_ok=True)
         return {"id": id, "stored": True}

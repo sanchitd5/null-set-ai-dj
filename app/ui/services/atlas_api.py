@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 
 from app.music_brain.atlas import macros as mc
 from app.music_brain.atlas import pair_atlas as pa
+from app.music_brain import song_store as _song_store
 from app.music_brain.config import CACHE_DIR
 
 router = APIRouter()
@@ -182,7 +183,7 @@ def studied_sets():
     Recomputed when the library names or a study file change."""
     from app.music_brain.atlas import studied_combos as sc
 
-    files = [ATLAS_CACHE_DIR / "uploads" / "_names.json", ATLAS_CACHE_DIR / "track_aliases.json",
+    files = [_song_store.names_file(ATLAS_CACHE_DIR), ATLAS_CACHE_DIR / "track_aliases.json",
              *sorted((ATLAS_CACHE_DIR / "sets").glob("*/study.json"))]
     stamp = tuple((str(p), p.stat().st_mtime_ns) for p in files if p.exists())
     if _SETS_MEMO.get("stamp") != stamp:

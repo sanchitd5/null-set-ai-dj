@@ -76,9 +76,10 @@ def duration(path: str) -> float:
 
 
 def bench_cli(song, model, tmp):
+    from app.music_brain import config
     from app.music_brain.audio import stem_service
 
-    stem_service.STEMS_CACHE_DIR = Path(tmp) / "cli"
+    config.CACHE_DIR = Path(tmp) / "cli"            # song_store resolves its folders from this at call time
     before = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
     with GpuSampler() as g:
         t0 = time.monotonic()

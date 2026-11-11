@@ -101,10 +101,10 @@ def stamps(src: Path) -> Dict[str, Tuple[str, str]]:
 def _library_stamp(cache: Path) -> str:
     """Changes when a song arrives or is renamed: a macro or pair skipped as unresolved may resolve now."""
     h = hashlib.sha256()
-    up = cache / "uploads"
-    for q in sorted(up.iterdir()) if up.is_dir() else []:
-        h.update(q.name.encode() + b";")
-    for q in (up / "_names.json", cache / "track_aliases.json"):
+    from app.music_brain import song_store
+    for tid, q in sorted(song_store.library_audio(cache).items()):
+        h.update(f"{tid}{q.suffix};".encode())
+    for q in (song_store.names_file(cache), cache / "track_aliases.json"):
         try:
             st = q.stat()
             h.update(f"{st.st_size}:{st.st_mtime_ns};".encode())

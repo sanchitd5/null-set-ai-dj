@@ -83,8 +83,8 @@ def test_api_match_uses_cached_vocal_stem_without_separating(monkeypatch, tmp_pa
     monkeypatch.setattr(server, "analyze_track", lambda p: tracks[str(p)])
     monkeypatch.setattr(stem_service, "file_hash", lambda p: str(p))
     monkeypatch.setattr(
-        stem_service, "_load_from_cache",
-        lambda d: {"vocals": str(stem)} if d.name.startswith(("a_", "b_")) and "_ft_vocals" in d.name else None,
+        stem_service, "load_set",
+        lambda h, model, two=None, root=None: {"vocals": str(stem)} if h in ("a", "b") and two == "vocals" and model.endswith("_ft") else None,
     )
     monkeypatch.setattr(analyzer, "vocal_presence_map", lambda p: [(0.0, 240.0)])
     monkeypatch.setattr(server, "separate_stems", lambda *a, **k: pytest.fail("must not separate"))

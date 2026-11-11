@@ -1,6 +1,6 @@
 """4-stem (vocals/drums/bass/other) and 2-stem (vocals/instrumental) audio
 separation via Demucs (htdemucs_ft), with SHA-256-keyed disk caching in
-cache/stems/ so a track is never separated twice.
+cache/songs/<id>/stems/ so a track is never separated twice.
 """
 
 from __future__ import annotations
@@ -18,7 +18,8 @@ from typing import Dict, List, Optional
 
 from app.music_brain.audio import audio_io
 from app.music_brain.audio.audio_io import MANIFEST_VERSION, read_manifest, write_manifest  # noqa: F401 (re-export)
-from app.music_brain.config import DEMUCS_MODEL, STEMS_CACHE_DIR
+from app.music_brain import song_store
+from app.music_brain.config import DEMUCS_MODEL
 
 FOUR_STEM_NAMES = ("vocals", "drums", "bass", "other")
 TWO_STEM_NAMES = ("vocals", "no_vocals")
@@ -51,8 +52,9 @@ def file_hash(path: Path) -> str:
 
 
 def _cache_dir_for(audio_hash: str, model: str, two_stems: Optional[str]) -> Path:
+    """The folder a stem set is written to: songs/<id>/stems/<model>[_<stem>]/ (G26)."""
     suffix = f"_{two_stems}" if two_stems else ""
-    return STEMS_CACHE_DIR / f"{audio_hash}_{model}{suffix}"
+    return song_store.stem_cache_dir(audio_hash, f"{model}{suffix}")
 
 
 def _manifest_path(cache_dir: Path) -> Path:
@@ -61,6 +63,12 @@ def _manifest_path(cache_dir: Path) -> Path:
 
 def _load_from_cache(cache_dir: Path) -> Optional[Dict[str, str]]:
     return read_manifest(cache_dir)
+
+
+def load_set(audio_hash: str, model: str, two_stems: Optional[str] = None,
+             root: Optional[Path] = None) -> Optional[Dict[str, str]]:
+    """The cached stem set of a song for one model: its song folder first, then the old flat cache (G26)."""
+    return song_store.stem_set(audio_hash, f"{model}_{two_stems}" if two_stems else model, root)
 
 
 def _demucs_out():
@@ -101,7 +109,7 @@ def separate(
     cache_dir = _cache_dir_for(audio_hash, model, two_stems)
 
     if not force:
-        cached = _load_from_cache(cache_dir)
+        cached = load_set(audio_hash, model, two_stems)
         if cached is not None:
             return StemResult(
                 audio_hash=audio_hash, model=model, two_stems=two_stems,
@@ -157,7 +165,7 @@ def separate(
 
     write_manifest(cache_dir, stems)
     if model == DEMUCS_MODEL and not two_stems:
-        _auto_prune(audio_hash, cache_dir.parent)
+        _auto_prune(audio_hash, None)
 
     return StemResult(
         audio_hash=audio_hash, model=model, two_stems=two_stems,
@@ -214,9 +222,8 @@ class StemWorker:
         stems = result["stems"]
         cache_dir = Path(next(iter(stems.values()))).parent
         write_manifest(cache_dir, stems)
-        ft = f"_{DEMUCS_MODEL}"
-        if cache_dir.name.endswith(ft):
-            _auto_prune(cache_dir.name[: -len(ft)], cache_dir.parent)
+        if cache_dir.name == DEMUCS_MODEL and cache_dir.parent.name == "stems":     # songs/<id>/stems/<model>
+            _auto_prune(cache_dir.parent.parent.name, None)
         return stems
 
 
@@ -224,7 +231,7 @@ def cached_four_stems(audio_path: Path) -> Optional[Dict[str, str]]:
     """4 stems from any model already in the cache (htdemucs_ft first, then htdemucs)."""
     h = file_hash(audio_path)
     for model in (DEMUCS_MODEL, FAST_MODEL):
-        st = _load_from_cache(_cache_dir_for(h, model, None))
+        st = load_set(h, model)
         if st and all(st.get(n) for n in FOUR_STEM_NAMES):
             return st
     return None
@@ -237,8 +244,9 @@ def cached_four_stems(audio_path: Path) -> Optional[Dict[str, str]]:
 # set is written, and by the maintenance "stems" step for songs that already have one.
 
 def complete_ft(audio_hash: str, stems_dir: Optional[Path] = None) -> Optional[Dict[str, str]]:
-    """The song's htdemucs_ft 4-stem set when complete (manifest ok, all 4 files on disk), else None."""
-    st = _load_from_cache(Path(stems_dir or STEMS_CACHE_DIR) / f"{audio_hash}_{DEMUCS_MODEL}")
+    """The song's htdemucs_ft 4-stem set when complete (manifest ok, all 4 files on disk), else None.
+    stems_dir: an old flat stem cache to look in instead of the song folder (tests, tidy-up)."""
+    st = load_set(audio_hash, DEMUCS_MODEL, root=stems_dir)
     return st if st and all(st.get(n) for n in FOUR_STEM_NAMES) else None
 
 
@@ -250,12 +258,8 @@ def ft_vocals(audio_path: str | Path) -> Optional[str]:
 
 def non_ft_dirs(audio_hash: str, stems_dir: Optional[Path] = None) -> List[Path]:
     """Every stem folder of this song made by a model other than htdemucs_ft."""
-    root = Path(stems_dir or STEMS_CACHE_DIR)
-    if not root.is_dir():
-        return []
-    n = len(audio_hash) + 1
-    return sorted(d for d in root.glob(f"{audio_hash}_*")
-                  if d.is_dir() and not d.name[n:].startswith(DEMUCS_MODEL))
+    return [d for d in song_store.stem_variant_dirs(audio_hash, stems_dir)
+            if not song_store.variant_of(d, audio_hash).startswith(DEMUCS_MODEL)]
 
 
 def dir_bytes(d: Path) -> int:
@@ -264,14 +268,13 @@ def dir_bytes(d: Path) -> int:
 
 def prune_non_ft(audio_hash: str, stems_dir: Optional[Path] = None, dry_run: bool = False) -> dict:
     """Remove the song's non-ft stem folders, ONLY when its ft set is complete. Each folder is
-    renamed out of stems/ first (atomic: a reader sees the whole folder or none), then deleted.
+    renamed out of its place first (atomic: a reader sees the whole folder or none), then deleted.
     -> {"removed": [folder names], "bytes": n, "errors": [...]} or {"skipped": why}."""
-    root = Path(stems_dir or STEMS_CACHE_DIR)
-    if complete_ft(audio_hash, root) is None:
+    if complete_ft(audio_hash, stems_dir) is None:
         return {"removed": [], "bytes": 0, "errors": [], "skipped": "no complete htdemucs_ft set"}
     out = {"removed": [], "bytes": 0, "errors": []}
-    trash = root.parent / "stems_trash"
-    for d in non_ft_dirs(audio_hash, root):
+    trash = (Path(stems_dir).parent if stems_dir is not None else song_store.songs_dir()) / ("stems_trash" if stems_dir is not None else "_trash")
+    for d in non_ft_dirs(audio_hash, stems_dir):
         size = dir_bytes(d)
         if not dry_run:
             try:
@@ -287,7 +290,7 @@ def prune_non_ft(audio_hash: str, stems_dir: Optional[Path] = None, dry_run: boo
     return out
 
 
-def _auto_prune(audio_hash: str, stems_dir: Path) -> None:
+def _auto_prune(audio_hash: str, stems_dir: Optional[Path]) -> None:
     """After an ft set was written: drop the non-ft copies. Never fails the separation."""
     try:
         r = prune_non_ft(audio_hash, stems_dir)

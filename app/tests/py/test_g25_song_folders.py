@@ -177,37 +177,69 @@ def test_migrate_dry_run_changes_nothing(cache):
     tracks = _lib(cache)
     before = sorted(str(p) for p in cache.rglob("*"))
     res = song_migrate.run(tracks, dry_run=True, hash_fn=lambda p: "HASH1")
-    assert res["planned"] == 3 and res["moved"] == 0 and sorted(str(p) for p in cache.rglob("*")) == before
+    assert res["planned"] == 5 and res["moved"] == 0 and sorted(str(p) for p in cache.rglob("*")) == before
 
 
-def test_migrate_moves_links_and_is_idempotent(cache):
+def test_migrate_renames_without_links_and_is_idempotent(cache):
     tracks = _lib(cache)
     old = tracks["t1"].read_bytes()
+    ino = tracks["t1"].stat().st_ino
     logs = []
     res = song_migrate.run(tracks, dry_run=False, log=logs.append, hash_fn=lambda p: "HASH1")
-    assert res["moved"] == 3 and res["failed"] == 0 and len(logs) == 3
+    assert res["moved"] == 3 and res["failed"] == 0
     new = ss.song_dir("t1") / "audio.flac"
-    assert new.read_bytes() == old and tracks["t1"].is_symlink() and tracks["t1"].read_bytes() == old   # old path resolves
+    assert new.read_bytes() == old and new.stat().st_ino == ino          # renamed, not copied
+    assert not os.path.lexists(tracks["t1"])                              # no symlink back
+    assert not [p for p in cache.rglob("*") if p.is_symlink()]
     assert ss.audio_path("t1") == new
     got = ss.stem_files("t1", "htdemucs_ft", audio_hash="HASH1")
     assert set(got) == {"vocals", "drums"} and got["vocals"].parent == ss.stems_dir("t1", "htdemucs_ft")
     man = json.loads(Path(res["manifest"]).read_text())
-    assert len(man["moves"]) == 3 and all(m["size"] > 0 for m in man["moves"])   # rename-only: same inode, size recorded
-    again = song_migrate.run(tracks, dry_run=False, hash_fn=lambda p: "HASH1")           # nothing left to do
-    assert again["planned"] == 0 and again["moved"] == 0
+    assert len(man["moves"]) == 3 and all(m["size"] > 0 for m in man["moves"])
     from app.music_brain.audio.audio_io import read_manifest
-    assert set(read_manifest(cache / "stems" / "HASH1_htdemucs_ft")) == {"vocals", "drums"}   # old stem cache still reads
+    assert set(read_manifest(ss.stems_dir("t1", "htdemucs_ft"))) == {"vocals", "drums"}   # the new folder is a set
+    assert not (cache / "stems" / "HASH1_htdemucs_ft").exists()                             # old folder retired
+    again = song_migrate.run(tracks, dry_run=False, hash_fn=lambda p: "HASH1")
+    assert again["planned"] == 0 and again["moved"] == 0
 
 
-def test_migrate_recopies_a_truncated_target_and_resumes(cache):
+def test_migrate_resumes_with_limit(cache):
     tracks = _lib(cache)
-    dst = ss.song_dir("t1") / "audio.flac"
-    dst.parent.mkdir(parents=True)
-    dst.write_bytes(b"trunc")                                                              # a crashed earlier run
     res = song_migrate.run(tracks, dry_run=False, hash_fn=lambda p: "HASH1", limit=1)
-    assert res["moved"] == 1 and dst.read_bytes() == b"audio-bytes" * 100
+    assert res["moved"] == 1
     res = song_migrate.run(tracks, dry_run=False, hash_fn=lambda p: "HASH1")
-    assert res["planned"] == 2 and res["moved"] == 2
+    assert res["moved"] == 2 and res["failed"] == 0
+
+
+def test_migrate_removes_symlinks_left_by_the_halted_run(cache):
+    tracks = _lib(cache)
+    new = ss.song_dir("t1") / "audio.flac"
+    new.parent.mkdir(parents=True)
+    os.rename(tracks["t1"], new)
+    os.symlink(new, tracks["t1"])                                         # what G25 left behind
+    res = song_migrate.run({"t1": new}, dry_run=False, hash_fn=lambda p: "HASH1")
+    assert res["unlinked"] == 1 and not os.path.lexists(tracks["t1"]) and new.is_file()
+
+
+def test_migrate_never_creates_a_symlink_even_if_the_fs_refuses_them(cache, monkeypatch):
+    import errno
+    tracks = _lib(cache)
+
+    def eperm(*a, **k):
+        raise OSError(errno.EPERM, "no symlinks on exfat")
+    monkeypatch.setattr(os, "symlink", eperm)
+    res = song_migrate.run(tracks, dry_run=False, hash_fn=lambda p: "HASH1")
+    assert res["failed"] == 0 and res["moved"] == 3
+
+
+def test_migrate_failed_verification_moves_the_batch_back_and_stops(cache, monkeypatch):
+    tracks = _lib(cache)
+    orig = tracks["t1"].read_bytes()
+    monkeypatch.setattr(song_migrate, "_verify", lambda rows: "forced failure")
+    res = song_migrate.run(tracks, dry_run=False, hash_fn=lambda p: "HASH1")
+    assert res["failed"] == 1 and res["rolled_back"] == 3
+    assert tracks["t1"].read_bytes() == orig and not ss.song_dir("t1").joinpath("audio.flac").exists()
+    assert (cache / "stems" / "HASH1_htdemucs_ft" / "vocals.flac").is_file()
 
 
 # ---- HTTP
@@ -236,8 +268,6 @@ def test_migrate_never_copies_across_disks(tmp_path, monkeypatch):
     def exdev(a, b):
         raise OSError(_errno.EXDEV, "cross-device")
     monkeypatch.setattr(sm.os, "rename", exdev)
-    copied = []
-    monkeypatch.setattr(sm.shutil, "copy2", lambda *a, **k: copied.append(a))
     with pytest.raises(OSError, match="skipped"):
         sm._move({"kind": "audio", "src": str(src), "dst": str(dst)})
-    assert src.read_bytes() == b"x" * 64 and not dst.exists() and not copied
+    assert src.read_bytes() == b"x" * 64 and not dst.exists()

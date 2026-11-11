@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 import soundfile as sf
 
-from app.music_brain.config import ROOT_DIR, STEMS_CACHE_DIR
+from app.music_brain.config import ROOT_DIR
 from app.music_brain.audio.stem_service import (
     _cache_dir_for,
     _load_from_cache,
@@ -42,9 +42,9 @@ def test_file_hash_differs_for_different_content(tmp_path):
 def test_cache_dir_naming_includes_model_and_two_stems():
     d_four = _cache_dir_for("deadbeef", "htdemucs_ft", None)
     d_two = _cache_dir_for("deadbeef", "htdemucs_ft", "vocals")
-    assert d_four.name == "deadbeef_htdemucs_ft"
-    assert d_two.name == "deadbeef_htdemucs_ft_vocals"
-    assert d_four.parent == STEMS_CACHE_DIR
+    assert d_four.name == "htdemucs_ft"                       # songs/<id>/stems/<model>[_<stem>]
+    assert d_two.name == "htdemucs_ft_vocals"
+    assert d_four.parent == d_two.parent and d_four.parent.name == "stems" and d_four.parent.parent.name == "deadbeef"
 
 
 def test_load_from_cache_returns_none_when_manifest_missing(tmp_path):

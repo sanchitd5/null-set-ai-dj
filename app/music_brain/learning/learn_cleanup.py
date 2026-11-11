@@ -74,14 +74,14 @@ class Tidy:
         return None
 
     def library_copy(self, path: Path) -> Optional[Path]:
-        """The library file holding exactly these bytes (CACHE_DIR/uploads/<sha256[:16]>.*)."""
+        """The library file holding exactly these bytes (songs/<sha256[:16]>/audio.*)."""
         from app.music_brain.learning.set_import import content_id
         try:
             cid = content_id(Path(path))
         except OSError:
             return None
-        return next((p for p in (self.cache_dir / "uploads").glob(f"{cid}.*")
-                     if p.is_file() and not p.name.startswith("_")), None)
+        from app.music_brain import song_store
+        return song_store.library_audio(self.cache_dir).get(cid)
 
     # ------------------------------------------------------------------ 1. register
     def register(self, tracks: List[dict], set_audio: Optional[Path] = None) -> Dict[str, str]:
@@ -130,7 +130,7 @@ class Tidy:
               set_path: Optional[Path] = None) -> None:
         """Delete what step 1 made safe. Every path is checked again here: a song only when
         the library copy exists now, a clip only inside this set's clips/, a stem folder only
-        inside the stem cache, the recording only inside the sets dir after every ID cut."""
+        inside the stem cache or a song folder's stems/, the recording only inside the sets dir after every ID cut."""
         if self.skipped:
             return
         self._leftovers(self.songs_dir, "leftovers")      # while the finished .mp3 they belong to is still here
@@ -143,7 +143,9 @@ class Tidy:
                 self._rm(Path(c), "clips")
         for d in stem_dirs:
             d = Path(d)
-            if _inside(d, self.stems_dir) and d.resolve() != self.stems_dir.resolve():
+            # a flat stem cache entry, or a stem variant folder of a song folder (songs/<id>/stems/<variant>)
+            if (_inside(d, self.stems_dir) and d.resolve() != self.stems_dir.resolve()
+                    and (d.parent.resolve() == self.stems_dir.resolve() or d.parent.name == "stems")):
                 self._rm(d, "clip_stems")
         if set_path is None:
             return

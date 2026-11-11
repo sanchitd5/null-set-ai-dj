@@ -86,11 +86,10 @@ def convert_file(wav: Path, subtype: Optional[str] = None) -> Tuple[Path, int, i
 
 # ---- discovery -----------------------------------------------------------------------------------
 def stem_dirs(cache: Path) -> Iterator[Path]:
-    root = cache / "stems"
-    if root.is_dir():
-        for d in sorted(root.iterdir()):
-            if d.is_dir() and (d / audio_io.MANIFEST_NAME).exists():   # no manifest = not finished
-                yield d
+    from app.music_brain import song_store
+    for _h, d in song_store.iter_stem_variants(cache=cache):       # song folders, then the old flat cache
+        if (d / audio_io.MANIFEST_NAME).exists():                   # no manifest = not finished
+            yield d
 
 
 def keylock_dirs(cache: Path) -> Iterator[Path]:
