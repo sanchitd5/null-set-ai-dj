@@ -23,7 +23,7 @@ import os
 import time
 from typing import Callable, Optional, Sequence
 
-from app.music_brain.pick_accept import PickHooks, accept_candidate
+from app.music_brain.pick_accept import accept_candidate
 
 DEADLINE_ENV = "SUGGEST_DEADLINE_S"
 LLM_BUDGET_ENV = "SUGGEST_LLM_BUDGET_S"
@@ -92,8 +92,6 @@ def ladder(*, deadline_at: float, hard_played: Sequence[str], earlier: Sequence[
             base_state[k] = ss[k]
     pinned = str(ss.get("scene_genre") or "").strip()      # HF10: the set's pinned scene binds EVERY step (graph, YouTube, LLM, library)
     heard_earlier = {_norm(x) for x in earlier}
-    scene_hooks = PickHooks(lambda scene, genre, profile: bool(genre) and bool(family_jump(scene, genre)),
-                            lambda a, b: None)
 
     def accept(r: dict, relax: Sequence[str] = (), scene_genre: Optional[str] = None) -> bool:
         verdict, why = _lang(lang_check, r)
@@ -103,12 +101,14 @@ def ladder(*, deadline_at: float, hard_played: Sequence[str], earlier: Sequence[
             cand["not_music"] = True
         if r.get("duration_s") is not None:
             cand["duration_s"] = r["duration_s"]
+        if r.get("era"):
+            cand["era"] = str(r["era"])
         state = dict(base_state, relax=list(relax))
         scene_genre = scene_genre or pinned
         if scene_genre:
             state["scene_genre"] = scene_genre
             cand["genre"] = str(r.get("genre") or genre_of(r) or "")
-        return accept_candidate(cand, state, hooks=scene_hooks)[0]
+        return accept_candidate(cand, state)[0]       # default hooks: the same genre / era knowledge as dj-core
 
     def hard_ok(r: dict, allow_penalty: bool = False) -> bool:
         return accept(r, ("language_penalty",) if allow_penalty else ())
