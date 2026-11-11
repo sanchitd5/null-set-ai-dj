@@ -1,5 +1,0 @@
-# Pin of the dj-core decision service executable (built by dj-core CI, release asset dj-core-svc-<sha>).
-# Bumped by a PR after the dj-core main CI job "service" is green. Rollback = the previous pin.
-# Empty values: nothing pinned yet; the server answers pick decisions with 503 until the exe is installed.
-DJ_CORE_SHA=
-DJ_CORE_SHA256=

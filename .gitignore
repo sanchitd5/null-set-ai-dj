@@ -31,3 +31,6 @@ research/notes/*
 !research/notes/set_study_analyze.py
 # local fine-tuned model weights (app/music_brain/llm_train)
 data/models/
+
+# dj-core service binary, installed by the server pipeline (built from the private dj-core repo)
+/bin/
