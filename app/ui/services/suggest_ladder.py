@@ -103,7 +103,8 @@ def ladder(*, deadline_at: float, hard_played: Sequence[str], earlier: Sequence[
             cand["duration_s"] = r["duration_s"]
         if r.get("era"):
             cand["era"] = str(r["era"])
-        state = dict(base_state, relax=list(relax))
+        # the phone's own relax ids (HF12: scene_unlabelled after repeated unlabelled refusals) ride with every step
+        state = dict(base_state, relax=list(dict.fromkeys([*(ss.get("relax") or []), *relax])))
         scene_genre = scene_genre or pinned
         if scene_genre:
             state["scene_genre"] = scene_genre

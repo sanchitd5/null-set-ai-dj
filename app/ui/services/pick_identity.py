@@ -117,6 +117,11 @@ def primary_credit(text: str) -> str:
     return parts[0] if parts else _key(text)
 
 
+def credits_in_order(text: str) -> list[str]:
+    """Squashed credited names of a pick's artist field in credit order ('A & B feat. C' -> ['a', 'b', 'c'])."""
+    return [k for k in (_key(x) for x in _CREDIT_SPLIT.split(fold(text))) if k]
+
+
 def _credit_set(texts: Iterable[str]) -> set[str]:
     out: set[str] = set()
     for t in texts:

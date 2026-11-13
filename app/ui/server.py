@@ -2954,6 +2954,75 @@ def _suggest_key(req: "AutopilotSuggestRequest") -> str:
     return json.dumps(req.dict(), sort_keys=True, default=str)
 
 
+def _library_artist_genres() -> Dict[str, list]:
+    """credited artist key -> the genre labels of that artist's library songs (library order). Cached on the library and
+    label counts: the labels move only when songs or labels are added."""
+    from app.ui.services import pick_identity as pi
+    from app.ui.services.track_identity import clean_identity
+
+    sig = (len(_tracks), len(_track_names), len(_suggested_genres))
+    hit = _artist_genre_cache.get("v")
+    if hit and hit[0] == sig:
+        return hit[1]
+    idx: Dict[str, list] = {}
+    for tid in list(_tracks):
+        g = _track_vibe(tid).get("genre")
+        name = _track_names.get(tid) or ""
+        if not g or not name:
+            continue
+        for k in pi.credits_in_order(clean_identity(name)[0]):
+            idx.setdefault(k, []).append(g)
+    _artist_genre_cache["v"] = (sig, idx)
+    return idx
+
+
+_artist_genre_cache: Dict[str, tuple] = {}
+
+
+def _graph_artist_genres() -> Dict[str, str]:
+    """artist key -> the genre label graph.db carries for the artist (the builder's majority of its songs). Empty when the atlas
+    builder is absent or the graph predates node.genre (builder schema step 6). Re-read at most every 120 s."""
+    hit = _artist_genre_cache.get("g")
+    if hit and time.monotonic() - hit[0] < 120:
+        return hit[1]
+    out: Dict[str, str] = {}
+    try:
+        from app.music_brain.atlas import graph_schema as gs
+
+        conn = gs.open_graph(CACHE_DIR)
+        out = {k: g for k, g in conn.execute("SELECT key, genre FROM node WHERE kind = 'artist' AND genre IS NOT NULL AND genre != ''")}
+    except Exception:
+        out = {}
+    _artist_genre_cache["g"] = (time.monotonic(), out)
+    return out
+
+
+def _artist_genre_of(row: dict) -> str:
+    """HF12: the genre of a candidate by the owner rule "the artist decides" (dj-core resolve_genre, PICK_RULES.genre_resolution).
+    This only gathers the inputs, the rule is dj-core's: each credited artist in credit order with its graph.db genre and the labels of its library songs,
+    and the song's own data label. The LLM's label never counts. "" = unknown (no artist in the library, no data label)."""
+    from app.music_brain import pick_accept
+    from app.ui.services import pick_identity as pi
+
+    idx, graph = _library_artist_genres(), _graph_artist_genres()
+    artists = [{"graph_genre": graph.get(k), "library_genres": idx.get(k, [])}
+               for k in pi.credits_in_order(str(row.get("artist") or ""))]
+    data = str(row.get("data_genre") or "").strip()
+    if not data and not any(a["library_genres"] or a["graph_genre"] for a in artists):
+        return ""
+    try:
+        return str(pick_accept.resolve_genre({"artists": artists, "data_genre": data or None}).get("genre") or "")
+    except Exception as exc:       # the service down: unknown, the acceptance call reports it
+        print(f"[suggest] artist genre unavailable: {exc!r}", flush=True)
+        return ""
+
+
+def _genre_of_row(r: dict) -> str:
+    """A ladder row's genre: the song's own stored label, else its artist's (_artist_genre_of)."""
+    v = _track_vibe(r["track_id"]) if r.get("track_id") else _vibe_by_name(f"{r.get('artist', '')} - {r.get('title', '')}")
+    return (v or {}).get("genre") or _artist_genre_of(r)
+
+
 def _suggest_ladder_mod():
     from app.ui.services import suggest_ladder
     return suggest_ladder
@@ -3059,9 +3128,7 @@ def _suggest_ladder_late(req: "AutopilotSuggestRequest", ctx: dict, reason: str)
         print(f"[suggest] language profile unavailable: {exc}", flush=True)
     cur_genre = str(_suggested_genres.get(_genre_key(title), "") or _track_vibe(req.track_id).get("genre") or "") if title else ""
 
-    def gof(r):
-        v = _track_vibe(r["track_id"]) if r.get("track_id") else _vibe_by_name(f"{r.get('artist', '')} - {r.get('title', '')}")
-        return (v or {}).get("genre") or ""
+    gof = _genre_of_row
 
     def yt_rows(remaining: float) -> list:
         if ctx.get("yt_rows"):
@@ -3331,9 +3398,7 @@ def _autopilot_suggest_impl(req: AutopilotSuggestRequest, ctx: Optional[dict] = 
     played_now = history_display + avoid_display + queue_display + [display]
     cur_genre = str(genre or "")
 
-    def _gof(r):
-        v = _track_vibe(r["track_id"]) if r.get("track_id") else _vibe_by_name(f"{r.get('artist', '')} - {r.get('title', '')}")
-        return (v or {}).get("genre") or ""
+    _gof = _genre_of_row
 
     def _yt_rows(remaining_s: float) -> list:
         if ctx is not None and ctx.get("yt_rows"):
