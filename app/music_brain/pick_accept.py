@@ -29,3 +29,12 @@ def accept_candidate(candidate: dict, state: dict) -> Tuple[bool, Optional[str]]
 def resolve_genre(inp: dict) -> dict:
     """The artist decides the genre (PICK_RULES.genre_resolution): {"genre", "source"}."""
     return djcore_bridge.call("resolve_genre", {"inputs": [inp or {}]})[0]
+
+
+def genre_distance(pairs: Iterable[Tuple[str, str]]) -> List[Optional[int]]:
+    """HF13: steps between each (pinned scene genre, candidate genre) on dj-core's one genre graph (0 = same family, None =
+    unlabelled or no path). For RANKING only (closer first); whether a distance is acceptable is accept_candidate's call."""
+    ps = [[a or "", b or ""] for a, b in pairs]
+    if not ps:
+        return []
+    return djcore_bridge.call("genre_distance", {"pairs": ps})

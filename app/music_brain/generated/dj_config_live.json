@@ -1,6 +1,6 @@
 {
-  "_generated": "GENERATED from dj-config 685842b-dirty - do not edit",
-  "config_hash": "fbfce8e240d1",
+  "_generated": "GENERATED from dj-config 009f153 - do not edit",
+  "config_hash": "5602bafeaaa3",
   "values": {
     "ACCENT_MAX_SHARE": {
       "value": 0.2,

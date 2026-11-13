@@ -81,7 +81,9 @@ def vet_one(a_name: str, b_name: str, *, a_genre: Optional[str] = None, a_era: O
         return {"gate": "earlier_set", "why": "played in an earlier set"}
     active = sp.selection_active(punjabi_profile, a_genre)
     in_profile = active and sp.in_scene_pair(a_genre, b_genre)
-    if not in_profile and family_jump(a_genre, b_genre):
+    # HF13: a pinned scene already vetted B by its distance from the SCENE above (dj-core); the hop from A is judged only without a pin
+    pinned_ok = bool(set_genre) and bool(genre_families(set_genre)) and bool(genre_families(b_genre))
+    if not in_profile and not pinned_ok and family_jump(a_genre, b_genre):
         return {"gate": "scene", "why": f"genre jump ({a_genre} -> {b_genre})"}
     return None
 
