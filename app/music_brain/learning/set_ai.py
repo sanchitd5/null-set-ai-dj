@@ -64,13 +64,25 @@ def find_model(urls: Optional[List[str]] = None, opener=None) -> Optional[tuple]
     import urllib.request
 
     opener = opener or urllib.request.build_opener(urllib.request.ProxyHandler({}))
-    for url in urls or MODEL_URLS:
+    want = None
+    if urls is None:
+        urls = list(MODEL_URLS)
+        if os.environ.get("OMNI_BASE_URL"):
+            # the server's own model endpoint (live_ear.config), tried first so the CLI reaches the same model
+            from app.ui.services import live_ear
+
+            cfg = live_ear.config()
+            urls.insert(0, cfg["base_url"].rstrip("/"))
+            want = cfg["model"]
+    for url in urls:
         try:
             with opener.open(f"{url}/models", timeout=2) as r:
                 models = json.loads(r.read()).get("data") or []
         except Exception:
             continue
         if models:
+            if want and any(m.get("id") == want for m in models):
+                return url, want
             best = next((m for m in models if m.get("loaded")), models[0])
             return url, best["id"]
     return None
