@@ -108,3 +108,39 @@ def test_review_prompt_explains_single_song_moves_and_sends_positions():
     system, user = seen[0]
     assert '"b" is null by design' in system and "Not a definition of the move" in system
     assert json.loads(user)["items"][0]["source"] == [[65.4, 72.7], [10.0, 13.0]]
+
+
+class _FakeOpener:
+    def __init__(self, live):
+        self.live, self.seen = live, []
+
+    def open(self, url, timeout=0):
+        import io
+
+        self.seen.append(url)
+        for base, ids in self.live.items():
+            if url.startswith(base):
+                return io.BytesIO(json.dumps({"data": [{"id": i, "loaded": False} for i in ids]}).encode())
+        raise OSError("refused")
+
+
+def test_find_model_uses_the_servers_omni_endpoint_and_model(monkeypatch):
+    monkeypatch.setenv("OMNI_BASE_URL", "http://10.0.0.111:8901/v1")
+    monkeypatch.setenv("OMNI_MODEL", "qwen3-omni")
+    op = _FakeOpener({"http://10.0.0.111:8901/v1": ["text", "qwen3-omni"]})
+    assert set_ai.find_model(opener=op) == ("http://10.0.0.111:8901/v1", "qwen3-omni")
+    assert op.seen == ["http://10.0.0.111:8901/v1/models"]
+
+
+def test_find_model_without_omni_env_probes_localhost_only(monkeypatch):
+    monkeypatch.delenv("OMNI_BASE_URL", raising=False)
+    op = _FakeOpener({})
+    assert set_ai.find_model(opener=op) is None
+    assert op.seen == [f"{u}/models" for u in set_ai.MODEL_URLS]
+
+
+def test_find_model_falls_back_to_localhost_when_omni_endpoint_is_down(monkeypatch):
+    monkeypatch.setenv("OMNI_BASE_URL", "http://10.0.0.111:8901/v1")
+    local = set_ai.MODEL_URLS[0]
+    op = _FakeOpener({local: ["m"]})
+    assert set_ai.find_model(opener=op) == (local, "m")
