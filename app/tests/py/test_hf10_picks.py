@@ -20,25 +20,25 @@ def run(**kw):
 
 
 def test_off_scene_graph_picks_refused_in_pinned_scene():
-    graph = [{"artist": "A", "title": "Off", "genre": "pop"}, {"artist": "B", "title": "On", "genre": "rap"}]
+    graph = [{"artist": "A", "title": "Off", "genre": "metal"}, {"artist": "B", "title": "On", "genre": "rap"}]
     r = run(graph_picks=lambda: graph, set_state={"scene_genre": "rap"})
     assert [p["title"] for p in r["suggestions"]] == ["On"] and r["pick_source"] == "graph"
 
 
 def test_off_scene_yt_and_llm_refused_too():
-    off = [{"artist": "A", "title": "Off", "genre": "pop", "yt_id": "x" * 11}]
+    off = [{"artist": "A", "title": "Off", "genre": "metal", "yt_id": "x" * 11}]
     r = run(yt_pick=lambda rows: off, llm=lambda rem: off, set_state={"scene_genre": "rap"},
             genre_of=lambda r: "rap" if r.get("track_id") else "")
     assert r["pick_source"].startswith("library")
 
 
 def test_pinned_scene_gives_way_only_at_the_last_library_step():
-    r = run(set_state={"scene_genre": "rap"}, genre_of=lambda r: "pop")
+    r = run(set_state={"scene_genre": "rap"}, genre_of=lambda r: "metal")
     assert r["pick_source"] == "library_any" and r["suggestions"]
 
 
 def test_no_pin_graph_unchanged():
-    graph = [{"artist": "A", "title": "Off", "genre": "pop"}]
+    graph = [{"artist": "A", "title": "Off", "genre": "metal"}]
     assert run(graph_picks=lambda: graph)["pick_source"] == "graph"
 
 

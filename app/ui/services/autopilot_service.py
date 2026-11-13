@@ -734,6 +734,18 @@ from app.music_brain.analysis.genre import genre_scenes as _genre_scenes  # noqa
 from app.music_brain.generated import dj_config as DJ  # noqa: E402
 from app.music_brain.pick_accept import accept_candidate  # noqa: E402
 
+
+def within_pinned_scene(pinned: str, genre) -> bool:
+    """HF13: True when dj-core's scene gate (accept_candidate, the one rule source) lets a candidate of `genre` into the set's PINNED
+    scene (up to scene_distance.max_steps away from the scene, never measured from the playing song). No pin / no label / no answer: False."""
+    if not (pinned or "").strip() or not str(genre or "").strip():
+        return False
+    try:
+        return accept_candidate({"ids": ["scene-check"], "genre": str(genre)}, {"scene_genre": pinned})[0]
+    except Exception as exc:
+        print(f"[suggest] scene distance check failed: {exc!r}", flush=True)
+        return False
+
 # Scene continuity (owner: Anyma "Atoma" went to "EVIL x YOU (bjork X Melanie
 # Martinez MashMIX)"). A mashup / bootleg / "A x B" title inside a coherent
 # non-open-format scene is scored as a genre jump (bounded: it stays a last resort).
@@ -767,7 +779,7 @@ def _filter_suggestions(
     data: dict, history: list[str], occasion_set: bool = False, current_key: str | None = None,
     allow_genre_change: bool = False, current_artist: str = "", measured_energy: int | None = None,
     energy_lo: int | None = None, punjabi_profile: str = "off", scene_genre: str = "",
-    current_title: str = "", lang_check=None,
+    current_title: str = "", lang_check=None, pinned_scene: str = "",
 ) -> list[dict]:
     """Drop sets/interviews, exact repeats, profile clashes and (unless steering)
     suggestions whose expected_key clashes with `current_key`. A pick that clashes
@@ -875,6 +887,8 @@ def _filter_suggestions(
             hop = max(hop or 0.0, 2.0)
         if sp_active and _scene_profile.in_scene_pair(cur_genre, s.get("genre")):
             hop = 0.0  # one scene under the profile (note s7), not a genre jump
+        if pinned_scene and within_pinned_scene(pinned_scene, s.get("genre")):
+            hop = 0.0  # HF13: inside the pinned scene's reach (<= scene_distance.max_steps from the scene): not a genre jump from the playing song
         scene = scene_of(cur_genre)
         if scene and mashup_title(s["title"]):
             hop = max(hop or 0.0, MASHUP_SCENE_HOP)
@@ -936,7 +950,7 @@ def _filter_suggestions(
     return [max(off_theme, key=lambda t: t[0])[1]] if off_theme else []
 
 
-def yt_fallback(rows, *, cur_genre, genre_of, lang_check=None, exclude=(), limit: int = 3) -> list[dict]:
+def yt_fallback(rows, *, cur_genre, genre_of, lang_check=None, exclude=(), limit: int = 3, pinned_scene: str = "") -> list[dict]:
     """Last resort before a repeat / hold: the playing song's YouTube related songs (yt_related.candidates rows), best first.
     A row passes when it is not already heard (`exclude`: display names), is no genre / scene jump by DATA genre
     (`genre_of(row)` -> catalogue or library label, "" = unknown; the model's own label is never asked), and passes the language
@@ -954,7 +968,7 @@ def yt_fallback(rows, *, cur_genre, genre_of, lang_check=None, exclude=(), limit
         if _is_noise_title(label):
             continue
         genre = str(genre_of(r) or "")
-        if genre and cur_genre and _family_jump(cur_genre, genre):
+        if genre and cur_genre and _family_jump(cur_genre, genre) and not within_pinned_scene(pinned_scene, genre):
             note_rejects([r], "yt fallback: genre jump")
             continue
         if lang_check is not None:
@@ -1382,6 +1396,7 @@ def suggest_next_tracks(
     energy_reset: bool = False,
     punjabi_profile: str = "off",  # scene_profile mode: off | on | auto
     scene_anchor: str = "",        # the set's scene while the playing song is an off-scene mistake
+    pinned_scene: str = "",        # HF13: the set's pinned scene (set_state.scene_genre): genres within its reach are no genre jump
     candidates: list[dict] | None = None,   # pick_pool.build_pool(): picks must be one of these (by cid)
     lang_check=None,               # (pick) -> (verdict, reason) against the set's language profile (lang_id)
     graph_picks: list[dict] | None = None,  # graph_pick.picks_for(): tried first, the LLM only tops up (G10)
@@ -1411,7 +1426,7 @@ def suggest_next_tracks(
     scene_genre = str(scene_anchor or genre or "").strip()
 
     def _filt(*a, **k):                 # every filter pass knows the playing song's credits (side-artist hops)
-        return _filter_suggestions(*a, current_title=title, lang_check=lang_check, **k)
+        return _filter_suggestions(*a, current_title=title, lang_check=lang_check, pinned_scene=pinned_scene, **k)
     try:
         target = float(tempo_target) if tempo_target is not None else 0.0
     except (TypeError, ValueError):

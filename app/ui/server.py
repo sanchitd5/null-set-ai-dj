@@ -3155,7 +3155,8 @@ def _suggest_ladder_late(req: "AutopilotSuggestRequest", ctx: dict, reason: str)
         library=_library_rows(), neighbours=_neighbour_rows(req.track_id), cur_genre=cur_genre, genre_of=gof,
         family_jump=family_jump, lang_check=lang_check, graph_picks=graph_rows, yt_rows=yt_rows,
         yt_pick=lambda rows: yt_fallback(rows, cur_genre=cur_genre, lang_check=lang_check, genre_of=gof,
-                                         exclude=played + list(earlier)),
+                                         exclude=played + list(earlier),
+                                         pinned_scene=str((req.set_state or {}).get("scene_genre") or "").strip()),
         reason=reason, vetoed=req.vetoed, llm=None, set_state=req.set_state)
 
 
@@ -3368,6 +3369,7 @@ def _autopilot_suggest_impl(req: AutopilotSuggestRequest, ctx: Optional[dict] = 
                 lead_bpm=req.lead_bpm,
                 punjabi_profile=req.punjabi_profile,
                 scene_anchor=req.scene_anchor.strip(),
+                pinned_scene=str((req.set_state or {}).get("scene_genre") or "").strip(),
                 candidates=candidates,
                 lang_check=lang_check,
                 graph_picks=None,

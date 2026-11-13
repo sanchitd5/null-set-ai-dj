@@ -23,7 +23,7 @@ import os
 import time
 from typing import Callable, Optional, Sequence
 
-from app.music_brain.pick_accept import accept_candidate
+from app.music_brain.pick_accept import accept_candidate, genre_distance
 
 DEADLINE_ENV = "SUGGEST_DEADLINE_S"
 LLM_BUDGET_ENV = "SUGGEST_LLM_BUDGET_S"
@@ -105,11 +105,27 @@ def ladder(*, deadline_at: float, hard_played: Sequence[str], earlier: Sequence[
             cand["era"] = str(r["era"])
         # the phone's own relax ids (HF12: scene_unlabelled after repeated unlabelled refusals) ride with every step
         state = dict(base_state, relax=list(dict.fromkeys([*(ss.get("relax") or []), *relax])))
-        scene_genre = scene_genre or pinned
+        scene_genre = pinned or scene_genre      # HF13: a pinned scene is measured from the scene itself, never from the song now playing
         if scene_genre:
             state["scene_genre"] = scene_genre
+            if not pinned:
+                state["scene_max_steps"] = 1      # HF13: the reference is the playing song, not a pin: one step only, no drift
             cand["genre"] = str(r.get("genre") or genre_of(r) or "")
         return accept_candidate(cand, state)[0]       # default hooks: the same genre / era knowledge as dj-core
+
+    def rank(rows: Sequence[dict]) -> list:
+        # HF13: under a pinned scene prefer the closer genre (exact, then 1, 2, 3 steps from the PINNED scene; dj-core measures it,
+        # acceptance stays accept_candidate's). Stable, so the step's own order breaks ties. No pin or no answer: unchanged.
+        rows = list(rows)
+        if not pinned or len(rows) < 2:
+            return rows
+        try:
+            d = genre_distance([(pinned, str(labelled(r).get("genre") or "")) for r in rows])
+        except Exception as exc:        # ranking is a preference, never a reason to lose a pick
+            print(f"[suggest] genre_distance failed: {exc!r}", flush=True)
+            return rows
+        far = 10 ** 6
+        return [r for _, r in sorted(zip([far if x is None else x for x in d], rows), key=lambda t: t[0])]
 
     def hard_ok(r: dict, allow_penalty: bool = False) -> bool:
         return accept(r, ("language_penalty",) if allow_penalty else ())
@@ -135,7 +151,7 @@ def ladder(*, deadline_at: float, hard_played: Sequence[str], earlier: Sequence[
     def take(rows: Sequence[dict], source: str, why: str, *, need_fresh=False, scene=False,
              allow_penalty=False, last_resort=False) -> list:
         out, seen = [], set()
-        for r in rows:
+        for r in rank([x for x in rows if isinstance(x, dict) and x.get("title")]):
             if not isinstance(r, dict) or not r.get("title"):
                 continue
             relax = ("language_penalty",) if allow_penalty else ()
@@ -155,12 +171,12 @@ def ladder(*, deadline_at: float, hard_played: Sequence[str], earlier: Sequence[
         return out
 
     def done(picks: list, source: str) -> dict:
-        return {"suggestions": prefer_library(picks), "pick_source": source, "fallback_reason": reason}
+        return {"suggestions": prefer_library(rank(picks)), "pick_source": source, "fallback_reason": reason}
 
     def collect(fn, source):
         try:
-            return [dict(labelled(p), pick_source=p.get("pick_source") or source, fallback_reason=reason)
-                    for p in fn() if isinstance(p, dict) and hard_ok(p)]
+            return rank([dict(labelled(p), pick_source=p.get("pick_source") or source, fallback_reason=reason)
+                         for p in fn() if isinstance(p, dict) and hard_ok(p)])
         except Exception as exc:        # a failing step falls through to the next
             print(f"[suggest] ladder step {source} failed: {exc!r}", flush=True)
             return []

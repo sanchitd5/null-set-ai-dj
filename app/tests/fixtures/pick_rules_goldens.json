@@ -1,6 +1,6 @@
 {
- "_generated": "GENERATED from dj-config 685842b-dirty - do not edit",
- "config_hash": "fbfce8e240d1",
+ "_generated": "GENERATED from dj-config 009f153 - do not edit",
+ "config_hash": "5602bafeaaa3",
  "files": {
   "genre": {
    "kind": "resolve_genre",
@@ -993,6 +993,146 @@
      "expect": {
       "ok": false,
       "reason": "leaves the set's house scene (metal)"
+     },
+     "needs_hooks": true
+    },
+    {
+     "name": "HF13 scene: one step from the pinned scene passes",
+     "candidate": {
+      "ids": [
+       "song c"
+      ],
+      "duration_s": 200,
+      "genre": "techno"
+     },
+     "state": {
+      "playing_ids": [
+       "song p"
+      ],
+      "played": [],
+      "vetoed": [],
+      "scene_genre": "house"
+     },
+     "expect": {
+      "ok": true,
+      "reason": null
+     },
+     "needs_hooks": true
+    },
+    {
+     "name": "HF13 scene: two steps from the pinned scene pass",
+     "candidate": {
+      "ids": [
+       "song c"
+      ],
+      "duration_s": 200,
+      "genre": "drum and bass"
+     },
+     "state": {
+      "playing_ids": [
+       "song p"
+      ],
+      "played": [],
+      "vetoed": [],
+      "scene_genre": "house"
+     },
+     "expect": {
+      "ok": true,
+      "reason": null
+     },
+     "needs_hooks": true
+    },
+    {
+     "name": "HF13 scene: three steps from the pinned scene pass",
+     "candidate": {
+      "ids": [
+       "song c"
+      ],
+      "duration_s": 200,
+      "genre": "drum and bass"
+     },
+     "state": {
+      "playing_ids": [
+       "song p"
+      ],
+      "played": [],
+      "vetoed": [],
+      "scene_genre": "ambient"
+     },
+     "expect": {
+      "ok": true,
+      "reason": null
+     },
+     "needs_hooks": true
+    },
+    {
+     "name": "HF13 scene: unrelated family still refused",
+     "candidate": {
+      "ids": [
+       "song c"
+      ],
+      "duration_s": 200,
+      "genre": "metal"
+     },
+     "state": {
+      "playing_ids": [
+       "song p"
+      ],
+      "played": [],
+      "vetoed": [],
+      "scene_genre": "house"
+     },
+     "expect": {
+      "ok": false,
+      "reason": "leaves the set's house scene (metal)"
+     },
+     "needs_hooks": true
+    },
+    {
+     "name": "HF13 scene: a hub never bridges two genres",
+     "candidate": {
+      "ids": [
+       "song c"
+      ],
+      "duration_s": 200,
+      "genre": "country"
+     },
+     "state": {
+      "playing_ids": [
+       "song p"
+      ],
+      "played": [],
+      "vetoed": [],
+      "scene_genre": "hip hop"
+     },
+     "expect": {
+      "ok": false,
+      "reason": "leaves the set's hip hop scene (country)"
+     },
+     "needs_hooks": true
+    },
+    {
+     "name": "HF13 scene: language block stays hard at distance 0",
+     "candidate": {
+      "ids": [
+       "song c"
+      ],
+      "duration_s": 200,
+      "genre": "house",
+      "lang_verdict": "block",
+      "lang_reason": "language jump"
+     },
+     "state": {
+      "playing_ids": [
+       "song p"
+      ],
+      "played": [],
+      "vetoed": [],
+      "scene_genre": "house"
+     },
+     "expect": {
+      "ok": false,
+      "reason": "language jump"
      },
      "needs_hooks": true
     }
