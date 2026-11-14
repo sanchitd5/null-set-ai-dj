@@ -14,7 +14,7 @@ APP = Path(__file__).resolve().parents[2]
 # read-only fallbacks to the old layout (stem server, sim library, swap_mix; TODO 2026-12-15: remove with the fallback).
 ALLOWED = {
     "music_brain/song_store.py", "ui/services/song_migrate.py", "music_brain/config.py",
-    "sim/stem_capture.py", "stem_server/server.py", "sim/library.py", "music_brain/render/swap_mix.py",
+    "sim/stem_capture.py", "stem_server/server.py", "stem_server/canary.py", "sim/library.py", "music_brain/render/swap_mix.py",
 }
 FLAT = [
     re.compile(r"\bSTEMS_CACHE_DIR\b"),

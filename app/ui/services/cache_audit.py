@@ -72,7 +72,7 @@ def scan(tracks: Dict[str, Path], names: Dict[str, str], known_sources: Dict[str
             continue
         info = probe_fn(path)
         vid = known_sources.get(tid) or info.get("vid")
-        name = names.get(tid) or path.stem
+        name = names.get(tid) or tid
         dur = info.get("dur")
         if dur is not None and not (MIN_SECS <= dur < MAX_SECS):
             add(tid, "bad_length", f"{dur:.0f}s", vid)

@@ -59,7 +59,7 @@ def run(tracks: Dict[str, Path], names: Dict[str, str], ctx, limit: int = 0, for
             except OSError:
                 dur = None
             try:
-                res = lyric_check.check_song(tid, names.get(tid) or Path(path).stem, vocal, dur,
+                res = lyric_check.check_song(tid, names.get(tid) or tid, vocal, dur,
                                              video=album_art._video_id(tid), asr_fn=asr_fn, lyrics_fn=lyrics_fn, log=ctx.log)
             except Exception as exc:                 # one bad file must not stop the batch
                 out["failed"] += 1

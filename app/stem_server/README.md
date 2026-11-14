@@ -46,11 +46,14 @@ are `sha256(file bytes)[:16]`, the same as the console and the phone.
 | `GET /v1/tracks/{id}/analysis` | the console's analysis v6 of an uploaded track (`analyzer.analyze`, same disk cache as `/api/tracks/{id}/analysis`). The phone reads it instead of analysing on the device |
 | `GET /v1/jobs/{job}` | `status`: queued / running / done / error, plus `priority`, `position` (1 = next), real `progress` (segments done), `elapsed`, `eta`, `device`, `model`, `error`, `note`, `seconds` |
 | `GET /v1/jobs` | the queue in run order (running first), `queued`, `model`, `device`, `worker` (`alive`, `pid`) |
+| `GET /v1/canary?sample=N` | cache canary (see "Identity"): 200 `{"ok": true, ...}`, 503 with `problems` when a sampled stem set is not as long as its song or a derived cache dir holds files of two songs. Also `python -m app.stem_server canary [N]` (no token, exit 1 on failure) |
 | `GET /v1/tracks/{id}/stems/{name}.m4a?start=S&end=E` | AAC-LC 256 kbps, 44.1 kHz stereo, covering that window only (at most 600 s). `name`: vocals, drums, bass, other, no_vocals. Returns 409 before the split, 416 past the end of the track |
 
 Window response headers: `X-Stem-Sample-Rate`, `X-Stem-Start-Frame` (`round(S*44100)`),
 `X-Stem-Frames`, `X-Stem-Total-Frames`, `X-Stem-Encoder-Delay`, `X-Stem-Encoder-Padding`,
-`X-Stem-Model`, `X-Stem-Sha256` (of the body).
+`X-Stem-Model`, `X-Stem-Sha256` (of the body), `X-Stem-Track-Id` and `X-Stem-Source-Sha256` (who the
+file was made from; the phone refuses a response that is not for the track it asked for). The same
+headers come with the whole-song download (no `start`/`end`).
 
 Routes are relative and the server never builds a URL to itself, so a proxy can mount it under a
 stripped prefix (Caddy: `/stems/*` → `127.0.0.1:$STEM_PORT`). The phone's base URL may include
@@ -96,6 +99,21 @@ on purpose.
   returns 409.
 * Each encoded window has a sha256 that is checked before it is served. On a mismatch the server
   re-encodes it.
+
+### Identity: cache keys are song identity
+
+A derived cache (`stem_windows/<key>/`, the phone's stem store, any analysis cache) is keyed by the
+song's id (`sha256(bytes)[:16]`), never by a folder's own name. In a song folder
+(`songs/<id>/stems/<model>`) the folder name is only the model, so a key taken from it is shared by every
+song (G26 served all songs the first song's stems for three days). `StemServer.set_key` is
+`<song id>_<model>`.
+
+On top of the key, every window/whole sidecar records `track_id`, `source_sha256` (full sha of the source
+audio), `model` and `manifest_sha256` (the stem set). A cached file is served only when all four match
+the request again; otherwise it is dropped and encoded from the right stems (a sidecar from before this
+binding counts as a mismatch). The canary (`/v1/canary`, `python -m app.stem_server canary`) samples
+cached sets and checks stem length against the song audio and that no derived dir holds two songs.
+CT116: `ssh nullset-dj 'cd /opt/null-set-ai-dj && .venv/bin/python -m app.stem_server canary'`.
 
 ### GPU sharing
 

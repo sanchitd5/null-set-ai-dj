@@ -175,6 +175,30 @@ class StemServer:
             return f"{cdir.parent.parent.name}_{cdir.name}"
         return cdir.name
 
+    def identity(self, track_id: str, p: Path, stems: Dict[str, str], model: str) -> dict:
+        """Who a derived file belongs to: the request's track id, the full sha256 of its source audio,
+        and the stem set (model + a hash of the manifest: stem names, paths, sizes). Recorded in every
+        window/whole sidecar; a cached file is served only when this matches again (STEMGUARD)."""
+        sets = [[n, stems[n], os.path.getsize(stems[n])] for n in sorted(stems)]
+        return {"track_id": track_id, "source_sha256": self.full_hash(track_id, p), "model": model,
+                "manifest_sha256": hashlib.sha256(json.dumps(sets).encode()).hexdigest()}
+
+    def cached_meta(self, dest: Path, ident: dict) -> Optional[dict]:
+        """Meta of a cached window/whole file that is intact AND bound to `ident`; else None and the
+        file is dropped, so it is re-encoded from the right stems. A sidecar from before the binding
+        (no identity) counts as a mismatch."""
+        meta = windows.cached_window(dest) if dest.exists() else None
+        if meta is None:
+            return None
+        if not windows.meta_matches(meta, ident):
+            print(f"[stem-server] {ident['track_id']}: cached {dest.parent.name}/{dest.name} belongs to "
+                  f"{meta.get('track_id')}/{str(meta.get('source_sha256'))[:12]}, not this track; dropped",
+                  file=sys.stderr, flush=True)
+            dest.unlink(missing_ok=True)
+            dest.with_suffix(".json").unlink(missing_ok=True)
+            return None
+        return meta
+
     def stem_manifest(self, h: str, model: str) -> Optional[Dict[str, str]]:
         """The set in the song folder, else in the old flat cache."""
         return (stem_service.read_manifest(self.stem_dir(h, model))
@@ -415,9 +439,10 @@ class StemServer:
         s1 = min(round(end * windows.SAMPLE_RATE), total)
         if s1 <= s0:
             raise HTTPException(416, "window is past the end of the track")
+        ident = self.identity(track_id, p, stems, model)
         dest = self.s.windows / self.set_key(cdir) / f"{name}_{s0}_{s1}.m4a"
         with self.encode_lock:
-            meta = windows.cached_window(dest) if dest.exists() else None
+            meta = self.cached_meta(dest, ident)
             if meta is None:
                 bad = windows.verify_stems(cdir, stems, parts)
                 if bad:
@@ -428,7 +453,7 @@ class StemServer:
                     self.submit(track_id, 4)
                     raise HTTPException(409, f"stem cache failed its check ({bad}); re-splitting, retry later")
                 meta = windows.encode_m4a(windows.read_window([stems[n] for n in parts], s0, s1), dest)
-                meta.update(start_frame=s0, total_frames=total, model=model)
+                meta.update(start_frame=s0, total_frames=total, **ident)
                 windows.store_window_meta(dest, meta)
         return dest, meta
 
@@ -446,13 +471,14 @@ class StemServer:
         if ready is None:
             raise HTTPException(409, "not separated yet; POST /v1/separate")
         stems, cdir, model = ready
+        ident = self.identity(track_id, p, stems, model)
         dest = self.s.windows / self.set_key(cdir) / f"{name}_whole.m4a"
-        meta = windows.cached_window(dest) if dest.exists() else None
+        meta = self.cached_meta(dest, ident)
         if meta is not None:
             os.utime(dest, None)                  # LRU for the prune
             return dest, meta
         with self._set_lock(self.set_key(cdir)):
-            meta = windows.cached_window(dest) if dest.exists() else None
+            meta = self.cached_meta(dest, ident)
             if meta is None:
                 bad = windows.verify_stems(cdir, stems, FOUR)
                 if bad:
@@ -461,8 +487,8 @@ class StemServer:
                     shutil.rmtree(dest.parent, ignore_errors=True)
                     self.submit(track_id, 4)
                     raise HTTPException(409, f"stem cache failed its check ({bad}); re-splitting, retry later")
-                self._encode_all(stems, self.set_key(cdir), model)
-                meta = windows.cached_window(dest) if dest.exists() else None
+                self._encode_all(stems, self.set_key(cdir), ident)
+                meta = self.cached_meta(dest, ident)
                 if meta is None:
                     raise HTTPException(500, "whole-song encode failed")
         self._prune_whole()
@@ -472,18 +498,18 @@ class StemServer:
         with self.lock:
             return self._set_locks.setdefault(key, threading.Lock())
 
-    def _encode_all(self, stems: Dict[str, str], key: str, model: str) -> None:
+    def _encode_all(self, stems: Dict[str, str], key: str, ident: dict) -> None:
         """Encode the four whole stems of one set at once (missing ones only). Caller holds the set lock."""
         from concurrent.futures import ThreadPoolExecutor
 
         def one(n: str) -> None:
             dest = self.s.windows / key / f"{n}_whole.m4a"
-            if dest.exists() and windows.cached_window(dest) is not None:
+            if self.cached_meta(dest, ident) is not None:
                 return
             total = windows.total_frames(stems[n])
             t0 = time.time()
             meta = windows.encode_whole_m4a(stems[n], dest)
-            meta.update(start_frame=0, total_frames=total, model=model)
+            meta.update(start_frame=0, total_frames=total, **ident)
             windows.store_window_meta(dest, meta)
             print(f"[stem-server] {key[:16]} {n}: whole m4a {dest.stat().st_size >> 10} KB in {time.time() - t0:.1f} s",
                   file=sys.stderr, flush=True)
@@ -590,6 +616,18 @@ def create_app(settings: Optional[Settings] = None, separate_fn=None) -> FastAPI
     def health():
         return {"ok": True}
 
+    @app.get("/v1/canary", dependencies=[Depends(auth)])
+    def canary_route(sample: int = 5):
+        """Stem cache canary: random cached sets vs their song audio, and no shared derived cache dir.
+        200 when clean, 503 with the findings otherwise."""
+        from app.stem_server import canary
+
+        res = canary.run(s.cache, srv.models(), max(1, min(sample, 50)))
+        if not res["ok"]:
+            print(f"[stem-server] canary FAILED: {res['problems']}", file=sys.stderr, flush=True)
+            return JSONResponse(res, status_code=503)
+        return res
+
     @app.api_route("/v1/tracks/{track_id}", methods=["GET", "HEAD"], dependencies=[Depends(auth)])
     def track(track_id: str):
         p = srv.track_path(check_id(track_id))
@@ -691,6 +729,8 @@ def create_app(settings: Optional[Settings] = None, separate_fn=None) -> FastAPI
             "X-Stem-Encoder-Padding": str(meta["encoder_padding"]),
             "X-Stem-Model": str(meta["model"]),
             "X-Stem-Sha256": meta["sha256"],
+            "X-Stem-Track-Id": str(meta["track_id"]),
+            "X-Stem-Source-Sha256": str(meta["source_sha256"]),
             "Cache-Control": "private, max-age=31536000, immutable",
         }
         if not whole:
