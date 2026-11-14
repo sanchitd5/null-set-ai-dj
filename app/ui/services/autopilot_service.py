@@ -1765,13 +1765,15 @@ def suggest_next_tracks(
         except ValueError as exc:
             print(f"[suggest] earlier-set retry failed: {exc}", flush=True)
     recent_all = (history_display or history) + list(queue_display or [])
-    pool = fresh or suggestions
-    spaced = artist_spacing(pool, recent_all)
+    # HF14: never rebind `pool` here: it is the candidate pool the closure _g grounds the retry's picks against (a rebind made
+    # the second retry raise KeyError('cid') and dropped the LLM answer for the graph / library fallback).
+    picked = fresh or suggestions
+    spaced = artist_spacing(picked, recent_all)
     # Every pick was by an artist that just played: ask once more, naming them.
-    if pool and not spaced and can_retry():
-        names = "; ".join(f"{x.get('artist', '')} - {x.get('title', '')}" for x in pool)[:400]
+    if picked and not spaced and can_retry():
+        names = "; ".join(f"{x.get('artist', '')} - {x.get('title', '')}" for x in picked)[:400]
         print(f"[suggest] every pick repeats a recent artist: {names}", flush=True)
-        note_rejects(pool, "artist played too recently")
+        note_rejects(picked, "artist played too recently")
         try:
             data4 = _extract_json(chat_raw(system_msg, user_msg + (
                 f"\n\nREJECTED - too many songs by the same artist lately: {names}. "

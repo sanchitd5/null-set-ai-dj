@@ -118,3 +118,23 @@ def test_ground_accepts_artist_and_title_swapped():
                          cat=[], exclude=[], seed_title="Seed")
     ok, free = pp.ground([{"artist": "Aarzu", "title": "Noor"}], pool)
     assert not free and ok[0]["artist"] == "Noor" and ok[0]["title"] == "Aarzu" and ok[0]["track_id"] == "t1"
+
+
+def test_artist_spacing_retry_still_grounds_against_the_candidate_pool(monkeypatch):
+    """HF14: the 'every pick repeats a recent artist' retry rebound `pool` to the picks, so grounding the retry's picks raised
+    KeyError('cid') (3 times in 3 days on prod) and the LLM answer was dropped for the fallback."""
+    monkeypatch.setattr(svc, "_verify_picks", lambda picks: (picks, []))
+    replies = iter(['{"suggestions":[{"cid":"C1","artist":"x","title":"y","reason":"x"}]}',
+                    '{"suggestions":[{"cid":"C2","artist":"x","title":"y","reason":"x"}]}'])
+    monkeypatch.setattr(svc, "chat_raw", lambda *a, **k: next(replies))
+    monkeypatch.setattr(svc, "_filter_suggestions", lambda data, *a, **k: [x for x in data["suggestions"]])
+    calls = []
+
+    def spacing(picks, recent):
+        calls.append(len(picks))
+        return [] if len(calls) == 1 else list(picks)          # the first answer repeats a recent artist
+    monkeypatch.setattr(svc, "artist_spacing", spacing)
+    pool = _pool()
+    out = svc.suggest_next_tracks("Seed", "Art", 124.0, "8A", 200.0, 0.5, "", [], candidates=pool)
+    assert len(calls) == 2, "the artist retry ran"
+    assert [(s["artist"], s["title"]) for s in out] == [(pool[1]["artist"], pool[1]["title"])]
