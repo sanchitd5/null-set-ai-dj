@@ -167,6 +167,14 @@ class StemServer:
         """Where a song's stem set lives: its folder songs/<id>/stems/<model>."""
         return self.s.songs / h[:16] / "stems" / model
 
+    def set_key(self, cdir: Path) -> str:
+        """The derived-cache key (stem_windows/<key>/) of one stem set. A song-folder set is
+        songs/<id>/stems/<model>, whose own name is only the model, so the key adds the song id;
+        a legacy flat set (stems/<hash>_<model>) is already unique by name."""
+        if cdir.parent.name == "stems" and cdir.parent.parent.parent == self.s.songs:
+            return f"{cdir.parent.parent.name}_{cdir.name}"
+        return cdir.name
+
     def stem_manifest(self, h: str, model: str) -> Optional[Dict[str, str]]:
         """The set in the song folder, else in the old flat cache."""
         return (stem_service.read_manifest(self.stem_dir(h, model))
@@ -407,7 +415,7 @@ class StemServer:
         s1 = min(round(end * windows.SAMPLE_RATE), total)
         if s1 <= s0:
             raise HTTPException(416, "window is past the end of the track")
-        dest = self.s.windows / cdir.name / f"{name}_{s0}_{s1}.m4a"
+        dest = self.s.windows / self.set_key(cdir) / f"{name}_{s0}_{s1}.m4a"
         with self.encode_lock:
             meta = windows.cached_window(dest) if dest.exists() else None
             if meta is None:
@@ -438,12 +446,12 @@ class StemServer:
         if ready is None:
             raise HTTPException(409, "not separated yet; POST /v1/separate")
         stems, cdir, model = ready
-        dest = self.s.windows / cdir.name / f"{name}_whole.m4a"
+        dest = self.s.windows / self.set_key(cdir) / f"{name}_whole.m4a"
         meta = windows.cached_window(dest) if dest.exists() else None
         if meta is not None:
             os.utime(dest, None)                  # LRU for the prune
             return dest, meta
-        with self._set_lock(cdir.name):
+        with self._set_lock(self.set_key(cdir)):
             meta = windows.cached_window(dest) if dest.exists() else None
             if meta is None:
                 bad = windows.verify_stems(cdir, stems, FOUR)
@@ -453,7 +461,7 @@ class StemServer:
                     shutil.rmtree(dest.parent, ignore_errors=True)
                     self.submit(track_id, 4)
                     raise HTTPException(409, f"stem cache failed its check ({bad}); re-splitting, retry later")
-                self._encode_all(stems, cdir.name, model)
+                self._encode_all(stems, self.set_key(cdir), model)
                 meta = windows.cached_window(dest) if dest.exists() else None
                 if meta is None:
                     raise HTTPException(500, "whole-song encode failed")

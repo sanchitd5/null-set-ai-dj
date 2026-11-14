@@ -483,3 +483,24 @@ def test_real_split_on_this_host(tmp_path):
     assert set(stems) == {"vocals", "drums", "bass", "other"}
     meta = windows.encode_m4a(windows.read_window([stems["drums"]], 0, 5 * SR), tmp_path / "w.m4a")
     assert meta["frames"] == 5 * SR and len(_decode(tmp_path / "w.m4a", False)) == 5 * SR
+
+
+def test_song_folder_sets_never_share_a_derived_cache(srv):
+    # Song-folder stem sets are all named after the model (songs/<id>/stems/<model>); the window and
+    # whole-song caches must still be per song, or every song is served the first song's stems.
+    from app.music_brain import stem_service
+    lens = {}
+    for i, seconds in enumerate((4.0, 7.0)):
+        body = b"ID3" + bytes([i]) * 4096
+        tid = hashlib.sha256(body).hexdigest()[:16]
+        assert srv.req("POST", f"/v1/tracks?id={tid}&ext=mp3", body)[0] == 200
+        d = srv.cache / "songs" / tid / "stems" / stem_service.DEMUCS_MODEL
+        d.mkdir(parents=True, exist_ok=True)
+        x = (_click_track(seconds, [1.0]) * 0.5 * 32767).astype(np.int16)
+        write_manifest(d, {n: str(write_flac(d / f"{n}.flac", x, SR)) for n in ("drums", "bass", "other", "vocals")})
+        lens[tid] = int(seconds * SR)
+    for tid, frames in lens.items():
+        st, h, _ = srv.req("GET", f"/v1/tracks/{tid}/stems/drums.m4a")
+        assert st == 200 and int(h["X-Stem-Total-Frames"]) == frames
+        st, h, _ = srv.req("GET", f"/v1/tracks/{tid}/stems/drums.m4a?start=0&end=2")
+        assert st == 200 and int(h["X-Stem-Total-Frames"]) == frames
