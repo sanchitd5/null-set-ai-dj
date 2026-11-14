@@ -55,7 +55,7 @@ def _display_name(track_id: str, path: Path) -> str:
     """server.list_tracks' rule."""
     from app.ui import server
 
-    return server._track_names.get(track_id) or server._name_from_tags(track_id, path) or path.stem
+    return server._track_names.get(track_id) or server._name_from_tags(track_id, path) or track_id
 
 
 def _has_stems(track_id: str) -> bool:

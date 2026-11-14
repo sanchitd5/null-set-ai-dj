@@ -202,3 +202,11 @@ def cached_window(dest: Path) -> Optional[dict]:
 
 def store_window_meta(dest: Path, meta: dict) -> None:
     atomic_write_text(dest.with_suffix(".json"), json.dumps(meta))
+
+
+IDENT_KEYS = ("track_id", "source_sha256", "model", "manifest_sha256")
+
+
+def meta_matches(meta: dict, ident: dict) -> bool:
+    """True when a cached file's sidecar names exactly this track, source audio and stem set."""
+    return all(meta.get(k) == ident[k] for k in IDENT_KEYS)

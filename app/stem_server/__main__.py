@@ -10,7 +10,26 @@ import uvicorn
 from app.stem_server.server import create_app
 
 
+def canary(argv: list) -> int:
+    """python -m app.stem_server canary [N]: the stem cache canary, no token or running server needed."""
+    import json
+    from pathlib import Path
+
+    from app.music_brain.audio import stem_service
+    from app.music_brain.config import CACHE_DIR, DEMUCS_MODEL
+    from app.stem_server import canary as cn
+
+    cache = Path(os.environ.get("AIDJ_CACHE_DIR") or CACHE_DIR).expanduser().resolve()
+    models = list(dict.fromkeys([os.environ.get("STEM_SERVER_MODEL", DEMUCS_MODEL), stem_service.DEMUCS_MODEL,
+                                 stem_service.FAST_MODEL]))
+    res = cn.run(cache, models, int(argv[0]) if argv else 5)
+    print(json.dumps(res, indent=2))
+    return 0 if res["ok"] else 1
+
+
 def main() -> int:
+    if sys.argv[1:2] == ["canary"]:
+        return canary(sys.argv[2:])
     try:
         app = create_app()
     except RuntimeError as exc:          # no / short token: refuse to start

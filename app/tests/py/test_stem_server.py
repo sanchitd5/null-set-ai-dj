@@ -107,11 +107,13 @@ class _Srv:
         self.uv.should_exit = True
 
 
-def _fake_split(stems_audio: dict[str, np.ndarray], calls: list):
+def _fake_split(stems_audio: dict[str, np.ndarray], calls: list, layout: str = "flat"):
+    """layout "flat": stems/<sha>_<model>; "folder": songs/<id>/stems/<model> (G26, what prod writes)."""
     def run(path, model, device, stems_dir):
         calls.append(path)
         h = hashlib.sha256(Path(path).read_bytes()).hexdigest()
-        d = Path(stems_dir) / f"{h}_{model}"
+        d = (Path(stems_dir) / f"{h}_{model}" if layout == "flat"
+             else Path(stems_dir).parent / "songs" / h[:16] / "stems" / model)
         d.mkdir(parents=True, exist_ok=True)
         out = {n: str(write_flac(d / f"{n}.flac", (x * 32767).astype(np.int16), SR)) for n, x in stems_audio.items()}
         write_manifest(d, out)
@@ -130,10 +132,12 @@ def stems_audio():
     }
 
 
-@pytest.fixture
-def srv(tmp_path, stems_audio):
+@pytest.fixture(params=["flat", "folder"])
+def srv(request, tmp_path, stems_audio):
+    """Every test using it runs on both stem layouts: the legacy flat cache and the song folder."""
     calls: list = []
-    s = _Srv(tmp_path, _fake_split(stems_audio, calls))
+    s = _Srv(tmp_path, _fake_split(stems_audio, calls, request.param))
+    s.layout = request.param
     s.calls = calls
     yield s
     s.stop()
@@ -425,7 +429,7 @@ def test_corrupt_window_and_stem_are_never_served(srv, track):
     st, h2, again = srv.req("GET", path)                    # mismatch -> re-encoded, never the flipped file
     assert st == 200 and hashlib.sha256(again).hexdigest() == h2["X-Stem-Sha256"]
     # a flipped stem: refuse, drop the set, re-split
-    stem = next((srv.cache / "stems").rglob("drums.flac"))
+    stem = next(srv.cache.rglob("drums.flac"))
     data = bytearray(stem.read_bytes())
     data[-100] ^= 0xFF
     stem.write_bytes(bytes(data))
@@ -504,3 +508,125 @@ def test_song_folder_sets_never_share_a_derived_cache(srv):
         assert st == 200 and int(h["X-Stem-Total-Frames"]) == frames
         st, h, _ = srv.req("GET", f"/v1/tracks/{tid}/stems/drums.m4a?start=0&end=2")
         assert st == 200 and int(h["X-Stem-Total-Frames"]) == frames
+
+
+# ---- STEMGUARD: identity binding, both layouts, canary ------------------------------------------------
+def _make_song(srv, i: int, seconds: float, layout: str | None = None, model=None) -> tuple[str, int]:
+    """Upload a distinct song and give it a ready 4-stem set of `seconds` (click at 1 s) in `layout`."""
+    from app.music_brain import stem_service
+
+    layout = layout or srv.layout
+    model = model or stem_service.DEMUCS_MODEL
+    import io
+
+    import soundfile as sf
+
+    t = np.arange(int(seconds * SR)) / SR
+    buf = io.BytesIO()
+    sf.write(buf, (0.2 * np.sin(2 * np.pi * (200 + 37 * i) * t)).astype(np.float32), SR, format="WAV", subtype="PCM_16")
+    body = buf.getvalue()                                  # real audio of `seconds`: the canary reads its length
+    h = hashlib.sha256(body).hexdigest()
+    tid = h[:16]
+    assert srv.req("POST", f"/v1/tracks?id={tid}&ext=wav", body)[0] == 200
+    d = (srv.cache / "songs" / tid / "stems" / model if layout == "folder" else srv.cache / "stems" / f"{h}_{model}")
+    d.mkdir(parents=True, exist_ok=True)
+    x = (_click_track(seconds, [1.0]) * 0.5 * 32767).astype(np.int16)
+    write_manifest(d, {n: str(write_flac(d / f"{n}.flac", x, SR)) for n in ("drums", "bass", "other", "vocals")})
+    return tid, int(seconds * SR)
+
+
+def test_n_songs_get_n_distinct_caches_and_their_own_frames(srv):
+    lens = dict(_make_song(srv, i, 3.0 + i) for i in range(4))
+    for tid, frames in lens.items():
+        for q in ("", "?start=0&end=2"):
+            st, h, _ = srv.req("GET", f"/v1/tracks/{tid}/stems/drums.m4a{q}")
+            assert st == 200 and int(h["X-Stem-Total-Frames"]) == frames
+            assert h["X-Stem-Track-Id"] == tid and len(h["X-Stem-Source-Sha256"]) == 64
+            assert h["X-Stem-Source-Sha256"][:16] == tid
+    dirs = [d for d in (srv.cache / "stem_windows").iterdir() if d.is_dir()]
+    assert len(dirs) == len(lens)
+    for d in dirs:
+        owners = {json.loads(p.read_text())["track_id"] for p in d.glob("*.json")}
+        assert len(owners) == 1
+
+
+def _wipe_stems(srv, tid):
+    import shutil
+    shutil.rmtree(srv.cache / "songs" / tid / "stems", ignore_errors=True)
+    for d in (srv.cache / "stems").glob(f"{tid}*"):
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def test_cache_of_another_song_is_never_served(srv):
+    """The G26 incident: song B's request lands in song A's derived dir. Whatever put A's files there,
+    the sidecar names A, so B is re-encoded from B's stems and A's file is dropped."""
+    a, fa = _make_song(srv, 1, 4.0)
+    b, fb = _make_song(srv, 2, 7.0)
+    for q in ("", "?start=0&end=2"):
+        assert srv.req("GET", f"/v1/tracks/{a}/stems/drums.m4a{q}")[0] == 200
+    (da,) = [d for d in (srv.cache / "stem_windows").iterdir() if d.is_dir()]
+    # poison: B's request dir (computed as the old bug did: one shared dir) is made to hold A's files
+    import shutil
+    srv_obj = srv.app.state.server
+    p = srv_obj.track_path(b)
+    stems, cdir, model = srv_obj.ready_set(b, p)
+    db = srv.cache / "stem_windows" / srv_obj.set_key(cdir)
+    shutil.copytree(da, db, dirs_exist_ok=True)
+    for q in ("", "?start=0&end=2"):
+        st, h, body = srv.req("GET", f"/v1/tracks/{b}/stems/drums.m4a{q}")
+        assert st == 200 and int(h["X-Stem-Total-Frames"]) == fb, "served the wrong song's stems"
+        assert h["X-Stem-Track-Id"] == b and h["X-Stem-Source-Sha256"][:16] == b
+        assert hashlib.sha256(body).hexdigest() == h["X-Stem-Sha256"]
+
+
+def test_old_sidecar_without_identity_is_re_encoded(srv):
+    tid, frames = _make_song(srv, 3, 5.0)
+    assert srv.req("GET", f"/v1/tracks/{tid}/stems/bass.m4a")[0] == 200
+    side = next((srv.cache / "stem_windows").rglob("bass_whole.json"))
+    meta = json.loads(side.read_text())
+    for k in ("track_id", "source_sha256", "manifest_sha256"):
+        meta.pop(k)
+    side.write_text(json.dumps(meta))
+    st, h, _ = srv.req("GET", f"/v1/tracks/{tid}/stems/bass.m4a")
+    assert st == 200 and h["X-Stem-Track-Id"] == tid
+    assert json.loads(side.read_text())["source_sha256"] == h["X-Stem-Source-Sha256"]
+
+
+def test_changed_stem_set_is_re_encoded(srv):
+    """Same song, a different stem set (manifest) than the cached files were made from: not served."""
+    tid, frames = _make_song(srv, 4, 5.0)
+    assert srv.req("GET", f"/v1/tracks/{tid}/stems/other.m4a")[0] == 200
+    side = next((srv.cache / "stem_windows").rglob("other_whole.json"))
+    meta = json.loads(side.read_text())
+    meta["manifest_sha256"] = "0" * 64
+    side.write_text(json.dumps(meta))
+    st, h, _ = srv.req("GET", f"/v1/tracks/{tid}/stems/other.m4a")
+    assert st == 200 and json.loads(side.read_text())["manifest_sha256"] != "0" * 64
+
+
+def test_canary_passes_clean_and_fails_on_shared_cache_or_length(srv):
+    a, _ = _make_song(srv, 5, 4.0, layout="folder")
+    b, _ = _make_song(srv, 6, 6.0, layout="folder")
+    for t in (a, b):
+        assert srv.req("GET", f"/v1/tracks/{t}/stems/drums.m4a")[0] == 200
+    st, _, body = srv.req("GET", "/v1/canary?sample=10")
+    res = json.loads(body)
+    assert st == 200 and res["ok"] and sorted(res["checked"]) == sorted([a, b]), res
+    # two songs in one derived dir -> 503
+    import shutil
+    da, db = sorted(d for d in (srv.cache / "stem_windows").iterdir() if d.is_dir())
+    for f in db.glob("*.json"):
+        shutil.copy(f, da / f"x_{f.name}")
+    st, _, body = srv.req("GET", "/v1/canary?sample=10")
+    assert st == 503 and any("share this cache dir" in p for p in json.loads(body)["problems"])
+    for f in da.glob("x_*.json"):
+        f.unlink()
+    assert srv.req("GET", "/v1/canary?sample=10")[0] == 200
+    # a song whose stems are far longer than its audio (wrong song's stems) -> 503
+    from app.music_brain import stem_service
+    d = srv.cache / "songs" / a / "stems" / stem_service.DEMUCS_MODEL
+    x = (_click_track(40.0, [1.0]) * 0.5 * 32767).astype(np.int16)
+    for n in ("drums", "bass", "other", "vocals"):
+        write_flac(d / f"{n}.flac", x, SR)
+    st, _, body = srv.req("GET", "/v1/canary?sample=10")
+    assert st == 503 and any(a in p and "song audio" in p for p in json.loads(body)["problems"])
