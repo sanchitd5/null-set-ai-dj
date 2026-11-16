@@ -1,9 +1,9 @@
-# GENERATED from dj-config ecb42b2 - do not edit
-# config-hash: 50469c5a639f
+# GENERATED from dj-config 9f59181 - do not edit
+# config-hash: aff3b8240afa
 """Generated from dj-config/config/*.json. Do not edit; run dj-config/tool/gen.py."""
 
-SHA = "ecb42b2"
-CONFIG_HASH = "50469c5a639f"
+SHA = "9f59181"
+CONFIG_HASH = "aff3b8240afa"
 
 ACCENT_MAX_SHARE = 0.2  # fraction
 ACCENT_RECIPES = ["Backspin (Spinback)", "Echo Out", "Bass Swap"]  # list
@@ -11,6 +11,17 @@ ARC_TARGET = {"warm-up": 4, "build": 6, "peak": 8, "cool-down": 5}  # level
 BARS_PER_PHRASE = 8  # bars
 BEATS_PER_BAR = 4  # beats
 BIG_COOLDOWN_S = 240  # s
+BLEND_DEFAULT_BARS = 32  # bars
+BLEND_EXIT_SHIFT_MAX_BARS = 32  # bars
+BLEND_LENGTH_SCORE = {"8": 0, "16": 0, "32": 6, "64": 10}  # points
+BLEND_LONG_BARS = 64  # bars
+BLEND_LONG_GAP_MAX = 0.02  # fraction
+BLEND_LONG_KEY_MIN = 0.9  # score
+BLEND_SWAP_GAP_MAX = 0.04  # fraction
+BLEND_SWAP_KEY_MIN = 0.8  # score
+BLEND_SWAP_MAX_GAP_BARS = 2  # bars
+BLEND_SWAP_MIN_BARS = 32  # bars
+BLEND_TIGHT_BARS = 16  # bars
 BOOK_AFTER_LOAD_S = 6  # s
 BOOK_GIVE_UP_S = 25.0  # s
 BOOK_LEAD_S = 75.0  # s

@@ -2,7 +2,7 @@
 // Run by test_autopilot_core.py; exits non-zero on the first failed assertion.
 const assert = require("assert");
 const { stemBlendBars, stemBlendFader, phraseWaitS, introBars, vocalRecipe, homePlan, maskedGlideBars, maskedDropAt,
-  LADDER_STEP_PCT } = require("../../ui/static/autopilot.js");
+  LADDER_STEP_PCT, planWithRoom } = require("../../ui/static/autopilot.js");
 
 const bar128 = 240 / 128;   // 1.875 s
 const bar90 = 240 / 90;     // 2.667 s
@@ -280,4 +280,31 @@ console.log("autopilot core ok");
   assert.strictEqual(autopilotCore.searchPlan({ pos: 2, exitLo: 30, leadS: autopilotCore.searchLeadS(true) }).deadline, false);
   assert.strictEqual(autopilotCore.searchPlan({ pos: 15, exitLo: 30, leadS: autopilotCore.searchLeadS(true) }).deadline, true);
   console.log("quick set window ok");
+}
+
+// BLEND exit shift (planWithRoom): a merge shorter than the target moves A's exit earlier on the 8-bar phrase grid
+{
+  const P = 15;   // 8 bars of 1.875 s
+  const mk = (barsAt) => (t) => ({ bars: barsAt(t), result: { t } });
+  // reaches the target at once: no shift
+  let r = planWithRoom({ aT: 100, lo: 40, phraseS: P, target: 32, plan: mk(() => 32) });
+  assert.deepStrictEqual([r.aT, r.shiftedBars, r.tried], [100, 0, 1]);
+  // 16 bars at the exit, 32 one phrase earlier: first earlier exit that reaches the target wins
+  r = planWithRoom({ aT: 100, lo: 40, phraseS: P, target: 32, plan: mk((t) => (t >= 100 ? 16 : 32)) });
+  assert.deepStrictEqual([r.aT, r.shiftedBars, r.tried, r.result.t], [85, 8, 2, 85]);
+  // never reaches the target: the longest strictly longer one, nearest first on a tie
+  r = planWithRoom({ aT: 100, lo: 40, phraseS: P, target: 32, plan: mk((t) => (t >= 100 ? 8 : t >= 70 ? 16 : 24)) });
+  assert.deepStrictEqual([r.aT, r.shiftedBars], [55, 24]);   // 16 at 85 s, 24 at 55 s (3 phrases): longest wins; 40 s ties and stays further
+  // never earlier than lo
+  r = planWithRoom({ aT: 100, lo: 90, phraseS: P, target: 32, plan: mk((t) => (t >= 100 ? 16 : 32)) });
+  assert.deepStrictEqual([r.aT, r.shiftedBars], [100, 0]);
+  // at most BLEND_EXIT_SHIFT_MAX_BARS (32 bars = 4 phrases) earlier
+  r = planWithRoom({ aT: 100, lo: 0, phraseS: P, target: 32, plan: mk((t) => (t > 39 ? 8 : 32)) });   // a 32 would need 5 phrases back (25 s)
+  assert.deepStrictEqual([r.aT, r.shiftedBars], [100, 0]);
+  // a shift only for a strictly longer merge (equal length stays at the original exit)
+  r = planWithRoom({ aT: 100, lo: 40, phraseS: P, target: 32, plan: mk(() => 16) });
+  assert.deepStrictEqual([r.aT, r.shiftedBars], [100, 0]);
+  // no merge at the exit (null), a merge one phrase earlier
+  r = planWithRoom({ aT: 100, lo: 40, phraseS: P, target: 32, plan: mk((t) => (t >= 100 ? null : 32)) });
+  assert.deepStrictEqual([r.aT, r.shiftedBars], [85, 8]);
 }

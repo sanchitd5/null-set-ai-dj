@@ -1,5 +1,5 @@
-// GENERATED from dj-config ecb42b2 - do not edit
-// config-hash: 50469c5a639f
+// GENERATED from dj-config 9f59181 - do not edit
+// config-hash: aff3b8240afa
 (function (root) {
   "use strict";
   const values = {
@@ -9,6 +9,17 @@
     "BARS_PER_PHRASE": 8,
     "BEATS_PER_BAR": 4,
     "BIG_COOLDOWN_S": 240,
+    "BLEND_DEFAULT_BARS": 32,
+    "BLEND_EXIT_SHIFT_MAX_BARS": 32,
+    "BLEND_LENGTH_SCORE": {"8": 0, "16": 0, "32": 6, "64": 10},
+    "BLEND_LONG_BARS": 64,
+    "BLEND_LONG_GAP_MAX": 0.02,
+    "BLEND_LONG_KEY_MIN": 0.9,
+    "BLEND_SWAP_GAP_MAX": 0.04,
+    "BLEND_SWAP_KEY_MIN": 0.8,
+    "BLEND_SWAP_MAX_GAP_BARS": 2,
+    "BLEND_SWAP_MIN_BARS": 32,
+    "BLEND_TIGHT_BARS": 16,
     "BOOK_AFTER_LOAD_S": 6,
     "BOOK_GIVE_UP_S": 25.0,
     "BOOK_LEAD_S": 75.0,
@@ -158,6 +169,6 @@
   };
   root.DJ_CONFIG = Object.freeze(values);
   root.DJ_CONFIG_LIVE = Object.freeze(live);
-  root.DJ_CONFIG_META = Object.freeze({ sha: "ecb42b2", hash: "50469c5a639f" });
+  root.DJ_CONFIG_META = Object.freeze({ sha: "9f59181", hash: "aff3b8240afa" });
   if (typeof module !== "undefined" && module.exports) module.exports = root.DJ_CONFIG;
 })(typeof window !== "undefined" ? window : globalThis);

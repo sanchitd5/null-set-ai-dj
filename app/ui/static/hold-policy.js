@@ -1,4 +1,4 @@
-// G17 long merges + holds: hold lengths, the recipe mix rule layer, stem level matching, hold safety and set telemetry.
+// G17 long merges + holds: hold lengths (the BLEND rule), the recipe mix rule layer, stem level matching, hold safety and set telemetry.
 // Mirror of dj-core lib/console/hold_policy.dart and app/music_brain/hold_policy.py (same numbers, same functions);
 // every number is a dj-config key. Pure functions, no DOM; also require()-able in node.
 if (typeof DJ_CONFIG === "undefined" && typeof require === "function") require("./generated/dj_config.js");   // node: browsers load it via index.html
@@ -6,7 +6,10 @@ if (typeof DJ_CONFIG === "undefined" && typeof require === "function") require("
   "use strict";
 
   const MERGE_HOLD_MIN_BARS = DJ_CONFIG.MERGE_HOLD_MIN_BARS, MERGE_HOLD_MAX_BARS = DJ_CONFIG.MERGE_HOLD_MAX_BARS;
-  const MERGE_HOLD_TARGET_S = DJ_CONFIG.MERGE_HOLD_TARGET_S, HOLD_ALIGN_BARS = DJ_CONFIG.HOLD_ALIGN_BARS;
+  const MERGE_HOLD_TARGET_S = DJ_CONFIG.MERGE_HOLD_TARGET_S, HOLD_ALIGN_BARS = DJ_CONFIG.HOLD_ALIGN_BARS;   // TARGET_S: no longer used for the merge length (BLEND)
+  const BLEND_DEFAULT_BARS = DJ_CONFIG.BLEND_DEFAULT_BARS, BLEND_LONG_BARS = DJ_CONFIG.BLEND_LONG_BARS, BLEND_TIGHT_BARS = DJ_CONFIG.BLEND_TIGHT_BARS;
+  const BLEND_LONG_KEY_MIN = DJ_CONFIG.BLEND_LONG_KEY_MIN, BLEND_LONG_GAP_MAX = DJ_CONFIG.BLEND_LONG_GAP_MAX;
+  const BLEND_EXIT_SHIFT_MAX_BARS = DJ_CONFIG.BLEND_EXIT_SHIFT_MAX_BARS;
   const INSONG_HOLD_MIN_BARS = DJ_CONFIG.INSONG_HOLD_MIN_BARS, INSONG_HOLD_MAX_BARS = DJ_CONFIG.INSONG_HOLD_MAX_BARS;
   const INSONG_HOLDS_ON = DJ_CONFIG.INSONG_HOLDS_ON, STEM_MERGE_SHARE_MIN = DJ_CONFIG.STEM_MERGE_SHARE_MIN;
   const ACCENT_MAX_SHARE = DJ_CONFIG.ACCENT_MAX_SHARE, ACCENT_RECIPES = DJ_CONFIG.ACCENT_RECIPES;
@@ -36,13 +39,28 @@ if (typeof DJ_CONFIG === "undefined" && typeof require === "function") require("
     return s;
   }
 
-  // Merge-hold bars: target seconds / bar seconds snapped down to the 16-bar grid, clamped to the settings' min..max, capped by roomBars
-  // on the same grid; with less than one grid step of room, whole 8-bar phrases (0 = no room).
-  function mergeHoldBars(barS, roomBars, s) {
-    s = s || settings();
-    if (!(barS > 0) || !(roomBars >= 8)) return 0;
-    const want = Math.floor(MERGE_HOLD_TARGET_S / barS);
-    const bars = clamp(Math.floor(want / HOLD_ALIGN_BARS) * HOLD_ALIGN_BARS, s.mergeMin, s.mergeMax);
+  // BLEND (mirror of dj-core lib/console/blend_rule.dart): the merge length a pair wants. 32 bars by default, 64 for a long compatible pair
+  // (key >= BLEND_LONG_KEY_MIN, tempo gap <= BLEND_LONG_GAP_MAX, room for 64 + the tail), 16 in a quick set. roomBars null = room not judged here.
+  const BLEND_TAIL_BARS = 10;   // 8-bar handover + 2 spare bars (stem-moves HANDOVER_BARS + HOLD_ROOM_BARS)
+  const blendRoomFor = (m) => m + BLEND_TAIL_BARS;
+  function blendTargetBars(o) {
+    o = o || {};
+    if (o.quick) return BLEND_TIGHT_BARS;
+    const long = o.keyScore != null && o.keyScore >= BLEND_LONG_KEY_MIN && (o.gap || 0) <= BLEND_LONG_GAP_MAX &&
+      (o.roomBars == null || o.roomBars >= blendRoomFor(BLEND_LONG_BARS));
+    return long ? BLEND_LONG_BARS : BLEND_DEFAULT_BARS;
+  }
+  // The length A's exit moves earlier for: 32 bars (16 in a quick set, which never moves). 64 is taken when the room is there, never bought with an earlier exit.
+  const blendRoomTarget = (quick) => (quick ? BLEND_TIGHT_BARS : BLEND_DEFAULT_BARS);
+
+  // Merge-hold bars for a pair: o = { roomBars, settings, keyScore, gap, quick }. A length the user set (settings.mergeHoldBars) wins, clamped to
+  // the settings' min..max; else the BLEND rule. Then capped by roomBars on the 16-bar grid; with less than one grid step of room, whole 8-bar phrases (0 = no room).
+  function mergeHoldBars(o) {
+    o = o || {};
+    const s = o.settings || settings(), roomBars = o.roomBars;
+    if (!(roomBars >= 8)) return 0;
+    const bars = s.mergeHoldBars > 0 ? clamp(s.mergeHoldBars, s.mergeMin, s.mergeMax)
+      : blendTargetBars({ keyScore: o.keyScore, gap: o.gap, quick: o.quick, roomBars });
     const cap = Math.floor(roomBars / HOLD_ALIGN_BARS) * HOLD_ALIGN_BARS;
     if (bars <= cap) return bars;
     return cap >= HOLD_ALIGN_BARS ? cap : Math.floor(roomBars / 8) * 8;
@@ -149,7 +167,7 @@ if (typeof DJ_CONFIG === "undefined" && typeof require === "function") require("
 
   const core = { MERGE_HOLD_MIN_BARS, MERGE_HOLD_MAX_BARS, MERGE_HOLD_TARGET_S, HOLD_ALIGN_BARS, INSONG_HOLD_MIN_BARS, INSONG_HOLD_MAX_BARS,
     INSONG_HOLDS_ON, STEM_MERGE_SHARE_MIN, ACCENT_MAX_SHARE, ACCENT_RECIPES, STEM_MATCH_MAX_BOOST_DB, HOLD_END_ENERGY_DROP,
-    settings, mergeHoldBars, inSongHoldBars, isAccent, enforceRecipeMix, levelMatch, holdEndReason, holdEndBar, holdGuard, holdTelemetry };
+    BLEND_EXIT_SHIFT_MAX_BARS, BLEND_TAIL_BARS, settings, blendTargetBars, blendRoomTarget, mergeHoldBars, inSongHoldBars, isAccent, enforceRecipeMix, levelMatch, holdEndReason, holdEndBar, holdGuard, holdTelemetry };
   if (typeof module !== "undefined" && module.exports) module.exports = core;
   root.HoldPolicy = core;
 })(typeof window !== "undefined" ? window : globalThis);

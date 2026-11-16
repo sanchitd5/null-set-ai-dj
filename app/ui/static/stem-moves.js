@@ -908,14 +908,16 @@ if (typeof HoldPolicy === "undefined" && typeof require === "function") require(
     if (o.gap != null && o.gap > HOLD_TEMPO_CAP) return no("tempo", `tempo gap ${(o.gap * 100).toFixed(1)} % over the ${HOLD_TEMPO_CAP * 100} % cap`);
     if (o.keyScore != null && o.keyScore < HOLD_KEY_MIN) return no("key", `camelot ${o.keyScore} < ${HOLD_KEY_MIN}`);
     if (!o.eA || !o.eB) return no("stems", "stem energy unmeasured");
-    // G17: long holds. M runs on the hold-policy grid (16 bars), BPM-scaled toward MERGE_HOLD_TARGET_S inside the settings' min..max;
-    // a song without that much room falls back to whole 8-bar phrases (the old behaviour). A stored move keeps its own length.
+    // G17: long holds. M runs on the hold-policy grid (16 bars) inside the settings' min..max; the pair's wanted length is the BLEND rule
+    // (32 bars, 64 for a long compatible pair, 16 in a quick set; a length the user fixed wins). A song without that much room falls back to
+    // whole 8-bar phrases (the old behaviour). A stored move keeps its own length.
     const HP = root.HoldPolicy || HoldPolicy, minBars = o.holdMin != null ? o.holdMin : HP.MERGE_HOLD_MIN_BARS, maxBars = o.holdMax != null ? o.holdMax : HP.MERGE_HOLD_MAX_BARS;
     const roomM = Math.floor((o.roomBars - HANDOVER_BARS - HOLD_ROOM_BARS) / HOLD_PHRASE_BARS) * HOLD_PHRASE_BARS;
-    const targetBars = o.barS > 0 ? HP.mergeHoldBars(o.barS, o.roomBars, HP.settings({ merge_hold_bars: minBars === maxBars ? minBars : 0 })) : minBars;
+    const targetBars = HP.mergeHoldBars({ roomBars: o.roomBars, settings: HP.settings({ merge_hold_bars: minBars === maxBars ? minBars : 0 }), keyScore: o.keyScore, gap: o.gap, quick: !!o.quick });
     if (roomM < HOLD_PHRASE_BARS) return no("room", `${Math.round(o.roomBars)} bars left, need ${HOLD_PHRASE_BARS + HANDOVER_BARS + HOLD_ROOM_BARS}`);
     const grid = HP.HOLD_ALIGN_BARS, longMs = [];
-    for (let m = grid; m <= Math.min(maxBars, roomM); m += grid) longMs.push(m);
+    const capBars = o.quick ? Math.min(maxBars, DJ_CONFIG.BLEND_TIGHT_BARS) : maxBars;   // BLEND: a quick set keeps short
+    for (let m = grid; m <= Math.min(capBars, roomM); m += grid) longMs.push(m);
     if (o.preferM > 0 && o.preferM % HOLD_PHRASE_BARS === 0 && o.preferM <= roomM && !longMs.includes(o.preferM)) longMs.push(o.preferM);
     longMs.sort((x, y) => x - y);
     const candMs = longMs.length ? longMs : [];

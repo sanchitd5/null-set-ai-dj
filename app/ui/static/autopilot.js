@@ -1123,6 +1123,27 @@ var autopilotCore = (function () {
     const spans = breakdownSpans(o.energyTimes, o.energyCurve, 240 / o.bpm);
     return exitOutOfBreakdown(o.t, spans, o.phraseS, o.lo == null ? -Infinity : o.lo, o.trackEnd);
   }
+  // BLEND: A's exit moved for room (mirror of dj-core lib/console/blend_rule.dart planWithRoom). plan(t) -> { bars, result } (bars null / 0 = no merge).
+  // Plans at aT; when the merge is shorter than `target` bars, tries exits on A's phrase grid (phraseS = 8 A bars in s), nearest first, down to lo
+  // and at most maxShiftBars earlier. The first exit that reaches target wins, else the longest merge found (a shift only for a strictly longer one).
+  // -> { result, aT, shiftedBars, tried }
+  function planWithRoom(o) {
+    const maxShift = o.maxShiftBars != null ? o.maxShiftBars : DJ_CONFIG.BLEND_EXIT_SHIFT_MAX_BARS;
+    const first = o.plan(o.aT);
+    let best = first, bestAt = o.aT, tried = 1;
+    if ((first.bars || 0) >= o.target || !(o.phraseS > 0)) return { result: first.result, aT: o.aT, shiftedBars: 0, tried };
+    for (let k = 1; k <= Math.floor(maxShift / 8); k++) {
+      const t = o.aT - k * o.phraseS;
+      if (t < o.lo) break;
+      const r = o.plan(t);
+      tried++;
+      if ((r.bars || 0) > (best.bars || 0)) {
+        best = r; bestAt = t;
+        if ((r.bars || 0) >= o.target) break;
+      }
+    }
+    return { result: best.result, aT: bestAt, shiftedBars: Math.round((o.aT - bestAt) / o.phraseS) * 8, tried };
+  }
   // ---- pre-render readiness (next song's stems + key-locked tempo stems made BEFORE the booking) ------
   // Measured on 25 real transitions (data/cache/sessions): the booking follows the deck load by a
   // median 6 s, the fire comes a median 206 s later, and 9 of 25 songs had no stems on the deck at the
@@ -1240,7 +1261,7 @@ var autopilotCore = (function () {
   const api = { languageRefusal, deadlineTail, earlierInScene, deckIdentity, bookingMismatch, pickReset, SCENE_SHIFT_AFTER, prerenderTargets, readinessNeeds, aTempoAtEntry, deferBudgetS, deferDecision, orderByReadiness, DEFER_MAX_S, DEFER_MIN_LEAD_S, PREFER_READY_JUMP,
     emptyRetryMs, useLibraryFallback, searchPlan, DEADLINE_LEAD_S, preparedWait, PREPARED_LEAD_S, gateWhy, candSource, deckEvent,
     sceneAnchorNext, sceneAnchorBad, sceneOrder, SCENE_ORDER, rankAtlasBackups, crossBackups, measuredWaiver, deadlineStuck, stuckBackups, STUCK_AFTER_HOLDS, macroFallback, backupStale, backupNeedsStems, rememberPairReject, pairRejected, awaitJob, keySafeRecipe, KEY_SAFE_MIN, energyStepOk, hybridWindowKey, highSpans, quantileLinear, median, exitPastHigh, learnedRecipe, vocalRecipe, stemBlendBars, stemBlendFader, phraseWaitS, introBars, FADER_PARK_BARS, homePlan, maskedGlideBars, maskedDropAt, HOME_DROP_PCT, LADDER_STEP_PCT,
-    tempoLockableAt, recipeKind, decideRecipe, planSkipReason, WINDOWS, RAPID_WINDOW, searchLeadS, playWindowFor, exitBounds, exitPick, exitTiming, exitHighPush, audibleEnd, entryClamp, SILENT_FLOOR,
+    tempoLockableAt, recipeKind, decideRecipe, planSkipReason, WINDOWS, RAPID_WINDOW, searchLeadS, playWindowFor, exitBounds, exitPick, exitTiming, exitHighPush, planWithRoom, audibleEnd, entryClamp, SILENT_FLOOR,
     breakdownSpans, exitOutOfBreakdown, exitBreakdownPush, energyAtTarget, FINISH_MAX_S, forcedExit, forcedRecipe, forcedLine, forcedBooking,
     storedMove, vetRefusal, vetStep, badPairOf, pairKey, mashupGate, mashupBars,
     sleepPlan, SLEEP_FADE_S, setEnergy, arcAt, windowLevel, energyRecipeChoice, pickEntryByEnergy, ARC_TARGET, SET_RECENT, SET_ARC_W, SET_RELAXED_MAX, SET_HIGH_MIN, ENERGY_MATCH_TOL,
@@ -1768,7 +1789,7 @@ function createAutopilotEngine({ host, ai }) {
   // clean stems, one sub-bass owner and the level floor. -> {plan} | {gate, why, tried}.
   // bFallback: B's start when the vocal-entry fetch has not landed (measured stems decide).
   // prefer (a forced plan's stored merge): {entry, M, label}; B enters on the stored line
-  function planHold(od, idk, aT, bFallback, sm, prefer = null, bounds = null) {
+  function planHold(od, idk, aT, bFallback, sm, prefer = null, bounds = null, quick = false) {
     const no = (gate, why) => ({ gate, why, tried: [] });
     if (!sm.core.holdPlan) return no("module", "no holdPlan");
     if (!od.stemsReady || !idk.stems || !od.bpm || !idk.bpm) {
@@ -1794,7 +1815,7 @@ function createAutopilotEngine({ host, ai }) {
       gap, keyScore: cs && ka && kb ? cs(ka, kb) : null, roomBars, barS, aT, bT: entry, barA, barB, bRap: !!(ve && ve.rap), eA, eB,
       aVox: od.analysis && od.analysis.vocal_active_regions, bVox: idk.analysis && idk.analysis.vocal_active_regions,
       aud: (() => { const aA = sm.stemEnergyBars(od, aT, barA, n, "audible"), aB = sm.stemEnergyBars(idk, entry, barB, n, "audible"); return aA && aB ? { aA, aB } : null; })(),
-      preferM: prefer && prefer.M, preferLabel: prefer && prefer.label, holdMin: hMin, holdMax: hMax,
+      preferM: prefer && prefer.M, preferLabel: prefer && prefer.label, holdMin: hMin, holdMax: hMax, quick,
     });
     if (!hp.ok) return hp;
     return { plan: { entry, M: hp.M, rap: !!(ve && ve.rap), gap, ranked: hp.ranked, pick: hp.pick, aT, heard: false, hold: hp, phases: hp.phases, holdE: { eA, eB },
@@ -1803,23 +1824,25 @@ function createAutopilotEngine({ host, ai }) {
   // Plan the merge for A -> B at A's song time aT: the hold plan first; when a gate refuses
   // it (the reason is logged for the sim), the classic fixed-length merge below; then the
   // silent ear re-ranks the top 3 in the background (offline clips, nothing plays) before
-  // the transition fires. Stored on B's deck as _mergePlan.
-  function planMerge(aId, bId, od, idk, aT, bFallback = null, prefer = null, bounds = null) {
+  // the transition fires. Stored on B's deck as _mergePlan. quick: a quick set keeps the merge short (BLEND, 16 bars).
+  // probe: plan only (the BLEND exit-shift tries earlier exits), no log, no audition, nothing stored.
+  function planMerge(aId, bId, od, idk, aT, bFallback = null, prefer = null, bounds = null, quick = false, probe = false) {
     const sm = host.mod.stemMoves;
     if (!sm || !sm.core.mergeRank) return null;
-    const hd = planHold(od, idk, aT, bFallback, sm, prefer, bounds);
+    const hd = planHold(od, idk, aT, bFallback, sm, prefer, bounds, quick);
     let plan = hd.plan || null;
     if (!plan) {
       const mf = mergeFits(od, idk);
-      mergeGateLog(activeDeck, hd.gate, autopilotCore.gateWhy(hd), !!mf, hd.tried);
+      if (!probe) mergeGateLog(activeDeck, hd.gate, autopilotCore.gateWhy(hd), !!mf, hd.tried);
       if (!mf) return null;
       const cs = host.mod.djMind && host.mod.djMind.core && host.mod.djMind.core.camelotScore;
       const ka = od.analysis && od.analysis.key && od.analysis.key.camelot, kb = idk.analysis && idk.analysis.key && idk.analysis.key.camelot;
       const ranked = sm.core.mergeRank({ eA: stemMeans(od, aT, mf.M), eB: stemMeans(idk, mf.entry, mf.M),
         keyScore: cs && ka && kb ? cs(ka, kb) : null, bRap: mf.rap });
-      if (!ranked.length) { mergeGateLog(activeDeck, "no_combo", "no stem combination plays", false); return null; }
+      if (!ranked.length) { if (!probe) mergeGateLog(activeDeck, "no_combo", "no stem combination plays", false); return null; }
       plan = { ...mf, ranked, pick: ranked[0], aT, heard: false };
     }
+    if (probe) return plan;   // BLEND exit-shift probe: only the plan (its length), no audition, nothing stored on the deck
     const mf = plan;
     const ranked = plan.ranked;
     idk._mergePlan = plan;
@@ -4227,6 +4250,7 @@ function createAutopilotEngine({ host, ai }) {
     if (peakT) { recipe = peakT.recipe; bTime = peakT.bTime; exitAt = peakT.exitAt; }
     // Keep the exit on A's phrase grid: push by whole phrases, never by seconds.
     const phraseS = 32 * 60 / od0bpm;
+    const blendQuick = setMode() === "quick" || /^QUICK/.test(w.label || "");   // BLEND: a quick set / window keeps merges at 16 bars and never moves the exit
     const timing = autopilotCore.exitTiming({ exitAt, nowPos, phraseS, w, oneSong, vocalShort, peak: !!peakT });
     let effectiveATime = timing.effectiveATime;
     const xfDuration = timing.xfDuration;
@@ -4280,7 +4304,7 @@ function createAutopilotEngine({ host, ai }) {
         liveATime: effectiveATime, liveBTime: bTime, beat: !!lockS.beat, stemsBoth: !!(stemsBoth && odS && sdS), keyScore: keyScoreS,
         mashupFits: !!(stemsBoth && odS && sdS && mashupFits(odS, sdS)), mergeOn: mergesOn(),
         vocalRule: vocalRule ? { why: vocalCut, recipe: "Bass Swap" } : null,
-        planMerge: (aT, bT, prefer) => planMerge(currentId, nextId, odS, sdS, aT, bT, prefer),
+        planMerge: (aT, bT, prefer) => planMerge(currentId, nextId, odS, sdS, aT, bT, prefer, null, blendQuick),
         mergeGate: () => (lastMergeGate ? `${lastMergeGate.gate}: ${lastMergeGate.why}` : null) });
       recipe = fb.recipe; effectiveATime = fb.aT; bTime = fb.bT;
       if (fb.refused) {
@@ -4293,7 +4317,20 @@ function createAutopilotEngine({ host, ai }) {
       host.bus.emit("ai-activity", { kind: "macro", deck: activeDeck, label: `${forced.n != null ? `MACRO ${forced.n}` : "STUDIED"} · ${recipe}`, why: line });
       playPlanTag = ` | ${w.label} ${fmtTime(effectiveATime - entryPos)} · ${forced.n != null ? `macro step ${forced.n}` : "stored move"}`;
     } else if (!preplanned && lockS.beat && !layer && !peakT && mergesOn() && stemsBoth && odS && sdS) {
-      const mp = planMerge(currentId, nextId, odS, sdS, effectiveATime, bTime);
+      // BLEND: a merge shorter than 32 bars (never in a quick set) moves A's exit earlier on A's phrase grid for room
+      if (!blendQuick) {
+        const hs = HoldPolicy.settings(host.holdSettings);
+        const rm = autopilotCore.planWithRoom({ aT: effectiveATime, lo: Math.max(lo, nowPos + DJ_CONFIG.REPLAN_LEAD_S), phraseS,
+          target: hs.mergeHoldBars > 0 ? hs.mergeHoldBars : HoldPolicy.blendRoomTarget(false),
+          plan: (t) => { const p = planMerge(currentId, nextId, odS, sdS, t, bTime, null, null, false, true); return { bars: p ? p.M : null, result: p }; } });
+        if (rm.shiftedBars > 0) {
+          console.info("transition timing:", `exit moved ${rm.shiftedBars} bars earlier to ${fmtTime(rm.aT)}: room for a ${rm.result.M}-bar merge`);
+          host.log.step("exit_moved", { deck: activeDeck, decision: `exit -${rm.shiftedBars} bars`, why: "room for the merge length", result: { from: effectiveATime, to: rm.aT, bars: rm.result.M } });
+          effectiveATime = rm.aT;
+          playPlanTag = ` | ${w.label} ${fmtTime(effectiveATime - entryPos)}`;
+        }
+      }
+      const mp = planMerge(currentId, nextId, odS, sdS, effectiveATime, bTime, null, null, blendQuick);
       if (mp) {
         recipe = "Stem Merge";   // merge -> hold -> transition beats the matcher's / learned pick when its gates pass
         console.info("transition recipe:", `Stem Merge: ${mp.pick.label} (${mp.pick.reasons.join(", ")}), ${mp.M} bars` +

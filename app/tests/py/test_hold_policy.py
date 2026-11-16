@@ -13,13 +13,21 @@ def test_constants_match_dj_config():
     assert list(hp.ACCENT_RECIPES) == list(DJ.ACCENT_RECIPES) and hp.INSONG_HOLDS_ON == DJ.INSONG_HOLDS_ON
 
 
-def test_merge_hold_bars_scale_with_bpm_and_room():
-    assert hp.merge_hold_bars(240 / 128, 200) == 48
-    assert hp.merge_hold_bars(240 / 174, 200) == 64
-    assert hp.merge_hold_bars(240 / 90, 200) == 32
-    assert hp.merge_hold_bars(240 / 60, 200) == 32
-    assert hp.merge_hold_bars(1.38, 40) == 32 and hp.merge_hold_bars(1.38, 20) == 16
-    assert hp.merge_hold_bars(1.38, 12) == 8 and hp.merge_hold_bars(1.38, 4) == 0
+def test_blend_length_rule_and_room_cap():
+    """BLEND: 32 default, 64 for a long compatible pair with room, 16 quick; capped by room on the 16-bar grid."""
+    assert hp.merge_hold_bars(200, key_score=0.7, gap=0.01) == 32
+    assert hp.merge_hold_bars(200) == 32                                         # unknown key: never long
+    assert hp.merge_hold_bars(200, key_score=0.9, gap=0.01) == 64
+    assert hp.merge_hold_bars(200, key_score=1.0, gap=0.02) == 64
+    assert hp.merge_hold_bars(200, key_score=0.89, gap=0.01) == 32               # key just short
+    assert hp.merge_hold_bars(200, key_score=1.0, gap=0.03) == 32                # tempo gap just over
+    assert hp.merge_hold_bars(73, key_score=1.0) == 32 and hp.merge_hold_bars(74, key_score=1.0) == 64
+    assert hp.merge_hold_bars(200, key_score=1.0, quick=True) == 16
+    assert hp.merge_hold_bars(40, key_score=0.7) == 32 and hp.merge_hold_bars(20, key_score=0.7) == 16
+    assert hp.merge_hold_bars(12) == 8 and hp.merge_hold_bars(4) == 0
+    assert hp.merge_hold_bars(200, hp.settings({"merge_hold_bars": 128}), key_score=1.0, quick=True) == 128   # user's length wins
+    assert hp.blend_target_bars(1.0, 0.0) == 64 and hp.blend_target_bars(1.0, 0.0, room_bars=60) == 32
+    assert hp.blend_room_target() == 32 and hp.blend_room_target(quick=True) == 16
 
 
 def test_settings_clamp_and_override():
@@ -28,7 +36,7 @@ def test_settings_clamp_and_override():
     assert hp.settings({"insong_hold_bars": 500})["insong_hold_bars"] == 64
     assert hp.settings({"stem_merge_share": 7, "accent_cap": -1})["stem_merge_share"] == 1
     assert hp.settings("junk") == hp.settings({})
-    assert hp.merge_hold_bars(1.875, 200, hp.settings({"merge_hold_bars": 128})) == 128
+    assert hp.merge_hold_bars(200, hp.settings({"merge_hold_bars": 128})) == 128
     assert hp.in_song_hold_bars(64) == 32 and hp.in_song_hold_bars(12) == 0
     assert hp.in_song_hold_bars(64, hp.settings({"insong_holds": False})) == 0
 
