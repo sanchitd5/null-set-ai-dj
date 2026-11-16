@@ -728,10 +728,13 @@ if (typeof DJ_CONFIG === "undefined" && typeof require === "function") require("
     // -> {kind, busyS, why} when a move was booked, else null (refusals are logged, once per kind and phrase).
     function tick(d, o) {
       if (!store && host.clock.now() - loadedAt > 300000) load();
+      const lr = host.mod.lyricRemix;
+      // a lyric remix somebody asked for goes first (its plan is booked asynchronously; a refusal that can clear is retried next phrase)
+      if (lr && lr.wantsDeck && lr.wantsDeck(d)) { try { lr.tick(d, o); } catch (e) { console.info("lyric remix tick failed -", e && e.message); } }
       const r = attempt(d, o, null);
       if (r && r.kind) return r;
       // nothing booked: the lyric remix may try (executes a precomputed plan; never blocks or delays anything)
-      try { const lr = host.mod.lyricRemix; if (lr && lr.tick) lr.tick(d, o); } catch (e) { console.info("lyric remix tick failed -", e && e.message); }
+      if (!(lr && lr.wantsDeck && lr.wantsDeck(d))) { try { if (lr && lr.tick) lr.tick(d, o); } catch (e) { console.info("lyric remix tick failed -", e && e.message); } }
       return null;
     }
     // On demand (ai-actions.js through dj-mind learnedNow): one kind on the next line, same o as tick. Only the

@@ -4124,6 +4124,13 @@ function createAutopilotEngine({ host, ai }) {
       }
     }
     if (!active) return;
+    // LIVEREMIX: the AI DJ chose a lyric remix with this pick (server suggest `lyric_remix`): perform it live when the song / this A -> B plays
+    try {
+      const lrp = candidate && candidate.suggestion && candidate.suggestion.lyric_remix, lrm = host.mod && host.mod.lyricRemix;
+      if (lrp && lrp.plan_id && lrm && lrm.request && (lrp.b ? lrp.a === currentId && lrp.b === nextId : lrp.a === nextId)) {
+        lrm.request({ plan: lrp.plan_id, a: lrp.b ? currentId : nextId, b: lrp.b ? nextId : null });
+      }
+    } catch (e) { console.info("lyric remix request failed -", e && e.message); }
     let bTime = candidate.b_time || 0;
     let vocalShort = false, vocalCut = "";
     let recipe = candidate.recipe || "Blend";

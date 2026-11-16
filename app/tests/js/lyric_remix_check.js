@@ -194,6 +194,46 @@ function fakeHost(responses) {
       host.decks.b = null;
       assert.doesNotThrow(() => m.tick(host.decks.a, { pos: 100, bar: BAR, phrase: 1, lineT: 100, st: {} }));
     }
+    // a requested remix (wantPlan): pure rules, then the runtime: no /has needed, only its own plan, status while waiting, cleared when armed
+    {
+      const w = { plan: "r1", a: "s1", b: null }, wp = { plan: "x1", a: "s1", b: "s2" };
+      assert.strictEqual(lr.wantPlanFor(w, "s1", null, false), "r1"); assert.strictEqual(lr.wantPlanFor(w, "s9", null, false), null);
+      assert.strictEqual(lr.wantPlanFor(w, "s1", "s2", true), null, "a within plan never runs in a transition pass");
+      assert.strictEqual(lr.wantPlanFor(wp, "s1", "s2", true), "x1"); assert.strictEqual(lr.wantPlanFor(wp, "s1", "s3", true), null);
+      assert.strictEqual(lr.wantPlanFor(wp, "s1", null, false), null); assert.strictEqual(lr.wantPlanFor(null, "s1", null, false), null);
+      assert(lr.retryable("stems_not_live") && lr.retryable("wait") && !lr.retryable("lang_mismatch") && !lr.retryable("no_plan"));
+      assert.strictEqual(lr.wantStatus("stems_not_live", "x"), "Getting stems for the remix"); assert.strictEqual(lr.wantStatus("wait", "x"), "Remix waiting for its moment");
+      assert.strictEqual(lr.wantStatus("lang_mismatch", "two languages"), "Remix not played: two languages");
+      const flush = () => new Promise((r) => setImmediate(r));
+      const o = { pos: 99, bar: BAR, phrase: 6, lineT: 99, entryT: 8, exitT: 400, st: {} };
+      // stems late: refused with a retryable gate, kept, status says so; the next phrase retries and plays
+      let stems = false;
+      const okPlan = { ok: true, kind: "lyric_remix", mode: "song", start: 101, end: 109, plan_id: "r1", text: "asked", why: "Lyric remix: asked", score: 0.8, beats: 16,
+        slices: [{ from: 40, dur: 4, off: 0, gain: 1, src: "self" }] };
+      const { host, log } = fakeHost((url) => (url.includes("/has") ? { within: 0, pair: 0 } : stems ? okPlan : { ok: false, gate: "stems_not_live", reason: "not sounding" }));
+      const m = mk(host);
+      assert.strictEqual(m.request({ plan: "r1", a: "s1", b: null }), true); assert.strictEqual(m.status, "Waiting for the song");
+      m.tick(host.decks.a, o); await flush(); await flush(); await flush();
+      const post = JSON.parse(log.fetch.filter((f) => f[0] === "/api/lyric_remix/plan")[0][1].body);
+      assert.strictEqual(post.ctx.wantPlan, "r1"); assert.strictEqual(post.ctx.mode, "song"); assert.strictEqual(post.b, null);
+      assert.strictEqual(log.fetch.filter((f) => f[0] === "/api/lyric_remix/plan").length, 1, "only its own plan runs, no pair or overlap try");
+      assert.strictEqual(host.decks.a._lyricRemix, undefined, "stems late: the plain song plays");
+      assert.deepStrictEqual(m.want && m.want.plan, "r1", "kept for the next chance"); assert.strictEqual(m.status, "Getting stems for the remix");
+      stems = true;
+      m.tick(host.decks.a, Object.assign({}, o, { phrase: 7 })); await flush(); await flush(); await flush();
+      assert(host.decks.a._lyricRemix, "armed at the retry"); assert.strictEqual(m.want, null); assert.strictEqual(m.status, "");
+      // a hard refusal drops the request with the reason; a request for another song is ignored (and dropped once its song was seen leaving)
+      const h2 = fakeHost((url) => (url.includes("/has") ? { within: 0, pair: 0 } : { ok: false, gate: "lang_mismatch", reason: "two languages" }));
+      const m2 = mk(h2.host);
+      m2.request({ plan: "x1", a: "s1", b: "s2" });
+      m2.tick(h2.host.decks.a, o); await flush(); await flush(); await flush(); await flush();
+      assert.strictEqual(m2.want, null, "dropped"); assert.strictEqual(m2.status, "Remix not played: two languages");
+      const h3 = fakeHost(() => ({ within: 0, pair: 0 }));
+      const m3 = mk(h3.host);
+      m3.request({ plan: "z1", a: "s7", b: null }); m3.tick(h3.host.decks.a, o); await flush(); await flush();
+      assert(!h3.log.fetch.some((f) => f[0] === "/api/lyric_remix/plan"), "a request for a song that is not on air asks nothing");
+      assert.strictEqual(m3.want.plan, "z1"); assert.strictEqual(m3.wantsDeck(h3.host.decks.a), false);
+    }
   } finally { console.info = origInfo; }
   console.log("lyric_remix_check: ok");
 })().catch((e) => { console.error(e); process.exit(1); });
