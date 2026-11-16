@@ -31,6 +31,12 @@ def resolve_genre(inp: dict) -> dict:
     return djcore_bridge.call("resolve_genre", {"inputs": [inp or {}]})[0]
 
 
+def first_song_scene(label: Optional[str], inp: Optional[dict] = None) -> dict:
+    """SCENEPIN: the set's scene from its first song (dj-core first_song_scene): the song's own label when it maps to a genre family,
+    else the artist-decides genre (`inp` = resolve_genre input), else null (open). {"genre", "source"}."""
+    return djcore_bridge.call("first_song_scene", {"items": [{"label": label or None, "inputs": inp or None}]})[0]
+
+
 def genre_distance(pairs: Iterable[Tuple[str, str]]) -> List[Optional[int]]:
     """HF13: steps between each (pinned scene genre, candidate genre) on dj-core's one genre graph (0 = same family, None =
     unlabelled or no path). For RANKING only (closer first); whether a distance is acceptable is accept_candidate's call."""

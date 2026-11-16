@@ -2950,14 +2950,20 @@ def autopilot_vet(req: VetRequest):
         if not v["genre"]:
             v = _vibe_by_name(name)
         rows.append({"track_id": c.track_id, "name": name, "genre": v["genre"], "era": v["era"], "stored": c.stored})
+    scene = None
+    if req.pin_set and not req.set_genre:
+        scene = _first_song_scene(av["genre"], a_name)      # SCENEPIN: the first song's scene (label, else the artist's genre)
     res = bv.vet(a_name, rows, a_genre=av["genre"], a_era=av["era"], history=req.history, earlier=earlier,
                  vetoes=_vetoes(), punjabi_profile=req.punjabi_profile, anchor_genre=req.anchor_genre or None,
-                 set_genre=req.set_genre or (av["genre"] if req.pin_set else None))
+                 set_genre=req.set_genre or ((scene or {}).get("genre") if req.pin_set else None))
     for r, row in zip(res, rows):
         r["genre"], r["era"] = row["genre"], row["era"]
     from app.music_brain.analysis.genre import scene_keys
-    return {"a_name": a_name, "a_genre": av["genre"], "a_era": av["era"],
-            "a_families": scene_keys(av["genre"]), "results": res}
+    out = {"a_name": a_name, "a_genre": av["genre"], "a_era": av["era"],
+           "a_families": scene_keys(av["genre"]), "results": res}
+    if scene is not None:
+        out.update(scene_genre=scene.get("genre"), scene_source=scene.get("source"), scene_families=scene_keys(scene.get("genre")))
+    return out
 
 
 def _pair_vibe(track_a_id: str, track_b_id: str) -> Dict[str, Optional[str]]:
@@ -3024,11 +3030,9 @@ def _graph_artist_genres() -> Dict[str, str]:
     return out
 
 
-def _artist_genre_of(row: dict) -> str:
-    """HF12: the genre of a candidate by the owner rule "the artist decides" (dj-core resolve_genre, PICK_RULES.genre_resolution).
-    This only gathers the inputs, the rule is dj-core's: each credited artist in credit order with its graph.db genre and the labels of its library songs,
-    and the song's own data label. The LLM's label never counts. "" = unknown (no artist in the library, no data label)."""
-    from app.music_brain import pick_accept
+def _artist_genre_input(row: dict) -> Optional[dict]:
+    """The dj-core resolve_genre input of a row {artist, data_genre}: each credited artist in credit order with its graph.db genre
+    and the labels of its library songs, and the song's own data label. None = nothing known at all (no artist in the library, no data label)."""
     from app.ui.services import pick_identity as pi
 
     idx, graph = _library_artist_genres(), _graph_artist_genres()
@@ -3036,12 +3040,38 @@ def _artist_genre_of(row: dict) -> str:
                for k in pi.credits_in_order(str(row.get("artist") or ""))]
     data = str(row.get("data_genre") or "").strip()
     if not data and not any(a["library_genres"] or a["graph_genre"] for a in artists):
+        return None
+    return {"artists": artists, "data_genre": data or None}
+
+
+def _artist_genre_of(row: dict) -> str:
+    """HF12: the genre of a candidate by the owner rule "the artist decides" (dj-core resolve_genre, PICK_RULES.genre_resolution).
+    This only gathers the inputs (_artist_genre_input), the rule is dj-core's. The LLM's label never counts. "" = unknown."""
+    from app.music_brain import pick_accept
+
+    inp = _artist_genre_input(row)
+    if inp is None:
         return ""
     try:
-        return str(pick_accept.resolve_genre({"artists": artists, "data_genre": data or None}).get("genre") or "")
+        return str(pick_accept.resolve_genre(inp).get("genre") or "")
     except Exception as exc:       # the service down: unknown, the acceptance call reports it
         print(f"[suggest] artist genre unavailable: {exc!r}", flush=True)
         return ""
+
+
+def _first_song_scene(label: Optional[str], name: str) -> dict:
+    """SCENEPIN: the scene of a set whose first song is `name` (stored label `label`): dj-core's first_song_scene rule. Gathers the
+    inputs only. {"genre": str | None, "source": ...}; the service down: the song's label alone, logged."""
+    from app.music_brain import pick_accept
+    from app.ui.services.track_identity import clean_identity
+
+    artist, _title = clean_identity(name) if name else ("", "")
+    inp = _artist_genre_input({"artist": "" if artist == "Unknown" else artist, "data_genre": ""})
+    try:
+        return pick_accept.first_song_scene(label, inp)
+    except Exception as exc:
+        print(f"[vet] first-song scene unavailable: {exc!r}", flush=True)
+        return {"genre": label or None, "source": "label" if label else "unknown"}
 
 
 def _genre_of_row(r: dict) -> str:
