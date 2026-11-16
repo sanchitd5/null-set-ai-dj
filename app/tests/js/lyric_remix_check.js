@@ -120,8 +120,67 @@ function fakeHost(responses) {
       const last = JSON.parse(log.fetch.filter((f) => f[0] === "/api/lyric_remix/plan").pop()[1].body);
       assert.deepStrictEqual(last.ctx.donePlans, ["q1"]);
       assert.strictEqual(last.ctx.vocalBusy, true, "own window running: vocal busy");
-      log.timers[0](); assert.strictEqual(log.slices, 1, "the booked timer runs the self slices"); assert.strictEqual(log.mixes, 1, "stem mode entered");
+      log.timers[log.timers.length - 1](); assert.strictEqual(log.slices, 1, "the booked timer runs the self slices"); assert.strictEqual(log.mixes, 1, "stem mode entered");
       m.stop(d); assert.strictEqual(d._lyricRemix, null, "stop releases");
+    }
+    // /has prefetch: the first tick awaits /has once (capped) and plans in the same phrase; prefetch() asks for the booked next song too
+    {
+      const ok = { ok: true, kind: "lyric_remix", mode: "song", start: 101, end: 109, plan_id: "f1", text: "first", why: "w", slices: [{ from: 40, dur: 4, off: 0, gain: 1, src: "self" }] };
+      const { host, log } = fakeHost((url) => (url.includes("/has") ? { within: 1, pair: 0 } : ok));
+      const m = mk(host), flush = () => new Promise((r) => setImmediate(r));
+      m.prefetch(host.decks.a);
+      assert(log.fetch.some((f) => f[0].startsWith("/api/lyric_remix/has?a=s1&b=s2")), "prefetch asks the booked pair");
+      assert(log.fetch.some((f) => f[0].startsWith("/api/lyric_remix/has?a=s1&b=") && !f[0].includes("b=s2")), "prefetch asks the song itself");
+      m.tick(host.decks.a, { pos: 99, bar: BAR, phrase: 1, lineT: 99, entryT: 8, exitT: 400, st: {} });
+      await flush(); await flush(); await flush();
+      assert(host.decks.a._lyricRemix, "the FIRST phrase of the song planned and armed (no wait for the next phrase)");
+      assert.strictEqual(log.fetch.filter((f) => f[0].startsWith("/api/lyric_remix/has?a=s1&b=s2")).length, 1, "/has is cached per (a,b)");
+      // a /has that never answers: awaited once with the cap, then the phrase is skipped without a plan request
+      const h2 = fakeHost((url) => (url.includes("/has") ? new Promise(() => {}) : ok));
+      h2.host.api.fetch = (url, opts) => { h2.log.fetch.push([url, opts]); return new Promise(() => {}); };
+      const m2 = mk(h2.host);
+      m2.tick(h2.host.decks.a, { pos: 99, bar: BAR, phrase: 1, lineT: 99, entryT: 8, exitT: 400, st: {} });
+      assert.strictEqual(h2.log.timers.length, 1, "one 400 ms cap timer");
+      h2.log.timers[0](); await flush(); await flush();
+      assert(!h2.log.fetch.some((f) => f[0] === "/api/lyric_remix/plan"), "no plan without /has counts");
+      m2.tick(h2.host.decks.a, { pos: 99, bar: BAR, phrase: 2, lineT: 99, entryT: 8, exitT: 400, st: {} });
+      assert.strictEqual(h2.log.timers.length, 1, "the wait happens once per pair");
+    }
+    // overlap ctx (pure) and runtime: overlap tried first, mute_decks restore, replaces_swap hook
+    {
+      const c = lr.songCtx(input()), b = { id: "b1", bpm: 124, guestStems: true };
+      const o = lr.overlapCtx(c, b, { winStart: 90, winEnd: 150, vocalSwap: { start: 120, end: 130 } });
+      assert.strictEqual(o.mode, "overlap"); assert.strictEqual(o.guestPlaying, true); assert.strictEqual(o.takeOverSwap, true);
+      assert.strictEqual(o.winStart, c.pos, "window never starts before the lead-advanced position"); assert.strictEqual(o.winEnd, 150);
+      assert.deepStrictEqual(o.vocalSwap, { start: 120, end: 130 }); assert.strictEqual(lr.overlapCtx(c, b, { winStart: 90, winEnd: 150 }).vocalSwap, null);
+      assert.strictEqual(lr.overlapCtx(c, b, null), null); assert.strictEqual(lr.overlapCtx(c, b, { winStart: 90, winEnd: 50 }), null);
+      assert.strictEqual(lr.overlapCtx(c, null, { winStart: 90, winEnd: 150 }), null); assert.strictEqual(c.mode, "song");
+      const ok = { ok: true, kind: "lyric_remix", mode: "overlap", start: 101, end: 109, plan_id: "o1", text: "ov", why: "w", mute_decks: ["a", "b"], replaces_swap: true,
+        slices: [{ from: 40, dur: 4, off: 0, gain: 1, src: "self" }, { from: 12, dur: 4, off: 4, gain: 1, src: "guest", rate: 1 }] };
+      const { host, log } = fakeHost((url) => (url.includes("/has") ? { within: 1, pair: 1 } : ok));
+      const calls = []; const mkGain = () => { const p = { value: 1, setValueAtTime(v, t) { calls.push(["set", v, t]); }, linearRampToValueAtTime(v, t) { calls.push(["ramp", v, t]); }, cancelScheduledValues() {} }; return p; };
+      host.decks.a.stemLive = { vocals: { gain: mkGain() } }; host.decks.b.stemLive = { vocals: { gain: mkGain() } };
+      let cancelled = 0; host.mod.stemMoves.cancelVocalSwap = () => { cancelled++; };
+      host.mod.djMind = { transitioning: true, overlapInfo: () => ({ winStart: 100, winEnd: 140, vocalSwap: null }) };
+      const m = mk(host), flush = () => new Promise((r) => setImmediate(r));
+      m.tick(host.decks.a, { pos: 99, bar: BAR, phrase: 3, lineT: 99, entryT: 8, exitT: 400, st: {} }); await flush(); await flush(); await flush();
+      const first = JSON.parse(log.fetch.filter((f) => f[0] === "/api/lyric_remix/plan")[0][1].body);
+      assert.strictEqual(first.ctx.mode, "overlap", "overlap is tried first while a transition overlap runs"); assert.strictEqual(first.ctx.guestPlaying, true);
+      assert(host.decks.a._lyricRemix, "armed");
+      log.timers[log.timers.length - 1]();
+      assert.strictEqual(cancelled, 1, "replaces_swap calls the host swap cancel");
+      const ramps = calls.filter((c) => c[0] === "ramp");
+      assert(ramps.some((c) => c[1] === 0) && ramps.some((c) => c[1] === 1), "both decks' live vocal ramp down and back up"); assert(calls.length >= 8, "A and B both muted");
+      m.stop(host.decks.a); assert.strictEqual(host.decks.a._lyricRemix, null, "stop releases");
+      // no swap cancel hook: only an info line, never a throw
+      delete host.mod.stemMoves.cancelVocalSwap;
+      assert.doesNotThrow(() => m.arm(host.decks.a, Object.assign({}, ok, { start: 101 })));
+      // a mute target without a live vocal stem refuses (quiet), nothing booked
+      host.decks.a._lyricRemix = null; host.decks.b.stemLive = null;
+      assert.strictEqual(m.arm(host.decks.a, ok).gate, "stems_not_live");
+      // no overlap bounds from the host: no overlap ctx, falls to transition
+      delete host.mod.djMind.overlapInfo;
+      assert.strictEqual(m.arm(host.decks.a, { ok: false }).ok, false);
     }
     // a late plan: refused by the lead check, nothing booked, no bookkeeping
     {
