@@ -837,7 +837,7 @@ _snap_cache: Dict[str, bytes] = {}
 def snapshot_zip(src: Optional[Path] = None) -> Tuple[str, bytes]:
     """(etag, zip) of the knowledge in the layout the phone's bundled assets/atlas uses: meta.json,
     names.json, genre_labels.json, learned_techniques.json, macros.json ({"macros": [...]}), pairs/<a>.json.gz,
-    plus version.json. Deterministic bytes; the one built snapshot is kept for its etag."""
+    lyric_remix.json.gz (when present), plus version.json. Deterministic bytes; the one built snapshot is kept for its etag."""
     src = Path(src or kn.KNOWLEDGE_DIR)
     files = _snapshot_files(src) if src.is_dir() else {}
     v = _version(src, files)
@@ -859,6 +859,8 @@ def snapshot_zip(src: Optional[Path] = None) -> Tuple[str, bytes]:
         elif kind == "meta":
             members["meta.json"] = data
         elif kind in ("names", "label", "learned"):
+            members[rel] = data
+        elif rel == kn.LYRIC_REMIX:                 # the one "other" file that ships: lyric remix plans + lines
             members[rel] = data
     members["macros.json"] = kn._dump({"macros": macros}, compact=True)
     members["version.json"] = kn._dump({"sha": v["sha"], "rules_hash": v["rules_hash"], "files": v["files"]})

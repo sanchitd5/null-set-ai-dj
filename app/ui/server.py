@@ -3801,6 +3801,9 @@ app.include_router(_replay_router)
 from app.ui.services.supermove_api import router as _supermove_router  # noqa: E402 -- $Up3R-M@SS!V3-M0v3 variants
 
 app.include_router(_supermove_router)
+from app.ui.services.lyric_remix_api import router as _lyric_remix_router  # noqa: E402 -- lyric remix plans (dj-core decides)
+
+app.include_router(_lyric_remix_router)
 from app.ui.services.mobile_api import router as _mobile_router  # noqa: E402 -- phone ("lite" console) wrappers
 
 app.include_router(_mobile_router)
