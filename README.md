@@ -189,6 +189,12 @@ pip install -r requirements.txt
 ./start.sh            # one shared Qwen3-Omni server, the app, opens http://localhost:8000
 ```
 
+**On a Mac** (first time, after the three lines above): `./build-djcore.sh` builds the dj-core decision service the console
+needs (once; needs a Dart SDK and your GitHub access to the private dj-core repo), then `./start.sh` uses it automatically.
+To build lyric remix plans from your library: `./build-lyric-remix.sh --dry-run` (counts), then e.g.
+`./build-lyric-remix.sh --backend local --max-calls 200` (needs `./start.sh` running) or `--backend claudecode`.
+Details, options and how the plans reach the server: [docs/engineering/MAC_TOOLS.md](docs/engineering/MAC_TOOLS.md).
+
 Then paste a seed URL and press **▶ START SET**, or play any song and press **▶ FROM CURRENT**.
 
 | `start.sh` | |

@@ -34,3 +34,6 @@ data/models/
 
 # dj-core service binary, installed by the server pipeline (built from the private dj-core repo)
 /bin/
+
+# dj-core service builds made by build-djcore.sh
+.djcore/

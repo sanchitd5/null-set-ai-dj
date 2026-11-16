@@ -113,3 +113,119 @@ def graph_view(name: str, *args, **kwargs):
     except (ImportError, AttributeError):
         return None
     return fn(*args, **kwargs)
+
+
+# ---------------------------------------------------------------- lyric remix CLI (./build-lyric-remix.sh)
+
+def _lyric_remix_module():
+    """The builder's lyric_remix module (ImportError when there is no atlas or this dj-atlas pin predates it)."""
+    if not AVAILABLE:
+        raise ImportError(SKIP_REASON)
+    from app.music_brain.atlas import lyric_remix
+    return lyric_remix
+
+
+def seed_published_plans(cache_dir, out=None, mod=None) -> int:
+    """Mark every plan already in the published lyric_remix document as judged-and-accepted in the local resumable state, so
+    a machine with no state of its own (the Mac, a fresh checkout) never asks the model about a candidate that is already
+    published, and the incremental build keeps those plans instead of dropping them. Only adds; returns how many it added."""
+    mod = mod or _lyric_remix_module()
+    doc = mod.read_doc(Path(out) if out else mod.default_out()) or {}
+    state = mod.load_state(cache_dir)
+    added = 0
+    for p in doc.get("plans", []):
+        if not isinstance(p, dict) or not p.get("id") or p["id"] in state["judged"]:
+            continue
+        try:
+            score = max(1, min(10, int(round(float(p.get("score") or 0.7) * 10))))
+        except (TypeError, ValueError):
+            score = 7
+        state["judged"][p["id"]] = {"ok": True, "score": score, "why": str(p.get("why") or ""), "a": p.get("a"), "b": p.get("b")}
+        added += 1
+    if added:
+        mod.save_state(cache_dir, state)
+    return added
+
+
+def keep_published_plans(before: dict, out, mod) -> int:
+    """After a build: put back the published plans (and their song lines) the build dropped, because this machine's library
+    lacks one of their songs. The Mac's library and the server's differ, and the two must add up, not replace each other.
+    Only when both documents were built on the same rules. Returns how many plans it put back."""
+    after = mod.read_doc(out) or {}
+    if not before.get("plans") or after.get("v") != before.get("v") or after.get("rules") != before.get("rules"):
+        return 0
+    have = {p.get("id") for p in after.get("plans", []) if isinstance(p, dict)}
+    back = [p for p in before["plans"] if isinstance(p, dict) and p.get("id") and p["id"] not in have]
+    if not back:
+        return 0
+    songs = dict(after.get("songs") or {})
+    for p in back:
+        for tid in (p.get("a"), p.get("b")):
+            if tid and tid not in songs and tid in (before.get("songs") or {}):
+                songs[tid] = before["songs"][tid]
+    plans = [p for p in after.get("plans", []) if isinstance(p, dict)] + back
+    mod.write_doc(out, dict(after, songs=songs, plans=sorted(plans, key=lambda p: p["id"])))
+    return len(back)
+
+
+def lyric_remix_cli(argv: List[str], mod=None, log: Callable[[str], None] = print) -> int:
+    """The Mac / local entry of the lyric remix builder: `python -m app.music_brain.atlas_bridge lyric-remix [options]`.
+    Resumable; plans are written to the knowledge checkout's lyric_remix.json.gz (see --help)."""
+    import argparse
+    import json
+    import os
+
+    ap = argparse.ArgumentParser(
+        prog="build-lyric-remix.sh",
+        description="Judge candidate lyric re-orderings on this machine's library and store the accepted plans.",
+        epilog="Results: the accepted plans go to app/music_brain/knowledge/lyric_remix.json.gz (the dj-atlas checkout; --out "
+               "changes it), the resumable state (every judged candidate) to <cache>/lyric_remix/state.json. Plans already in "
+               "that file are kept and never judged again. To ship them: see docs/engineering/MAC_TOOLS.md (publish to dj-atlas).")
+    ap.add_argument("--backend", choices=["local", "claudecode"], default="local",
+                    help="local: the omni server start.sh runs (or OMNI_SERVER_URL); claudecode: the logged-in claude CLI")
+    ap.add_argument("--queue", choices=["within", "pair", "both"], default="both",
+                    help="within: one song's own lines; pair: lines of two songs; both (default)")
+    ap.add_argument("--max-calls", type=int, default=None, help="stop after N judge calls (default: the builder's, 40)")
+    ap.add_argument("--dry-run", action="store_true", help="counts only: what a build would work with; no model, no writes")
+    ap.add_argument("--model", default=None, help="CLAUDECODE_MODEL for --backend claudecode (default haiku)")
+    ap.add_argument("--fallback-local", action="store_true", help="claudecode unusable: use the local model instead of stopping")
+    ap.add_argument("--only", default="", help="comma separated track ids (A songs)")
+    ap.add_argument("--cache-dir", default=None, help="library cache (default: AIDJ_CACHE_DIR or data/cache)")
+    ap.add_argument("--out", default=None, help="plans file (default: app/music_brain/knowledge/lyric_remix.json.gz)")
+    a = ap.parse_args(argv)
+    try:
+        mod = mod or _lyric_remix_module()
+    except ImportError as exc:
+        log(f"lyric remix builder not available: {exc}")
+        log("check out the private dj-atlas submodule:  git submodule update --init app/music_brain/knowledge")
+        return 2
+    cache = Path(a.cache_dir) if a.cache_dir else mod.default_cache_dir()
+    if a.dry_run:
+        mod.coverage(cache, log)
+        pub = mod.read_doc(Path(a.out) if a.out else mod.default_out()) or {}
+        log(f"published plans already in the file: {len(pub.get('plans', []))} (kept, never judged again)")
+        return 0
+    out = Path(a.out) if a.out else mod.default_out()
+    before = mod.read_doc(out) or {}
+    seeded = seed_published_plans(cache, out, mod)
+    if seeded:
+        log(f"{seeded} already published plans marked as judged (not asked again)")
+    if a.model:
+        os.environ["CLAUDECODE_MODEL"] = a.model
+    kw = {} if a.max_calls is None else {"max_calls": a.max_calls}
+    r = mod.build(cache, out=out, only=[x for x in a.only.split(",") if x] or None, backend=a.backend,
+                  fallback_local=a.fallback_local, queue="all" if a.queue == "both" else a.queue, log=log, **kw)
+    kept = keep_published_plans(before, out, mod)
+    if kept:
+        log(f"{kept} published plans of songs not in this library were kept")
+    log(json.dumps({k: v for k, v in r.items() if k != "batches"}, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    import sys
+
+    if sys.argv[1:2] == ["lyric-remix"]:
+        raise SystemExit(lyric_remix_cli(sys.argv[2:]))
+    print("usage: python -m app.music_brain.atlas_bridge lyric-remix [options]  (see ./build-lyric-remix.sh --help)")
+    raise SystemExit(2)
