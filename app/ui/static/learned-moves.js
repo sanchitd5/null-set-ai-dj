@@ -689,7 +689,10 @@
     function tick(d, o) {
       if (!store && host.clock.now() - loadedAt > 300000) load();
       const r = attempt(d, o, null);
-      return r && r.kind ? r : null;
+      if (r && r.kind) return r;
+      // nothing booked: the lyric remix may try (executes a precomputed plan; never blocks or delays anything)
+      try { const lr = host.mod.lyricRemix; if (lr && lr.tick) lr.tick(d, o); } catch (e) { console.info("lyric remix tick failed -", e && e.message); }
+      return null;
     }
     // On demand (ai-actions.js through dj-mind learnedNow): one kind on the next line, same o as tick. Only the
     // rate gates are skipped (songGate onDemand); toggles, store, safety and planner gates still refuse.
@@ -750,6 +753,7 @@
     function stop(d) {
       if (!d) return;
       cancel(d.id);
+      try { const lr = host.mod.lyricRemix; if (lr && lr.stop) lr.stop(d); } catch (e) { /* the lyric remix is optional */ }
       if (d._slices && d._slices.vocals && d.releaseSlices) { d.releaseSlices("vocals"); if (d.stemMix) d.stemMix(null, 0, 0.02); }
       const sw = d._artistSwap;
       if (sw) {

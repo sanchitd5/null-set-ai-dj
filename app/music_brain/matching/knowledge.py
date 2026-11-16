@@ -47,6 +47,7 @@ ATLAS = "pair_atlas.json.gz"                # the old single-file slim atlas (st
 ATLAS_DIR, ATLAS_META = "atlas", "meta.json"  # segmented: atlas/meta.json + atlas/pairs/<a>.json.gz
 _SHARD_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
 NAMES = "names.json"
+LYRIC_REMIX = "lyric_remix.json.gz"          # lyric remix plans + lines (built by the private atlas builder; read only here)
 LABELS = "genre_labels.json"                # track id -> {genre, era}: the model's labels (genre_labels.py)
 STAMP = "knowledge_seed.json"
 KEEP, PER_MOVE = 60, 20                     # slim atlas: the server Index's own selection per A

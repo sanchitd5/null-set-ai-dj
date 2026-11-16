@@ -48,7 +48,8 @@ GIT_TIMEOUT_S = 10
 # ---------------------------------------------------------------------------------- stamps
 def _files(src: Path) -> List[str]:
     """The knowledge files a sync reads, relative posix paths."""
-    out = [r for r in (kn.NAMES, kn.LABELS, kn.LEARNED, kn.ATLAS, f"{kn.ATLAS_DIR}/{kn.ATLAS_META}")
+    out = [r for r in (kn.NAMES, kn.LABELS, kn.LEARNED, kn.ATLAS, f"{kn.ATLAS_DIR}/{kn.ATLAS_META}",
+           kn.LYRIC_REMIX)
            if (src / r).is_file()]
     for sub, pat in ((kn.MACROS, "*.json"), (f"{kn.ATLAS_DIR}/pairs", "*.json.gz")):
         if (src / sub).is_dir():
