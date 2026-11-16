@@ -26,6 +26,9 @@
 # Settings live in .env (LLM_BACKEND, MLX_MODEL, MLX_PORT, OLLAMA_MODEL,
 # OMNI_MODEL, OMNI_PORT, OMNI_MAX_SEQS). The ear is optional: without its venv the
 # hold loop uses the DSP rules. Without mlx (not Apple Silicon) the app falls back to Ollama.
+# dj-core: the decision service the console needs. On the server it is installed under /opt/null-set-ai-dj; anywhere else
+# (a Mac) this script uses .djcore/bin/<pinned sha> and builds it once with ./build-djcore.sh when it is missing
+# (DJ_CORE_SVC=/path overrides; DJ_CORE_SKIP=1 runs without it).
 # Linux / CUDA: set OMNI_SERVER_URL (and OMNI_MODEL) to a running llama-server that serves
 # the Qwen3-Omni GGUF; this script then starts only the app and points both roles at it.
 set -uo pipefail
@@ -62,10 +65,13 @@ for arg in "$@"; do
     --no-open) OPEN=0 ;;
     --single-omni) SINGLE_OMNI=1; SINGLE_OMNI_ASKED=1 ;;
     --dual) SINGLE_OMNI=0 ;;
-    -h|--help) sed -n '2,27p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,33p' "$0"; exit 0 ;;
     *) echo "unknown option: $arg (see ./start.sh --help)" >&2; exit 2 ;;
   esac
 done
+# shellcheck source=deploy/djcore-env.sh
+. deploy/djcore-env.sh
+resolve_djcore || exit 1
 # PYTHON wins; otherwise the first interpreter that can run uvicorn: the repo's
 # venv first, then the python3s on PATH (Homebrew's python3 often lacks the deps).
 if [[ -n "${PYTHON:-}" ]]; then
