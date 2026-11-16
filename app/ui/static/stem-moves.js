@@ -1730,7 +1730,7 @@ if (typeof HoldPolicy === "undefined" && typeof require === "function") require(
     const st = ui.el(`stem-status-${id}`);
     if (!d || !st) return;
     const ready = d.stemsReady, has = !!d.stems;
-    st.textContent = d._meterGain ? "RIFF · KEY-LOCKED" : ready ? (d.stemState ? "LIVE STEMS" : "READY · full mix") : has ? "LOADED" : d.buffer ? "SEPARATING…" : "—";
+    st.textContent = d._meterGain ? "RIFF · KEY-LOCKED" : ready ? (d.stemState ? "LIVE STEMS" : "READY · full mix") : has ? "LOADED" : d.buffer ? (StemFetch.label((d.stemPhase || {}).phase, (d.stemPhase || {}).pct) || "STEMS…") : "—";
     st.className = `stem-status${ready || d._meterGain ? " stem-ready" : d.buffer && !has ? " stem-wait" : ""}`;
     ui.queryAll(`.stem-btn[data-deck="${id}"]`).forEach((b) => {
       b.disabled = !ready;

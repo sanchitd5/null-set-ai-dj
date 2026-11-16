@@ -1195,10 +1195,7 @@ class Deck {
         const v = await res.json();
         if (this.analysis !== analysis) return null;
         if (v.stems) {
-          const bufs = {};
-          await Promise.all(STEM_NAMES.map(async (n) => {
-            bufs[n] = await audioCtx.decodeAudioData(await (await fetch(v.stems[n])).arrayBuffer());
-          }));
+          const bufs = await StemFetch.fetchStems(v.stems, (b) => audioCtx.decodeAudioData(b));
           if (this.analysis !== analysis) return null;
           bufs.lag = nat.lag || 0;
           bufs.ratio = v.ratio || 1;
@@ -1275,15 +1272,19 @@ class Deck {
             if (Array.isArray(vr.regions)) analysis.vocal_active_regions = vr.regions;
           }
           if (this.analysis !== analysis) return;
-          const bufs = {};
-          await Promise.all(STEM_NAMES.map(async (n) => {
-            bufs[n] = await audioCtx.decodeAudioData(await (await fetch(v.stems[n])).arrayBuffer());
-          }));
+          this.stemPhase = { phase: "downloading", pct: null };
+          let bufs;
+          try {
+            bufs = await StemFetch.fetchStems(v.stems, (b) => audioCtx.decodeAudioData(b), (p) => {
+              if (this.analysis === analysis) this.stemPhase = { phase: "downloading", pct: p.pct };
+            });
+          } finally { if (this.analysis === analysis) this.stemPhase = null; }
           if (this.analysis !== analysis || !this.buffer) return;
           bufs.lag = await stemLagAsync(this.buffer, bufs);
           this.setStems(bufs);
           return;
         }
+        if (v.pending && this.analysis === analysis) this.stemPhase = { phase: "separating", pct: null };
       } catch (e) { console.warn("stems:", e.message); return; }
       await new Promise((r) => setTimeout(r, 3000));     // stems land on the deck within ~3 s of the server having them
     }
