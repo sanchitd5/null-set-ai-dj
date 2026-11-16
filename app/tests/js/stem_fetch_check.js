@@ -53,3 +53,13 @@ function fakeFetch(sizes, seen) {
   await assert.rejects(() => SF.fetchStems(urls, async (b) => b, null, bad), /HTTP 404/);
   console.log("stem_fetch ok");
 })().catch((e) => { console.error(e); process.exit(1); });
+
+// deck audio defaults to the AAC variant; dj-full-audio=1 asks for the original file
+{
+  const store = {}; global.localStorage = { getItem: (k) => store[k] ?? null, setItem: (k, v) => { store[k] = String(v); } };
+  assert.strictEqual(SF.trackAudioUrl("ab12"), "/api/audio/tracks/ab12?q=phone");
+  localStorage.setItem("dj-full-audio", "1");
+  assert.strictEqual(SF.trackAudioUrl("ab12"), "/api/audio/tracks/ab12");
+  delete global.localStorage;
+  console.log("trackAudioUrl ok");
+}

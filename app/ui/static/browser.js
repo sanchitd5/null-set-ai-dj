@@ -239,7 +239,7 @@ if (typeof module !== "undefined" && module.exports) module.exports = BROWSER_WA
     const name = track ? track.name : trackId;
     setStatus(`Loading ${name} into deck ${deckLetter.toUpperCase()}…`);
     try {
-      const res = await fetch(`/api/audio/tracks/${trackId}`);
+      const res = await fetch((typeof StemFetch !== "undefined" ? StemFetch.trackAudioUrl(trackId) : `/api/audio/tracks/${encodeURIComponent(trackId)}`));
       if (!res.ok) throw new Error(res.statusText);
       const blob = await res.blob();
       // Same load path as a fresh upload: the deck rebuilds its waveform,

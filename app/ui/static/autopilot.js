@@ -3224,7 +3224,7 @@ function createAutopilotEngine({ host, ai }) {
 
     // Preload next track into staging deck
     apStatus(`Loading ${nextName} into deck ${stagingDeck().toUpperCase()}…`);
-    const audioRes = await fetch(`/api/audio/tracks/${nextId}`);
+    const audioRes = await fetch((typeof StemFetch !== "undefined" ? StemFetch.trackAudioUrl(nextId) : `/api/audio/tracks/${encodeURIComponent(nextId)}`));
     if (!audioRes.ok) return false;
     const blob = await audioRes.blob();
     if (!active) return false;
@@ -4969,7 +4969,7 @@ function createAutopilotEngine({ host, ai }) {
       const seedName = seed.display_name || seed.filename;
 
       apStatus(`Loading ${seedName} into deck A…`);
-      const audioRes = await fetch(`/api/audio/tracks/${currentTrackId}`);
+      const audioRes = await fetch((typeof StemFetch !== "undefined" ? StemFetch.trackAudioUrl(currentTrackId) : `/api/audio/tracks/${encodeURIComponent(currentTrackId)}`));
       if (!audioRes.ok) throw new Error(audioRes.statusText);
       const blob = await audioRes.blob();
       await loadIntoDeck("a", currentTrackId, seedName, blob);

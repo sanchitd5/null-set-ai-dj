@@ -648,7 +648,7 @@
     async function ensureLoaded(deck, id, name) {
       const st = host.state || {};
       if ((deck === "a" ? st.trackA : st.trackB) === id) return;
-      const r = await host.api.fetch(`/api/audio/tracks/${encodeURIComponent(id)}`);
+      const r = await host.api.fetch((typeof StemFetch !== "undefined" ? StemFetch.trackAudioUrl(id) : `/api/audio/tracks/${encodeURIComponent(id)}`));
       if (!r.ok) throw new Error(`cannot load ${name || id}`);
       await host.loadIntoDeck(deck, id, name || id, await r.blob());
     }
