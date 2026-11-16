@@ -803,6 +803,14 @@ def _cached_stems4(track_id: str) -> Optional[Dict[str, str]]:
     return stems
 
 
+def _cached_stems4_safe(track_id: str) -> Optional[Dict[str, str]]:
+    """_cached_stems4 that answers None (not 404) for an unknown track."""
+    try:
+        return _cached_stems4(track_id)
+    except HTTPException:
+        return None
+
+
 def _llm_busy() -> bool:
     from app.ui.services.llm_gate import gate
 
@@ -3823,6 +3831,13 @@ app.include_router(_supermove_router)
 from app.ui.services.lyric_remix_api import router as _lyric_remix_router  # noqa: E402 -- lyric remix plans (dj-core decides)
 
 app.include_router(_lyric_remix_router)
+from app.ui.services import lyric_remix_songs as _lyric_remix_songs  # noqa: E402 -- lyric remix plans as on-request playable songs
+
+_lyric_remix_songs.configure(
+    track_path=lambda tid: _tracks.get(tid) if (_tracks.get(tid) and _tracks[tid].exists()) else None,
+    stems4=_cached_stems4_safe, queue_stems=lambda tid: _queue_stems(tid, urgent=True),
+    name_of=lambda tid: _track_names.get(tid) or tid, analyze=analyze_track)
+app.include_router(_lyric_remix_songs.router)
 from app.ui.services.mobile_api import router as _mobile_router  # noqa: E402 -- phone ("lite" console) wrappers
 
 app.include_router(_mobile_router)
