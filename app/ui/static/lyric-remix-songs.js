@@ -1,12 +1,11 @@
-// Lyric remix songs: a library panel listing accepted lyric-remix plans as playable songs (contract: wt/REMIXSONGS_CONTRACT.txt).
-//   GET  /api/lyric_remix/songs?q=&limit=      list (title, new lyric text, score, state, progress)
-//   GET  /api/lyric_remix/songs/<plan_id>      one song (+ beat grid when ready)
-//   POST /api/lyric_remix/songs/<plan_id>/render
-//   GET  /api/audio/remix/<plan_id>?q=phone    the rendered audio
-//   GET/PUT /api/lyric_remix/settings          {ai_picks}
-// PLAY NOW loads the song on deck A and starts it; QUEUE loads it as NEXT (deck B), like a library row. Both render first when needed.
-// The server decides everything; this file only lists, renders on request and loads. Pure helpers are node-checked
-// (app/tests/js/lyric_remix_songs_check.js).
+// Lyric remixes (web console panel). A remix is performed LIVE, never rendered: tapping a row plays the real song (or the A -> B pair) and
+// asks lyric-remix.js to perform the plan from the stems (dj-core decides; same move as the AI DJ's own). Contract:
+//   GET     /api/lyric_remix/songs?q=&limit=   list: {plan_id, kind, a, b, title, text, score}
+//   GET/PUT /api/lyric_remix/settings          {ai_picks, min_songs}
+//   POST    /api/tracks/<id>/separate?stems=4  stems are requested as soon as a row is tapped
+// PLAY NOW loads the song on the playing deck (or A) and plays it; BOOK NEXT loads it on the idle deck. A pair also loads B on the other
+// deck. Stems late: the plain song plays and the remix is retried every phrase ("Getting stems for the remix"). Pure helpers are
+// node-checked (app/tests/js/lyric_remix_songs_check.js).
 "use strict";
 
 const LRS = {
@@ -17,49 +16,40 @@ const LRS = {
     if (!n) return songs.slice();
     return songs.filter((s) => `${s.title || ""} ${s.text || ""}`.toLowerCase().includes(n));
   },
-  planId(song) { return song && (song.plan_id || String(song.id || "").replace(/^lr-/, "")); },
+  planId(song) { return song && song.plan_id; },
   esc(v) {
     return String(v == null ? "" : v).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   },
   fmtScore(score) { return isFinite(score) ? `${Math.round(Math.max(0, Math.min(1, score)) * 100)}` : "--"; },
-  fmtTime(sec) {
-    if (!isFinite(sec) || sec <= 0) return "--:--";
-    return `${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, "0")}`;
-  },
-  // Badge label + progress percent (or null) for a song state.
-  badge(song) {
-    switch (song && song.state) {
-      case "ready": return { label: "READY", pct: null, cls: "ready" };
-      case "rendering": {
-        const p = Math.round(Math.max(0, Math.min(1, +song.progress || 0)) * 100);
-        return { label: song.stage ? `RENDERING ${p}% · ${song.stage}` : `RENDERING ${p}%`, pct: p, cls: "rendering" };
-      }
-      case "error": return { label: "ERROR", pct: null, cls: "error" };
-      default: return { label: "NOT RENDERED", pct: null, cls: "none" };
+  kindLabel(song) { return song && song.b ? "PAIR · LIVE BLEND" : "LIVE IN THE SONG"; },
+  // What to do for a tap. st = {a: track id on deck a|null, b: id on deck b|null, playing: "a"|"b"|null}; action "play" | "queue".
+  // -> {steps: [{load, id, play?} ... , {request: {plan, a, b}}]} | {error}. The request always comes last: the remix is booked on top of
+  // whatever plays now.
+  steps(song, action, st) {
+    const A = song.a, B = song.b || null, other = (d) => (d === "a" ? "b" : "a");
+    const onAir = st.playing ? st[st.playing] : null, steps = [];
+    if (onAir === A) {
+      if (B) steps.push({ load: other(st.playing), id: B });
+    } else if (action === "queue" && st.playing) {
+      if (B) return { error: "A is not on air: use PLAY NOW for a pair remix" };
+      steps.push({ load: other(st.playing), id: A });
+    } else {
+      const dA = st.playing || "a";
+      steps.push({ load: dA, id: A, play: true });
+      if (B) steps.push({ load: other(dA), id: B });
     }
-  },
-  audioUrl(song) { return `/api/audio/remix/${encodeURIComponent(LRS.planId(song))}?q=phone`; },
-  // Deck for an action: PLAY NOW -> a, QUEUE -> b (NEXT).
-  deckFor(action) { return action === "queue" ? "b" : "a"; },
-  // Analysis-shaped object from the song doc, used when /api/tracks/<id>/analysis has none for an lr- id.
-  gridFrom(doc) {
-    if (!doc || !Array.isArray(doc.beat_times) || !doc.beat_times.length) return null;
-    return { bpm: doc.bpm || 0, duration: doc.duration || 0, beat_times: doc.beat_times, downbeat_times: doc.downbeat_times || [] };
+    steps.push({ request: { plan: song.plan_id, a: A, b: B } });
+    return { steps };
   },
   row(song) {
-    const b = LRS.badge(song), id = LRS.esc(song.id);
-    const busy = song.state === "rendering";
-    const actions = song.state === "error"
-      ? `<span class="row-status" title="${LRS.esc(song.error || "")}">${LRS.esc(song.error || "render failed")}</span>
-         <button class="hw-btn" data-lrs="retry" data-plan="${LRS.esc(LRS.planId(song))}">RETRY</button>`
-      : `<button class="hw-btn" data-lrs="play" data-plan="${LRS.esc(LRS.planId(song))}"${busy ? " disabled" : ""}>PLAY NOW</button>
-         <button class="hw-btn" data-lrs="queue" data-plan="${LRS.esc(LRS.planId(song))}"${busy ? " disabled" : ""}>QUEUE</button>`;
-    return `<div class="browser-row lrs-row" data-song="${id}">
+    const plan = LRS.esc(LRS.planId(song));
+    return `<div class="browser-row lrs-row" data-song="${plan}">
       <div class="row-title"><span class="row-txt"><span class="row-name" title="${LRS.esc(song.title)}">${LRS.esc(song.title)}</span>
         <span class="row-id lrs-text">${LRS.esc(song.text)}</span></span></div>
       <div class="num" title="score">${LRS.fmtScore(song.score)}</div>
-      <div class="lrs-state"><span class="chip lrs-badge lrs-${b.cls}">${LRS.esc(b.label)}</span>${b.pct == null ? "" : `<div class="nrg-bar"><i style="width:${b.pct}%"></i></div>`}</div>
-      <div class="lrs-actions">${actions}</div></div>`;
+      <div class="lrs-state"><span class="chip lrs-badge lrs-none">${LRS.kindLabel(song)}</span></div>
+      <div class="lrs-actions"><button class="hw-btn" data-lrs="play" data-plan="${plan}">PLAY NOW</button>
+         <button class="hw-btn" data-lrs="queue" data-plan="${plan}">BOOK NEXT</button></div></div>`;
   },
 };
 if (typeof module !== "undefined" && module.exports) module.exports = LRS;
@@ -70,22 +60,19 @@ if (typeof module !== "undefined" && module.exports) module.exports = LRS;
   if (!host) return;
   const rowsEl = document.getElementById("lrs-rows"), searchEl = document.getElementById("lrs-search");
   const aiEl = document.getElementById("lrs-ai-picks"), statusEl = document.getElementById("lrs-status");
-  let songs = [], timer = null, loadSeq = 0;
+  let songs = [], loadSeq = 0, statusTimer = null;
   const note = (t) => { if (statusEl) statusEl.textContent = t || ""; if (t && typeof setStatus === "function") setStatus(t); };
   const json = async (url, opts) => {
     const res = await fetch(url, opts);
     if (!res.ok) throw new Error((await res.text().catch(() => "")) || res.statusText);
     return res.json();
   };
+  const lyricRemix = () => (window.Engine && window.Engine.host && window.Engine.host.mod && window.Engine.host.mod.lyricRemix) || null;
 
   function render() {
     const list = LRS.filter(songs, searchEl && searchEl.value);
     rowsEl.innerHTML = list.length ? list.map(LRS.row).join("")
       : `<div class="browser-empty">${songs.length ? "No lyric remix matches that search." : "No lyric remixes yet."}</div>`;
-  }
-  function upsert(song) {
-    const i = songs.findIndex((s) => s.id === song.id);
-    if (i >= 0) songs[i] = Object.assign(songs[i], song); else songs.push(song);
   }
   async function refresh() {
     const seq = ++loadSeq, q = searchEl ? searchEl.value.trim() : "";
@@ -95,54 +82,58 @@ if (typeof module !== "undefined" && module.exports) module.exports = LRS;
       songs = d.songs || [];
       if (aiEl) aiEl.checked = !!d.ai_picks;
       render();
-      if (songs.some((s) => s.state === "rendering")) schedulePoll();
     } catch (e) {
       rowsEl.innerHTML = `<div class="browser-empty">Could not load lyric remixes: ${LRS.esc(e.message)} <button class="hw-btn" data-lrs="reload">RETRY</button></div>`;
     }
   }
-  function schedulePoll() { clearTimeout(timer); timer = setTimeout(refresh, LRS.POLL_MS); }
-
-  // Render when needed, poll once a second until ready|error; returns the ready song doc.
-  async function ensureReady(planId) {
-    let song = songs.find((s) => LRS.planId(s) === planId) || { plan_id: planId, id: `lr-${planId}` };
-    if (song.state !== "ready") {
-      song = await json(`/api/lyric_remix/songs/${encodeURIComponent(planId)}/render`, { method: "POST" });
-      upsert(song); render();
-    }
-    while (song.state === "rendering") {
-      await new Promise((r) => setTimeout(r, LRS.POLL_MS));
-      song = await json(`/api/lyric_remix/songs/${encodeURIComponent(planId)}`);
-      upsert(song); render();
-    }
-    if (song.state === "error") throw new Error(song.error || "render failed");
-    return song.sha256 ? song : json(`/api/lyric_remix/songs/${encodeURIComponent(planId)}`);
+  // Stems are requested at once (stem server); fire and forget, the deck loads them when they are there.
+  const askStems = (id) => { if (id) fetch(`/api/tracks/${encodeURIComponent(id)}/separate?stems=4`, { method: "POST" }).catch(() => {}); };
+  async function load(deckLetter, id) {
+    const res = await fetch(`/api/audio/tracks/${encodeURIComponent(id)}`);
+    if (!res.ok) throw new Error(res.statusText);
+    const name = (songs.find((s) => s.a === id) || {}).title || id;
+    await loadIntoDeck(deckLetter, id, String(name).replace(/ - lyric remix$/, ""), await res.blob());
+  }
+  const deckState = () => {
+    const d = window.decks || {}, st = (typeof state !== "undefined" ? state : window.state) || {};
+    return { a: st.trackA || null, b: st.trackB || null, playing: d.a && d.a.playing ? "a" : d.b && d.b.playing ? "b" : null };
+  };
+  // Shows the engine's wait state ("Getting stems for the remix") until the remix plays or is dropped.
+  function watchStatus() {
+    clearInterval(statusTimer);
+    statusTimer = setInterval(() => {
+      const lr = lyricRemix();
+      if (!lr) return clearInterval(statusTimer);
+      if (lr.status) note(lr.status);
+      if (!lr.want) { clearInterval(statusTimer); if (lr.status) note(lr.status); }
+    }, LRS.POLL_MS);
   }
 
   async function act(action, planId) {
-    const deckLetter = LRS.deckFor(action);
+    const song = songs.find((s) => LRS.planId(s) === planId);
+    if (!song) return;
     try {
-      note("Rendering lyric remix…");
-      const doc = await ensureReady(planId);
-      note(`Loading ${doc.title} into deck ${deckLetter.toUpperCase()}…`);
-      const res = await fetch(LRS.audioUrl(doc));
-      if (!res.ok) throw new Error(res.statusText);
-      await loadIntoDeck(deckLetter, doc.id, doc.title, await res.blob());
-      const deck = window.decks && window.decks[deckLetter], grid = LRS.gridFrom(doc);
-      if (deck && grid && !deck.analysis) {   // the track analysis route has nothing for an lr- id: use the song doc's grid
-        deck.analysis = grid; if (grid.bpm > 0) deck.bpm = grid.bpm;
-        const bpmEl = document.getElementById(`bpm-${deckLetter}`); if (bpmEl) bpmEl.textContent = deck.bpm.toFixed(1);
-        if (typeof deck.renderBeatGrid === "function") deck.renderBeatGrid();
+      const lr = lyricRemix();
+      if (!lr || !lr.request) throw new Error("the lyric remix engine is not loaded");
+      const plan = LRS.steps(song, action, deckState());
+      if (plan.error) return note(plan.error);
+      askStems(song.a); askStems(song.b);
+      note("Loading the song(s), getting stems…");
+      for (const st of plan.steps) {
+        if (st.request) { lr.request(st.request); continue; }
+        await load(st.load, st.id);
+        const deck = window.decks && window.decks[st.load];
+        if (st.play && deck && typeof deck.play === "function") deck.play();
       }
-      if (action === "play" && deck && typeof deck.play === "function") deck.play();
-      note(`${doc.title} ${action === "play" ? "playing on" : "queued as NEXT on"} deck ${deckLetter.toUpperCase()}.`);
-    } catch (e) { note(`Lyric remix failed: ${e.message}`); refresh(); }
+      note(`Lyric remix booked: ${song.text}`);
+      watchStatus();
+    } catch (e) { note(`Lyric remix failed: ${e.message}`); }
   }
 
   rowsEl.addEventListener("click", (e) => {
     const b = e.target.closest("[data-lrs]");
     if (!b) return;
     if (b.dataset.lrs === "reload") return refresh();
-    if (b.dataset.lrs === "retry") { const s = songs.find((x) => LRS.planId(x) === b.dataset.plan); if (s) { s.state = "none"; s.error = null; } return act("play", b.dataset.plan); }
     act(b.dataset.lrs, b.dataset.plan);
   });
   let searchTimer = null;

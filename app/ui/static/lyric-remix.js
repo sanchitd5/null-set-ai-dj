@@ -82,8 +82,27 @@
   }
   const statusText = (plan) => `Lyric remix: ${plan.text || ""}`.trim();
 
+  // A lyric remix somebody asked for (the Lyric remixes list or an AI pick): `{plan, a, b|null, seen}`. The plan id goes to dj-core as
+  // ctx.wantPlan (only that plan, the song cooldowns and the relaxed session do not apply); a within-song plan only on its own song and
+  // not in a transition pass, a pair plan only when its B is the booked next song.
+  function wantPlanFor(w, aId, bId, transition) {
+    if (!w || w.a !== aId) return null;
+    if (w.b) return bId === w.b ? w.plan : null;
+    return !bId && !transition ? w.plan : null;
+  }
+  // Gates that can clear by themselves (stems load, the window comes, the other move ends): the request is kept and retried at the next
+  // phrase; any other gate (language, quality, tempo gap, no plan ...) drops it. Same list as dj-core retryGates.
+  const RETRY_GATES = ["stems_not_live", "guest_stems", "busy", "vocal_layer", "late", "wait", "no_room", "vocal_owner", "no_stem_bus", "unavailable"];
+  const retryable = (gate) => RETRY_GATES.includes(gate);
+  // The "getting stems" / "waiting" line for a refusal of a requested remix, null when the request was dropped for good.
+  function wantStatus(gate, reason) {
+    if (gate === "stems_not_live" || gate === "guest_stems" || gate === "deferring") return "Getting stems for the remix";
+    if (retryable(gate)) return "Remix waiting for its moment";
+    return `Remix not played: ${reason || gate}`;
+  }
+
   const HAS_WAIT_MS = 400;           // the first eligible phrase waits this long (once) for /has before it is skipped
-  const core = { songCtx, transitionCtx, overlapCtx, HAS_WAIT_MS, body, splitSlices, sliceTiming, windowOf, leadRefusal, noteDone, statusText, MIN_LEAD_S, EXIT_GUARD_BARS };
+  const core = { songCtx, transitionCtx, overlapCtx, wantPlanFor, retryable, wantStatus, HAS_WAIT_MS, body, splitSlices, sliceTiming, windowOf, leadRefusal, noteDone, statusText, MIN_LEAD_S, EXIT_GUARD_BARS };
   root.lyricRemixCore = core;
   if (typeof module !== "undefined" && module.exports) module.exports = core;
 
@@ -99,6 +118,17 @@
     const said = new Set();                          // "deck:phrase" refusals already logged
     const seen = { a: null, b: null };                // track id last seen per deck
     let rttS = DEFAULT_RTT_S;
+    let want = null;                                 // the requested remix {plan, a, b, seen}, until it plays or its song leaves the air
+    let wantStatusText = "";
+    const setStatus = (t) => { wantStatusText = t || ""; try { host.bus.emit("lyric-remix-status", { text: wantStatusText }); } catch (e) { /* optional */ } };
+    function request(w) {
+      if (!w || !w.plan || !w.a) return false;
+      want = { plan: String(w.plan), a: String(w.a), b: w.b ? String(w.b) : null, seen: false };
+      setStatus("Waiting for the song");
+      return true;
+    }
+    function clearWant() { want = null; setStatus(""); }
+    const wantsDeck = (d) => !!(want && d && trackOf(d) === want.a);
 
     const other = (id) => (id === "a" ? "b" : "a");
     const trackOf = (d) => (host.state && host.state[d.id === "a" ? "trackA" : "trackB"]) || d.trackId || null;
@@ -275,32 +305,42 @@
     }
     function plan_(d, o, aId, g, bId) {
       try {
+        if (want && want.a !== aId && want.seen) clearWant();             // its song left the air without it
+        const asked = !!(want && want.a === aId);
+        if (asked) want.seen = true;
         const within = cached(aId, null), pair = bId ? cached(aId, bId) : null;
-        if (!within && !pair) return;                      // /has not answered within the cap: skip this phrase
-        const wantTransition = !!(pair && pair.pair > 0), wantSong = !!(within && within.within > 0);
+        const wpSong = wantPlanFor(want, aId, null, false), wpPair = wantPlanFor(want, aId, bId, true);
+        if (!asked && !within && !pair) return;                            // /has not answered within the cap: skip this phrase
+        const wantTransition = asked ? !!wpPair : !!(pair && pair.pair > 0), wantSong = asked ? !!wpSong : !!(within && within.within > 0);
         if (!wantTransition && !wantSong) return;
         const inp = deckInputs(d, o), base = songCtx(inp);
         const key = `${d.id}:${o.phrase}`;
-        const tries = [];
-        if (wantTransition || wantSong) { const oc = overlapCtx(base, g, overlapInfo(d)); if (oc) tries.push({ bId, ctx: oc }); }
-        if (wantTransition) { const tc = transitionCtx(base, g); if (tc) tries.push({ bId, ctx: tc }); }
-        if (wantSong) tries.push({ bId: null, ctx: base });
+        let tries = [];
+        const withWant = (c, plan) => (plan ? Object.assign(c, { wantPlan: plan }) : c);
+        if (wantTransition || wantSong) { const oc = overlapCtx(base, g, overlapInfo(d)); if (oc) tries.push({ bId, ctx: withWant(oc, wpPair), want: wpPair }); }
+        if (wantTransition) { const tc = transitionCtx(base, g); if (tc) tries.push({ bId, ctx: withWant(tc, wpPair), want: wpPair }); }
+        if (wantSong) tries.push({ bId: null, ctx: withWant(Object.assign({}, base), wpSong), want: wpSong });
+        if (asked) tries = tries.filter((t) => t.want);               // a request only runs its own plan
+        let lastRefusal = null;
+        const refused = () => { if (asked && lastRefusal) setStatus(wantStatus(lastRefusal.gate, lastRefusal.reason)); if (asked && lastRefusal && !retryable(lastRefusal.gate)) want = null; };
         const run = (i) => {
-          if (i >= tries.length) return;
+          if (i >= tries.length) return refused();
           const t = tries[i], t0 = host.clock.now();
           post("/api/lyric_remix/plan", body(aId, t.bId, t.ctx)).then((res) => {
             rttS = Math.max(0.05, Math.min(2, (host.clock.now() - t0) / 1000));
             if (!res || res.ok !== true) {
+              lastRefusal = { gate: res && res.gate, reason: res && res.reason };
               if (!said.has(key)) { said.add(key); if (said.size > 200) said.clear(); console.info(`lyric remix skipped: ${res && res.gate}: ${res && res.reason}`); }
               return run(i + 1);
             }
             if (!d.playing || trackOf(d) !== aId) return;
             const r = d._learned || (d._learned = { used: [], count: 0, lastAtBar: null, variant: 0 });
             const armed = arm(d, res);
-            if (!armed.ok) { console.info(`lyric remix skipped: ${armed.gate}: ${armed.reason}`); return run(i + 1); }
+            if (!armed.ok) { lastRefusal = { gate: armed.gate, reason: armed.reason }; console.info(`lyric remix skipped: ${armed.gate}: ${armed.reason}`); return run(i + 1); }
             noteDone(r, donePlans, res, inp.atBar);
+            if (t.want && want && want.plan === t.want) clearWant();
             say(d, res, armed, inp.atBar);
-          }).catch((e) => { console.info("lyric remix unavailable -", e && e.message); });
+          }).catch((e) => { lastRefusal = { gate: "unavailable", reason: e && e.message }; console.info("lyric remix unavailable -", e && e.message); refused(); });
         };
         run(0);
       } catch (e) {
@@ -328,7 +368,8 @@
         }
       } catch (e) { console.info("lyric remix stop failed -", e && e.message); }
     }
-    const api = { core, tick, arm, stop, cancel, prefetch, get donePlans() { return donePlans; } };
+    const api = { core, tick, arm, stop, cancel, prefetch, request, clear: clearWant, wantsDeck, get want() { return want; }, get status() { return wantStatusText; },
+      get donePlans() { return donePlans; } };
     host.mod.lyricRemix = api;
     return api;
   }

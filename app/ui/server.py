@@ -3213,11 +3213,27 @@ def autopilot_suggest(req: AutopilotSuggestRequest):
             raise HTTPException(status_code=504, detail="suggest still running")
         return slot["result"]
     try:
-        slot["result"] = _suggest_guaranteed(req)
+        slot["result"] = _attach_lyric_remix(req, _suggest_guaranteed(req))
         return slot["result"]
     finally:
         slot["done_at"] = _time.time()
         slot["event"].set()
+
+
+def _attach_lyric_remix(req: "AutopilotSuggestRequest", res: dict) -> dict:
+    """LIVEREMIX: with the owner's switch on, the AI DJ may choose a lyric remix as its next move: dj-core picks one of the plans whose
+    song(s) are among the picks that passed the gates, rate limited; that pick goes first and carries `lyric_remix` (the client books the
+    song or the A -> B pair and the remix is performed live). Never changes anything when off, on a look-ahead or on any failure."""
+    try:
+        picks = res.get("suggestions") if isinstance(res, dict) else None
+        if picks and not req.lookahead:
+            ss = req.set_state or {}
+            recent = [*(ss.get("playing_ids") or []), *req.exclude_ids, *req.vetoed]
+            _lyric_remix_songs.attach_pick(picks, playing_id=req.track_id, set_id=_clean_set_id(req.set_id),
+                                           history_len=len(req.history), recent_ids=recent)
+    except Exception as exc:       # noqa: BLE001 - a remix is a bonus
+        print(f"[suggest] lyric remix pick failed: {exc!r}", flush=True)
+    return res
 
 
 def _autopilot_suggest_impl(req: AutopilotSuggestRequest, ctx: Optional[dict] = None):
@@ -3835,8 +3851,7 @@ from app.ui.services import lyric_remix_songs as _lyric_remix_songs  # noqa: E40
 
 _lyric_remix_songs.configure(
     track_path=lambda tid: _tracks.get(tid) if (_tracks.get(tid) and _tracks[tid].exists()) else None,
-    stems4=_cached_stems4_safe, queue_stems=lambda tid: _queue_stems(tid, urgent=True),
-    name_of=lambda tid: _track_names.get(tid) or tid, analyze=analyze_track)
+    name_of=lambda tid: _track_names.get(tid) or tid)
 app.include_router(_lyric_remix_songs.router)
 from app.ui.services.mobile_api import router as _mobile_router  # noqa: E402 -- phone ("lite" console) wrappers
 
