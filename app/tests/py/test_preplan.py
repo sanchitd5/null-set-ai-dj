@@ -80,9 +80,39 @@ def test_quick_window_still_gets_a_plan(tmp_path):
     assert any(c["bars"] == 8 for c in cands)
     for c in cands:
         assert c["a_in"] >= 37 + preplan.MIN_LEAD_S + preplan.PLAN_BUDGET_S
-    # a long window keeps the 16/32-bar overlaps only
+    # a long window keeps the long-window overlaps (16 / 32, 64 only for a long compatible pair)
     long_c = preplan.candidates(a, b, BPM, BPM, lo=100, hi=200, now=37, eA=eA, eB=eB, key_score=1.0)
     assert long_c and {c["bars"] for c in long_c} <= set(preplan.OVERLAPS)
+
+
+def test_64_candidate_only_for_a_long_compatible_pair_and_32_beats_16_at_equal_fit(tmp_path):
+    """BLEND: 64 bars only when key >= BLEND_LONG_KEY_MIN and the tempo gap <= BLEND_LONG_GAP_MAX; BLEND_LENGTH_SCORE ranks 32 over 16."""
+    from app.music_brain.generated import dj_config as DJ
+
+    lv = {"drums": 0.2, "bass": 0.2, "vocals": 0.1, "other": 0.1}
+    sa, sb = _stems(tmp_path, "a", 400, lv), _stems(tmp_path, "b", 400, lv)
+    a, b = _ana(400, 20.0), _ana(400, 32.0)
+    for x in (a, b):
+        x["energy_curve"] = [0.5] * len(x["energy_times"])         # flat: identical fit for every length
+    eA, eB = preplan.energies(sa, BAR), preplan.energies(sb, BAR)
+
+    def lengths(bpm_b, key):
+        return {c["bars"] for c in preplan.candidates(a, b, BPM, bpm_b, lo=200, hi=380, now=37, eA=eA, eB=eB, key_score=key)}
+
+    assert DJ.BLEND_LONG_BARS in lengths(BPM, 1.0)                                   # same key, same tempo: 64 offered
+    assert DJ.BLEND_LONG_BARS in lengths(BPM * 1.01, DJ.BLEND_LONG_KEY_MIN)           # inside the limits
+    assert DJ.BLEND_LONG_BARS not in lengths(BPM, 0.8)                                # key too far
+    assert DJ.BLEND_LONG_BARS not in lengths(BPM, None)                               # unknown key
+    assert DJ.BLEND_LONG_BARS not in lengths(BPM * (1 + DJ.BLEND_LONG_GAP_MAX + 0.01), 1.0)   # tempo gap too wide
+    assert {16, 32} <= lengths(BPM, 0.8) <= {16, 32}
+    # equal fit: the same handover line at 16 and 32 bars scores by BLEND_LENGTH_SCORE (32 over 16)
+    cands = preplan.candidates(a, b, BPM, BPM, lo=200, hi=380, now=37, eA=eA, eB=eB, key_score=0.8)
+    by = {}
+    for c in cands:
+        by.setdefault((c["handover"], c["direction"]), {})[c["bars"]] = c["score"]
+    pairs = [v for v in by.values() if 16 in v and 32 in v]
+    assert pairs
+    assert any(v[32] > v[16] for v in pairs) and DJ.BLEND_LENGTH_SCORE["32"] > DJ.BLEND_LENGTH_SCORE["16"]
 
 
 def test_flat_or_mostly_loud_songs_have_no_high_to_protect():

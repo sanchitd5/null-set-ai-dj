@@ -6,16 +6,26 @@ const sm = require("../../ui/static/stem-moves.js");
 const STEMS = ["drums", "bass", "vocals", "other"];
 const env = (n, f) => Object.fromEntries(STEMS.map((s) => [s, Array.from({ length: n }, (_, i) => f(s, i))]));
 
-// hold lengths: 90 s target, BPM scaled, 16-bar grid, 32..64, capped by room
-assert.strictEqual(HP.mergeHoldBars(240 / 128, 200), 48);
-assert.strictEqual(HP.mergeHoldBars(240 / 174, 200), 64);
-assert.strictEqual(HP.mergeHoldBars(240 / 90, 200), 32);
-assert.strictEqual(HP.mergeHoldBars(240 / 60, 200), 32);
-assert.strictEqual(HP.mergeHoldBars(1.38, 40), 32);
-assert.strictEqual(HP.mergeHoldBars(1.38, 20), 16);
-assert.strictEqual(HP.mergeHoldBars(1.38, 12), 8);
-assert.strictEqual(HP.mergeHoldBars(1.38, 4), 0);
-assert.strictEqual(HP.mergeHoldBars(1.875, 200, HP.settings({ merge_hold_bars: 128 })), 128);
+// BLEND hold lengths: 32 default, 64 for a long compatible pair (key >= 0.9, gap <= 2 %, room >= 74), 16 in a quick set; capped by room on the 16-bar grid
+const mhb = (roomBars, o) => HP.mergeHoldBars({ roomBars, ...o });
+assert.strictEqual(mhb(200, { keyScore: 0.7, gap: 0.01 }), 32);                       // default
+assert.strictEqual(mhb(200, {}), 32);                                                  // unknown key: never long
+assert.strictEqual(mhb(200, { keyScore: 0.9, gap: 0.01 }), 64);                        // long compatible pair
+assert.strictEqual(mhb(200, { keyScore: 1, gap: 0.02 }), 64);
+assert.strictEqual(mhb(200, { keyScore: 0.89, gap: 0.01 }), 32);                       // key just short
+assert.strictEqual(mhb(200, { keyScore: 1, gap: 0.03 }), 32);                          // tempo gap just over
+assert.strictEqual(mhb(73, { keyScore: 1, gap: 0 }), 32);                              // room < 74: not long
+assert.strictEqual(mhb(74, { keyScore: 1, gap: 0 }), 64);
+assert.strictEqual(mhb(200, { keyScore: 1, gap: 0, quick: true }), 16);                // quick set
+assert.strictEqual(mhb(40, { keyScore: 0.7 }), 32);
+assert.strictEqual(mhb(20, { keyScore: 0.7 }), 16);                                    // room cap on the 16-bar grid
+assert.strictEqual(mhb(12, {}), 8);
+assert.strictEqual(mhb(4, {}), 0);
+assert.strictEqual(HP.mergeHoldBars({ roomBars: 200, settings: HP.settings({ merge_hold_bars: 128 }), keyScore: 1, gap: 0, quick: true }), 128);   // the user's length wins
+assert.strictEqual(HP.blendTargetBars({ keyScore: 1, gap: 0 }), 64);
+assert.strictEqual(HP.blendTargetBars({ keyScore: 1, gap: 0, roomBars: 60 }), 32);
+assert.strictEqual(HP.blendRoomTarget(false), 32);
+assert.strictEqual(HP.blendRoomTarget(true), 16);
 assert.strictEqual(HP.settings({ merge_hold_bars: 999 }).mergeHoldBars, 128);
 assert.strictEqual(HP.settings({ merge_hold_bars: 3 }).mergeHoldBars, 16);
 assert.strictEqual(HP.settings("junk").stemMergeShare, 0.6);
@@ -38,7 +48,7 @@ assert.strictEqual(HP.enforceRecipeMix("Echo Out", ["Stem Merge", "Stem Merge", 
 
 // level matching: the gain fix. A quiet stem refused the hold ("master -x dB"); matched, it books.
 {
-  const base = (o) => ({ gap: 0.01, keyScore: 0.9, roomBars: 100, barS: 2, aT: 0, bT: 0, barA: 2, barB: 2, aVox: [], bVox: [], ...o });
+  const base = (o) => ({ gap: 0.01, keyScore: 0.85, roomBars: 100, barS: 2, aT: 0, bT: 0, barA: 2, barB: 2, aVox: [], bVox: [], ...o });
   const eA = env(80, (s) => (s === "drums" || s === "bass" ? 0.45 : 0.3)), eB = env(80, (s) => (s === "vocals" || s === "other" ? 0.02 : 0.45));
   const off = sm.holdPlan(base({ eA, eB, levelMatch: false })), on = sm.holdPlan(base({ eA, eB }));
   assert.strictEqual(off.ok, false);
@@ -50,8 +60,10 @@ assert.strictEqual(HP.enforceRecipeMix("Echo Out", ["Stem Merge", "Stem Merge", 
   const dead = env(80, () => 0);
   assert.strictEqual(sm.holdPlan(base({ eA: dead, eB: dead })).ok, false);                 // the master floor still refuses silence
   const e = env(80, () => 0.3);
-  assert.strictEqual(sm.holdPlan(base({ eA: e, eB: e, barS: 240 / 128 })).M, 48);          // BPM scaled long hold
-  assert.strictEqual(sm.holdPlan(base({ eA: e, eB: e, barS: 240 / 174 })).M, 64);
+  assert.strictEqual(sm.holdPlan(base({ eA: e, eB: e })).M, 32);                          // default 32 bars
+  assert.strictEqual(sm.holdPlan(base({ eA: e, eB: e, keyScore: 0.9 })).M, 64);            // long compatible pair
+  assert.ok(sm.holdPlan(base({ eA: e, eB: e, keyScore: 0.9, quick: true })).M <= 16);      // a quick set keeps short
+  assert.strictEqual(sm.holdPlan(base({ eA: e, eB: e, keyScore: 0.9, roomBars: 60 })).M, 32);   // room < 74: not long
   const long = env(200, () => 0.3);
   assert.strictEqual(sm.holdPlan(base({ eA: long, eB: long, roomBars: 200, holdMin: 128, holdMax: 128 })).M, 128);
 }

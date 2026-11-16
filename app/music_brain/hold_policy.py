@@ -9,6 +9,8 @@ from __future__ import annotations
 import math
 from typing import Any, Optional
 
+from app.music_brain.generated import dj_config as DJ
+
 MERGE_HOLD_MIN_BARS = 32
 MERGE_HOLD_MAX_BARS = 64
 MERGE_HOLD_TARGET_S = 90
@@ -62,12 +64,38 @@ def settings(j: Any = None) -> dict:
     return s
 
 
-def merge_hold_bars(bar_s: float, room_bars: float, s: Optional[dict] = None) -> int:
+BLEND_TAIL_BARS = 10  # 8-bar handover + 2 spare bars
+
+
+def blend_room_for(m: int) -> int:
+    return m + BLEND_TAIL_BARS
+
+
+def blend_target_bars(key_score: Optional[float], gap: float = 0.0, quick: bool = False,
+                      room_bars: Optional[float] = None) -> int:
+    """BLEND rule (dj-core blend_rule.dart): 32 bars, 64 for a long compatible pair with room, 16 in a quick set."""
+    if quick:
+        return DJ.BLEND_TIGHT_BARS
+    long = (key_score is not None and key_score >= DJ.BLEND_LONG_KEY_MIN and (gap or 0) <= DJ.BLEND_LONG_GAP_MAX
+            and (room_bars is None or room_bars >= blend_room_for(DJ.BLEND_LONG_BARS)))
+    return DJ.BLEND_LONG_BARS if long else DJ.BLEND_DEFAULT_BARS
+
+
+def blend_room_target(quick: bool = False) -> int:
+    """The length A's exit moves earlier for: 32 bars (16 in a quick set, which never moves)."""
+    return DJ.BLEND_TIGHT_BARS if quick else DJ.BLEND_DEFAULT_BARS
+
+
+def merge_hold_bars(room_bars: float, s: Optional[dict] = None, key_score: Optional[float] = None,
+                    gap: float = 0.0, quick: bool = False) -> int:
+    """User-set length wins (clamped to min..max); else the BLEND rule; then capped by room on the 16-bar grid."""
     s = s or settings()
-    if not bar_s > 0 or not room_bars >= 8:
+    if not room_bars >= 8:
         return 0
-    want = int(MERGE_HOLD_TARGET_S // bar_s)
-    bars = int(_clamp((want // HOLD_ALIGN_BARS) * HOLD_ALIGN_BARS, s["merge_min"], s["merge_max"]))
+    if s["merge_hold_bars"] > 0:
+        bars = int(_clamp(s["merge_hold_bars"], s["merge_min"], s["merge_max"]))
+    else:
+        bars = blend_target_bars(key_score, gap, quick, room_bars)
     cap = int(room_bars // HOLD_ALIGN_BARS) * HOLD_ALIGN_BARS
     if bars <= cap:
         return bars

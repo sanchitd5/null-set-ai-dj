@@ -7,7 +7,7 @@ what the ear already pre-planned; bidirectional."
 A plan is (a_in, b_start, bars, combo):
   a_in     A's song time where B starts (a phrase line)
   b_start  B's song time at that moment (one of B's own phrase lines)
-  bars     how long both records share the air (16 or 32, on A's tempo)
+  bars     how long both records share the air (16, 32, or 64 for a long compatible pair, on A's tempo)
   combo    which deck owns each stem meanwhile (app.music_brain.render.merge)
 then B takes every stem on the handover line a_in + bars.
 
@@ -33,7 +33,7 @@ from app.music_brain.generated import dj_config as DJ
 
 PREPLAN_DIR = CACHE_DIR / "preplan"
 SR = 11025
-OVERLAPS = (16, 32)
+OVERLAPS = (16, 32, 64)         # BLEND: 32 is the default, 64 only for a long compatible pair (see long_blend_ok), 16 when little room
 MAX_HANDOVERS = 6
 EAR_TOP = 4
 MIN_LEAD_S = float(DJ.REPLAN_LEAD_S)          # B cannot start sooner than this from now: room to cue it
@@ -181,6 +181,13 @@ def in_breakdown(spans: Sequence[tuple], t: float) -> bool:
     return any(x <= t < y for x, y in spans)
 
 
+def long_blend_ok(key_score: Optional[float], bpm_a: float, bpm_b: float) -> bool:
+    """BLEND: a 64-bar merge only for a long compatible pair (key score and tempo gap inside the dj-config limits)."""
+    if key_score is None or key_score < DJ.BLEND_LONG_KEY_MIN or not (bpm_a > 0 and bpm_b > 0):
+        return False
+    return abs(bpm_a / bpm_b - 1) <= DJ.BLEND_LONG_GAP_MAX
+
+
 def candidates(a: dict, b: dict, bpm_a: float, bpm_b: float, lo: float, hi: float, now: float,
                eA: Dict[str, np.ndarray], eB: Dict[str, np.ndarray], key_score: Optional[float],
                b_rap: bool = False) -> List[dict]:
@@ -194,7 +201,8 @@ def candidates(a: dict, b: dict, bpm_a: float, bpm_b: float, lo: float, hi: floa
         idx = np.linspace(0, len(lines_a) - 1, MAX_HANDOVERS).round().astype(int)
         lines_a = [lines_a[i] for i in sorted(set(idx))]
     out = []
-    overlaps = SHORT_OVERLAPS if hi <= SHORT_WINDOW_S else OVERLAPS
+    short = hi <= SHORT_WINDOW_S
+    overlaps = SHORT_OVERLAPS if short else tuple(L for L in OVERLAPS if L != DJ.BLEND_LONG_BARS or long_blend_ok(key_score, bpm_a, bpm_b))
     for h in lines_a:
         for L in overlaps:
             a_in = h - L * bar_a
@@ -220,7 +228,7 @@ def candidates(a: dict, b: dict, bpm_a: float, bpm_b: float, lo: float, hi: floa
                 after = total_over(eB, b_line, b_line + 8 * bar_b, bar_b)
                 rise = (after - before) / max(before, 1e-6)
                 sag = min(0.0, (during - before) / max(before, 1e-6))
-                score = best["score"] + 15 * float(np.clip(rise, -1, 0.5)) + 20 * sag + (5 if L == 16 else 0)
+                score = best["score"] + 15 * float(np.clip(rise, -1, 0.5)) + 20 * sag + ((5 if L == 16 else 0) if short else DJ.BLEND_LENGTH_SCORE.get(str(L), 0))
                 direction = "B's intro under A's outro" if bs["why"] == "B's intro" else f"A's tail over {bs['why']}"
                 out.append({"a_in": round(a_in, 3), "b_start": round(bs["t"], 3), "handover": round(h, 3), "bars": L,
                             "combo": best["combo"], "label": best["label"], "direction": direction,
