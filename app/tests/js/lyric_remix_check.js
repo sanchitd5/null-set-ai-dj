@@ -221,7 +221,7 @@ function fakeHost(responses) {
       assert.deepStrictEqual(m.want && m.want.plan, "r1", "kept for the next chance"); assert.strictEqual(m.status, "Getting stems for the remix");
       stems = true;
       m.tick(host.decks.a, Object.assign({}, o, { phrase: 7 })); await flush(); await flush(); await flush();
-      assert(host.decks.a._lyricRemix, "armed at the retry"); assert.strictEqual(m.want, null); assert.strictEqual(m.status, "");
+      assert(host.decks.a._lyricRemix, "armed at the retry"); assert.strictEqual(m.want, null); assert(/^Remix in \d+ bars$/.test(m.status), "armed: the deck status counts the bars to the remix");
       // a hard refusal drops the request with the reason; a request for another song is ignored (and dropped once its song was seen leaving)
       const h2 = fakeHost((url) => (url.includes("/has") ? { within: 0, pair: 0 } : { ok: false, gate: "lang_mismatch", reason: "two languages" }));
       const m2 = mk(h2.host);
@@ -233,6 +233,61 @@ function fakeHost(responses) {
       m3.request({ plan: "z1", a: "s7", b: null }); m3.tick(h3.host.decks.a, o); await flush(); await flush();
       assert(!h3.log.fetch.some((f) => f[0] === "/api/lyric_remix/plan"), "a request for a song that is not on air asks nothing");
       assert.strictEqual(m3.want.plan, "z1"); assert.strictEqual(m3.wantsDeck(h3.host.decks.a), false);
+    }
+    // a requested remix drives itself (own phrase clock, AI DJ off): plan asked, armed at the section, status through to playing; AI DJ on: no double run
+    {
+      const flush = () => new Promise((r) => setImmediate(r));
+      const okPlan = { ok: true, kind: "lyric_remix", mode: "song", start: 120, end: 128, plan_id: "d1", text: "driven", why: "Lyric remix: driven", score: 0.8, beats: 16,
+        slices: [{ from: 40, dur: 4, off: 0, gain: 1, src: "self" }] };
+      const prep = (responses) => {
+        const h = fakeHost(responses), ivs = []; let cleared = 0;
+        h.host.clock.setInterval = (f) => { ivs.push(f); return ivs.length; }; h.host.clock.clearInterval = () => { cleared++; };
+        const down = Array.from({ length: 200 }, (_, i) => i * BAR);        // 2 s bars, a line every 16 s
+        for (const id of ["a", "b"]) { h.host.decks[id].analysis = { bpm: 120, downbeat_times: down }; h.host.decks[id].buffer = { duration: 400 }; h.host.decks[id]._currentPosition = () => h.pos; }
+        h.pos = 100; h.ivs = ivs; h.cleared = () => cleared;
+        return h;
+      };
+      const plans = (h) => h.log.fetch.filter((f) => f[0] === "/api/lyric_remix/plan");
+      const h = prep((url) => (url.includes("/has") ? { within: 0, pair: 0 } : okPlan));
+      const m = mk(h.host);
+      assert.strictEqual(m.request({ plan: "d1", a: "s1", b: null }), true); assert.strictEqual(h.ivs.length, 1, "the own clock starts with the request");
+      h.ivs[0](); await flush(); await flush(); await flush();
+      assert.strictEqual(plans(h).length, 1, "AI DJ off: the plan is asked by the own clock");
+      const sent = JSON.parse(plans(h)[0][1].body); assert.strictEqual(sent.ctx.wantPlan, "d1"); assert.strictEqual(sent.ctx.lineT, 112, "mid-phrase: the next line");
+      assert(h.host.decks.a._lyricRemix, "armed at the section"); assert.strictEqual(m.want, null);
+      assert(/^Remix in \d+ bars$/.test(m.status)); assert(h.log.status.some((t) => /^Remix in/.test(t)), "the deck status line shows it");
+      h.ivs[0](); await flush(); assert.strictEqual(plans(h).length, 1, "performed once: no second plan");
+      h.host.audio.currentTime = 10 + 21; h.ivs[0](); assert.strictEqual(m.status, "Remix playing");
+      h.host.audio.currentTime = 10 + 400; h.ivs[0](); assert.strictEqual(m.status, ""); assert.strictEqual(m.busy, false);
+      h.ivs[0](); assert.strictEqual(h.cleared(), 1, "the clock stops once the remix is performed");
+      // AI DJ on (SET MIND owns the deck): the own clock never ticks, dj-mind's tick runs it once
+      const h2 = prep((url) => (url.includes("/has") ? { within: 0, pair: 0 } : okPlan));
+      h2.host.mod.djMind = { owns: () => true };
+      const m2 = mk(h2.host); m2.request({ plan: "d1", a: "s1", b: null });
+      h2.ivs[0](); h2.ivs[0](); await flush(); assert.strictEqual(plans(h2).length, 0, "AI DJ on: the own clock leaves the deck to dj-mind");
+      m2.tick(h2.host.decks.a, { pos: 100, bar: BAR, phrase: 6, lineT: 100, entryT: 0, exitT: 400, st: {} }); await flush(); await flush(); await flush();
+      assert.strictEqual(plans(h2).length, 1, "dj-mind's tick plans it once"); h2.ivs[0](); await flush(); assert.strictEqual(plans(h2).length, 1, "no double run");
+      // stems late: waiting status, retried at the next phrase, then armed
+      let stems = false;
+      const h3 = prep((url) => (url.includes("/has") ? { within: 0, pair: 0 } : stems ? okPlan : { ok: false, gate: "stems_not_live", reason: "not sounding" }));
+      const m3 = mk(h3.host); m3.request({ plan: "d1", a: "s1", b: null });
+      h3.ivs[0](); await flush(); await flush(); await flush(); assert.strictEqual(m3.status, "Getting stems for the remix"); assert(m3.want);
+      h3.ivs[0](); await flush(); assert.strictEqual(plans(h3).length, 1, "same phrase: not asked again");
+      stems = true; h3.pos = 118; h3.ivs[0](); await flush(); await flush(); await flush();
+      assert.strictEqual(plans(h3).length, 2, "next phrase: retried"); assert(h3.host.decks.a._lyricRemix, "armed once the stems are there");
+      // a refusal that cannot clear: reason shown, request dropped, clock stops
+      const h4 = prep((url) => (url.includes("/has") ? { within: 0, pair: 0 } : { ok: false, gate: "lang_mismatch", reason: "two languages" }));
+      const m4 = mk(h4.host); m4.request({ plan: "d1", a: "s1", b: null }); h4.ivs[0](); await flush(); await flush(); await flush(); await flush();
+      assert.strictEqual(m4.status, "Remix not played: two languages"); assert.strictEqual(m4.want, null); h4.ivs[0](); assert.strictEqual(h4.cleared(), 1);
+      // a pair booked with the AI DJ off: the remix, then the transition itself (the MERGE -> HOLD path), on the exit line the plan was sized for
+      const pairPlan = Object.assign({}, okPlan, { mode: "transition", plan_id: "p1", slices: [{ from: 40, dur: 4, off: 0, gain: 1, src: "self" }, { from: 12, dur: 4, off: 4, gain: 1, src: "guest", rate: 1 }] });
+      const h5 = prep((url) => (url.includes("/has") ? { within: 0, pair: 0 } : pairPlan)), merges = [];
+      h5.host.mod.autopilot = { mergeNow: (o) => { merges.push(o); return { ok: true, why: "x" }; } };
+      const m5 = mk(h5.host); m5.request({ plan: "p1", a: "s1", b: "s2" });
+      h5.host.decks.b.playing = false; h5.ivs[0](); await flush(); await flush(); await flush();
+      const pb = JSON.parse(plans(h5)[0][1].body); assert.strictEqual(pb.ctx.mode, "transition"); assert.strictEqual(pb.ctx.exitT, 112 + 6 * 16, "exit = six lines past the next line");
+      assert.strictEqual(merges.length, 1, "the transition is booked"); assert.strictEqual(merges[0].aT, 112 + 6 * 16); assert.strictEqual(merges[0].out, "a"); assert.strictEqual(merges[0].inn, "b");
+      assert.strictEqual(merges[0].bId, "s2");
     }
   } finally { console.info = origInfo; }
   console.log("lyric_remix_check: ok");

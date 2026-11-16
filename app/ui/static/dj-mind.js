@@ -740,7 +740,7 @@ function loopVocalRefusal(kind, genre, share) {
   const PLAN_MIN_WAIT_MS = DJ_CONFIG.PLAN_MIN_WAIT_MS, PLAN_MAX_WAIT_MS = DJ_CONFIG.PLAN_MAX_WAIT_MS;   // server LLM timeout is 60 s
   const planWaitMs = (deadlineS) => Math.max(PLAN_MIN_WAIT_MS,
     Math.min(PLAN_MAX_WAIT_MS, (Number.isFinite(deadlineS) ? deadlineS : Infinity) * 1000));
-  const core = { planWaitMs, PLAN_MIN_WAIT_MS, nextLoopStart, loopWrapped, decide, mergeSections, sectionAt, phraseAt, vocalShare, subdropBars, energyNote,
+  const core = { planWaitMs, PLAN_MIN_WAIT_MS, nextLoopStart, loopWrapped, decide, mergeSections, sectionAt, phraseAt, phraseBounds, vocalShare, subdropBars, energyNote,
                  hookKey, motifHook, MOTIF_MAX_PLAYS, MOTIF_GAP_SONGS,
                  phraseBounds, phraseLabel, isPreDrop, remixBlock, aiVeto, needsHoldLoop, holdLoopAnchor, holdLoopSpan, holdLoopCandidates, pickHoldLoop,
                  PRECLEAR_DB, LOW_KILL, REMIX_MOVES,
@@ -1622,6 +1622,7 @@ function loopVocalRefusal(kind, genre, share) {
                     planLayer, layering, get layerActive() { return !!layerRun; }, core,
                     holdLoopInfo, holdLoopAct, overlayState, learnedNow,
                     get transitioning() { return inTransition; },
+                    owns: (id) => !!timer && deckId === id && mindOn(),   // SET MIND follows deck id and ticks its moves (lyric-remix.js: one owner per deck)
                     busy: () => inTransition || !!holdLoop || !!layerRun };   // artist-moves.js run-now safety gate
   }
   if (root.Engine) root.Engine.mount("djMind", create);
