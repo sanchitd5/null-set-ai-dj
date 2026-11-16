@@ -1089,6 +1089,27 @@
   </p>
 </section>
 
+<section class="panel browser" id="lrs-panel">
+  <div class="browser-ribbon">
+    <div class="search-box">
+      <span class="search-icon">⌕</span>
+      <input type="text" id="lrs-search" placeholder="Search lyric remixes by title or new lyric…" />
+    </div>
+    <div class="sort-group">
+      <span class="hud-label">LYRIC REMIXES</span>
+      <label class="lrs-switch" title="Off: lyric remixes play only when you ask for them.">
+        <input type="checkbox" id="lrs-ai-picks" /> AI DJ may pick lyric remixes
+        <span class="hud-label">off = on request only</span>
+      </label>
+      <button class="hw-btn" id="lrs-refresh">REFRESH</button>
+    </div>
+  </div>
+  <div class="browser-table lrs-table">
+    <div class="browser-rows" id="lrs-rows"><div class="browser-empty">Loading lyric remixes…</div></div>
+  </div>
+  <p class="panel-note" id="lrs-status"></p>
+</section>
+
 <div class="nul-super" id="nul-super" aria-hidden="true"></div>
 
 <footer class="footbar">
@@ -1121,6 +1142,7 @@
 <script src="/drop-line.js"></script>
 <script src="/mashup-layer.js"></script>
 <script src="/browser.js"></script>
+<script src="/lyric-remix-songs.js"></script>
 <script src="/hold-policy.js"></script>
 <script src="/stem-moves.js"></script>
 <script src="/learned-moves.js"></script>

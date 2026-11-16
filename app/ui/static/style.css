@@ -1841,3 +1841,11 @@ body::after {
 }
 .build-banner .build-later { padding: 6px 10px; font-weight: 400; }
 html.phone-lite .build-banner button { min-height: 44px; }
+
+/* Lyric remix songs panel (lyric-remix-songs.js): reuses the browser rows, with its own column layout. */
+.lrs-row { display: grid; grid-template-columns: minmax(160px, 4fr) 48px minmax(120px, 2fr) minmax(150px, 2fr); align-items: center; gap: var(--sp-sm, 8px); padding: 6px 8px; }
+.lrs-text { white-space: normal; opacity: 0.8; }
+.lrs-actions { display: flex; gap: 6px; justify-content: flex-end; align-items: center; }
+.lrs-badge.lrs-error { color: #ff5a5a; }
+.lrs-switch { display: inline-flex; align-items: center; gap: 6px; }
+@media (max-width: 600px) { .lrs-row { grid-template-columns: 1fr; } .lrs-actions { justify-content: flex-start; } }
