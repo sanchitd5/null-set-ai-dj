@@ -61,6 +61,15 @@ var StemFetch = (function () {
     return null;
   }
 
-  return { NAMES, aacUrl, fetchBytes, fetchStems, label };
+  // Deck audio for a library track: the same AAC variant (?q=phone) unless the owner asked for the original file
+  // (localStorage dj-full-audio = "1"): a remote browser over a home uplink otherwise waits minutes for 10-20 MB.
+  function trackAudioUrl(id) {
+    const base = `/api/audio/tracks/${encodeURIComponent(id)}`;
+    let full = false;
+    try { full = (typeof localStorage !== "undefined") && localStorage.getItem("dj-full-audio") === "1"; } catch (_) {}
+    return full ? base : aacUrl(base);
+  }
+
+  return { NAMES, aacUrl, fetchBytes, fetchStems, label, trackAudioUrl };
 })();
 if (typeof module !== "undefined" && module.exports) module.exports = StemFetch;

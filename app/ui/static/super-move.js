@@ -356,7 +356,7 @@ if (typeof DJ_CONFIG === "undefined" && typeof require === "function") require("
     const wait = async (ok, ms, gen) => { const t0 = host.clock.now(); while (!ok() && host.clock.now() - t0 < ms && run && run.gen === gen) await new Promise((r) => setTimeout(r, 250)); return ok(); };
     // Song on a deck, native stems in, key-locked at the plan tempo (Rubber Band set, as the autopilot does), not playing.
     async function loadSong(deckId, s, gen) {
-      const r = await host.api.fetch(`/api/audio/tracks/${encodeURIComponent(s.id)}`);
+      const r = await host.api.fetch((typeof StemFetch !== "undefined" ? StemFetch.trackAudioUrl(s.id) : `/api/audio/tracks/${encodeURIComponent(s.id)}`));
       if (!r.ok) throw new Error(`cannot load ${s.name}`);
       await host.loadIntoDeck(deckId, s.id, s.name, await r.blob());
       const d = host.decks[deckId];

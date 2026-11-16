@@ -89,7 +89,7 @@ if (typeof module !== "undefined" && module.exports) module.exports = LRS;
   // Stems are requested at once (stem server); fire and forget, the deck loads them when they are there.
   const askStems = (id) => { if (id) fetch(`/api/tracks/${encodeURIComponent(id)}/separate?stems=4`, { method: "POST" }).catch(() => {}); };
   async function load(deckLetter, id) {
-    const res = await fetch(`/api/audio/tracks/${encodeURIComponent(id)}`);
+    const res = await fetch((typeof StemFetch !== "undefined" ? StemFetch.trackAudioUrl(id) : `/api/audio/tracks/${encodeURIComponent(id)}`));
     if (!res.ok) throw new Error(res.statusText);
     const name = (songs.find((s) => s.a === id) || {}).title || id;
     await loadIntoDeck(deckLetter, id, String(name).replace(/ - lyric remix$/, ""), await res.blob());
