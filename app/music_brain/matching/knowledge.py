@@ -115,35 +115,33 @@ def privacy_hits(obj, where: str = "") -> List[str]:
 
 
 # ------------------------------------------------------------------------------------ slim atlas
-def slim_atlas(atlas: dict, keep: int = KEEP, per_move: int = PER_MOVE) -> dict:
-    """The pairs worth publishing: every pair with evidence (combo / studied / seed / played)
-    plus, per A, the top `keep` by works and the top `per_move` per judged move (what the
-    server's Index serves). Tracks keep what summary / chains / order_picks read.
-    Dropped: file-stat sigs, per-bar features, vocal regions, session ids, the cache path."""
+def _slim_chosen(ps: List[dict], keep: int, per_move: int) -> Dict[str, dict]:
+    """One A's slim selection {b: pair}: evidence pairs, the top `keep` by works, the top `per_move` per judged move."""
     from app.music_brain.atlas import pair_atlas as pa
 
-    by_a: Dict[str, List[dict]] = {}
-    for p in atlas["pairs"].values():
-        by_a.setdefault(p["a"], []).append(p)
-    pick: Dict[str, dict] = {}
-    for a, ps in by_a.items():
-        ps.sort(key=lambda p: (-p["works"], p["b"]))
-        chosen = {p["b"]: p for p in ps[:keep]}
-        for p in ps:
-            if p.get("combo") or p.get("played") or p.get("seed") or p.get("studied"):
-                chosen[p["b"]] = p
-        for m in pa.MOVES:
-            if m in pa.UNJUDGED:
-                continue
-            ok = [p for p in ps if pa.move_of(p, m).get("ok")]
-            ok.sort(key=lambda p: (-(pa.move_of(p, m).get("score") or 0), -p["works"], p["b"]))
-            for p in ok[:per_move]:
-                chosen[p["b"]] = p
-        for p in chosen.values():
-            q = {k: v for k, v in p.items() if k not in ("sig", "knowledge")}
-            if isinstance(q.get("played"), dict):
-                q["played"] = {k: v for k, v in q["played"].items() if k != "sessions"}
-            pick[f"{p['a']}>{p['b']}"] = q
+    ps.sort(key=lambda p: (-p["works"], p["b"]))
+    chosen = {p["b"]: p for p in ps[:keep]}
+    for p in ps:
+        if p.get("combo") or p.get("played") or p.get("seed") or p.get("studied"):
+            chosen[p["b"]] = p
+    for m in pa.MOVES:
+        if m in pa.UNJUDGED:
+            continue
+        ok = [p for p in ps if pa.move_of(p, m).get("ok")]
+        ok.sort(key=lambda p: (-(pa.move_of(p, m).get("score") or 0), -p["works"], p["b"]))
+        for p in ok[:per_move]:
+            chosen[p["b"]] = p
+    return chosen
+
+
+def _slim_pair(p: dict) -> dict:
+    q = {k: v for k, v in p.items() if k not in ("sig", "knowledge")}
+    if isinstance(q.get("played"), dict):
+        q["played"] = {k: v for k, v in q["played"].items() if k != "sessions"}
+    return q
+
+
+def _slim_doc(atlas: dict, pick: Dict[str, dict], source_pairs: int, keep: int, per_move: int) -> dict:
     tr = atlas.get("tracks") or {}
     used = {x for p in pick.values() for x in (p["a"], p["b"])}
     tracks = {t: {f: tr[t].get(f) for f in TRACK_FIELDS if f in tr[t]} for t in sorted(used) if t in tr}
@@ -151,7 +149,47 @@ def slim_atlas(atlas: dict, keep: int = KEEP, per_move: int = PER_MOVE) -> dict:
             "slim": {"keep": keep, "per_move": per_move}, "tracks": tracks,
             "pairs": dict(sorted(pick.items())),
             "stats": {"tracks": len(tracks), "pairs": len(pick), "source_tracks": len(tr),
-                      "source_pairs": len(atlas["pairs"])}}
+                      "source_pairs": source_pairs}}
+
+
+def slim_atlas(atlas: dict, keep: int = KEEP, per_move: int = PER_MOVE) -> dict:
+    """The pairs worth publishing: every pair with evidence (combo / studied / seed / played)
+    plus, per A, the top `keep` by works and the top `per_move` per judged move (what the
+    server's Index serves). Tracks keep what summary / chains / order_picks read.
+    Dropped: file-stat sigs, per-bar features, vocal regions, session ids, the cache path."""
+    by_a: Dict[str, List[dict]] = {}
+    for p in atlas["pairs"].values():
+        by_a.setdefault(p["a"], []).append(p)
+    pick: Dict[str, dict] = {}
+    for a, ps in by_a.items():
+        for p in _slim_chosen(ps, keep, per_move).values():
+            pick[f"{p['a']}>{p['b']}"] = _slim_pair(p)
+    return _slim_doc(atlas, pick, len(atlas["pairs"]), keep, per_move)
+
+
+def slim_atlas_stored(cache: Path, keep: int = KEEP, per_move: int = PER_MOVE) -> Optional[dict]:
+    """slim_atlas of the stored atlas WITHOUT loading it whole (pa.load parses ~900k pairs, several GB
+    on a big library): one A's pairs are read, reduced and dropped at a time. Same result as
+    slim_atlas(pa.load(cache)); None when there is no atlas. The doc also carries "tracks_all"
+    ({id: name}) for the caller's name lookup."""
+    from app.music_brain.atlas import atlas_store as store
+    from app.music_brain.atlas import pair_atlas as pa
+
+    root = pa._root(cache, None)
+    meta = pa.load_meta(path=root)
+    if meta is None:
+        return None
+    atlas = {k: v for k, v in meta.items() if k not in pa._META_ONLY}
+    atlas["tracks"] = store.track_features(root)
+    pick: Dict[str, dict] = {}
+    n = 0
+    for a, ps in store.iter_pairs_by_a(root):
+        n += len(ps)
+        for p in _slim_chosen(list(ps.values()), keep, per_move).values():
+            pick[f"{p['a']}>{p['b']}"] = _slim_pair(p)
+    doc = _slim_doc(atlas, pick, n, keep, per_move)
+    doc["tracks_all"] = {t: f.get("name") for t, f in atlas["tracks"].items()}
+    return doc
 
 
 def _gz_json(p: Path):
@@ -254,12 +292,11 @@ def export(cache_dir: Optional[Path] = None, out: Optional[Path] = None,
         n_obs = sum(len(e.get("observations") or []) for e in learned.values() if isinstance(e, dict))
     from app.music_brain.atlas import pair_atlas as pa
 
-    atlas = pa.load(cache)
-    slim = slim_atlas(atlas) if atlas else None
+    slim = slim_atlas_stored(cache)                # streamed: never the whole atlas in memory
     if slim:
         ids.update(slim["tracks"])
     names = dict(_read(out / NAMES, {}) or {})
-    atlas_names = {t: f.get("name") for t, f in ((atlas or {}).get("tracks") or {}).items()}
+    atlas_names = (slim or {}).pop("tracks_all", None) or {}
     for t in ids:
         n = names_local.get(t) or names_local.get(ds.resolve_alias(t, cache, aliases)) or atlas_names.get(t)
         if n:

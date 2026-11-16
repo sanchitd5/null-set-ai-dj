@@ -25,6 +25,7 @@ load_dotenv()
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
+from app.ui.services.bounded_cache import BoundedCache
 from app.ui.services.ranged_file import RangedFileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -99,6 +100,24 @@ _admin.configure(AUTH_GUARD)
 def health():
     """Unauthenticated liveness probe: says nothing beyond ok."""
     return {"ok": True}
+
+
+@app.get("/api/health")
+def health_detail():
+    """Authenticated health: ok plus the process memory line (RSS, peak, warn threshold) and the sizes of the
+    per-track caches. /health stays the bare public probe."""
+    from app.ui.services import mem_watch
+
+    return {"ok": True, "memory": mem_watch.snapshot(),
+            "caches": {"stems": len(_stem_cache), "pairs": len(_pair_cache), "hook_drop": len(_hook_drop_cache),
+                       "voiced": len(_voiced_cache), "vocal_entry": len(_vocal_entry_cache)}}
+
+
+@app.on_event("startup")
+def _start_mem_watch() -> None:
+    from app.ui.services import mem_watch
+
+    mem_watch.start(log=lambda m: print(m, flush=True))
 
 
 @app.on_event("startup")
@@ -768,7 +787,7 @@ _stem_cv = threading.Condition()
 _stem_done = {"separated": 0, "failed": 0}
 
 
-_stem_cache: Dict[str, Dict[str, str]] = {}
+_stem_cache: Dict[str, Dict[str, str]] = BoundedCache(4096)
 
 
 def _cached_stems4(track_id: str) -> Optional[Dict[str, str]]:
@@ -1225,7 +1244,7 @@ def _backfill_art() -> None:
     album_art.start_backfill(lambda: list(_tracks))
 
 
-_vocal_entry_cache: Dict[str, dict] = {}
+_vocal_entry_cache: Dict[str, dict] = BoundedCache(512)
 
 
 @app.get("/api/tracks/{track_id}/vocal_entry")
@@ -1454,7 +1473,7 @@ def get_track_stems(track_id: str, separate: bool = False, bpm: Optional[float] 
     return {"stems": None, "pending": _queue_stems(track_id) if separate else False}
 
 
-_voiced_cache: Dict[tuple, dict] = {}
+_voiced_cache: Dict[tuple, dict] = BoundedCache(512)
 
 
 _pair_cache: Dict[tuple, tuple] = {}
@@ -1535,7 +1554,7 @@ def _safe_hook_drops_impl(track_id: str) -> list:
         return []
 
 
-_hook_drop_cache: Dict[str, tuple] = {}
+_hook_drop_cache: Dict[str, tuple] = BoundedCache(128)       # (lines, analysis): the analysis is the big part
 _hook_drop_miss: Dict[str, float] = {}
 HOOK_MISS_TTL_S = 600.0
 

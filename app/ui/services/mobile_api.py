@@ -23,6 +23,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from app.ui.services import album_art
+from app.ui.services.bounded_cache import BoundedCache
 
 router = APIRouter()
 
@@ -32,7 +33,7 @@ MAX_LIMIT = 500
 MAX_Q = 120
 SESSIONS_IN_SYNC = 30
 LYRICS_MISS_TTL_S = 600.0             # same as server.HOOK_MISS_TTL_S: no lyrics a moment ago -> don't re-ask
-_lyrics_cache: Dict[str, list] = {}
+_lyrics_cache: Dict[str, list] = BoundedCache(512)
 _lyrics_miss: Dict[str, float] = {}
 
 
