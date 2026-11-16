@@ -388,8 +388,9 @@ class _Sync:
         segmented = isinstance(kn._read(self.src / kn.ATLAS_DIR / kn.ATLAS_META), dict)
         full = kn.ATLAS in paths or f"{kn.ATLAS_DIR}/{kn.ATLAS_META}" in paths
         with _atlas_lock(self.cache):
+            from app.music_brain.atlas import atlas_store as store
             path = pa.atlas_path(self.cache)
-            local = pa.load(self.cache)
+            local = store.open_for_update(path)             # tracks + meta; the pairs are read row by row
             if local is None and (pa._has_atlas(pa._db(path)) or (path / pa.META).exists()
                                   or pa._legacy(path).exists()):
                 self.rep["atlas"] = "local atlas unreadable: left alone"
@@ -400,7 +401,7 @@ class _Sync:
                 self.hold |= paths
                 return
             doc = local or {"schema": pa.SCHEMA, "rules": ka["rules"], "built_at": ka.get("built_at"),
-                            "cache_dir": "", "tracks": {}, "pairs": {}, "stats": {}}
+                            "cache_dir": "", "tracks": {}, "pairs": store.StoredPairs(path), "stats": {}}
             n, seen, dirty = 0, set(), False
             for p in ka.get("pairs", {}).values():
                 rel = f"{kn.ATLAS_DIR}/pairs/{p['a']}.json.gz" if segmented else kn.ATLAS
@@ -433,7 +434,7 @@ class _Sync:
             if n:
                 doc.setdefault("stats", {})["knowledge_pairs"] = n
             if dirty and not self.dry:
-                pa.write_atlas(doc, path)
+                store.save_updated(doc, path)
         self.rep["pairs"] = self.rep["atlas"] = n
 
     def flush(self, old: Dict[str, Tuple[str, str]], lib: str) -> None:
@@ -562,7 +563,8 @@ def _apply(cache: Path, store: str, key: str, P) -> None:
         from app.music_brain.atlas import pair_atlas as pa
         from app.music_brain.learning.set_import import _atlas_lock
         with _atlas_lock(cache):
-            doc = pa.load(cache)
+            from app.music_brain.atlas import atlas_store as store
+            doc = store.open_for_update(pa.atlas_path(cache))
             if doc is None:
                 raise ValueError("no local atlas")
             cur = doc["pairs"].get(key)
@@ -572,4 +574,4 @@ def _apply(cache: Path, store: str, key: str, P) -> None:
                 if isinstance(cur, dict) and cur.get("played") is not None:
                     P["played"] = cur["played"]
                 doc["pairs"][key] = P
-            pa.write_atlas(doc, pa.atlas_path(cache))
+            store.save_updated(doc, pa.atlas_path(cache))

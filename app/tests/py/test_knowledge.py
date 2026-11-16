@@ -277,3 +277,13 @@ def test_auto_seed_runs_once_per_change(src, tmp_path, monkeypatch):
     kn._SEEN.clear()
     assert kn.auto_seed(cache, src["out"]) is None, "the stamp file survives a restart"
     assert calls == [1]
+
+
+def test_slim_atlas_stored_equals_slim_of_the_whole_atlas_without_loading_it(src, monkeypatch):
+    """export reads the stored atlas one A at a time (a 900-track atlas parsed whole is several GB)."""
+    whole = kn.slim_atlas(pa.load(src["cache"]))
+    monkeypatch.setattr(pa, "load", lambda *a, **k: (_ for _ in ()).throw(AssertionError("whole atlas loaded")))
+    streamed = kn.slim_atlas_stored(src["cache"])
+    streamed.pop("tracks_all")
+    assert streamed == whole
+    assert kn.export(src["cache"], src["out"])["changed"] == []
