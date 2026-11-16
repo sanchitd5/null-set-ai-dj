@@ -100,3 +100,15 @@ def test_range_answers_206(client, q):
     assert r.headers["content-range"] == f"bytes 1000-{len(whole) - 1}/{len(whole)}"
     assert r.content == whole[1000:]
     assert c.get(f"/api/audio/tracks/{TID}{q}").headers.get("accept-ranges") == "bytes"
+
+
+@needs_ffmpeg
+def test_stem_route_serves_aac_with_content_length(client, monkeypatch):
+    """The console fetches stems as ?q=phone (AAC, edit list): smaller, a Content-Length for the progress bar."""
+    c, src, _ = client
+    monkeypatch.setattr(server, "_cached_stems4", lambda tid: {n: src for n in server.STEM_NAMES})
+    for n in server.STEM_NAMES:
+        r = c.get(f"/api/tracks/{TID}/stems/{n}?q=phone")
+        assert r.status_code == 200 and r.headers["content-type"] == "audio/mp4"
+        assert int(r.headers["content-length"]) == len(r.content) < src.stat().st_size / 3
+    assert c.get(f"/api/tracks/{TID}/stems/drums").content == src.read_bytes()      # no q: the original

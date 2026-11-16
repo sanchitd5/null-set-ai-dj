@@ -17,8 +17,8 @@ const ALLOW = {
     966,  // setPitchPercent(pct) { ... }            -- the definition itself
     418,  // rampPitchPercent's own not-playing fallback -- deck isn't producing sound yet
     996,  // aiSetPitch's fallback when tempoGlideSeconds() found no real change (g === 0)
-    1648, // SYNC button -- the user's own control
-    1709, // pitch fader input handler -- the user's own control
+    1649, // SYNC button -- the user's own control
+    1710, // pitch fader input handler -- the user's own control
   ],
   "autopilot.js": [],
 };
