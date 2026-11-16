@@ -416,8 +416,9 @@ var autopilotCore = (function () {
   // Failed searches back off like empty answers (20, 40, 80, 120 s), so a model whose picks all get
   // dropped is not asked back-to-back every 15 s.
   const DEADLINE_LEAD_S = 45;
-  function searchPlan({ pos, exitLo, failedSearches = 0, emptyStreak = 0 } = {}) {
-    const deadline = Number.isFinite(pos) && Number.isFinite(exitLo) && pos >= exitLo - DEADLINE_LEAD_S;
+  // leadS: QUICK SET (searchLeadS), a lead shorter than DEADLINE_LEAD_S; default DEADLINE_LEAD_S
+  function searchPlan({ pos, exitLo, failedSearches = 0, emptyStreak = 0, leadS } = {}) {
+    const deadline = Number.isFinite(pos) && Number.isFinite(exitLo) && pos >= exitLo - (Number.isFinite(leadS) ? leadS : DEADLINE_LEAD_S);
     return {
       deadline,
       fallbackFirst: deadline || failedSearches >= 1 || useLibraryFallback(emptyStreak),
@@ -1020,7 +1021,12 @@ var autopilotCore = (function () {
   // o: {steering ("move"), famous, rem (famous / finish song: seconds left from its entry),
   //     mode, score, energy, finish}
   const FINISH_MAX_S = 360;        // = WINDOWS.long.max; GUESS
+  // QUICK SET (dj-config RAPID_WINDOW, dj-core playWindowFor rapid): every song 30-60 s, whatever its match, energy or fame
+  const RAPID_WINDOW = Object.freeze({ min: DJ_CONFIG.RAPID_WINDOW.min, max: DJ_CONFIG.RAPID_WINDOW.max, xf: DJ_CONFIG.RAPID_WINDOW.xf, label: "QUICK SET" });
+  // the lead before the exit window at which the search goes deadline-first in a quick set (dj-core searchLeadS)
+  const searchLeadS = (rapid) => (rapid ? Math.min(DEADLINE_LEAD_S, DJ_CONFIG.RAPID_DEADLINE_LEAD_FRAC * RAPID_WINDOW.min) : undefined);
   function playWindowFor(o) {
+    if (o.rapid) return RAPID_WINDOW;
     if (o.steering === "move") return WINDOWS.bridge;
     // Punjabi scene profile, full level: 45-90 s snippets (scene-profile.js playWindow; note s7, GUESS)
     if (o.profileWindow) return o.profileWindow;
@@ -1234,7 +1240,7 @@ var autopilotCore = (function () {
   const api = { languageRefusal, deadlineTail, earlierInScene, deckIdentity, bookingMismatch, pickReset, SCENE_SHIFT_AFTER, prerenderTargets, readinessNeeds, aTempoAtEntry, deferBudgetS, deferDecision, orderByReadiness, DEFER_MAX_S, DEFER_MIN_LEAD_S, PREFER_READY_JUMP,
     emptyRetryMs, useLibraryFallback, searchPlan, DEADLINE_LEAD_S, preparedWait, PREPARED_LEAD_S, gateWhy, candSource, deckEvent,
     sceneAnchorNext, sceneAnchorBad, sceneOrder, SCENE_ORDER, rankAtlasBackups, crossBackups, measuredWaiver, deadlineStuck, stuckBackups, STUCK_AFTER_HOLDS, macroFallback, backupStale, backupNeedsStems, rememberPairReject, pairRejected, awaitJob, keySafeRecipe, KEY_SAFE_MIN, energyStepOk, hybridWindowKey, highSpans, quantileLinear, median, exitPastHigh, learnedRecipe, vocalRecipe, stemBlendBars, stemBlendFader, phraseWaitS, introBars, FADER_PARK_BARS, homePlan, maskedGlideBars, maskedDropAt, HOME_DROP_PCT, LADDER_STEP_PCT,
-    tempoLockableAt, recipeKind, decideRecipe, planSkipReason, WINDOWS, playWindowFor, exitBounds, exitPick, exitTiming, exitHighPush, audibleEnd, entryClamp, SILENT_FLOOR,
+    tempoLockableAt, recipeKind, decideRecipe, planSkipReason, WINDOWS, RAPID_WINDOW, searchLeadS, playWindowFor, exitBounds, exitPick, exitTiming, exitHighPush, audibleEnd, entryClamp, SILENT_FLOOR,
     breakdownSpans, exitOutOfBreakdown, exitBreakdownPush, energyAtTarget, FINISH_MAX_S, forcedExit, forcedRecipe, forcedLine, forcedBooking,
     storedMove, vetRefusal, vetStep, badPairOf, pairKey, mashupGate, mashupBars,
     sleepPlan, SLEEP_FADE_S, setEnergy, arcAt, windowLevel, energyRecipeChoice, pickEntryByEnergy, ARC_TARGET, SET_RECENT, SET_ARC_W, SET_RELAXED_MAX, SET_HIGH_MIN, ENERGY_MATCH_TOL,
@@ -2460,7 +2466,7 @@ function createAutopilotEngine({ host, ai }) {
     // music ("punjabi wedding" while Fred again.. plays) -> steer, even across
     // a tempo gap (Echo Out), instead of holding out for a beat-matchable pick.
     if (!opts.lookAhead) {
-      if (data.current_genre) currentGenre = data.current_genre;
+      if (data.current_genre) setCurrentGenre(data.current_genre);
       if (data.current_era) currentEra = data.current_era;
       steering = data.steering === "move" && steerStep < MAX_STEER_STEPS ? "move" : "stay";
       if (steering === "stay") steerStep = 0;
@@ -2660,6 +2666,8 @@ function createAutopilotEngine({ host, ai }) {
   // Variety: subgenre of each played song, to spot a style that has plateaued.
   let genreLog = [];
   let currentGenre = "";
+  // the playing song's genre label; learned-moves.js / artist-moves.js read it from host.session for the MOVE_GENRE_ALLOW gate
+  function setCurrentGenre(g) { currentGenre = g || ""; if (host.session) host.session.genre = currentGenre; }
   // SCENE ANCHOR (autopilotCore.sceneAnchorNext): the set's scene, and while the playing song is an
   // off-scene mistake, the scene the next selection goes back to (every path: suggest, FOLLOW SET /
   // combos, pool, atlas backup, library, booking vet).
@@ -3037,7 +3045,7 @@ function createAutopilotEngine({ host, ai }) {
       if (r0 && cand.track_id) pairClash.set(autopilotCore.pairKey(currentId, cand.track_id), r0.scene_clash === true);   // mashupFits' scene gate
       if (r0) { cand._genre = r0.genre || null; cand._families = r0.families || []; cand._sceneRel = r0.scene_rel || null; }   // scene anchor
       if (j && j.a_genre && currentTrackId === currentId) {
-        currentGenre = j.a_genre;   // the playing song's STORED label wins
+        setCurrentGenre(j.a_genre);   // the playing song's STORED label wins
         // the set's first scene: the playing song's, before any landing moved it
         if (!setScene && (j.a_families || []).length) setScene = { genre: j.a_genre, families: j.a_families.slice().sort() };
         if (!sceneState.anchor && (j.a_families || []).length) sceneState = Object.assign({}, sceneState, { anchor: { genre: j.a_genre, families: j.a_families.slice().sort() } });
@@ -3973,7 +3981,7 @@ function createAutopilotEngine({ host, ai }) {
     // "avoid" so the model proposes different songs.
     const MAX_ROUNDS = 3;
     const plan = autopilotCore.searchPlan({
-      pos: deckPosition(activeDeck), exitLo: exitWindow(50).lo,
+      pos: deckPosition(activeDeck), exitLo: exitWindow(50).lo, leadS: autopilotCore.searchLeadS(rapidOn()),
       failedSearches: failedFor === currentId ? failedSearches : 0, emptyStreak });
     if (plan.fallbackFirst) {
       if (await deadlineFallback(currentId, gen, plan.deadline ? "deadline" : "search failed before")) return;
@@ -3983,7 +3991,7 @@ function createAutopilotEngine({ host, ai }) {
     let deadlineTried = plan.fallbackFirst;
     for (let round = 1; round <= MAX_ROUNDS; round++) {
       // the exit came close while the model was still answering: the backup, not another round
-      if (!deadlineTried && autopilotCore.searchPlan({ pos: deckPosition(activeDeck), exitLo: exitWindow(50).lo }).deadline) {
+      if (!deadlineTried && autopilotCore.searchPlan({ pos: deckPosition(activeDeck), exitLo: exitWindow(50).lo, leadS: autopilotCore.searchLeadS(rapidOn()) }).deadline) {
         deadlineTried = true;
         if (await deadlineFallback(currentId, gen, "deadline")) return;
         if (!active || gen !== prepGen) return;
@@ -4138,7 +4146,7 @@ function createAutopilotEngine({ host, ai }) {
     // forced covers every stored step: macro, studied combo, FOLLOW SET and liked (macro-mode source "liked")
     if (!forced) {
       try { setEn = liveSetEnergy(odS, sdS, currentId, nextId, candidate.a_time, blend ? blend.entry : bTime, blend, {
-        recipe, roomS: autopilotCore.entryRoomS(autopilotCore.playWindowFor({ steering, mode: setMode(), score: candidate.score || 50, energy: currentEnergy })) }); } catch (e) { setEn = null; }
+        recipe, roomS: autopilotCore.entryRoomS(autopilotCore.playWindowFor({ steering, mode: setMode(), rapid: rapidOn(), score: candidate.score || 50, energy: currentEnergy })) }); } catch (e) { setEn = null; }
     }
     if (setEn) decIn.energy = setEn;
     const dec = autopilotCore.decideRecipe(decIn, host.mod.tempoRule);
@@ -4532,7 +4540,7 @@ function createAutopilotEngine({ host, ai }) {
         genreLog.push(currentGenre || "");
         // the stored label (booking vet) over the pick's own genre: a FOLLOW SET song had none, the library
         // fallback then filtered nothing (191133)
-        currentGenre = (scheduledNext && (scheduledNext._genre || (scheduledNext.suggestion && scheduledNext.suggestion.genre))) || "";
+        setCurrentGenre((scheduledNext && (scheduledNext._genre || (scheduledNext.suggestion && scheduledNext.suggestion.genre))) || "");
         noteSceneLanding(scheduledNext, nextName);
         currentEra = (scheduledNext && scheduledNext.suggestion && scheduledNext.suggestion.era) || currentEra;
         songsSinceJump = jumpPending ? 0 : songsSinceJump + 1;
@@ -4573,8 +4581,11 @@ function createAutopilotEngine({ host, ai }) {
   function setMode() {
     const el = ui.el("ap-mode");
     const v = el ? el.value : "hybrid";
+    if (v === "rapid") return "quick";   // a quick set is a QUICK set for every rule; only its play window is shorter (rapidOn)
     return ["long", "quick", "hybrid"].includes(v) ? v : "hybrid";
   }
+  // QUICK SET: every song plays 30-60 s (autopilotCore.RAPID_WINDOW)
+  function rapidOn() { const el = ui.el("ap-mode"); return !!el && el.value === "rapid"; }
 
   // The windows themselves (autopilotCore.WINDOWS) and the choice (playWindowFor) are pure.
   function playWindow(score) {
@@ -4587,7 +4598,7 @@ function createAutopilotEngine({ host, ai }) {
     const finish = !famous && !!(pd && pd.buffer) && host.ui.flag("ap-finish-toggle", true)
       && (lastFinishIdx === idx || idx - lastFinishIdx >= 2) && autopilotCore.energyAtTarget(playedEnergies(), idx).ok;
     const sp = sceneProfile(), profileWindow = sp ? sp.playWindow(profileLevel(), steering) : null;
-    const w = autopilotCore.playWindowFor({ steering, famous, finish, profileWindow,
+    const w = autopilotCore.playWindowFor({ steering, famous, finish, profileWindow, rapid: rapidOn(),
       rem: famous || finish ? autopilotCore.audibleEnd(pd.analysis, pd.buffer.duration) - (entryPos || 0) : 0,
       mode: setMode(), score, energy: currentEnergy });
     if (w.label === "FULL·finish") lastFinishIdx = idx;
@@ -4833,7 +4844,7 @@ function createAutopilotEngine({ host, ai }) {
     leadTo = null;
     leadStatus("");
     genreLog = [];
-    currentGenre = ""; sceneState = { anchor: null, prev: null, recover: null }; setScene = null; badPairPending = null;
+    setCurrentGenre(""); sceneState = { anchor: null, prev: null, recover: null }; setScene = null; badPairPending = null;
     currentEra = "";
     songsSinceJump = 0;
     jumpPending = false;
@@ -4892,7 +4903,7 @@ function createAutopilotEngine({ host, ai }) {
     leadTo = null;
     leadStatus("");
     genreLog = [];
-    currentGenre = ""; sceneState = { anchor: null, prev: null, recover: null }; setScene = null; badPairPending = null;
+    setCurrentGenre(""); sceneState = { anchor: null, prev: null, recover: null }; setScene = null; badPairPending = null;
     currentEra = "";
     songsSinceJump = 0;
     jumpPending = false;

@@ -44,7 +44,7 @@
 
   const lm = root.learnedMovesCore || (typeof require === "function" ? require("./learned-moves.js") : null);
   const dl = root.dropLineCore || (typeof require === "function" ? require("./drop-line.js") : null);   // the shared drop-line rule
-  const { envelope, snapBeat, median } = lm;
+  const { envelope, snapBeat, median, moveGenreRefusal, loopVocalRefusal } = lm;
 
   const KINDS = ["slip_loop", "cue_tease", "roll", "perc_bridge", "pad_lead", "chant_gate", "dhol_drop", "chop_duck"];
   const SPEC = { slip_loop: "S13", cue_tease: "S14", roll: "S12", perc_bridge: "S11", pad_lead: "Lane8", chant_gate: "S20", dhol_drop: "Desi", chop_duck: "S18" };
@@ -143,6 +143,8 @@
       const start = nb.t;
       if (start < c.pos + MIN_LEAD_S * rate) continue;
       const vs = vocalShare(c.vocals, start, c.lineT);
+      const lr = loopVocalRefusal("slip_loop", c.genre, vs);   // off-EDM only over a vocal-free window (dj-config MOVE_VOCAL_LOOP_GATE)
+      if (lr) return no("genre", lr);
       if (vs > MAX_VOCAL_SHARE) return no("vocal_seam", `${Math.round(vs * 100)}% of the window is sung: a loop would cut a word`);
       return { ok: true, kind: "slip_loop", start, release: c.lineT, loop_beats: W / 2, window_beats: W,
         cap_beats: SLIP_CAP_BEATS, extension_beats: 0, grid_err_s: nb.err, fallbacks,
@@ -290,6 +292,8 @@
   //     vocalLive (A's vocal stem sounds), vocalBusy (sliced / held / swapped), inTransition,
   //     holdActive, mashupActive, relaxed, onDemand}
   function planChantGate(c) {
+    const gr = moveGenreRefusal("chant_gate", c.genre);   // dj-config MOVE_GENRE_ALLOW: EDM / electronic only, on demand too
+    if (gr) return no("genre", gr);
     if (c.inTransition || c.holdActive) return no("transition", "a transition or merge hold owns the deck");
     if (c.mashupActive) return no("vocal_layer", "a vocal layer is running");
     if (!c.vocalLive) return no("no_stems", "A's vocal stem is not live");
@@ -559,7 +563,8 @@
           padFor: null, chants: 0, chantLine: null, slipBooked: null, dholFor: null }));
     function attempt(kind, d, o) {
       const a = d.analysis || {}, b = host.decks && host.decks[other(d.id)], r = songOf(d);
-      const base = { pos: o.pos, inTransition: !!o.inTransition, mashupActive: !!o.mashupActive, relaxed: relaxed(), onDemand: !!o.onDemand };
+      const base = { pos: o.pos, inTransition: !!o.inTransition, mashupActive: !!o.mashupActive, relaxed: relaxed(), onDemand: !!o.onDemand,
+        genre: (host.session && host.session.genre) || "" };
       let p = null, res = null;
       if (kind === "perc_bridge") {
         p = planPercBridge({ deckCount: Object.keys(host.decks || {}).length });

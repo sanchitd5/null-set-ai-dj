@@ -10,7 +10,7 @@ const base = {
   vocalAhead: 0, barsOnTrack: 40, barsToExit: null, holdRoomBars: 0,
   overlapStyle: null, preClearBars: 8, preCleared: false, instantShown: false,
   holdsUsed: 0, mashupActive: false, subdropThisTrack: false,
-  subdropLastTrack: false, secsSinceMove: 1e9, setMode: "hybrid",
+  subdropLastTrack: false, secsSinceMove: 1e9, setMode: "hybrid", genre: "house", vocalLoop2: 0, vocalLoop8: 0,
 };
 const s = (o) => Object.assign({}, base, o);
 
@@ -403,3 +403,19 @@ console.log("dj-mind relaxed ok");
   assert.strictEqual(planWaitMs(1e6), 65000);
   console.log("plan wait floor ok");
 }
+
+// MOVE_VOCAL_LOOP_GATE (dj-core test/move_genre_test.dart, one rule): the loop / roll moves repeat the full mix, so off-EDM they need a vocal-free region
+{
+  const { remixBlock } = core;
+  const st = (o) => rx(Object.assign({ phraseSection: "drop", preDrop: true }, o));
+  for (const k of ["stutter", "peak_roll", "loop_extend"]) {
+    assert.strictEqual(remixBlock(k, st({ genre: "house", vocalLoop2: 0.8, vocalLoop8: 0.8 })), null, `${k} on house`);
+    assert.ok(/stutter the vocal/.test(remixBlock(k, st({ genre: "hip hop", vocalLoop2: 0.8, vocalLoop8: 0.8 }))), `${k} sung hip hop`);
+    assert.ok(remixBlock(k, st({ genre: "punjabi", vocalLoop2: 0.8, vocalLoop8: 0.8 })));
+    assert.strictEqual(remixBlock(k, st({ genre: "", vocalLoop2: 0, vocalLoop8: 0 })), null, `${k} vocal-free, unknown genre`);
+    assert.strictEqual(remixBlock(k, st({ genre: "hip hop", vocalLoop2: 0, vocalLoop8: 0 })), null);
+    assert.ok(remixBlock(k, st({ genre: "hip hop", vocalLoop2: undefined, vocalLoop8: undefined })), "unmeasured off-EDM");
+  }
+  assert.strictEqual(remixBlock("beat_jump", rx({ phraseSection: "verse", genre: "hip hop", vocalLoop2: 0.8, vocalLoop8: 0.8 })), null, "beat_jump loops nothing");
+}
+console.log("move vocal loop gate ok");

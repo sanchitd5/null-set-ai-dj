@@ -1,9 +1,9 @@
-# GENERATED from dj-config 7bb0915 - do not edit
-# config-hash: 49121c971159
+# GENERATED from dj-config ecb42b2 - do not edit
+# config-hash: 50469c5a639f
 """Generated from dj-config/config/*.json. Do not edit; run dj-config/tool/gen.py."""
 
-SHA = "7bb0915"
-CONFIG_HASH = "49121c971159"
+SHA = "ecb42b2"
+CONFIG_HASH = "50469c5a639f"
 
 ACCENT_MAX_SHARE = 0.2  # fraction
 ACCENT_RECIPES = ["Backspin (Spinback)", "Echo Out", "Bass Swap"]  # list
@@ -90,6 +90,8 @@ MERGE_HOLD_MIN_BARS = 32  # bars
 MERGE_HOLD_TARGET_S = 90  # s
 MERGE_KEY_OK = 0.8  # score
 MICRO_STEPS = 32  # steps
+MOVE_GENRE_ALLOW = {"vocal_chop": ["electronic"], "chant_gate": ["electronic"], "acapella_build": ["electronic"], "learned_acapella_build": ["electronic"], "vocal_loop_fragment": ["electronic"], "vocal_hold": ["electronic"]}
+MOVE_VOCAL_LOOP_GATE = {"moves": ["loop_extend", "stutter", "peak_roll", "slip_loop"], "vocal_free_max": 0.02}
 NEIGHBOUR_FAMILIES = ["bass|dnb", "bass|edm", "bass|electronic", "bass|house", "bass|melodic", "bass|trance", "breaks|dnb", "breaks|electronic", "breaks|house", "chill|electronic", "chill|melodic", "dnb|electronic", "edm|electronic", "edm|house", "edm|melodic", "edm|trance", "electronic|house", "electronic|melodic", "electronic|techno", "electronic|trance", "hiphop|rnb", "house|melodic", "house|techno", "house|trance", "melodic|techno", "melodic|trance", "techno|trance"]
 OUTPUT_CEIL = 0.998  # linear
 OVERLAP_BARS = {"instant": 4, "standard": 16, "slow": 32}  # bars
@@ -105,6 +107,9 @@ PLAN_MAX_WAIT_MS = 65000  # ms
 PLAN_MIN_WAIT_MS = 12000  # ms
 PREPLAN_WAIT_MS = 35000  # ms
 PRE_CLEAR_BARS = {"instant": 0, "standard": 8, "slow": 16}  # bars
+RAPID_BOOK_MARGIN_S = 4.0  # s
+RAPID_DEADLINE_LEAD_FRAC = 0.5  # ratio
+RAPID_WINDOW = {"min": 30, "max": 60, "xf": 8}
 REPLAN_LEAD_S = 20.0  # s
 RIFF_MAX_STRETCH = 0.15  # fraction
 SESSION_PAUSE_CLOSE_MIN = 15  # min

@@ -701,7 +701,10 @@ if (typeof HoldPolicy === "undefined" && typeof require === "function") require(
     const used = new Set(ctx.used || []);
     const menu = ctx.vocal >= 0.5 ? ["vocal_hold", "acapella", "bass_out"]
       : ctx.vocal >= 0.15 ? ["bass_out", "drum_break", "synth_hold"] : ["drum_break", "synth_hold", "bass_out"];
-    return menu.find((k) => !used.has(k) && (ctx.othersCarry || keepsVibe(k, 16, ctx.energy))) || null;
+    // a held (repeated) vocal bar is shorter than a lyric line: electronic songs only (dj-config MOVE_GENRE_ALLOW vocal_hold; dj-core moveGenreRefusal)
+    const lm = root.learnedMovesCore || (typeof require === "function" ? require("./learned-moves.js") : null);
+    return menu.find((k) => !(k === "vocal_hold" && lm && lm.moveGenreRefusal(k, ctx.genre))
+      && !used.has(k) && (ctx.othersCarry || keepsVibe(k, 16, ctx.energy))) || null;
   }
   // Hook drop (app/music_brain/analysis/hook_drop.py plan items: {cut_at, drop_at, text}):
   // drums + bass leave over a quarter bar ending on cut_at, synths duck to

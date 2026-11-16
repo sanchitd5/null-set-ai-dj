@@ -1,6 +1,6 @@
 {
- "_generated": "GENERATED from dj-config 7bb0915 - do not edit",
- "config_hash": "49121c971159",
+ "_generated": "GENERATED from dj-config ecb42b2 - do not edit",
+ "config_hash": "50469c5a639f",
  "files": {
   "genre": {
    "kind": "resolve_genre",

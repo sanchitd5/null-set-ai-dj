@@ -23,8 +23,37 @@
 // master, room before the exit, per-song cap and spacing. Sub-bass: vocal moves only touch the vocal stem; the
 // loop_extend loops ONE deck's whole mix. Ramps everywhere (>= 6 ms edges on slices, stemMix ramps), never a
 // bare pitch move.
+if (typeof DJ_CONFIG === "undefined" && typeof require === "function") require("./generated/dj_config.js");   // node: browsers load it via index.html
 (function (root) {
   "use strict";
+
+  // dj-config MOVE_GENRE_ALLOW (one rule, dj-core server_port/genre.dart moveGenreRefusal): a vocal chop style move runs only
+  // when the playing song's label matches a keyword of an allowed GENRE_FAMILIES family (electronic covers its sub-scenes);
+  // an empty or unmapped label refuses. Moves not in the table are not gated. Pinned to the Dart rule by the golden corpus.
+  function genreInFamily(genre, family) {
+    const g = String(genre == null ? "" : genre).toLowerCase().trim();
+    return !!g && (DJ_CONFIG.GENRE_FAMILIES[family] || []).some((kw) => g.includes(kw));
+  }
+  function moveGenreRefusal(move, genre) {
+    const allow = DJ_CONFIG.MOVE_GENRE_ALLOW[move];
+    if (!allow) return null;
+    const g = String(genre == null ? "" : genre).toLowerCase().trim();
+    if (!g) return `${move} runs only on ${allow.join("/")} songs and this song has no genre label`;
+    for (const fam of allow) if (genreInFamily(g, fam)) return null;
+    return `${move} runs only on ${allow.join("/")} songs, not on "${g}"`;
+  }
+  // dj-config MOVE_VOCAL_LOOP_GATE (dj-core loopVocalRefusal): the loop / roll moves of the full mix run on an electronic song as before; off-EDM
+  // (or an unknown genre) only over a vocal-free region. vocalShare = share of the loop region the vocal stem covers; null / NaN = not measured.
+  function loopVocalRefusal(move, genre, vocalShare) {
+    const gate = DJ_CONFIG.MOVE_VOCAL_LOOP_GATE;
+    if (!gate.moves.includes(move)) return null;
+    if (genreInFamily(genre, "electronic")) return null;
+    const g = String(genre == null ? "" : genre).toLowerCase().trim();
+    const label = g ? `a "${g}" song` : "an unlabelled song";
+    if (typeof vocalShare !== "number" || Number.isNaN(vocalShare)) return `${move} on ${label} needs a vocal-free loop and the vocals are not measured`;
+    if (vocalShare > gate.vocal_free_max) return `${move} on ${label}: ${Math.round(vocalShare * 100)}% of the loop is sung, it would stutter the vocal (EDM only)`;
+    return null;
+  }
 
   const KINDS = ["vocal_loop", "vocal_resequence", "vocal_chop", "loop_extend"];
   const LABEL = { vocal_loop: "VOCAL LOOP", vocal_resequence: "VOCAL RE-CUT", vocal_chop: "VOCAL CHOPS", loop_extend: "LOOP EXTEND" };
@@ -149,6 +178,8 @@
     if (c.relaxed) return { gate: "relaxed", reason: "relaxed session: no learned moves" };
     if (c.mashupActive) return { gate: "vocal_layer", reason: "a vocal layer is running" };
     if (c.deferring && kind !== "loop_extend") return { gate: "b_deferred", reason: "B's stems are still loading" };
+    const gr = moveGenreRefusal(kind, c.genre);   // vocal chop style moves: EDM / electronic only, on demand too
+    if (gr) return { gate: "genre", reason: gr };
     if (onDemand) return null;
     if ((c.count || 0) >= MAX_PER_SONG) return { gate: "cap", reason: `learned move cap ${MAX_PER_SONG} per song reached` };
     if ((c.used || []).includes(kind)) return { gate: "cap", reason: `${kind} already played on this song` };
@@ -189,6 +220,9 @@
     let lineS = num(P.line_s);
     if (lineS == null) { lineS = 4 * beat; fallbacks.push("line_s"); }
     let best = null;
+    // a loop that repeats less than the whole lyric line stutters the vocal: electronic songs only (MOVE_GENRE_ALLOW vocal_loop_fragment)
+    const fragRefusal = moveGenreRefusal("vocal_loop_fragment", c.genre);
+    let fragSkipped = false;
     for (const ln of lines) {
       let start = snapBeat(ln.s, c.lineT, beat, "floor");
       if (start < tMin) start = snapBeat(tMin, c.lineT, beat, "ceil");
@@ -196,13 +230,17 @@
       for (const L of LOOP_LEN_BEATS) {
         const dur = L * beat;
         if (dur > avail + 0.5 * beat) continue;
+        if (fragRefusal && dur < avail - 0.5 * beat) { fragSkipped = true; continue; }
         if (coverage(c.env, start, start + dur, ln.thr) < 0.6) continue;
         const score = Math.abs(dur - lineS);
         if (!best || score < best.score) best = { start, L, dur, score, line: ln };
       }
       if (best) break;                     // the earliest line that fits
     }
-    if (!best) return no("no_slice", "no vocal line fills a whole 1/2 bar to 2 bars");
+    if (!best) {
+      if (fragSkipped) return no("genre", `only a part of a lyric line could be looped, and ${fragRefusal.replace("vocal_loop_fragment", "repeating less than a whole line")}`);
+      return no("no_slice", "no vocal line fills a whole 1/2 bar to 2 bars");
+    }
     let repeats = num(P.repeats);
     if (repeats == null) { repeats = 1; fallbacks.push("repeats"); }
     let plays = 1 + clamp(Math.round(repeats), 1, 3);
@@ -344,6 +382,8 @@
     } else fallbacks.push("bar_levels");
     let sung = 0;
     for (const [a, b] of c.vocals || []) sung += Math.max(0, Math.min(b, end) - Math.max(a, start));
+    const lr = loopVocalRefusal("loop_extend", c.genre, Array.isArray(c.vocals) ? sung / (end - start) : null);
+    if (lr) return no("genre", lr);
     if (sung / (end - start) > 0.25) return no("vocal_seam", `${Math.round((100 * sung) / (end - start))} % of the loop is sung: it would stutter the singer`);
     return { ok: true, kind: "loop_extend", stem: null, start, end, beats: ext, slices: null, fallbacks,
       grid_err_s: 0, cap_beats: cap, loop: { start, beats: L, passes, release: end },
@@ -509,7 +549,7 @@
   }
 
   const core = { KINDS, LABEL, CAP_BEATS, MAX_PER_SONG, GAP_BARS, EXIT_GUARD_BARS, MIN_LEAD_S, MIN_RMS, LOOP_LEN_BEATS, EXTEND_LOOP_BEATS,
-    median, quantile, snapBeat, stemPlays, envelope, envAt, coverage, vocalLines, ruleBlocks, parseStore, moveGate, songGate, vocalGate,
+    moveGenreRefusal, loopVocalRefusal, genreInFamily, median, quantile, snapBeat, stemPlays, envelope, envAt, coverage, vocalLines, ruleBlocks, parseStore, moveGate, songGate, vocalGate,
     planVocalLoop, planResequence, planChop, planLoopExtend, pick,
     ARTIST_KINDS, ARTIST_LABEL, planVocalSwap, planAcapellaBuild, artistPick, dropGate };
   root.learnedMovesCore = core;
@@ -669,7 +709,7 @@
         pos: o.pos, rate, bar: o.bar, lineT: o.lineT, entryT: o.entryT || 0, exitT: o.exitT, barsOnTrack: st.barsOnTrack != null ? st.barsOnTrack : atBar,
         barsToExit: st.barsToExit != null ? st.barsToExit : null, atBar, used: r.used, count: r.count, lastAtBar: r.lastAtBar,
         mashupActive: !!st.mashupActive, relaxed: !!(host.session && host.session.relaxed), deferring: waiting, waiting,
-        othersVocal: othersVocal(d), variant: r.variant, label: st.phraseSection, nextLabel: st.nextPhraseSection, onAir: st.onAir,
+        genre: (host.session && host.session.genre) || "", othersVocal: othersVocal(d), variant: r.variant, label: st.phraseSection, nextLabel: st.nextPhraseSection, onAir: st.onAir,
         vocalShare: sm ? sm.vocalShare(d.analysis && d.analysis.vocal_active_regions, o.lineT, o.lineT + PHRASE_BARS * o.bar) : 0,
         vocals: d.analysis && d.analysis.vocal_active_regions,
         drops: DL && d.analysis ? DL.dropSpans(d.analysis, d.bpm || d.analysis.bpm) : null,   // drop-line rule (dropGate)

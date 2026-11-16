@@ -20,7 +20,7 @@ function mkEnv(t0, t1, hop, segs) {
 const HOP = BEAT / 4;
 const SUNG = [[33.1, 35.0, 0.2], [36.0, 38.0, 0.3], [40.0, 44.0, 0.25]];
 const env = mkEnv(LINE, LINE + 8 * BAR, HOP, SUNG);
-const base = () => ({ pos: LINE + 0.05, rate: 1, bar: BAR, lineT: LINE, entryT: 0, exitT: 400, barsToExit: null, barsOnTrack: 40, atBar: 40, used: [], count: 0,
+const base = () => ({ genre: "house", pos: LINE + 0.05, rate: 1, bar: BAR, lineT: LINE, entryT: 0, exitT: 400, barsToExit: null, barsOnTrack: 40, atBar: 40, used: [], count: 0,
   lastAtBar: null, mashupActive: false, relaxed: false, deferring: false, othersVocal: false, variant: 0, env, envFull: mkEnv(0, LINE + 8 * BAR, HOP, SUNG),
   energy: { drums: 0.2, bass: 0.2, vocals: 0.15, other: 0.1 }, vocalShare: 0.7, label: "verse", vocals: SUNG.map((s) => [s[0], s[1]]) });
 
@@ -51,6 +51,13 @@ const base = () => ({ pos: LINE + 0.05, rate: 1, bar: BAR, lineT: LINE, entryT: 
   assert.deepStrictEqual(P.fallbacks, [], "measured / sighted: no constants");
   const F = lm.planVocalLoop(base());
   assert(F.ok && F.fallbacks.includes("line_s") && F.fallbacks.includes("repeats"), "no sighting numbers -> constants are listed");
+  // vocal_loop_fragment (MOVE_GENRE_ALLOW): a loop that repeats the WHOLE sung line runs on any genre, a part of a line is EDM only
+  const whole = lm.planVocalLoop(Object.assign(base(), { genre: "hip hop", params: { repeats: 1, line_s: 2 } }));
+  assert(whole.ok && whole.params.loop_beats === 4, "the 2 s line is looped whole on hip hop: " + JSON.stringify(whole));
+  const longLine = mkEnv(LINE, LINE + 8 * BAR, HOP, [[33.0, 41.0, 0.3]]);                // an 8 s line: every loop length is a fragment
+  assert.strictEqual(lm.planVocalLoop(Object.assign(base(), { genre: "hip hop", env: longLine })).gate, "genre");
+  assert.strictEqual(lm.planVocalLoop(Object.assign(base(), { genre: "", env: longLine })).gate, "genre", "unknown genre refuses the fragment");
+  assert(lm.planVocalLoop(Object.assign(base(), { genre: "trance", env: longLine })).ok, "EDM may loop a fragment");
   // silence: nothing to loop
   assert.strictEqual(lm.planVocalLoop(Object.assign(base(), { env: mkEnv(LINE, LINE + 16, HOP, []) })).gate, "no_line");
   assert.strictEqual(lm.planVocalLoop(Object.assign(base(), { energy: { drums: 1, bass: 1, vocals: 0.001, other: 1 } })).gate, "silent_stem");
@@ -136,6 +143,31 @@ const base = () => ({ pos: LINE + 0.05, rate: 1, bar: BAR, lineT: LINE, entryT: 
   assert.strictEqual(lm.songGate({ ...s, deferring: true }, "loop_extend"), null, "loop_extend is the filler");
   assert.strictEqual(lm.songGate({ ...s, mashupActive: true }, "vocal_chop").gate, "vocal_layer");
   assert.strictEqual(lm.songGate({ ...s, relaxed: true }, "vocal_chop").gate, "relaxed");
+  // MOVE_GENRE_ALLOW: vocal chop style moves only on electronic songs, unknown genre refuses, on demand too
+  assert.strictEqual(lm.songGate({ ...s, genre: "deep house" }, "vocal_chop"), null, "a house song may chop");
+  assert.strictEqual(lm.songGate({ ...s, genre: "Melodic Techno" }, "vocal_chop"), null, "case does not matter");
+  for (const g of ["hip hop", "punjabi", "pop", "r&b", "rock", "", null, undefined, "spoken word"]) {
+    assert.strictEqual(lm.songGate({ ...s, genre: g }, "vocal_chop").gate, "genre", `no chops on ${g}`);
+    assert.strictEqual(lm.songGate({ ...s, genre: g }, "vocal_chop", true).gate, "genre", `no chops on ${g}, on demand either`);
+    assert.strictEqual(lm.songGate({ ...s, genre: g }, "acapella_build", true).gate, "genre");
+    assert.strictEqual(lm.songGate({ ...s, genre: g }, "vocal_loop"), null, "other learned kinds are not genre gated");
+  }
+  // the same case table as dj-core test/move_genre_test.dart (one rule, two hosts)
+  for (const m of ["vocal_chop", "chant_gate", "acapella_build"]) {
+    for (const g of ["house", "Deep House", "melodic techno", "trance", "edm", "drum & bass", "future bass", "electronic", "big room", "uk garage"]) assert.strictEqual(lm.moveGenreRefusal(m, g), null, `${m} on ${g}`);
+    for (const g of ["hip hop", "hip-hop", "punjabi", "bhangra", "pop", "r&b", "rock", "reggaeton", "country", "jazz", "spoken word", "bollywood", "", "   ", null]) assert.notStrictEqual(lm.moveGenreRefusal(m, g), null, `${m} on ${g}`);
+  }
+  for (const m of ["vocal_loop", "vocal_resequence", "loop_extend", "vocal_swap", "slip_loop"]) assert.strictEqual(lm.moveGenreRefusal(m, "hip hop"), null);
+  // MOVE_VOCAL_LOOP_GATE / vocal_loop_fragment (same case table as dj-core test/move_genre_test.dart)
+  for (const g of ["house", "trance", "drum & bass"]) assert.strictEqual(lm.loopVocalRefusal("stutter", g, 0.9), null);
+  for (const g of ["hip hop", "punjabi", "pop", "", null]) {
+    assert.notStrictEqual(lm.loopVocalRefusal("loop_extend", g, 0.9), null, `sung loop on ${g}`);
+    assert.strictEqual(lm.loopVocalRefusal("loop_extend", g, 0), null, `vocal-free loop on ${g}`);
+    assert.notStrictEqual(lm.loopVocalRefusal("peak_roll", g, undefined), null, `unmeasured on ${g}`);
+    assert.notStrictEqual(lm.moveGenreRefusal("vocal_loop_fragment", g), null);
+  }
+  assert.strictEqual(lm.loopVocalRefusal("vocal_resequence", "hip hop", 1), null);
+  assert(lm.pick({ ...s, genre: "hip hop" }, { vocal_chop: { enabled: true, seen: 3, rules: [], params: {} } }).refusals.some((x) => x.kind === "vocal_chop" && x.gate === "genre"));
   assert.strictEqual(lm.songGate({ ...s, barsOnTrack: 8 }, "vocal_chop").gate, "early");
   // pick: the best fitting plan, refusals named
   const r = lm.pick(Object.assign(base(), { label: "verse", barRms: [0.2, 0.2, 0.2, 0.2] }), st, {});
@@ -164,7 +196,7 @@ async function runtime() {
     bus: { emit: (t, d) => events.push({ t, d }), on() {}, off() {} },
     log: { step() {} }, ui: { flag: (id, d) => (id in flags ? flags[id] : d), el: () => null, query: () => null, queryAll: () => [], create() {}, fire() {}, status() {}, cssVar: () => "" },
     storage: { get: () => null, set() {} }, random: { uuid: () => "u", next: () => 0.5 },
-    audio: { currentTime: now }, decks: {}, state: {}, session: { relaxed: false }, mod: {}, expose() {}, loadIntoDeck() {},
+    audio: { currentTime: now }, decks: {}, state: {}, session: { relaxed: false, genre: "house" }, mod: {}, expose() {}, loadIntoDeck() {},
   };
   Engine.use(host);
   const api = Engine.create("learnedMoves");
@@ -231,7 +263,7 @@ async function mind() {
     api: { fetch: async () => ({ json: async () => ({}) }) }, bus: { emit() {}, on() {}, off() {} }, log: { step() {} },
     ui: { flag: () => true, el, query: el, queryAll: () => [], create: el, fire() {}, status() {}, cssVar: () => "" },
     storage: { get: () => null, set() {} }, random: { uuid: () => "u", next: () => 0.5 },
-    audio: { currentTime: now }, decks: {}, state: {}, session: { relaxed: false }, mod: {}, expose() {}, loadIntoDeck() {},
+    audio: { currentTime: now }, decks: {}, state: {}, session: { relaxed: false, genre: "house" }, mod: {}, expose() {}, loadIntoDeck() {},
   };
   const down = Array.from({ length: 200 }, (_, i) => i * BAR);
   host.decks.a = { id: "a", playing: true, bpm: BPM, analysis: { downbeat_times: down, sections: [], vocal_active_regions: [] }, buffer: { duration: 400 },

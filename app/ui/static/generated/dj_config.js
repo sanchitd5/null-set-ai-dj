@@ -1,5 +1,5 @@
-// GENERATED from dj-config 7bb0915 - do not edit
-// config-hash: 49121c971159
+// GENERATED from dj-config ecb42b2 - do not edit
+// config-hash: 50469c5a639f
 (function (root) {
   "use strict";
   const values = {
@@ -88,6 +88,8 @@
     "MERGE_HOLD_TARGET_S": 90,
     "MERGE_KEY_OK": 0.8,
     "MICRO_STEPS": 32,
+    "MOVE_GENRE_ALLOW": {"vocal_chop": ["electronic"], "chant_gate": ["electronic"], "acapella_build": ["electronic"], "learned_acapella_build": ["electronic"], "vocal_loop_fragment": ["electronic"], "vocal_hold": ["electronic"]},
+    "MOVE_VOCAL_LOOP_GATE": {"moves": ["loop_extend", "stutter", "peak_roll", "slip_loop"], "vocal_free_max": 0.02},
     "NEIGHBOUR_FAMILIES": ["bass|dnb", "bass|edm", "bass|electronic", "bass|house", "bass|melodic", "bass|trance", "breaks|dnb", "breaks|electronic", "breaks|house", "chill|electronic", "chill|melodic", "dnb|electronic", "edm|electronic", "edm|house", "edm|melodic", "edm|trance", "electronic|house", "electronic|melodic", "electronic|techno", "electronic|trance", "hiphop|rnb", "house|melodic", "house|techno", "house|trance", "melodic|techno", "melodic|trance", "techno|trance"],
     "OUTPUT_CEIL": 0.998,
     "OVERLAP_BARS": {"instant": 4, "standard": 16, "slow": 32},
@@ -103,6 +105,9 @@
     "PLAN_MIN_WAIT_MS": 12000,
     "PREPLAN_WAIT_MS": 35000,
     "PRE_CLEAR_BARS": {"instant": 0, "standard": 8, "slow": 16},
+    "RAPID_BOOK_MARGIN_S": 4.0,
+    "RAPID_DEADLINE_LEAD_FRAC": 0.5,
+    "RAPID_WINDOW": {"min": 30, "max": 60, "xf": 8},
     "REPLAN_LEAD_S": 20.0,
     "RIFF_MAX_STRETCH": 0.15,
     "SESSION_PAUSE_CLOSE_MIN": 15,
@@ -153,6 +158,6 @@
   };
   root.DJ_CONFIG = Object.freeze(values);
   root.DJ_CONFIG_LIVE = Object.freeze(live);
-  root.DJ_CONFIG_META = Object.freeze({ sha: "7bb0915", hash: "49121c971159" });
+  root.DJ_CONFIG_META = Object.freeze({ sha: "ecb42b2", hash: "50469c5a639f" });
   if (typeof module !== "undefined" && module.exports) module.exports = root.DJ_CONFIG;
 })(typeof window !== "undefined" ? window : globalThis);

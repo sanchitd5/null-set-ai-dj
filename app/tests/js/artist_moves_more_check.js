@@ -51,7 +51,7 @@ assert.ok(p.ok && p.fallbacks.some((f) => /^gain=/.test(f)));
 
 // ---- chant_gate
 const beats = Array.from({ length: 400 }, (_, i) => i * beatS);
-const chantBase = () => ({ pos: 50, lineT: 64, bpm: BPM, rate: 1, beats, vocals: [[55, 70]], drops: [], energyNow: 0.3, energyNext: 0.6,
+const chantBase = () => ({ genre: "melodic techno", pos: 50, lineT: 64, bpm: BPM, rate: 1, beats, vocals: [[55, 70]], drops: [], energyNow: 0.3, energyNext: 0.6,
   count: 0, quiet: true, vocalLive: true, vocalBusy: false, inTransition: false, holdActive: false, mashupActive: false, relaxed: false, onDemand: false });
 p = am.planChantGate(chantBase());
 assert.ok(p.ok, JSON.stringify(p));
@@ -63,6 +63,7 @@ assert.strictEqual(p.steps.length, 16, "straight 16ths: 32 slots, every other on
 for (const s of p.steps) assert.ok(Math.abs(s.t1 - s.t0 - 0.125) < 1e-9 && s.t0 >= p.start && s.t1 <= p.release);
 assert.ok(p.floor > 0 && p.floor < 0.5);
 const refuseC = (patch, gate) => { const r = am.planChantGate(Object.assign(chantBase(), patch)); assert.strictEqual(r.ok, false); assert.strictEqual(r.gate, gate, JSON.stringify(r)); };
+refuseC({ genre: "hip hop" }, "genre"); refuseC({ genre: "" }, "genre"); refuseC({ genre: "punjabi", onDemand: true }, "genre");
 refuseC({ inTransition: true }, "transition");
 refuseC({ holdActive: true }, "transition");
 refuseC({ mashupActive: true }, "vocal_layer");
@@ -160,7 +161,7 @@ function fakeHost(decks, over = {}) {
   const host = {
     audio: { get currentTime() { return t.now; } },
     clock: { now: () => t.now * 1000, perfNow: () => t.now * 1000, setTimeout: (fn, ms) => { t.q.push({ at: t.now + ms / 1000, fn }); return t.q.length; }, clearTimeout() {} },
-    decks, session: { relaxed: false },
+    decks, session: { relaxed: false, genre: "house" },
     mod: Object.assign({ djMind: { core: { camelotScore: () => 0.9 } }, sceneProfile: require(path.join(STATIC, "scene-profile.js")),
       fxBudget: { spend: (k, c, ctx) => { spent.push(k); return { ok: true, why: "ok" }; } } }, over.mod || {}),
     bus: { emit: (type, detail) => events.push({ type, detail }) },
@@ -189,7 +190,8 @@ function mount(H) {
   const sb = { Engine: { mount: (n, create) => { if (n === "artistMoves") api = create({ host: H.host }); } }, console: { info() {}, warn() {} }, Math, Object, Array, Number, JSON, String, RegExp, Float32Array, require };
   sb.window = sb;
   vm.createContext(sb);
-  vm.runInContext(fs.readFileSync(path.join(STATIC, "drop-line.js"), "utf8"), sb);   // index.html order
+  vm.runInContext(fs.readFileSync(path.join(STATIC, "generated", "dj_config.js"), "utf8"), sb);   // index.html order
+  vm.runInContext(fs.readFileSync(path.join(STATIC, "drop-line.js"), "utf8"), sb);
   vm.runInContext(fs.readFileSync(path.join(STATIC, "learned-moves.js"), "utf8"), sb);
   vm.runInContext(fs.readFileSync(path.join(STATIC, "artist-moves.js"), "utf8"), sb);
   return api;

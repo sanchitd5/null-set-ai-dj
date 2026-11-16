@@ -108,7 +108,7 @@ function mkEnv(t0, t1, hop, segs) {
 }
 const HOP = BEAT / 4;
 const SUNG = [[LINE + 2.1, LINE + 5.9, 0.2], [LINE + 8.1, LINE + 11.9, 0.25]];
-const baseC = () => ({ pos: LINE + 0.05, rate: 1, bar: BAR, lineT: LINE, entryT: 0, exitT: 400, barsToExit: null, barsOnTrack: 40, atBar: 40, used: [], count: 0,
+const baseC = () => ({ genre: "house", pos: LINE + 0.05, rate: 1, bar: BAR, lineT: LINE, entryT: 0, exitT: 400, barsToExit: null, barsOnTrack: 40, atBar: 40, used: [], count: 0,
   lastAtBar: null, mashupActive: false, relaxed: false, deferring: false, othersVocal: false, env: mkEnv(LINE, LINE + 8 * BAR, HOP, SUNG),
   envFull: mkEnv(LINE - 16, LINE + 8 * BAR, HOP, SUNG), energy: { drums: 0.2, bass: 0.2, vocals: 0.15, other: 0.1 }, label: "verse", nextLabel: "verse",
   bLines: [{ s: 20.1, e: 23.85, rms: 0.1 }, { s: 30.2, e: 31.0, rms: 0.3 }], bBeat: BEAT, bGrid0: 0, bRate: 1, tempoGap: 0, keyScore: 1, bRap: false, bPlaying: false });
@@ -148,6 +148,13 @@ const baseC = () => ({ pos: LINE + 0.05, rate: 1, bar: BAR, lineT: LINE, entryT:
   assert.strictEqual(lm.artistPick(capped, {}).plan, null, "the per-song cap holds");
   assert(lm.artistPick(capped, {}, "acapella_build", true).plan, "on demand skips the cap");
   assert.strictEqual(lm.artistPick(Object.assign(capped, { relaxed: true }), {}, "acapella_build", true).plan, null, "never the relaxed-session gate");
+  for (const g of ["hip hop", "punjabi", "pop", "", null]) {
+    const r = lm.artistPick(Object.assign(baseC(), { label: "build", genre: g }), {}, "acapella_build", true);
+    assert.strictEqual(r.plan, null, `no acapella chop build on ${g}`);
+    assert.strictEqual(r.refusals[0].gate, "genre");
+  }
+  assert(lm.artistPick(Object.assign(baseC(), { label: "build", genre: "techno" }), {}, "acapella_build", true).plan, "techno may");
+  assert(lm.artistPick(Object.assign(baseC(), { label: "build", genre: "pop" }), {}, "vocal_swap", true).refusals.every((x) => x.gate !== "genre"), "a line swap is not genre gated");
 }
 
 // ---- runtime: the run-now entries through a fake Host -------------------------------------------------------
@@ -165,7 +172,7 @@ const baseC = () => ({ pos: LINE + 0.05, rate: 1, bar: BAR, lineT: LINE, entryT:
     bus: { emit() {}, on: (t, fn) => { listeners[t] = fn; }, off() {} },
     log: { step: (k, o) => steps.push({ k, o }) }, ui: { flag: (id, d) => (id in flags ? flags[id] : d), el: () => null, query: () => null, queryAll: () => [], create() {}, fire() {}, status: (m) => statuses.push(m), cssVar: () => "" },
     storage: { get: () => null, set() {} }, random: { uuid: () => "u", next: () => 0.5 },
-    audio: { currentTime: now }, decks: {}, state: {}, session: { relaxed: false }, mod: {}, expose() {}, loadIntoDeck() {},
+    audio: { currentTime: now }, decks: {}, state: {}, session: { relaxed: false, genre: "house" }, mod: {}, expose() {}, loadIntoDeck() {},
   };
   Engine.use(host);
   const art = Engine.create("learnedMoves");

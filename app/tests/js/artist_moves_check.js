@@ -17,7 +17,7 @@ const DOWNBEATS = Array.from({ length: 100 }, (_, i) => i * 2);
 
 // ---------------------------------------------------------------- S13 slip loop planner
 const slip = (o = {}) => am.planSlipLoop(Object.assign({ pos: 55, lineT: 64, bpm: 120, rate: 1, beats: BEATS, exitT: 120,
-  slipSupported: true, vocals: [], energyNow: 0.4, energyNext: 0.7, count: 0, atBar: 40, lastAtBar: null, quiet: true }, o));
+  genre: "house", slipSupported: true, vocals: [], energyNow: 0.4, energyNext: 0.7, count: 0, atBar: 40, lastAtBar: null, quiet: true }, o));
 {
   const p = slip();
   assert.ok(p.ok, JSON.stringify(p));
@@ -47,6 +47,12 @@ const slip = (o = {}) => am.planSlipLoop(Object.assign({ pos: 55, lineT: 64, bpm
   assert.strictEqual(slip({ vocals: null }).gate, "unmeasured");
   assert.strictEqual(slip({ vocals: [[50, 70]] }).gate, "vocal_seam");
   assert.strictEqual(slip({ exitT: 66 }).gate, "exit_guard");
+  // MOVE_VOCAL_LOOP_GATE: off-EDM a slip loop needs a vocal-free window (EDM keeps the 25% rule); same cases as dj-core test/move_genre_test.dart
+  assert.strictEqual(slip({ genre: "hip hop", vocals: [[50, 70]] }).gate, "genre");
+  assert.strictEqual(slip({ genre: "punjabi", vocals: [[50, 70]] }).gate, "genre");
+  assert.strictEqual(slip({ genre: "", vocals: [[50, 70]] }).gate, "genre", "unknown genre refuses a sung window");
+  assert.ok(slip({ genre: "hip hop", vocals: [[1, 2]] }).ok, "vocal-free window runs off-EDM");
+  assert.ok(slip({ genre: "trance", vocals: [[50, 52]] }).ok, "EDM keeps the 25% rule");
   // on demand skips only the choice gates
   assert.ok(slip({ onDemand: true, count: 5, lastAtBar: 39, energyNext: 0.1, quiet: false, relaxed: true }).ok);
   assert.strictEqual(slip({ onDemand: true, loopOn: true }).gate, "deck_busy");
@@ -230,7 +236,7 @@ function fakeHost(decks) {
   const host = {
     audio: { get currentTime() { return t.now; } },
     clock: { now: () => t.now * 1000, perfNow: () => t.now * 1000, setTimeout: (fn, ms) => { t.q.push({ at: t.now + ms / 1000, fn }); return t.q.length; }, clearTimeout() {} },
-    decks, session: { relaxed: false }, mod: {},
+    decks, session: { relaxed: false, genre: "house" }, mod: {},
     bus: { emit: (type, detail) => events.push({ type, detail }) },
     log: { step: (kind, o) => steps.push({ kind, o }) },
     ui: { flag: () => true, status: (m) => status.push(m), queryAll: () => [] },
@@ -257,7 +263,8 @@ function fakeDeck(id, over = {}) {
   const sb = { Engine: { mount: (n, create) => { if (n === "artistMoves") api = create({ host: H.host }); } }, console: { info() {}, warn() {} }, Math, Object, Array, Number, JSON, require };
   sb.window = sb;
   vm.createContext(sb);
-  vm.runInContext(fs.readFileSync(path.join(STATIC, "drop-line.js"), "utf8"), sb);   // index.html order
+  vm.runInContext(fs.readFileSync(path.join(STATIC, "generated", "dj_config.js"), "utf8"), sb);   // index.html order
+  vm.runInContext(fs.readFileSync(path.join(STATIC, "drop-line.js"), "utf8"), sb);
   vm.runInContext(fs.readFileSync(path.join(STATIC, "learned-moves.js"), "utf8"), sb);
   vm.runInContext(fs.readFileSync(path.join(STATIC, "artist-moves.js"), "utf8"), sb);
   assert.ok(api && api.tick && api.runNow);

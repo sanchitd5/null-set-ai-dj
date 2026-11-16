@@ -181,9 +181,11 @@ console.log("stem moves core ok");
       assert.ok(last.stems === null || last.hold, `${k} resolves on the line`);
     }
   }
-  const base = { vocal: 0.8, used: [], count: 0, barsOnTrack: 40, barsLeft: 80, lastAtBar: null, atBar: 40 };
+  const base = { genre: "house", vocal: 0.8, used: [], count: 0, barsOnTrack: 40, barsLeft: 80, lastAtBar: null, atBar: 40 };
   assert.strictEqual(remixPick(base), "vocal_hold");
   assert.strictEqual(remixPick({ ...base, used: ["vocal_hold"] }), "acapella");
+  // MOVE_GENRE_ALLOW vocal_hold: a repeated vocal bar is EDM only (same case as dj-core test/move_genre_test.dart)
+  for (const g of ["hip hop", "punjabi", "pop", "", null, undefined]) assert.strictEqual(remixPick({ ...base, genre: g }), "acapella", `no vocal hold on ${g}`);
   assert.strictEqual(remixPick({ ...base, vocal: 0 }), "synth_hold");          // alone on the master: never drums alone
   assert.strictEqual(remixPick({ ...base, vocal: 0.3 }), "bass_out");
   assert.strictEqual(remixPick({ ...base, vocal: 0, othersCarry: true }), "drum_break");   // the other deck carries the tones
