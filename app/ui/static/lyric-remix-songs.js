@@ -4,7 +4,8 @@
 //   GET/PUT /api/lyric_remix/settings          {ai_picks, min_songs}
 //   POST    /api/tracks/<id>/separate?stems=4  stems are requested as soon as a row is tapped
 // PLAY NOW loads the song on the playing deck (or A) and plays it; BOOK NEXT loads it on the idle deck. A pair also loads B on the other
-// deck. Stems late: the plain song plays and the remix is retried every phrase ("Getting stems for the remix"). Pure helpers are
+// deck. Stems late: the plain song plays and the remix is retried every phrase ("Getting stems for the remix"). lyric-remix.js drives a
+// requested remix on its own phrase clock (AI DJ on or off); the status here follows it: Remix in N bars / Remix playing / the refusal. Pure helpers are
 // node-checked (app/tests/js/lyric_remix_songs_check.js).
 "use strict";
 
@@ -105,7 +106,7 @@ if (typeof module !== "undefined" && module.exports) module.exports = LRS;
       const lr = lyricRemix();
       if (!lr) return clearInterval(statusTimer);
       if (lr.status) note(lr.status);
-      if (!lr.want) { clearInterval(statusTimer); if (lr.status) note(lr.status); }
+      if (!lr.busy) { clearInterval(statusTimer); note(lr.status || ""); }
     }, LRS.POLL_MS);
   }
 

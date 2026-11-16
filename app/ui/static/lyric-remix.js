@@ -101,6 +101,8 @@
     return `Remix not played: ${reason || gate}`;
   }
 
+  const DRIVE_MS = 250;             // the own clock's poll
+  const PAIR_EXIT_PHRASES = 6;      // a requested pair exits this many phrase lines ahead (room for the remix window)
   const HAS_WAIT_MS = 400;           // the first eligible phrase waits this long (once) for /has before it is skipped
   const core = { songCtx, transitionCtx, overlapCtx, wantPlanFor, retryable, wantStatus, HAS_WAIT_MS, body, splitSlices, sliceTiming, windowOf, leadRefusal, noteDone, statusText, MIN_LEAD_S, EXIT_GUARD_BARS };
   root.lyricRemixCore = core;
@@ -120,14 +122,27 @@
     let rttS = DEFAULT_RTT_S;
     let want = null;                                 // the requested remix {plan, a, b, seen}, until it plays or its song leaves the air
     let wantStatusText = "";
-    const setStatus = (t) => { wantStatusText = t || ""; try { host.bus.emit("lyric-remix-status", { text: wantStatusText }); } catch (e) { /* optional */ } };
+    let performing = null;                           // the armed remix {deck, at, until}: status "Remix in N bars" / "Remix playing" until it ends
+    let driveTimer = null;
+    const driven = { a: null, b: null };             // phrase index last driven per deck (the own clock below)
+    const entryAt = { a: null, b: null };            // track position where the own clock first saw the requested song on air
+    const exitAt = { a: null, b: null };             // planned exit (track s) the own clock gave a requested pair
+    const setStatus = (t) => {
+      const next = t || "";
+      if (next === wantStatusText) return;
+      wantStatusText = next;
+      try { host.bus.emit("lyric-remix-status", { text: wantStatusText }); } catch (e) { /* optional */ }
+      if (next) { try { host.ui.status(next); } catch (e) { /* optional */ } }       // the deck status line shows it too
+    };
     function request(w) {
       if (!w || !w.plan || !w.a) return false;
       want = { plan: String(w.plan), a: String(w.a), b: w.b ? String(w.b) : null, seen: false };
+      driven.a = driven.b = null; entryAt.a = entryAt.b = null; exitAt.a = exitAt.b = null;
       setStatus("Waiting for the song");
+      startDrive();
       return true;
     }
-    function clearWant() { want = null; setStatus(""); }
+    function clearWant() { want = null; if (!performing) setStatus(""); }
     const wantsDeck = (d) => !!(want && d && trackOf(d) === want.a);
 
     const other = (id) => (id === "a" ? "b" : "a");
@@ -338,14 +353,73 @@
             const armed = arm(d, res);
             if (!armed.ok) { lastRefusal = { gate: armed.gate, reason: armed.reason }; console.info(`lyric remix skipped: ${armed.gate}: ${armed.reason}`); return run(i + 1); }
             noteDone(r, donePlans, res, inp.atBar);
-            if (t.want && want && want.plan === t.want) clearWant();
+            const asked_ = !!(t.want && want && want.plan === t.want), pairAsked = asked_ && !!want.b;
+            if (asked_) want = null;
+            if (asked_) { performing = { deck: d, at: armed.at, until: armed.until }; startDrive(); watchPerforming(); }
             say(d, res, armed, inp.atBar);
+            if (pairAsked) bookTransition(d, bId);
           }).catch((e) => { lastRefusal = { gate: "unavailable", reason: e && e.message }; console.info("lyric remix unavailable -", e && e.message); refused(); });
         };
         run(0);
       } catch (e) {
         console.info("lyric remix tick failed -", e && e.message);
       }
+    }
+
+    // ---- the own clock: a requested remix drives itself whether or not the AI DJ runs ------------------------------------------------
+    // One owner per deck: while dj-mind (SET MIND on and following the deck) ticks the remix on its phrase clock, this clock only keeps the
+    // status current; otherwise it ticks once per phrase from the deck's own beat grid, the same `o` dj-mind builds.
+    const mindOwns = (d) => { const m = host.mod.djMind; return !!(m && typeof m.owns === "function" && m.owns(d.id)); };
+    function djCore() { return root.djMindCore || (typeof require === "function" ? require("./dj-mind.js") : null); }
+    function startDrive() { if (!driveTimer && host.clock.setInterval) driveTimer = host.clock.setInterval(drive, DRIVE_MS); }
+    function stopDrive() { if (driveTimer) { host.clock.clearInterval(driveTimer); driveTimer = null; } }
+    // The tick input for deck d: the current line when the deck is right on it, else the next one (a plan always starts ahead).
+    function driveInputs(d) {
+      const dm = djCore();
+      if (!dm || !dm.phraseAt || !dm.phraseBounds) return null;
+      const an = d.analysis || {}, bar = 240 / (d.bpm || (an && an.bpm) || 128), pos = d._currentPosition();
+      const cur = dm.phraseAt(an.downbeat_times, pos, bar);
+      let idx = cur, lineT = dm.phraseBounds(an.downbeat_times, idx, bar)[0];
+      if (Math.abs(pos - lineT) > bar / 2) { idx = cur + 1; lineT = dm.phraseBounds(an.downbeat_times, idx, bar)[0]; }
+      if (entryAt[d.id] == null) entryAt[d.id] = d._mindEntry != null ? d._mindEntry : pos;
+      const end = d.buffer && d.buffer.duration ? d.buffer.duration : 0;
+      let exitT = end;
+      if (want && want.b) {                                   // a pair: the transition is ours too; it fires on a line after the remix window
+        if (exitAt[d.id] == null) exitAt[d.id] = Math.min(end, dm.phraseBounds(an.downbeat_times, idx + PAIR_EXIT_PHRASES, bar)[0]);
+        exitT = exitAt[d.id];
+      }
+      return { cur, o: { pos, bar, phrase: idx, lineT, entryT: entryAt[d.id], exitT, st: {} } };
+    }
+    function watchPerforming() {
+      if (!performing) return;
+      const { deck: d, at, until } = performing, now = audioCtx.currentTime;
+      if (!d.playing || now >= until || !d._lyricRemix) { performing = null; if (!want) setStatus(""); return; }
+      if (now < at) {
+        const rate = (d._playbackRate && d._playbackRate()) || 1, bar = 240 / (d.bpm || 128);
+        setStatus(`Remix in ${Math.max(1, Math.round(((at - now) * rate) / bar))} bars`);
+      } else setStatus("Remix playing");
+    }
+    function drive() {
+      try {
+        watchPerforming();
+        if (!want) { if (!performing) stopDrive(); return; }
+        const d = ["a", "b"].map((i) => host.decks && host.decks[i]).find((x) => x && x.playing && trackOf(x) === want.a);
+        if (!d || mindOwns(d)) return;
+        const inp = driveInputs(d);
+        if (!inp || driven[d.id] === inp.cur) return;
+        driven[d.id] = inp.cur;
+        tick(d, inp.o);
+      } catch (e) { console.info("lyric remix drive failed -", e && e.message); }
+    }
+    // A pair booked with the AI DJ off: B plays in on the line after the remix window, the same MERGE -> HOLD the AI actions use.
+    function bookTransition(d, bId) {
+      try {
+        if (mindOwns(d)) return;                                          // SET MIND books its own transition
+        const ap = host.mod.autopilot, sm = host.mod.stemMoves, n = host.decks && host.decks[other(d.id)], aT = exitAt[d.id];
+        if (!ap || !ap.mergeNow || !sm || !n || aT == null) return setStatus("Remix played, no transition: the mixer is not loaded");
+        const r = ap.mergeNow({ out: d.id, inn: other(d.id), aId: trackOf(d), bId, aT, t0: sm.audioAt(d, aT) });
+        if (!r || !r.ok) setStatus(`Remix played, no transition: ${(r && r.why) || "refused"}`);
+      } catch (e) { console.info("lyric remix transition failed -", e && e.message); }
     }
 
     function stop(d) {
@@ -368,7 +442,7 @@
         }
       } catch (e) { console.info("lyric remix stop failed -", e && e.message); }
     }
-    const api = { core, tick, arm, stop, cancel, prefetch, request, clear: clearWant, wantsDeck, get want() { return want; }, get status() { return wantStatusText; },
+    const api = { core, tick, arm, stop, cancel, prefetch, request, clear: clearWant, wantsDeck, get want() { return want; }, get busy() { return !!(want || performing); }, get status() { return wantStatusText; },
       get donePlans() { return donePlans; } };
     host.mod.lyricRemix = api;
     return api;
