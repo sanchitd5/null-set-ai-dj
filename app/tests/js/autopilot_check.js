@@ -263,3 +263,21 @@ console.log("autopilot core ok");
   const b = autopilotCore.exitBounds({ w: { min: 60, max: 300, xf: 24 }, entryPos: 0, trackDur: audibleEnd({ energy_times: tailTimes, energy_curve: tail }, 278) });
   assert.ok(b.trackEnd <= 268 - 24 - 2 + 1e-9);
 }
+
+// QUICK SET (dj-config RAPID_WINDOW, dj-core playWindowFor rapid): every song 30-60 s whatever its match, energy or fame; the search
+// goes deadline-first at a lead scaled to the window, not 45 s before an exit that is 30 s from the entry.
+{
+  const autopilotCore = require("../../ui/static/autopilot.js");
+  const w = autopilotCore.playWindowFor({ rapid: true, mode: "quick", score: 20, famous: true, rem: 400, finish: true, steering: "move", energy: 2 });
+  assert.deepStrictEqual([w.min, w.max, w.xf], [30, 60, 8]);
+  assert.strictEqual(autopilotCore.playWindowFor({ mode: "quick", score: 80 }).min, 40, "plain quick is unchanged");
+  const b = autopilotCore.exitBounds({ w, entryPos: 20, trackDur: 200 });
+  assert.deepStrictEqual([b.lo, b.hi], [50, 80]);
+  assert.strictEqual(autopilotCore.searchLeadS(false), undefined);
+  assert.strictEqual(autopilotCore.searchLeadS(true), 15);
+  // 30 s window entered at 0: the normal 45 s lead is deadline-first at once; the quick lead waits until 15 s in
+  assert.strictEqual(autopilotCore.searchPlan({ pos: 2, exitLo: 30 }).deadline, true);
+  assert.strictEqual(autopilotCore.searchPlan({ pos: 2, exitLo: 30, leadS: autopilotCore.searchLeadS(true) }).deadline, false);
+  assert.strictEqual(autopilotCore.searchPlan({ pos: 15, exitLo: 30, leadS: autopilotCore.searchLeadS(true) }).deadline, true);
+  console.log("quick set window ok");
+}

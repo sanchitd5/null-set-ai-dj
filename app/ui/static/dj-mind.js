@@ -46,6 +46,11 @@
 
 if (typeof DJ_CONFIG === "undefined" && typeof require === "function") require("./generated/dj_config.js");   // node: browsers load it via index.html
 if (typeof HoldPolicy === "undefined" && typeof require === "function") require("./hold-policy.js");   // G17
+// MOVE_VOCAL_LOOP_GATE: the rule lives in learned-moves.js (browser: loaded before the first tick, so looked up at call time)
+function loopVocalRefusal(kind, genre, share) {
+  const lm = (typeof learnedMovesCore !== "undefined" && learnedMovesCore) || (typeof require === "function" ? require("./learned-moves.js") : null);
+  return lm ? lm.loopVocalRefusal(kind, genre, share) : null;
+}
 (function (root) {
   "use strict";
 
@@ -219,6 +224,9 @@ if (typeof HoldPolicy === "undefined" && typeof require === "function") require(
     if (s.mashupActive) return "vocal layer running";
     if (DROP_LEADINS.includes(kind) && !s.preDrop) return "no drop after this phrase";
     if (kind === "loop_extend" && (sect === "build" || sect === "outro")) return "no loop on a build/outro";
+    // loop / roll moves repeat the full mix: off-EDM only over a vocal-free region (dj-config MOVE_VOCAL_LOOP_GATE; dj-core loopVocalRefusal)
+    const lr = loopVocalRefusal(kind, s.genre, kind === "loop_extend" ? s.vocalLoop8 : s.vocalLoop2);
+    if (lr) return lr;
     if (kind === "beat_jump") {
       if (RELEASE_LABELS.includes(sect) || s.preDrop) return "never jump a drop or its lead-in";
       if ((s.skipHitsDrop || {})[bars]) return "jump would skip a drop";
@@ -941,7 +949,7 @@ if (typeof HoldPolicy === "undefined" && typeof require === "function") require(
       subdropThisTrack: subdropTrackIdx === trackIdx,
       subdropLastTrack: subdropTrackIdx === trackIdx - 1,
       secsSinceMove: nowS() - lastMoveAt,
-      setMode: mode ? mode.value : "hybrid",
+      setMode: mode ? (mode.value === "rapid" ? "quick" : mode.value) : "hybrid",
       phraseSection: pLab, phraseEnergy: pEnergy, nextPhraseSection: nLab,
       preDrop: isPreDrop(pLab, nLab),
       skipHitsDrop: { 8: dropIn(8), 16: dropIn(16) },
@@ -958,6 +966,9 @@ if (typeof HoldPolicy === "undefined" && typeof require === "function") require(
       drumsOn: !!(host.mod.beatLayer && host.mod.beatLayer.boostUntil && host.mod.beatLayer.isEnabled()),
       boostThisTrack: boostTrackIdx === trackIdx, secsSinceBoost: nowS() - lastBoostAt,
       lastBarVocal: vocalShare(a.vocal_active_regions, p1 - bar, p1),
+      // MOVE_VOCAL_LOOP_GATE: the loop / roll region (2 bars before the line; 8 for a loop extend) and the song's label
+      vocalLoop2: vocalShare(a.vocal_active_regions, p1 - 2 * bar, p1), vocalLoop8: vocalShare(a.vocal_active_regions, p1 - 8 * bar, p1),
+      genre: (host.session && host.session.genre) || "",
       peakKind: plan ? plan.peakKind : null, peakWhy: plan ? plan.peakWhy : null,
     };
     st.peak = isPeak(st);
@@ -1254,6 +1265,7 @@ if (typeof HoldPolicy === "undefined" && typeof require === "function") require(
       used: r.used, count: r.count, barsOnTrack: atBar, barsLeft: (exitT - lineT) / bar, lastAtBar: r.lastAtBar, atBar,
       energy: sm.remixEnergy(d, lineT, bar),
       othersCarry: !!(d._othersCarry && d._othersCarry()),     // a drum break only while the other deck plays too
+      genre: (host.session && host.session.genre) || "",       // vocal_hold: electronic songs only (MOVE_GENRE_ALLOW)
     });
     if (!kind) return false;
     // "never vocal mix a drop line" (drop-line.js): the held (looped) vocal bar must not run over a drop or
@@ -1457,7 +1469,7 @@ if (typeof HoldPolicy === "undefined" && typeof require === "function") require(
           track_a_id: currentId, track_b_id: nextId,
           now: d._currentPosition(), entry: d._mindEntry || 0,
           window_lo: win.lo, window_hi: win.hi,
-          set_mode: mode ? mode.value : "hybrid",
+          set_mode: mode ? (mode.value === "rapid" ? "quick" : mode.value) : "hybrid",
           set_position: win.setPosition || 0,
           recent_moves: log.slice(-4).map((l) => l.action),
           remix_used: remixUsed.slice(),
@@ -1589,7 +1601,7 @@ if (typeof HoldPolicy === "undefined" && typeof require === "function") require(
     return peakTransition({
       peakOn: peakOn(),
       // song-level only: a transition changes the vibe, so "has a drop" is not enough
-      peak: (Number.isFinite(profileE) && profileE >= PEAK_PROFILE_ENERGY) || (mode && mode.value === "quick"),
+      peak: (Number.isFinite(profileE) && profileE >= PEAK_PROFILE_ENERGY) || (mode && (mode.value === "quick" || mode.value === "rapid")),
       drop: ctx.drop, aDrops: aDropLines(d, bar),
       aVocal: a.vocal_active_regions, lo: ctx.lo, hi: ctx.hi, plannedExit: ctx.plannedExit,
       entryPos: ctx.entryPos || 0, bar,
