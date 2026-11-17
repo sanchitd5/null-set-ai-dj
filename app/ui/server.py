@@ -3472,6 +3472,7 @@ def _autopilot_suggest_impl(req: AutopilotSuggestRequest, ctx: Optional[dict] = 
                 pinned_scene=str((req.set_state or {}).get("scene_genre") or "").strip(),
                 candidates=candidates,
                 lang_check=lang_check,
+                genre_of=_artist_genre_of,
                 graph_picks=None,
                 graph_min=None,
             )
