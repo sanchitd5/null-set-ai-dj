@@ -74,7 +74,11 @@ _FILLER = re.compile(
     r"(?i)(thanks?\s+(you\s+)?(so\s+much\s+)?for\s+(watching|listening)|please\s+subscribe|like\s+and\s+subscribe|"
     r"subtitles?\s+(by|made|created)|captions?\s+by|transcri(bed|ption)\s+by|translated\s+by|amara\.org|"
     r"www\.|https?://|\.com\b|copyright|all\s+rights\s+reserved|see\s+you\s+(in\s+the\s+)?next|"
-    r"untertitel|sous-titres|sottotitoli|subt[ií]tulos|ご視聴|字幕|订阅|訂閱|點贊|点赞)")
+    r"untertitel|sous-titres|sottotitoli|subt[ií]tulos|ご視聴|字幕|订阅|訂閱|點贊|点赞|"
+    # channel / video boilerplate (an interview, a lyric-video intro, an outro card): speech, never a sung line
+    r"subscribe|\bchannel\b|(link|links)\s+(is\s+|are\s+)?(in|below)|description\s+(box|below)|click\s+(the\s+)?(bell|link)|"
+    r"official\s+(music\s+)?video|lyric(s)?\s+video|\bcredits?\b.*\bfeaturing\b|follow\s+(me|us)\s+on|"
+    r"सब्सक्राइब|चैनल|ਸਬਸਕ੍ਰਾਈਬ|ਚੈਨਲ|سبسکرائب|چینل)")
 _FILLER_EXACT = {"you", "thank you", "thanks", "thank you so much", "bye", "bye bye", "music", "applause",
                  "laughter", "silence", "instrumental", "outro", "intro"}
 _NO_WORDS = re.compile(r"^[\W_♪♫♩♬]*$")
@@ -411,10 +415,11 @@ def too_thin(lines: Sequence[dict], sung: Optional[np.ndarray]) -> bool:
 
 def transcribe_full(vocal, sr: Optional[int] = None, vocal_regions: Optional[Sequence[Sequence[float]]] = None,
                     backend: Optional[str] = None, model: Optional[str] = None, engine=None,
-                    log: Callable[[str], None] = lambda m: None) -> dict:
+                    log: Callable[[str], None] = lambda m: None, language: Optional[str] = None) -> dict:
     """Full result: {lines, words, language, language_prob, backend, model, stats}.
     lines are [] when no backend, no singing, or the result is too thin to trust.
-    engine: an object with language(audio)/run(audio, clips, language) (tests mock it)."""
+    engine: an object with language(audio)/run(audio, clips, language) (tests mock it).
+    language: force this Whisper language code (the library's language id) instead of detecting it per song."""
     name = model_name(model)
     be = "mock" if engine is not None else pick_backend(backend)
     doc = {"v": ASR_V, "lines": [], "words": [], "language": None, "language_prob": None,
@@ -436,7 +441,10 @@ def transcribe_full(vocal, sr: Optional[int] = None, vocal_regions: Optional[Seq
     with _LOCK:
         eng = engine if engine is not None else _engine(be, name)
         a, b = max(regs, key=lambda r: r[1] - r[0])          # language from the longest sung span
-        lang, prob = eng.language(y[int(a * SR): int(min(b, a + 30.0) * SR)])
+        if language:
+            lang, prob = language, None
+        else:
+            lang, prob = eng.language(y[int(a * SR): int(min(b, a + 30.0) * SR)])
         segs = eng.run(y, [x for r in regs for x in r], lang)
     doc["stats"]["asr_s"] = round(time.time() - t0, 1)
     doc["language"], doc["language_prob"] = lang, (round(prob, 3) if prob is not None else None)
@@ -498,14 +506,15 @@ def cached(vocal_path, model: Optional[str] = None, cache_dir: Optional[Path] = 
 
 def for_stem(vocal_path, force: bool = False, vocal_regions=None, backend: Optional[str] = None,
              model: Optional[str] = None, cache_dir: Optional[Path] = None, engine=None,
-             log: Callable[[str], None] = lambda m: None) -> dict:
+             log: Callable[[str], None] = lambda m: None, language: Optional[str] = None) -> dict:
     """Cached transcription of a vocal stem file (transcribed on a miss). A run without a
     backend is not cached (installing one later must not find a stale empty answer)."""
     if not force:
         doc = cached(vocal_path, model, cache_dir)
         if doc is not None:
             return doc
-    doc = transcribe_full(vocal_path, vocal_regions=vocal_regions, backend=backend, model=model, engine=engine, log=log)
+    doc = transcribe_full(vocal_path, vocal_regions=vocal_regions, backend=backend, model=model, engine=engine, log=log,
+                          language=language)
     if doc["backend"] is None:
         return doc
     doc["vocal_hash"] = stem_hash(vocal_path)
@@ -583,6 +592,74 @@ def gpu_busy(run=None, samples: int = 3) -> bool:
         if util > GATE_UTIL_PCT or free < GATE_FREE_MB:
             return True
     return False
+
+
+STRONG_MODEL = "large-v3"
+INDIC_LANGS = ("pa", "hi", "ur")
+
+
+def set_live(quiet_min: float = 15.0, now: Callable[[], float] = time.time, cache_dir: Optional[Path] = None) -> bool:
+    """A DJ set is live: a session wrote events in the last quiet_min minutes (the GPU is then the DJ's)."""
+    root = Path(cache_dir if cache_dir is not None else CACHE_DIR) / "sessions"
+    try:
+        return any(now() - p.stat().st_mtime < quiet_min * 60 for p in root.glob("*/events.jsonl"))
+    except OSError:
+        return False
+
+
+def batch_languages(langs: Sequence[str] = INDIC_LANGS, model: str = STRONG_MODEL, limit: Optional[int] = None,
+                    backend: Optional[str] = None, log: Callable[[str], None] = print, force: bool = False,
+                    live: Optional[Callable[[], bool]] = None, gate: Optional[Callable[[], bool]] = None,
+                    sleep: Callable[[float], None] = time.sleep, only: Optional[Sequence[str]] = None) -> dict:
+    """Stronger-model pass for the songs the language id calls `langs` (pa / hi / ur): the vocal stem is transcribed
+    with `model`, the language FORCED from the language id (Whisper's own per-song guess mixes Devanagari / Gurmukhi /
+    Urdu), cached next to the default model's result (the lines builder prefers it). Idle only: stops at once when a
+    set is live (live()), waits while the shared GPU is busy (gate()). -> {todo, done, failed, with_lyrics, stopped}."""
+    from app.music_brain.analysis import lang_id
+
+    be = pick_backend(backend)
+    if be is None:
+        raise ValueError("no ASR backend: pip install -r requirements-asr.txt (or LYRICS_ASR is off)")
+    live = live or set_live
+    if gate is None and be == "cuda":
+        gate = gpu_busy
+    todo = []
+    for h, v in vocal_stems():
+        rec = lang_id.get(h)
+        code = (rec or {}).get("lang")
+        if code in langs and (not only or h in only) and (force or cached(v, model) is None):
+            todo.append((h, v, code))
+    if limit:
+        todo = todo[:limit]
+    out = {"model": model, "todo": len(todo), "done": 0, "failed": 0, "with_lyrics": 0, "stopped": None}
+    log(f"ASR {model} for {'/'.join(langs)}: {len(todo)} song(s), backend {be}")
+    try:
+        for i, (h, v, code) in enumerate(todo, 1):
+            if live():
+                out["stopped"] = "a set is live"
+                break
+            if gate is not None and gate():
+                release()
+                log(f"[{i}/{len(todo)}] GPU busy: waiting")
+                while gate():
+                    if live():
+                        break
+                    sleep(GATE_POLL_S)
+                if live():
+                    out["stopped"] = "a set is live"
+                    break
+            try:
+                doc = for_stem(v, force=force, backend=be, model=model, log=log, language=code)
+                out["done"] += 1
+                out["with_lyrics"] += bool(doc["lines"])
+                log(f"[{i}/{len(todo)}] {h[:12]} ({code}): {len(doc['lines'])} line(s), {doc['stats'].get('asr_s', 0)} s")
+            except Exception as exc:
+                out["failed"] += 1
+                log(f"[{i}/{len(todo)}] {h[:12]}: failed ({type(exc).__name__}: {str(exc)[:200]})")
+    finally:
+        release()
+    log(f"ASR {model} done: {out}")
+    return out
 
 
 def batch(missing_only: bool = True, limit: Optional[int] = None, backend: Optional[str] = None,

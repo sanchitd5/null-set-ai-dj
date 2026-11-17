@@ -306,6 +306,9 @@ def transcribe_lyrics(args) -> dict:
     from app.music_brain.analysis import lyrics_asr as asr
 
     log = lambda m: print(m, file=sys.stderr, flush=True)
+    if getattr(args, "indic", False):
+        return asr.batch_languages(model=args.model or asr.STRONG_MODEL, limit=args.limit, backend=args.backend, log=log,
+                                   force=args.force)
     if args.all:
         if args.background:
             import subprocess
@@ -446,6 +449,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_tl.add_argument("--separate", action="store_true", help="separate the song (2 stems) when no vocal stem is cached")
     p_tl.add_argument("--force", action="store_true", help="transcribe again even when cached")
     p_tl.add_argument("--words", action="store_true", help="include word timings in the output")
+    p_tl.add_argument("--indic", action="store_true", help="batch: the pa / hi / ur songs with the strong model (large-v3), language forced from the language id; idle only")
     p_tl.add_argument("--all", action="store_true", help="batch: every cached vocal stem")
     p_tl.add_argument("--missing-only", action="store_true", help="batch: only stems with no cached result for this model")
     p_tl.add_argument("--limit", type=int, default=None, help="batch: at most N stems")
