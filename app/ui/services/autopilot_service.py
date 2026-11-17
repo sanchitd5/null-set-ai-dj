@@ -1483,7 +1483,9 @@ def suggest_next_tracks(
       Tempo only: never sets occasion_set, theme lock or steering.
     Compatible with both openai v0.x/3.x (ChatCompletion.create) and v1.x/v2.x (OpenAI client).
     """
-    scene_genre = str(scene_anchor or genre or "").strip()
+    # VIBELOCK: the set's pinned vibe is the reference of every LLM step (prompt, filters, pick_reason), never the playing song: that one
+    # drifts a set one genre at a time. No pin (owner released it, or no known genre yet): the scene anchor, then the playing song.
+    scene_genre = str(pinned_scene or scene_anchor or genre or "").strip()
 
     def _filt(*a, **k):                 # every filter pass knows the playing song's credits (side-artist hops)
         return _filter_suggestions(*a, current_title=title, lang_check=lang_check, pinned_scene=pinned_scene, genre_of=genre_of, **k)

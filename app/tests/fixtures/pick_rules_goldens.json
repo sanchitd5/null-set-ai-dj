@@ -1,6 +1,6 @@
 {
- "_generated": "GENERATED from dj-config 281964d - do not edit",
- "config_hash": "1ff4b288ea34",
+ "_generated": "GENERATED from dj-config 281964d-dirty - do not edit",
+ "config_hash": "29dca38ad18f",
  "files": {
   "excluded": {
    "doc": "AFRIX excluded gate vectors: candidate (artist, title, genres, lang_id, country; ids and genre also count) -> acceptCandidate verdict. Only strong cues (artist, genre, country) refuse.",
@@ -1391,7 +1391,7 @@
      "needs_hooks": true
     },
     {
-     "name": "HF13 scene: two steps from the pinned scene pass",
+     "name": "HF13 scene: two steps from the pinned scene are refused (VIBELOCK: reach is one step)",
      "candidate": {
       "ids": [
        "song c"
@@ -1408,13 +1408,13 @@
       "scene_genre": "house"
      },
      "expect": {
-      "ok": true,
-      "reason": null
+      "ok": false,
+      "reason": "leaves the set's house scene (drum and bass)"
      },
      "needs_hooks": true
     },
     {
-     "name": "HF13 scene: three steps from the pinned scene pass",
+     "name": "HF13 scene: three steps from the pinned scene are refused (VIBELOCK)",
      "candidate": {
       "ids": [
        "song c"
@@ -1431,8 +1431,8 @@
       "scene_genre": "ambient"
      },
      "expect": {
-      "ok": true,
-      "reason": null
+      "ok": false,
+      "reason": "leaves the set's ambient scene (drum and bass)"
      },
      "needs_hooks": true
     },
@@ -1504,6 +1504,236 @@
      "expect": {
       "ok": false,
       "reason": "language jump"
+     },
+     "needs_hooks": true
+    },
+    {
+     "name": "VIBELOCK: hip hop set refuses disco house (the drifted pick of set 2026-11-18_040803)",
+     "candidate": {
+      "ids": [
+       "song c"
+      ],
+      "duration_s": 200,
+      "genre": "disco house"
+     },
+     "state": {
+      "playing_ids": [
+       "song p"
+      ],
+      "played": [],
+      "vetoed": [],
+      "scene_genre": "hip hop"
+     },
+     "expect": {
+      "ok": false,
+      "reason": "leaves the set's hip hop scene (disco house)"
+     },
+     "needs_hooks": true
+    },
+    {
+     "name": "VIBELOCK: hip hop set refuses indie pop",
+     "candidate": {
+      "ids": [
+       "song c"
+      ],
+      "duration_s": 200,
+      "genre": "indie pop"
+     },
+     "state": {
+      "playing_ids": [
+       "song p"
+      ],
+      "played": [],
+      "vetoed": [],
+      "scene_genre": "hip hop"
+     },
+     "expect": {
+      "ok": false,
+      "reason": "leaves the set's hip hop scene (indie pop)"
+     },
+     "needs_hooks": true
+    },
+    {
+     "name": "VIBELOCK: hip hop set refuses reggaeton",
+     "candidate": {
+      "ids": [
+       "song c"
+      ],
+      "duration_s": 200,
+      "genre": "reggaeton"
+     },
+     "state": {
+      "playing_ids": [
+       "song p"
+      ],
+      "played": [],
+      "vetoed": [],
+      "scene_genre": "hip hop"
+     },
+     "expect": {
+      "ok": false,
+      "reason": "leaves the set's hip hop scene (reggaeton)"
+     },
+     "needs_hooks": true
+    },
+    {
+     "name": "VIBELOCK: hip hop set refuses art pop",
+     "candidate": {
+      "ids": [
+       "song c"
+      ],
+      "duration_s": 200,
+      "genre": "art pop"
+     },
+     "state": {
+      "playing_ids": [
+       "song p"
+      ],
+      "played": [],
+      "vetoed": [],
+      "scene_genre": "hip hop"
+     },
+     "expect": {
+      "ok": false,
+      "reason": "leaves the set's hip hop scene (art pop)"
+     },
+     "needs_hooks": true
+    },
+    {
+     "name": "VIBELOCK: hip hop set refuses melodic techno",
+     "candidate": {
+      "ids": [
+       "song c"
+      ],
+      "duration_s": 200,
+      "genre": "melodic techno"
+     },
+     "state": {
+      "playing_ids": [
+       "song p"
+      ],
+      "played": [],
+      "vetoed": [],
+      "scene_genre": "hip hop"
+     },
+     "expect": {
+      "ok": false,
+      "reason": "leaves the set's hip hop scene (melodic techno)"
+     },
+     "needs_hooks": true
+    },
+    {
+     "name": "VIBELOCK: hip hop set keeps trap",
+     "candidate": {
+      "ids": [
+       "song c"
+      ],
+      "duration_s": 200,
+      "genre": "trap"
+     },
+     "state": {
+      "playing_ids": [
+       "song p"
+      ],
+      "played": [],
+      "vetoed": [],
+      "scene_genre": "hip hop"
+     },
+     "expect": {
+      "ok": true,
+      "reason": null
+     },
+     "needs_hooks": true
+    },
+    {
+     "name": "VIBELOCK: romantic (mellow) r&b set refuses a party hip hop pick one step away",
+     "candidate": {
+      "ids": [
+       "song c"
+      ],
+      "duration_s": 200,
+      "genre": "hip hop"
+     },
+     "state": {
+      "playing_ids": [
+       "song p"
+      ],
+      "played": [],
+      "vetoed": [],
+      "scene_genre": "r&b"
+     },
+     "expect": {
+      "ok": false,
+      "reason": "leaves the set's r&b scene (hip hop)"
+     },
+     "needs_hooks": true
+    },
+    {
+     "name": "VIBELOCK: hip hop set refuses a mellow r&b pick one step away",
+     "candidate": {
+      "ids": [
+       "song c"
+      ],
+      "duration_s": 200,
+      "genre": "r&b"
+     },
+     "state": {
+      "playing_ids": [
+       "song p"
+      ],
+      "played": [],
+      "vetoed": [],
+      "scene_genre": "hip hop"
+     },
+     "expect": {
+      "ok": false,
+      "reason": "leaves the set's hip hop scene (r&b)"
+     },
+     "needs_hooks": true
+    },
+    {
+     "name": "VIBELOCK: a mellow set keeps soul",
+     "candidate": {
+      "ids": [
+       "song c"
+      ],
+      "duration_s": 200,
+      "genre": "soul"
+     },
+     "state": {
+      "playing_ids": [
+       "song p"
+      ],
+      "played": [],
+      "vetoed": [],
+      "scene_genre": "r&b"
+     },
+     "expect": {
+      "ok": true,
+      "reason": null
+     },
+     "needs_hooks": true
+    },
+    {
+     "name": "VIBELOCK: pop is in no mood band, a pop set takes a one-step neighbour",
+     "candidate": {
+      "ids": [
+       "song c"
+      ],
+      "duration_s": 200,
+      "genre": "latin"
+     },
+     "state": {
+      "playing_ids": [
+       "song p"
+      ],
+      "played": [],
+      "vetoed": [],
+      "scene_genre": "pop"
+     },
+     "expect": {
+      "ok": true,
+      "reason": null
      },
      "needs_hooks": true
     }
