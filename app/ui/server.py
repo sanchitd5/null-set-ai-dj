@@ -32,6 +32,7 @@ from pydantic import BaseModel, Field
 
 from app.music_brain import song_store
 from app.music_brain.analysis import lang_id
+from app.ui.services import excluded_songs
 from app.music_brain.analysis.analyzer import analyze as analyze_track
 from app.music_brain.audio import audio_io
 from app.music_brain.config import (
@@ -201,6 +202,23 @@ def _remember_track_name(track_id: str, name: str) -> None:
 
 
 _load_registry_from_disk()
+
+
+def _drop_excluded(tid: str) -> None:
+    _tracks.pop(tid, None)
+    _track_names.pop(tid, None)
+
+
+def _sweep_excluded(apply: bool = True) -> list:
+    """AFRIX: quarantine every library song the dj-config EXCLUDED_RULES strongly match (reversible); weak cues are only listed."""
+    try:
+        return excluded_songs.sweep(list(_tracks), _track_names, apply=apply, on_removed=_drop_excluded)
+    except Exception as exc:                                 # a failing sweep must not stop the server
+        print(f"[excluded] sweep failed: {exc}", flush=True)
+        return []
+
+
+_sweep_excluded()
 
 
 def _song_stem(path: Path) -> str:
@@ -395,6 +413,10 @@ def _register_downloaded(paths: List[Path], names: Optional[List[str]] = None, m
     results = []
     for i, path in enumerate(paths):
         original_name = names[i] if names and i < len(names) and names[i] else path.stem
+        why = excluded_songs.gate_name(original_name)        # AFRIX: an excluded song never enters the library
+        if why:
+            path.unlink(missing_ok=True)
+            raise RuntimeError(f"not added ({why})")
         data = path.read_bytes()
         track_id = hashlib.sha256(data).hexdigest()[:16]
         dest = song_store.adopt_audio(path, track_id, move=move)
@@ -3894,6 +3916,26 @@ app.include_router(_mobile_router)
 from app.ui.services.session_events_api import router as _session_events_router  # noqa: E402 -- batched session events (phone watchdog)
 
 app.include_router(_session_events_router)
+@app.post("/api/admin/excluded/sweep", dependencies=[Depends(_admin.require_admin)])
+def post_excluded_sweep(apply: bool = False):
+    """AFRIX: dry run (apply=false) lists the matches; apply=true quarantines the strong ones."""
+    return {"applied": apply, "matched": _sweep_excluded(apply)}
+
+
+@app.post("/api/admin/excluded/restore/{track_id}", dependencies=[Depends(_admin.require_admin)])
+def post_excluded_restore(track_id: str):
+    name = (excluded_songs._read().get(track_id) or {}).get("name", "")
+    if not excluded_songs.restore(track_id):
+        raise HTTPException(status_code=404, detail="not quarantined, or its folder is back already")
+    p = song_store.audio_path(track_id)
+    if p:
+        _tracks[track_id] = p
+        if name:
+            _remember_track_name(track_id, name)
+    return {"restored": track_id}
+
+
+app.include_router(excluded_songs.router)      # GET /api/library/removed (AFRIX "Removed" list) + admin sweep / restore
 from app.ui.services import quarantine_cleanup as _quarantine_cleanup  # noqa: E402 -- _pick_quarantine retention + GET /api/admin/quarantine
 
 app.include_router(_quarantine_cleanup.router)
