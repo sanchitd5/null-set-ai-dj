@@ -38,12 +38,12 @@ def excluded_reason(display_name: str = "", artist: str = "", title: str = "", g
         if norm(g) in gset:
             return {"reason": f"african: genre {norm(g)}", "strong": True, "cue": "genre"}
     wset = {norm(g) for g in r.get("weak_genres", [])}
+    if country and str(country).upper() in r["countries"]:
+        return {"reason": f"african: country {str(country).upper()}", "strong": True, "cue": "country"}
     for g in genres or ():
         if norm(g) in wset:
             return {"reason": f"african: weak genre {norm(g)}", "strong": False, "cue": "genre"}
-    if country and str(country).upper() in r["countries"]:
-        return {"reason": f"african: country {str(country).upper()}", "strong": True, "cue": "country"}
-    if lang_id and lang_id in r["lang_ids"]:
+    if lang_id and str(lang_id).lower() in r["lang_ids"]:
         return {"reason": f"african: language {lang_id}", "strong": False, "cue": "lang_id"}
     t = f" {norm(title) or norm(display_name)} "
     for g in sorted(gset | wset):
