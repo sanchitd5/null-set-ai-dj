@@ -1,7 +1,304 @@
 {
- "_generated": "GENERATED from dj-config 9f59181 - do not edit",
- "config_hash": "aff3b8240afa",
+ "_generated": "GENERATED from dj-config c7d208a-dirty - do not edit",
+ "config_hash": "953ba5534fd4",
  "files": {
+  "excluded": {
+   "doc": "AFRIX excluded gate vectors: candidate (artist, title, genres, lang_id, country; ids and genre also count) -> acceptCandidate verdict. Only strong cues (artist, genre, country) refuse.",
+   "cases": [
+    {
+     "name": "blocklist artist as primary artist",
+     "candidate": {
+      "ids": [
+       "song c"
+      ],
+      "artist": "Burna Boy",
+      "title": "Some Song",
+      "duration_s": 200
+     },
+     "state": {
+      "playing_ids": [
+       "song p"
+      ],
+      "played": [],
+      "vetoed": []
+     },
+     "expect": {
+      "ok": false,
+      "reason": "excluded: artist burna boy"
+     }
+    },
+    {
+     "name": "blocklist artist compact spelling",
+     "candidate": {
+      "ids": [
+       "song c"
+      ],
+      "artist": "BurnaBoy",
+      "title": "Some Song",
+      "duration_s": 200
+     },
+     "state": {
+      "playing_ids": [
+       "song p"
+      ],
+      "played": [],
+      "vetoed": []
+     },
+     "expect": {
+      "ok": false,
+      "reason": "excluded: artist burna boy"
+     }
+    },
+    {
+     "name": "feat. credit in the title",
+     "candidate": {
+      "ids": [
+       "song c"
+      ],
+      "artist": "Other Artist",
+      "title": "Song (feat. Burna Boy)",
+      "duration_s": 200
+     },
+     "state": {
+      "playing_ids": [
+       "song p"
+      ],
+      "played": [],
+      "vetoed": []
+     },
+     "expect": {
+      "ok": false,
+      "reason": "excluded: artist burna boy"
+     }
+    },
+    {
+     "name": "ids only, feat. credit in the label",
+     "candidate": {
+      "ids": [
+       "Some Artist feat. Burna Boy - Song"
+      ],
+      "duration_s": 200
+     },
+     "state": {
+      "playing_ids": [
+       "song p"
+      ],
+      "played": [],
+      "vetoed": []
+     },
+     "expect": {
+      "ok": false,
+      "reason": "excluded: artist burna boy"
+     }
+    },
+    {
+     "name": "ids only, accents and punctuation",
+     "candidate": {
+      "ids": [
+       "x",
+       "BURNA-BOY & Friends"
+      ],
+      "duration_s": 200
+     },
+     "state": {
+      "playing_ids": [
+       "song p"
+      ],
+      "played": [],
+      "vetoed": []
+     },
+     "expect": {
+      "ok": false,
+      "reason": "excluded: artist burna boy"
+     }
+    },
+    {
+     "name": "genre amapiano",
+     "candidate": {
+      "ids": [
+       "song c"
+      ],
+      "artist": "Other Artist",
+      "title": "T",
+      "genres": [
+       "Amapiano"
+      ],
+      "duration_s": 200
+     },
+     "state": {
+      "playing_ids": [
+       "song p"
+      ],
+      "played": [],
+      "vetoed": []
+     },
+     "expect": {
+      "ok": false,
+      "reason": "african: genre amapiano"
+     }
+    },
+    {
+     "name": "genre label on the candidate's genre field",
+     "candidate": {
+      "ids": [
+       "song c"
+      ],
+      "genre": "afro house",
+      "duration_s": 200
+     },
+     "state": {
+      "playing_ids": [
+       "song p"
+      ],
+      "played": [],
+      "vetoed": []
+     },
+     "expect": {
+      "ok": false,
+      "reason": "african: genre afro house"
+     }
+    },
+    {
+     "name": "country NG",
+     "candidate": {
+      "ids": [
+       "song c"
+      ],
+      "artist": "Other Artist",
+      "title": "T",
+      "country": "ng",
+      "duration_s": 200
+     },
+     "state": {
+      "playing_ids": [
+       "song p"
+      ],
+      "played": [],
+      "vetoed": []
+     },
+     "expect": {
+      "ok": false,
+      "reason": "african: country NG"
+     }
+    },
+    {
+     "name": "language id alone is weak: pass",
+     "candidate": {
+      "ids": [
+       "song c"
+      ],
+      "artist": "Other Artist",
+      "title": "T",
+      "lang_id": "yo",
+      "duration_s": 200
+     },
+     "state": {
+      "playing_ids": [
+       "song p"
+      ],
+      "played": [],
+      "vetoed": []
+     },
+     "expect": {
+      "ok": true,
+      "reason": null
+     }
+    },
+    {
+     "name": "title word alone is weak: pass",
+     "candidate": {
+      "ids": [
+       "song c"
+      ],
+      "artist": "Other Artist",
+      "title": "Amapiano Mix",
+      "duration_s": 200
+     },
+     "state": {
+      "playing_ids": [
+       "song p"
+      ],
+      "played": [],
+      "vetoed": []
+     },
+     "expect": {
+      "ok": true,
+      "reason": null
+     }
+    },
+    {
+     "name": "weak language plus strong country refuses",
+     "candidate": {
+      "ids": [
+       "song c"
+      ],
+      "lang_id": "yo",
+      "country": "GH",
+      "duration_s": 200
+     },
+     "state": {
+      "playing_ids": [
+       "song p"
+      ],
+      "played": [],
+      "vetoed": []
+     },
+     "expect": {
+      "ok": false,
+      "reason": "african: country GH"
+     }
+    },
+    {
+     "name": "clean non-African song passes",
+     "candidate": {
+      "ids": [
+       "song c"
+      ],
+      "artist": "Other Artist",
+      "title": "Clean Song",
+      "genres": [
+       "house"
+      ],
+      "lang_id": "en",
+      "country": "US",
+      "duration_s": 200
+     },
+     "state": {
+      "playing_ids": [
+       "song p"
+      ],
+      "played": [],
+      "vetoed": []
+     },
+     "expect": {
+      "ok": true,
+      "reason": null
+     }
+    },
+    {
+     "name": "artist name inside a longer word does not match",
+     "candidate": {
+      "ids": [
+       "song c"
+      ],
+      "artist": "Burnaboyz Crew",
+      "title": "T",
+      "duration_s": 200
+     },
+     "state": {
+      "playing_ids": [
+       "song p"
+      ],
+      "played": [],
+      "vetoed": []
+     },
+     "expect": {
+      "ok": true,
+      "reason": null
+     }
+    }
+   ]
+  },
   "genre": {
    "kind": "resolve_genre",
    "doc": "Owner rule: the artist decides the genre. input -> resolveGenre verdict.",
