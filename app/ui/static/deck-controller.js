@@ -788,9 +788,13 @@ class Deck {
   // at audio time `at`; the live stem is muted across it and comes back on the last edge. Every piece
   // has ~6 ms edges (no clicks). Needs stem mode. Hard cap SLICE_MAX_S: a longer window is refused,
   // nothing is armed. -> {ok, until} or false.
-  stemSlices(name, slices, at, xf = 0.008) {
+  // opts.hold: the window does not give the live stem back at its end (a whole-song remix chains the next window right there; the caller
+  // restores it with releaseSlices / restoreLive when no next window follows). opts.chain: this window continues a held one that ends
+  // here (within 20 ms): the live stem is already down, so the busy check and the first edge are skipped.
+  stemSlices(name, slices, at, xf = 0.008, opts = null) {
     const st = this.stems;
-    if (!st || !st[name] || !this.stemsReady || !Array.isArray(slices) || !slices.length || this._holds[name] || this._slices[name]) return false;
+    const prev = this._slices[name], chained = !!(opts && opts.chain && prev && prev.hold && Math.abs(prev.until - at) <= 0.02);
+    if (!st || !st[name] || !this.stemsReady || !Array.isArray(slices) || !slices.length || this._holds[name] || (prev && !chained)) return false;
     const now = audioCtx.currentTime, rate = this._playbackRate(), k = st.ratio || 1;
     if (!(at >= now - 0.005) || !(rate > 0)) return false;
     let cur = 0, span = 0;
@@ -825,11 +829,12 @@ class Deck {
       s.onended = () => { if (this._stemSrc[key] === s) delete this._stemSrc[key]; g.disconnect(); };
       srcs.push(s);
     });
-    const live = this.stemLive[name].gain;
-    live.cancelScheduledValues(at);
-    live.setValueAtTime(1, at); live.linearRampToValueAtTime(0, at + xf);
-    live.setValueAtTime(0, until - xf); live.linearRampToValueAtTime(1, until);
-    const rec = { srcs, until };
+    const live = this.stemLive[name].gain, hold = !!(opts && opts.hold);
+    if (chained) live.cancelScheduledValues(prev.until - xf - 0.001);      // the held window's restore never ran; stay down
+    else { live.cancelScheduledValues(at); live.setValueAtTime(1, at); live.linearRampToValueAtTime(0, at + xf); }
+    if (hold) live.setValueAtTime(0, until - xf);
+    else { live.setValueAtTime(0, until - xf); live.linearRampToValueAtTime(1, until); }
+    const rec = { srcs, until, hold };
     this._slices[name] = rec;
     setTimeout(() => { if (this._slices[name] === rec) delete this._slices[name]; }, Math.max(0, (until - now) * 1000) + 60);
     return { ok: true, until };
@@ -844,6 +849,12 @@ class Deck {
     const live = this.stemLive[name].gain;
     live.cancelScheduledValues(t); live.setValueAtTime(live.value, t); live.linearRampToValueAtTime(1, t + 0.03);
     delete this._slices[name];
+  }
+
+  // Give a stem back that a held slice window left muted (a whole-song remix that ended or lost its chain): back within 30 ms.
+  restoreLive(name, at = 0) {
+    const t = Math.max(audioCtx.currentTime, at || 0), live = this.stemLive[name].gain;
+    live.cancelScheduledValues(t); live.setValueAtTime(live.value, t); live.linearRampToValueAtTime(1, t + 0.03);
   }
 
   releaseHold(name, at = 0) {

@@ -22,7 +22,7 @@ const LRS = {
     return String(v == null ? "" : v).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   },
   fmtScore(score) { return isFinite(score) ? `${Math.round(Math.max(0, Math.min(1, score)) * 100)}` : "--"; },
-  kindLabel(song) { return song && song.b ? "PAIR · LIVE BLEND" : "LIVE IN THE SONG"; },
+  kindLabel(song) { return song && song.b ? "PAIR · LIVE BLEND" : song && song.kind === "full" ? "WHOLE SONG · LIVE" : "LIVE IN THE SONG"; },
   // What to do for a tap. st = {a: track id on deck a|null, b: id on deck b|null, playing: "a"|"b"|null}; action "play" | "queue".
   // -> {steps: [{load, id, play?} ... , {request: {plan, a, b}}]} | {error}. The request always comes last: the remix is booked on top of
   // whatever plays now.

@@ -110,6 +110,8 @@ def cleanup_legacy() -> int:
 
 def _title(plan: dict) -> str:
     a = Host.name_of(plan["a"])
+    if plan.get("kind") == "full":
+        return f"{a} - full lyric remix"
     return f"{a} - lyric remix" if not plan.get("b") else f"{a} x {Host.name_of(plan['b'])} - lyric remix"
 
 
@@ -118,7 +120,7 @@ def _available(plan: dict) -> bool:
 
 
 def _song(plan: dict) -> dict:
-    return {"plan_id": plan["id"], "kind": "pair" if plan.get("b") else "within", "a": plan["a"], "b": plan.get("b"),
+    return {"plan_id": plan["id"], "kind": "pair" if plan.get("b") else "full" if plan.get("kind") == "full" else "within", "a": plan["a"], "b": plan.get("b"),
             "title": _title(plan), "text": plan.get("text") or "", "score": float(plan.get("score") or 0)}
 
 
