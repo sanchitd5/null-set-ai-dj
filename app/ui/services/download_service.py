@@ -395,6 +395,7 @@ def download_to_dir(url: str, output_dir: Path, progress: Optional[Progress] = N
             raise RuntimeError("invalid search query")
         if _is_mix(query) or _is_non_music(query) or _is_live(query):
             raise RuntimeError(f"not a studio song: \"{query}\"")
+        _refuse_excluded(query)
         progress("searching YouTube Music", None)
         artist, _, title = query.partition(" - ")
         if not title:
@@ -513,8 +514,33 @@ def _ytdlp(url: str, output_dir: Path, progress: Optional[Progress] = None,
     _log_resolve(song, official_only, trace, delivered)
     clean = _reject_non_tracks(new_files, check_live=is_search)
     for path in clean:
+        _gate_excluded(delivered, path)          # AFRIX: judged on what was delivered (title, uploader, channel, artists)
         _post_check(song, delivered, path)       # no pick (a pasted / phone-chosen video): length vs listing only
     return clean
+
+
+def _refuse_excluded(text: str) -> None:
+    from app.ui.services import excluded_songs
+
+    why = excluded_songs.gate_name(text)
+    if why:
+        raise RuntimeError(f"excluded: {why}")
+
+
+def _gate_excluded(info: dict, path: Path) -> None:
+    """AFRIX: a delivered file whose listing names an excluded artist / genre never enters the library."""
+    try:
+        from app.ui.services import excluded_songs
+
+        meta = info.get("artists") or info.get("artist") or info.get("creator")
+        meta = [meta] if isinstance(meta, str) else [str(x) for x in (meta or [])]
+        why = excluded_songs.gate_name(" ".join([str(info.get("title") or ""), str(info.get("uploader") or ""),
+                                                  str(info.get("channel") or ""), *meta]))
+    except Exception:
+        return
+    if why:
+        _quarantine(path, str(info.get("title") or path.stem), why, info)
+        raise RuntimeError(f"Excluded song ({why}); not added to the library.")
 
 
 def _log_resolve(song, official_only: bool, trace: list, chosen: Optional[dict]) -> None:
