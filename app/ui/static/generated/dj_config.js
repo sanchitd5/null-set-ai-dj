@@ -1,4 +1,4 @@
-// GENERATED from dj-config 281964d-dirty - do not edit
+// GENERATED from dj-config 264223e - do not edit
 // config-hash: 29dca38ad18f
 (function (root) {
   "use strict";
@@ -174,6 +174,6 @@
   };
   root.DJ_CONFIG = Object.freeze(values);
   root.DJ_CONFIG_LIVE = Object.freeze(live);
-  root.DJ_CONFIG_META = Object.freeze({ sha: "281964d-dirty", hash: "29dca38ad18f" });
+  root.DJ_CONFIG_META = Object.freeze({ sha: "264223e", hash: "29dca38ad18f" });
   if (typeof module !== "undefined" && module.exports) module.exports = root.DJ_CONFIG;
 })(typeof window !== "undefined" ? window : globalThis);
