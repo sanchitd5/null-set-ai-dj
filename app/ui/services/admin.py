@@ -32,7 +32,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from app.ui.services import set_lease
 
 MAX_AUDIT = 5000
-NAV = [("Sessions", "/admin/sessions"), ("Phone trace", "/admin/sessions/trace"), ("Jobs", "/admin/jobs"), ("Graph", "/admin/graph"), ("Cache audit", "/admin/cache-audit")]   # later admin pages append here
+NAV = [("Sessions", "/admin/sessions"), ("Phone trace", "/admin/sessions/trace"), ("Jobs", "/admin/jobs"), ("Graph", "/admin/graph"), ("Cache audit", "/admin/cache-audit"), ("Not music", "/admin/not-music")]   # later admin pages append here
 _PAGE_CSP = "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'"
 STEPS = (
     """CREATE TABLE admin_audit (id INTEGER PRIMARY KEY, at REAL NOT NULL, actor TEXT NOT NULL,
@@ -401,6 +401,34 @@ def _cache_audit_body() -> str:
 @router.get("/admin/cache-audit", response_class=HTMLResponse)
 def admin_cache_audit_page(email: str = Depends(require_admin)):
     return _page("Cache audit", _cache_audit_body(), email, refresh=0)
+
+
+def _not_music_body() -> str:
+    from app.music_brain.config import CACHE_DIR
+    from app.ui.services import not_music
+
+    e = html.escape
+    rows = []
+    for r in not_music.items(CACHE_DIR):
+        st = r.get("status")
+        act = {"removed": "restore", "review": "restore", "restored": ""}.get(st, "")
+        btn = (f'<form method="post" action="/api/library/not-music/{e(r["id"])}/restore"><button type="submit">Restore</button></form>'
+               if act else "")
+        if st == "review":
+            btn += f'<form method="post" action="/api/library/not-music/{e(r["id"])}/remove"><button type="submit">Remove</button></form>'
+        rows.append(f'<tr><td data-label="Song">{e(str(r.get("title") or r["id"]))}<br><span class="muted">{e(r["id"])}</span></td>'
+                    f'<td data-label="Why">{e("; ".join(r.get("reasons") or []))}</td>'
+                    f'<td data-label="Score">{e(str(r.get("score")))}</td><td data-label="Status">{e(str(st))}</td>'
+                    f'<td data-label="">{btn}</td></tr>')
+    head = ('<p>Removed as not music: interviews, commentary, news, talk. removed = out of the library, review = flagged, still in, '
+            'restored = whitelisted. Restore puts a song back for good. The daily <a href="/admin/jobs">not_music</a> job judges new songs.</p>')
+    return head + ("<table><tr><th>Song</th><th>Why</th><th>Score</th><th>Status</th><th></th></tr>" + "".join(rows) + "</table>"
+                   if rows else "<p>Nothing removed.</p>")
+
+
+@router.get("/admin/not-music", response_class=HTMLResponse)
+def admin_not_music_page(email: str = Depends(require_admin)):
+    return _page("Not music", _not_music_body(), email, refresh=0)
 
 
 @router.get("/admin/jobs", response_class=HTMLResponse)

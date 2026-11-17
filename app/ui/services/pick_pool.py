@@ -78,12 +78,15 @@ def atlas_neighbours(track_id: str, names: dict, cache_dir) -> list[dict]:
     """Library songs the pair atlas scored against `track_id`, best pair first."""
     try:
         from app.music_brain.atlas import atlas_store
+        from app.ui.services import not_music
         pairs = atlas_store.pairs_for(track_id, cache_dir)
     except Exception:
         return []
     scored = []
     for k, p in pairs.items():
         b = k.split(">", 1)[-1]
+        if not_music.is_removed(b, cache_dir):          # CLEANLIB: removed as not music
+            continue
         name = names.get(b)
         if not name or " - " not in name:
             continue

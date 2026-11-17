@@ -2,6 +2,7 @@
 
     lyric_check          manual, idle only: faster-whisper on each vocal stem vs the song's lyrics -> verdict in the song folder (G25)
     song_migrate         manual: moves flat song files into per-song folders; dry run unless the setting is turned off (G25)
+    not_music            cron "45 4 * * *": speech / interview / news files out of the library (CLEANLIB, restorable)
     cache_audit          manual: flags library files that are probably not the song they are named after (HF9)
     sync_compact         cron "30 3 * * *": folds old op-log entries away (DJ_SYNC_KEEP_DAYS)
     quarantine_cleanup   cron "15 4 * * *" (server local time); a fire missed while down runs once at startup
@@ -31,6 +32,26 @@ def _cache_audit(ctx: JobContext) -> dict:
     from app.music_brain.config import CACHE_DIR
     from app.ui.services import cache_audit
     return cache_audit.run(dict(server._tracks), dict(server._track_names), CACHE_DIR, time.time(), ctx.log)
+
+
+def _not_music(ctx: JobContext) -> dict:
+    from app.ui import server
+    from app.music_brain.config import CACHE_DIR
+    from app.ui.services import not_music
+    r = not_music.scan(dict(server._tracks), dict(server._track_names), CACHE_DIR, time.time(), ctx.log,
+                       should_stop=ctx.should_stop, limit=int(ctx.setting("limit")), redo=bool(ctx.setting("redo")))
+    not_music.apply_removed(server._tracks)
+    r["new"] = [{k: x[k] for k in ("id", "title", "status", "score", "reasons")} for x in r["new"]]
+    return r
+
+
+def _music_span(ctx: JobContext) -> dict:
+    from app.ui import server
+    from app.ui.services import music_span
+    r = music_span.run(dict(server._tracks), None, ctx.log, should_stop=ctx.should_stop,
+                       limit=int(ctx.setting("limit")), redo=bool(ctx.setting("redo")))
+    r["found"] = r["found"][:200]
+    return r
 
 
 def _lyric_check(ctx: JobContext) -> dict:
@@ -77,6 +98,12 @@ def register_builtin(reg: Registry) -> None:
                          schedule="15 4 * * *"))
     reg.register(JobSpec("cache_audit", "Song cache audit (flags suspect files, deletes nothing)", fn=_cache_audit,
                          kind="manual"))
+    reg.register(JobSpec("not_music", "Not-music cleanup (interviews, talk, news out of the library; restorable)", fn=_not_music,
+                         kind="manual", schedule="45 4 * * *", idle_only=True,
+                         settings={"limit": SettingSpec("int", 0, 0, 100000), "redo": SettingSpec("bool", False)}))
+    reg.register(JobSpec("music_span", "Music span (ad / talk / silence in a song's intro or outro, stored in its analysis)",
+                         fn=_music_span, kind="manual", schedule="15 5 * * *", idle_only=True,
+                         settings={"limit": SettingSpec("int", 0, 0, 100000), "redo": SettingSpec("bool", False)}))
     reg.register(JobSpec("lyric_check", "Lyric check (vocal stem vs lyrics, verdict per song)", fn=_lyric_check, kind="manual",
                          idle_only=True, settings={"limit": SettingSpec("int", 0, 0, 100000), "force": SettingSpec("bool", False)}))
     reg.register(JobSpec("song_migrate", "Move song files into per-song folders (dry run by default, deletes nothing)",

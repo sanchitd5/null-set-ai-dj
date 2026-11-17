@@ -59,7 +59,7 @@ def _prune() -> None:
 def _length_gate(paths: List[Path]) -> None:
     """A file outside 90 s - 9 min never enters the library: it goes to the pick quarantine (kept, not played)
     and the job fails. Before HF9 the check ran after registration, so the clip / album stayed in the library."""
-    from app.ui.services import download_service
+    from app.ui.services import download_service, not_music
 
     for path in paths:
         secs = download_service._duration_secs(path)
@@ -67,6 +67,10 @@ def _length_gate(paths: List[Path]) -> None:
             why = f"length {secs / 60:.1f} min (songs must be 1.5-9 min)"
             download_service._quarantine(path, path.stem, why, {"title": path.stem, "duration": secs})
             raise RuntimeError(f"length check failed: {why}; kept in quarantine, not added to the library")
+        why = not_music.check_download(path, path.stem, secs)       # CLEANLIB: talk / interview never enters the library
+        if why:
+            download_service._quarantine(path, path.stem, why, {"title": path.stem, "duration": secs})
+            raise RuntimeError(f"{why}; kept in quarantine, not added to the library")
 
 
 def start_job(

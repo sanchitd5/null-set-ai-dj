@@ -90,6 +90,9 @@ class TrackAnalysis:
     drops: List[dict] = field(default_factory=list)
     main_drop: Optional[dict] = None
     structure: Optional[dict] = None
+    # CLEANLIB (ui/services/music_span.py, wt/MUSIC_SPAN_CONTRACT.txt): {v, start, end, head, tail} of the real music;
+    # None = not judged, use the whole song.
+    music_span: Optional[dict] = None
 
     def to_dict(self) -> dict:
         d = asdict(self)
