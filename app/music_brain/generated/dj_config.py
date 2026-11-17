@@ -1,9 +1,9 @@
-# GENERATED from dj-config d1abede - do not edit
-# config-hash: 1502b6d5a569
+# GENERATED from dj-config 281964d - do not edit
+# config-hash: 1ff4b288ea34
 """Generated from dj-config/config/*.json. Do not edit; run dj-config/tool/gen.py."""
 
-SHA = "d1abede"
-CONFIG_HASH = "1502b6d5a569"
+SHA = "281964d"
+CONFIG_HASH = "1ff4b288ea34"
 
 ACCENT_MAX_SHARE = 0.2  # fraction
 ACCENT_RECIPES = ["Backspin (Spinback)", "Echo Out", "Bass Swap"]  # list
@@ -30,6 +30,8 @@ CAMELOT_TABLE = {"same": 1, "hour": 0.9, "relative": 0.85, "up2": 0.8, "diagonal
 CAMELOT_TABLE_LEARNED = {"same": 1, "hour": 0.9, "relative": 0.85, "up2": 0.8, "diagonal": 0, "down2": 0.8, "two_flip": 0, "clash": 0}
 DEFER_MIN_LEAD_S = 45.0  # s
 ELECTRONIC_CLUSTERS = {"house": ["house", "deep house", "tech house", "bass house", "synth house", "disco house", "afro house", "latin house", "funky house", "uk garage", "garage", "speed garage"], "melodic": ["melodic", "melodic techno", "melodic house", "progressive house", "progressive", "organic house"], "trance": ["trance", "psytrance", "uplifting trance"], "techno": ["techno", "hard techno", "minimal techno", "industrial techno", "acid techno"], "bass": ["dubstep", "melodic dubstep", "bass music", "bass house", "future bass", "riddim", "brostep"], "dnb": ["drum and bass", "drum & bass", "dnb", "jungle", "liquid", "neurofunk"], "chill": ["downtempo", "ambient", "chillout", "chill", "trip hop", "idm", "electronica"], "edm": ["edm", "big room", "electro", "electro house", "eurodance", "dance"], "breaks": ["breakbeat", "breaks", "big beat"]}
+ENERGY_FLAT_LOW_MAX = 4  # level
+ENERGY_FLAT_LOW_SONGS = 3  # songs
 ENERGY_MATCH_TOL = 3  # levels
 ENERGY_MAX_STEP = 2  # levels
 ENERGY_MIN_RAW = 0.1  # ratio
@@ -102,9 +104,10 @@ MERGE_HOLD_MIN_BARS = 32  # bars
 MERGE_HOLD_TARGET_S = 90  # s
 MERGE_KEY_OK = 0.8  # score
 MICRO_STEPS = 32  # steps
-MOVE_GENRE_ALLOW = {"vocal_chop": ["electronic"], "chant_gate": ["electronic"], "acapella_build": ["electronic"], "learned_acapella_build": ["electronic"], "vocal_loop_fragment": ["electronic"], "vocal_hold": ["electronic"]}
-MOVE_VOCAL_LOOP_GATE = {"moves": ["loop_extend", "stutter", "peak_roll", "slip_loop"], "vocal_free_max": 0.02}
+MOVE_GENRE_ALLOW = {"vocal_chop": ["electronic"], "chant_gate": ["electronic"], "acapella_build": ["electronic"], "learned_acapella_build": ["electronic"], "vocal_loop_fragment": ["electronic"], "vocal_hold": ["electronic"], "slip_loop_fragment": ["electronic"]}
+MOVE_VOCAL_LOOP_GATE = {"moves": ["loop_extend", "stutter", "peak_roll"], "vocal_free_max": 0.02}
 NEIGHBOUR_FAMILIES = ["bass|dnb", "bass|edm", "bass|electronic", "bass|house", "bass|melodic", "bass|trance", "breaks|dnb", "breaks|electronic", "breaks|house", "chill|electronic", "chill|melodic", "dnb|electronic", "edm|electronic", "edm|house", "edm|melodic", "edm|trance", "electronic|house", "electronic|melodic", "electronic|techno", "electronic|trance", "hiphop|rnb", "house|melodic", "house|techno", "house|trance", "melodic|techno", "melodic|trance", "techno|trance"]
+OCCASION_FIT_LOW = 4  # score
 OUTPUT_CEIL = 0.998  # linear
 OVERLAP_BARS = {"instant": 4, "standard": 16, "slow": 32}  # bars
 PEAK_KEY_MIN = 0.8  # score
@@ -138,6 +141,7 @@ STEM_WINDOW_PREROLL_S = 8  # s
 SUBDROP_COOLDOWN_S = 240  # s
 SUB_BASS_HPF_HZ = 120  # Hz
 UNCERTAIN_CLASH_SCORE = 0.5  # score
+UNKNOWN_GENRE_HOP = 2  # hops
 VOCAL_CLASH_CUTOFF = 0.5  # ratio
 WARMUP_SONGS = 5  # songs
 XF_CENTER_BOOST_DB = 1.5  # dB

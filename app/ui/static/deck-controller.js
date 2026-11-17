@@ -868,58 +868,37 @@ class Deck {
     delete this._stemSrc["hold_" + name];
   }
 
-  // Slip loop (artist move S13, Beat Masher / Flux style): loop `beats` from the
-  // current position while a shadow playhead keeps the song's own timeline
-  // running underneath. slipRelease() lands on the shadow, where the track would
-  // have been had the loop never played, so the phrase grid is not lost.
-  // `start` (song s, default now) is the grid point the loop begins on; a call more than
-  // 0.1 s off it is late and refused. The shadow starts from the real playhead, so the
-  // song's timeline is never moved. Refused (false) with no buffer, stopped, reversed or
-  // a loop already on.
-  slipLoop(beats, start) {
-    if (!this.buffer || !this.playing || this.reversed || this.loopOn || this._slip || !(beats > 0)) return false;
-    const pos = this._currentPosition(), from = start == null ? pos : start;
-    if (Math.abs(from - pos) > 0.1) return false;
-    const prevBeats = this.loopBeats;
-    this.loopBeats = beats;
-    this.loopOn = true;
-    this.play(from);
-    // the shadow runs from the real playhead at the rate in force (rebased on every rate change / glide)
-    this._slip = { pos, at: this.startedAt, rate: this._playbackRate(), prevBeats };
+  // Slip loop (artist move S13, Beat Masher / Flux style): loop `beats` of the VOCAL STEM only, from song time `from`
+  // (audio time `at`) until audio time `until`, while the drums / bass / other stems play straight through. The deck
+  // clock never stops, so when the hold ends the vocal is back on the song position: a true slip, nothing to land.
+  // Needs stem mode (the caller enters it with stemMix({}) and leaves it after `until`) and live stems: with no stems
+  // the move is refused (false), never a full-mix loop. Refused too when stopped, reversed, a loop / slip already runs.
+  slipLoop(beats, from, at, until) {
+    if (!this.buffer || !this.playing || this.reversed || this.loopOn || this._slip || !(beats > 0) || !(until > at)) return false;
+    if (!this.stemState || !this.holdStem("vocals", from, beats / 4, at, until)) return false;
+    this._slip = { vocal: true, until };
     return true;
   }
 
-  // Where the song would be now (null when no slip loop runs): the rate held since the last rebase, or the
-  // glide's own integral (_travelled) while one runs from that rebase.
+  // Where the song is now while a slip runs (null otherwise): the deck's own playhead, the loop only replaces the vocal.
   slipPosition() {
-    const s = this._slip;
-    if (!s) return null;
-    const T = audioCtx.currentTime;
-    const run = this._rateRamp && this.startedAt === s.at ? this._travelled(T) : Math.max(0, T - s.at) * s.rate;
-    return this._clampPos(s.pos + run);
+    return this._slip ? this._currentPosition() : null;
   }
-  _slipRebase(shadow) {   // after the deck clock was rebased at startedAt
-    if (this._slip) Object.assign(this._slip, { pos: shadow, at: this.startedAt, rate: this._playbackRate() });
-  }
+  _slipRebase() { /* the vocal slip rides the deck clock: nothing to rebase */ }
 
-  // Leave the slip loop onto the shadow playhead. Returns the landing position or null.
+  // Leave the slip loop now: the vocal is back on the song position. Returns that position or null.
   slipRelease() {
     const s = this._slip;
     if (!s) return null;
-    if (!this.loopOn) { this._dropSlip(); return null; }   // the loop was already taken off
-    const to = this.slipPosition();
-    this._slip = null;
-    this.loopOn = false;
-    this.loopBeats = s.prevBeats;
-    if (this.playing) this.play(to);
-    return to;
+    this._dropSlip();
+    return this.playing ? this._currentPosition() : null;
   }
 
-  // Forget the slip shadow without moving (someone else took the loop over).
+  // Forget the slip and give the live vocal back (someone else took over).
   _dropSlip() {
     if (!this._slip) return;
-    this.loopBeats = this._slip.prevBeats;
     this._slip = null;
+    this.releaseHold("vocals");
   }
 
   // Layer pieces of ANY buffer (this deck's own stem, or the next track's stem)
@@ -1128,7 +1107,7 @@ class Deck {
     this._stopSource();
     this.releaseLayers();
     this.playing = false;
-    if (this._slip) { this.loopOn = false; this.loopBeats = this._slip.prevBeats; this._slip = null; }
+    this._dropSlip();
     if (this.onPlayStateChange) this.onPlayStateChange(false);
   }
 
@@ -1330,7 +1309,7 @@ class Deck {
   seek(position, opts = {}) {
     if (!this.buffer) return false;
     const pos = this._clampPos(position);
-    if (opts.user && this._slip) { this._dropSlip(); this.loopOn = false; }   // a scrub ends the AI's slip loop
+    if (opts.user && this._slip) this._dropSlip();   // a scrub ends the AI's slip loop
     if (this.playing && !opts.user && this._onAir()) {
       const cur = this._currentPosition(), end = this._loopSpan && this._loopSpan[1];
       // natural: inaudible, a loop's own end, or a slip release onto the song's own timeline
@@ -1371,7 +1350,7 @@ class Deck {
   _setReversed(on) {
     if (on === this.reversed) return;
     const pos = this._currentPosition();
-    if (this._slip) { this._dropSlip(); this.loopOn = false; }   // no slip shadow runs backwards
+    this._dropSlip();   // no slip runs on a reversed deck
     const wasPlaying = this.playing;
     if (on) this._ensureReverseBuffer();
     if (wasPlaying) {

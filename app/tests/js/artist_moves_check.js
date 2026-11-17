@@ -1,5 +1,5 @@
 // Node check for the batch C artist moves (app/ui/static/artist-moves.js): every planner on synthetic beat grids
-// (caps, gates, no-op cases), the deck's slip-loop shadow playhead maths and layerPieces booking
+// (caps, gates, no-op cases), the deck's vocal-only slip loop (stem hold, the music untouched) and layerPieces booking
 // (deck-controller.js), and the runtime / run-now entry through a fake Host port.
 //   node app/tests/js/artist_moves_check.js
 "use strict";
@@ -16,8 +16,9 @@ const BEATS = Array.from({ length: 400 }, (_, i) => i * 0.5);
 const DOWNBEATS = Array.from({ length: 100 }, (_, i) => i * 2);
 
 // ---------------------------------------------------------------- S13 slip loop planner
+// the slip loop loops the VOCAL STEM only (the music runs on); no live stems = refused; off-EDM only a whole lyric line
 const slip = (o = {}) => am.planSlipLoop(Object.assign({ pos: 55, lineT: 64, bpm: 120, rate: 1, beats: BEATS, exitT: 120,
-  genre: "house", slipSupported: true, vocals: [], energyNow: 0.4, energyNext: 0.7, count: 0, atBar: 40, lastAtBar: null, quiet: true }, o));
+  genre: "house", slipSupported: true, stemsLive: true, vocals: [[56, 62]], energyNow: 0.4, energyNext: 0.7, count: 0, atBar: 40, lastAtBar: null, quiet: true }, o));
 {
   const p = slip();
   assert.ok(p.ok, JSON.stringify(p));
@@ -45,18 +46,33 @@ const slip = (o = {}) => am.planSlipLoop(Object.assign({ pos: 55, lineT: 64, bpm
   assert.strictEqual(slip({ energyNext: 0.3 }).gate, "no_build");
   assert.strictEqual(slip({ energyNow: null }).gate, "unmeasured");
   assert.strictEqual(slip({ vocals: null }).gate, "unmeasured");
-  assert.strictEqual(slip({ vocals: [[50, 70]] }).gate, "vocal_seam");
   assert.strictEqual(slip({ exitT: 66 }).gate, "exit_guard");
-  // MOVE_VOCAL_LOOP_GATE: off-EDM a slip loop needs a vocal-free window (EDM keeps the 25% rule); same cases as dj-core test/move_genre_test.dart
-  assert.strictEqual(slip({ genre: "hip hop", vocals: [[50, 70]] }).gate, "genre");
-  assert.strictEqual(slip({ genre: "punjabi", vocals: [[50, 70]] }).gate, "genre");
-  assert.strictEqual(slip({ genre: "", vocals: [[50, 70]] }).gate, "genre", "unknown genre refuses a sung window");
-  assert.ok(slip({ genre: "hip hop", vocals: [[1, 2]] }).ok, "vocal-free window runs off-EDM");
-  assert.ok(slip({ genre: "trance", vocals: [[50, 52]] }).ok, "EDM keeps the 25% rule");
+  assert.strictEqual(p.stem, "vocals"); assert.strictEqual(p.whole_line, false);
+  // no live stems: refused on any genre, never a full-mix fallback
+  for (const genre of ["house", "hip hop", ""]) assert.strictEqual(slip({ stemsLive: false, genre }).gate, "no_stems", genre);
+  assert.strictEqual(slip({ stemsLive: undefined }).gate, "no_stems");
+  // EDM: the beat-grid loop of the vocal may cut a line; a vocal-free loop would play nothing: refused
+  assert.ok(slip({ vocals: [[50, 70]] }).ok, "EDM stutters the vocal");
+  assert.strictEqual(slip({ vocals: [[1, 2]] }).gate, "no_vocal");
+  assert.strictEqual(slip({ vocals: [[61, 63]] }).gate, "no_vocal", "the sung part is in the second half of the window: the loop is vocal-free");
+  assert.strictEqual(slip({ vocals: [] }).gate, "no_vocal");
+  // MOVE_GENRE_ALLOW slip_loop_fragment: off-EDM only a WHOLE lyric line (a vocal-active region), repeated once; same cases as dj-core test/move_genre_test.dart
+  for (const genre of ["hip hop", "punjabi", "pop", "r&b", "rock", ""]) {
+    const w = slip({ genre, vocals: [[56, 58]] });
+    assert.ok(w.ok, `${genre}: ${w.reason}`);
+    assert.strictEqual(w.whole_line, true); assert.strictEqual(w.stem, "vocals");
+    near(w.start, 56); assert.strictEqual(w.loop_beats, 4); near(w.release, 60, 1e-9, "the line plays, then once more");
+  }
+  for (const v of [[[61, 63]], [[40, 52]], [[56, 56.4]], []]) {   // repeat past the line / a 24 beat stretch / a syllable / no vocal
+    const w = slip({ genre: "hip hop", vocals: v });
+    assert.strictEqual(w.gate, "genre", JSON.stringify(v)); assert.ok(/slip_loop_fragment/.test(w.reason));
+  }
+  assert.strictEqual(slip({ genre: "hip hop", pos: 56.5, vocals: [[55.5, 57], [58, 59]] }).start, 58, "a line behind the playhead is skipped");
+  assert.ok(slip({ genre: "trance", vocals: [[56, 62]] }).ok);
   // on demand skips only the choice gates
   assert.ok(slip({ onDemand: true, count: 5, lastAtBar: 39, energyNext: 0.1, quiet: false, relaxed: true }).ok);
   assert.strictEqual(slip({ onDemand: true, loopOn: true }).gate, "deck_busy");
-  assert.strictEqual(slip({ onDemand: true, vocals: [[50, 70]] }).gate, "vocal_seam");
+  assert.strictEqual(slip({ onDemand: true, stemsLive: false }).gate, "no_stems");
   assert.strictEqual(slip({ onDemand: true, inTransition: true }).gate, "transition");
   // no analysed beats: the bpm grid, listed as a fallback
   const g = slip({ beats: null });
@@ -133,7 +149,7 @@ assert.strictEqual(am.planPercBridge({ deckCount: 2, tempoGapPct: 12 }).gate, "n
 assert.strictEqual(am.planPercBridge({ deckCount: 3, tempoGapPct: 2 }).gate, "no_need");
 assert.ok(am.planPercBridge({ deckCount: 3, tempoGapPct: 9 }).ok);
 
-// ---------------------------------------------------------------- deck: slip loop shadow playhead + layerPieces
+// ---------------------------------------------------------------- deck: vocal-only slip loop + layerPieces
 const ctx = { currentTime: 10 };
 class Param {
   constructor(v) { this.ev = [{ t: -1, v }]; this._v = v; }
@@ -160,55 +176,85 @@ function makeDeck() {
   d._syncWavesurferCursor = () => {}; d._ensureReverseBuffer = () => {}; d._activeBuffer = () => d.buffer;
   return d;
 }
-{
-  ctx.currentTime = 10;
+// a deck in stem mode with live stems (the caller of slipLoop enters stem mode first)
+function stemDeck() {
   const d = makeDeck();
+  const buf = { duration: 200 };
+  d.stems = { drums: buf, bass: buf, vocals: buf, other: buf, lag: 0, ratio: 1 };
+  for (const n of ["drums", "bass", "vocals", "other"]) { d.stemGain[n] = node(); d.stemLive[n] = node(); }
+  d.stemState = { drums: 1, bass: 1, vocals: 1, other: 1, bus: 0 };
+  d._ready = true; Object.defineProperty(d, "stemsReady", { get() { return this._ready; } });
+  return d;
+}
+{
+  // only the vocal stem loops, on the grid; the music (drums / bass / other, the deck clock, the loop) is untouched
+  ctx.currentTime = 10;
+  const d = stemDeck();
   d.play(30);
   ctx.currentTime = 12;                               // song at 32
   near(d._currentPosition(), 32);
-  assert.strictEqual(d.slipLoop(4, 32.5), false, "a start 0.5 s off the playhead is late: refused");
-  assert.strictEqual(d.slipLoop(4, 32), true);
-  assert.strictEqual(d.slipLoop(4, 32), false, "one slip at a time");
-  assert.ok(d.loopOn); assert.strictEqual(d.loopBeats, 4);
-  const L = 4 * 60 / 128;                             // 1.875 s loop
-  ctx.currentTime = 16;                               // 4 s under the loop
-  near(d._currentPosition(), 32 + (4 % L), 1e-9, "the heard position wraps in the loop");
-  near(d.slipPosition(), 36, 1e-9, "the shadow runs on");
-  // a pitch change mid-slip: the shadow is rebased with the deck clock
-  d.setPitchPercent(5);
+  const before = Object.fromEntries(["drums", "bass", "other"].map((n) => [n, [d.stemGain[n].gain.ev.length, d.stemLive[n].gain.ev.length]]));
+  const mixEv = d.mixGain.gain.ev.length;
+  assert.strictEqual(d.slipLoop(4, 32, 12.1, 16.1), true);
+  assert.strictEqual(d.slipLoop(4, 32, 12.1, 16.1), false, "one slip at a time");
+  assert.deepStrictEqual(Object.keys(d._holds), ["vocals"], "the vocal stem is the only thing that loops");
+  const h = d._holds.vocals.src, bar = 240 / 128;
+  assert.strictEqual(h.loop, true); near(h.loopStart, 32); near(h.loopEnd, 32 + bar, 1e-9, "4 beats = one bar of the vocal stem");
+  near(h.at, 12.1); near(d._holds.vocals.until, 16.1);
+  for (const n of ["drums", "bass", "other"]) {
+    assert.deepStrictEqual([d.stemGain[n].gain.ev.length, d.stemLive[n].gain.ev.length], before[n], `${n} stem: no ramp, no hold: it plays straight through`);
+    assert.ok(!d._stemSrc[`hold_${n}`]);
+  }
+  assert.strictEqual(d.mixGain.gain.ev.length, mixEv, "the mix gain is not touched");
+  assert.strictEqual(d.loopOn, false, "no deck loop: the song clock is not looped");
+  ctx.currentTime = 16;                               // 4 s under the vocal loop: the deck clock ran on, nothing wrapped
+  near(d._currentPosition(), 36, 1e-9, "the music position is the deck position");
+  near(d.slipPosition(), 36, 1e-9, "the slip shadow is the deck position");
   ctx.currentTime = 18;
-  near(d.slipPosition(), 36 + 2 * 1.05, 1e-9, "shadow at the new rate after the change");
-  // a glide mid-slip: the shadow integrates it like the deck clock
-  d.setPitchPercent(0);
-  d.rampPitchPercent(4, 2);                          // 1.0 -> 1.04 over 2 s from t=18
-  ctx.currentTime = 20;
-  near(d.slipPosition(), 38.1 + 2 * 1.02, 1e-9, "shadow over a linear glide");
   const to = d.slipRelease();
-  near(to, 40.14, 1e-9, "release lands on the shadow");
-  near(d.startOffset, 40.14, 1e-9, "the deck continues from there");
-  assert.strictEqual(d.loopOn, false); assert.strictEqual(d.loopBeats, 4, "loop length restored");
+  near(to, 38, 1e-9, "the vocal is back on the song position");
+  assert.strictEqual(d._holds.vocals, undefined, "the hold is released");
+  assert.strictEqual(d.stemLive.vocals.gain.ev[d.stemLive.vocals.gain.ev.length - 1].v, 1, "the live vocal comes back");
   assert.strictEqual(d.slipPosition(), null); assert.strictEqual(d.slipRelease(), null, "no slip: no-op");
 }
 {
+  // refusals: stopped / reversed / a loop already on / not in stem mode / stems not live / no stems at all: nothing armed
   ctx.currentTime = 10;
-  const d = makeDeck();
-  assert.strictEqual(d.slipLoop(4), false, "stopped deck: refused");
+  const d = stemDeck();
+  assert.strictEqual(d.slipLoop(4, 30, 11, 15), false, "stopped deck: refused");
   d.play(30);
   d.loopOn = true;
-  assert.strictEqual(d.slipLoop(4), false, "a loop already on: refused");
+  assert.strictEqual(d.slipLoop(4, 30, 11, 15), false, "a loop already on: refused");
   d.loopOn = false; d.reversed = true;
-  assert.strictEqual(d.slipLoop(4), false, "reversed: refused");
+  assert.strictEqual(d.slipLoop(4, 30, 11, 15), false, "reversed: refused");
   d.reversed = false;
-  assert.ok(d.slipLoop(8));
-  d.toggleLoop();                                     // the listener takes the loop off
-  assert.strictEqual(d._slip, null); assert.strictEqual(d.loopOn, false);
+  assert.strictEqual(d.slipLoop(4, 30, 15, 11), false, "an empty window: refused");
+  const sm = d.stemState; d.stemState = null;
+  assert.strictEqual(d.slipLoop(4, 30, 11, 15), false, "full-mix mode: refused (a vocal hold would be inaudible)");
+  d.stemState = sm;
+  d._ready = false;
+  assert.strictEqual(d.slipLoop(4, 30, 11, 15), false, "stems not live: refused, never a full-mix loop");
+  assert.deepStrictEqual(Object.keys(d._holds), []); assert.ok(!d._slip); assert.strictEqual(d.loopOn, false);
+  const bare = makeDeck(); bare.play(30);
+  assert.strictEqual(bare.slipLoop(4, 30, 11, 15), false, "no stems: refused");
+  assert.strictEqual(bare.loopOn, false, "and no full-mix loop instead");
+}
+{
+  // someone else takes over: the vocal comes back, no slip is left running
+  ctx.currentTime = 10;
+  let d = stemDeck(); d.play(30);
+  assert.ok(d.slipLoop(8, 30, 11, 15));
+  d.toggleLoop();                                     // the listener presses LOOP
+  assert.ok(!d._slip); assert.strictEqual(d._holds.vocals, undefined);
   assert.strictEqual(d.slipRelease(), null);
-  assert.ok(d.slipLoop(8));
-  d.seek(80, { user: true });                         // a scrub ends the slip, no loop left running
-  assert.strictEqual(d._slip, null); assert.strictEqual(d.loopOn, false); assert.strictEqual(d.loopBeats, 4);
-  assert.ok(d.slipLoop(8));
+  d = stemDeck(); d.play(30);
+  assert.ok(d.slipLoop(8, 30, 11, 15));
+  d.seek(80, { user: true });                         // a scrub ends the slip
+  assert.ok(!d._slip); assert.strictEqual(d._holds.vocals, undefined); assert.strictEqual(d.loopOn, false);
+  d = stemDeck(); d.play(30);
+  assert.ok(d.slipLoop(8, 30, 11, 15));
   d.stopNow();
-  assert.strictEqual(d._slip, null); assert.strictEqual(d.loopOn, false);
+  assert.ok(!d._slip); assert.strictEqual(d._holds.vocals, undefined);
 }
 {
   ctx.currentTime = 10;
@@ -246,15 +292,16 @@ function fakeHost(decks) {
 }
 function fakeDeck(id, over = {}) {
   const d = { id, playing: true, bpm: 120, loopOn: false, reversed: false, _slices: {}, _holds: {}, stemsReady: false,
-    analysis: { beat_times: BEATS, downbeat_times: DOWNBEATS, vocal_active_regions: [], phrase_boundaries_8bar: [0, 16, 32, 48, 64, 80],
+    analysis: { beat_times: BEATS, downbeat_times: DOWNBEATS, vocal_active_regions: [[0, 200]], phrase_boundaries_8bar: [0, 16, 32, 48, 64, 80],
       energy_times: Array.from({ length: 100 }, (_, i) => i * 2), energy_curve: Array.from({ length: 100 }, (_, i) => (i >= 32 ? 0.8 : 0.4)) },
     pos: 55, _currentPosition() { return this.pos; }, _playbackRate: () => 1, crossfaderGain: { gain: { value: 1 } },
-    slipCalls: [], slipLoop(beats, start) { this.slipCalls.push([beats, start]); this._slip = { start }; return true; },
+    slipCalls: [], stemCalls: [], stemsLiveAt() { return !!this.stemsReady; }, stemMix(t, when) { this.stemCalls.push([t, when]); return true; },
+    slipLoop(beats, start, at, until) { this.slipCalls.push([beats, start, at, until]); this._slip = { start }; return true; },
     slipPosition() { return 64; }, slipRelease() { this._slip = null; return 64; }, layerPieces: () => ({ ok: true, until: 99 }) };
   return Object.assign(d, over);
 }
 {
-  const a = fakeDeck("a"), b = fakeDeck("b", { playing: false });
+  const a = fakeDeck("a", { stemsReady: true, stems: { vocals: {} } }), b = fakeDeck("b", { playing: false });
   const H = fakeHost({ a, b });
   const created = require(path.join(STATIC, "artist-moves.js"));
   assert.ok(created.planSlipLoop, "core export");
@@ -280,11 +327,26 @@ function fakeDeck(id, over = {}) {
   assert.strictEqual(ev.detail.label, "artist_move: slip_loop");
   assert.strictEqual(ev.detail.cap_beats, 16);
   assert.strictEqual(api.tick(a, o(55.2)), null, "one plan per phrase line");
-  H.advance(1.0);                                     // the loop engages on the grid point
-  assert.deepStrictEqual(a.slipCalls, [[8, 56]]);
-  H.advance(9.0);                                     // and releases on the line, onto the shadow
+  assert.strictEqual(ev.detail.stem, "vocals", "the move says it loops the vocal stem");
+  H.advance(1.0);                                     // stem mode, then the vocal loop engages on the grid point (audio time 1 .. 9)
+  assert.deepStrictEqual(a.slipCalls, [[8, 56, 1, 9]]);
+  assert.strictEqual(JSON.stringify(a.stemCalls[0]), "[{},0.99]", "stem mode is entered first");
+  H.advance(9.0);                                     // and releases on the line: the vocal is back on the song, the full mix returns
   const rel = H.events.find((e) => e.detail.kind === "artist_move_release");
   assert.ok(rel && rel.detail.line_err_s === 0 && rel.detail.shadow_err_s === 0);
+  assert.strictEqual(JSON.stringify(a.stemCalls[1]), "[null,9.03]", "the full mix comes back after the hold");
+  // no live stems: the plan is refused, nothing runs, no full-mix loop
+  {
+    const c = fakeDeck("a"), H2 = fakeHost({ a: c, b: fakeDeck("b", { playing: false }) });
+    let api2 = null;
+    const sb2 = { Engine: { mount: (n, create) => { if (n === "artistMoves") api2 = create({ host: H2.host }); } }, console: { info() {}, warn() {} }, Math, Object, Array, Number, JSON, require };
+    sb2.window = sb2; vm.createContext(sb2);
+    for (const f of ["generated/dj_config.js", "drop-line.js", "learned-moves.js", "artist-moves.js"]) vm.runInContext(fs.readFileSync(path.join(STATIC, f), "utf8"), sb2);
+    assert.strictEqual(api2.tick(c, o(55)), null);
+    assert.ok(H2.steps.some((s) => s.kind === "artist_move_refused" && s.o.decision === "slip_loop" && /no_stems/.test(s.o.why)));
+    H2.advance(10);
+    assert.deepStrictEqual(c.slipCalls, []); assert.deepStrictEqual(c.stemCalls, []);
+  }
   // a refusal is said once per phrase
   const n0 = H.steps.filter((s) => s.kind === "artist_move_refused").length;
   const busy = Object.assign(o(55), { lineT: 80, quiet: false });
