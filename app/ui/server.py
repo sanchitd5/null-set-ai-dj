@@ -184,6 +184,9 @@ def _load_registry_from_disk() -> None:
                 _track_names.update({k: v for k, v in loaded.items() if isinstance(v, str)})
         except (json.JSONDecodeError, OSError):
             pass
+    from app.ui.services import not_music
+
+    not_music.apply_removed(_tracks)            # CLEANLIB: songs removed as not music stay out of the registry
 
 
 def _remember_track_name(track_id: str, name: str) -> None:
@@ -492,7 +495,9 @@ def get_library_bad():
     cached copy of each (it never touches songs it downloaded itself)."""
     from app.ui.services import cache_audit
 
-    return {"ids": cache_audit.bad_ids(CACHE_DIR)}
+    from app.ui.services import not_music
+
+    return {"ids": sorted(set(cache_audit.bad_ids(CACHE_DIR)) | set(not_music.removed_ids(CACHE_DIR)))}
 
 
 @app.get("/api/library/lyric-verdicts")
@@ -3892,6 +3897,9 @@ app.include_router(_session_events_router)
 from app.ui.services import quarantine_cleanup as _quarantine_cleanup  # noqa: E402 -- _pick_quarantine retention + GET /api/admin/quarantine
 
 app.include_router(_quarantine_cleanup.router)
+from app.ui.services import not_music as _not_music  # noqa: E402 -- CLEANLIB: GET /api/library/not-music, restore / remove
+
+app.include_router(_not_music.router)
 app.include_router(_admin.router)             # /admin, /api/admin/*: before the static mount
 
 
