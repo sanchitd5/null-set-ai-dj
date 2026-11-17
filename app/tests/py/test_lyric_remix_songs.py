@@ -70,9 +70,11 @@ def test_render_routes_are_gone(env):
 
 
 def test_settings_round_trip_and_clamp(env):
-    assert env.get("/api/lyric_remix/settings").json() == {"ai_picks": False, "min_songs": 4}
-    assert env.put("/api/lyric_remix/settings", json={"ai_picks": True}).json() == {"ai_picks": True, "min_songs": 4}
-    assert env.put("/api/lyric_remix/settings", json={"min_songs": 9}).json() == {"ai_picks": True, "min_songs": 9}
+    assert env.get("/api/lyric_remix/settings").json() == {"ai_picks": False, "min_songs": 4, "auto_remix": True}
+    assert env.put("/api/lyric_remix/settings", json={"ai_picks": True}).json() == {"ai_picks": True, "min_songs": 4, "auto_remix": True}
+    assert env.put("/api/lyric_remix/settings", json={"min_songs": 9}).json() == {"ai_picks": True, "min_songs": 9, "auto_remix": True}
+    assert env.put("/api/lyric_remix/settings", json={"auto_remix": False}).json()["auto_remix"] is False
+    assert env.put("/api/lyric_remix/settings", json={"auto_remix": True}).json()["auto_remix"] is True
     assert env.put("/api/lyric_remix/settings", json={"min_songs": 999}).json()["min_songs"] == 50
     assert env.get("/api/lyric_remix/songs").json()["ai_picks"] is True
 

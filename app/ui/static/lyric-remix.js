@@ -28,7 +28,7 @@
       drops: i.drops == null ? null : i.drops, vocals: i.vocals == null ? null : i.vocals, barsOnTrack: num(i.barsOnTrack), used,
       count: num(i.count), lastAtBar: i.lastAtBar == null ? null : i.lastAtBar, atBar: num(i.atBar), variant: num(i.variant),
       donePlans: Array.isArray(i.donePlans) ? i.donePlans.slice() : [], mode: "song", relaxed: !!i.relaxed, mashupActive: !!i.mashupActive,
-      deferring: !!i.deferring, onDemand: false,
+      deferring: !!i.deferring, onDemand: false, auto: false, autoEnabled: !!i.autoEnabled,
     };
   }
   // The cross-deck variant: B's tempo and vocal stem, and a window that ends EXIT_GUARD_BARS before A's exit (A's exit is
@@ -124,6 +124,9 @@
     let wantStatusText = "";
     let performing = null;                           // the armed remix {deck, at, until}: status "Remix in N bars" / "Remix playing" until it ends
     let driveTimer = null;
+    let autoOn = true;                               // AUTO-REMIX (owner setting, default on): a remixable song's remix performs by itself
+    const autoDone = new Map();                      // deck id -> track id whose auto remix was refused for good (or already played)
+    const autoSong = { a: null, b: null }, autoPhrase = { a: null, b: null };
     const driven = { a: null, b: null };             // phrase index last driven per deck (the own clock below)
     const entryAt = { a: null, b: null };            // track position where the own clock first saw the requested song on air
     const exitAt = { a: null, b: null };             // planned exit (track s) the own clock gave a requested pair
@@ -211,7 +214,7 @@
         drops: DL && DL.dropSpans && d.analysis ? DL.dropSpans(d.analysis, d.bpm || d.analysis.bpm) : null,
         vocals: d.analysis && d.analysis.vocal_active_regions, used: r.used, count: r.count, lastAtBar: r.lastAtBar, variant: r.variant,
         donePlans, relaxed: !!(host.session && host.session.relaxed), mashupActive: !!st.mashupActive,
-        deferring: !!(host.session && host.session.deferring), rttS,
+        deferring: !!(host.session && host.session.deferring), rttS, autoEnabled: autoOn,
       };
     }
     function guestInfo(d) {
@@ -334,7 +337,8 @@
         const withWant = (c, plan) => (plan ? Object.assign(c, { wantPlan: plan }) : c);
         if (wantTransition || wantSong) { const oc = overlapCtx(base, g, overlapInfo(d)); if (oc) tries.push({ bId, ctx: withWant(oc, wpPair), want: wpPair }); }
         if (wantTransition) { const tc = transitionCtx(base, g); if (tc) tries.push({ bId, ctx: withWant(tc, wpPair), want: wpPair }); }
-        if (wantSong) tries.push({ bId: null, ctx: withWant(Object.assign({}, base), wpSong), want: wpSong });
+        const auto = autoOn && !asked && !wpSong && !(autoDone.get(d.id) === aId);
+        if (wantSong) tries.push({ bId: null, ctx: withWant(Object.assign({}, base, auto ? { auto: true } : {}), wpSong), want: wpSong, auto });
         if (asked) tries = tries.filter((t) => t.want);               // a request only runs its own plan
         let lastRefusal = null;
         const refused = () => { if (asked && lastRefusal) setStatus(wantStatus(lastRefusal.gate, lastRefusal.reason)); if (asked && lastRefusal && !retryable(lastRefusal.gate)) want = null; };
@@ -345,6 +349,7 @@
             rttS = Math.max(0.05, Math.min(2, (host.clock.now() - t0) / 1000));
             if (!res || res.ok !== true) {
               lastRefusal = { gate: res && res.gate, reason: res && res.reason };
+              if (t.auto && !retryable(lastRefusal.gate)) autoDone.set(d.id, aId);          // not for this song play: stop asking every phrase
               if (!said.has(key)) { said.add(key); if (said.size > 200) said.clear(); console.info(`lyric remix skipped: ${res && res.gate}: ${res && res.reason}`); }
               return run(i + 1);
             }
@@ -355,6 +360,7 @@
             noteDone(r, donePlans, res, inp.atBar);
             const asked_ = !!(t.want && want && want.plan === t.want), pairAsked = asked_ && !!want.b;
             if (asked_) want = null;
+            if (t.auto) autoDone.set(d.id, aId);
             if (asked_) { performing = { deck: d, at: armed.at, until: armed.until }; startDrive(); watchPerforming(); }
             say(d, res, armed, inp.atBar);
             if (pairAsked) bookTransition(d, bId);
@@ -402,7 +408,7 @@
     function drive() {
       try {
         watchPerforming();
-        if (!want) { if (!performing) stopDrive(); return; }
+        if (!want) { if (autoOn) autoDrive(); else if (!performing) stopDrive(); return; }
         const d = ["a", "b"].map((i) => host.decks && host.decks[i]).find((x) => x && x.playing && trackOf(x) === want.a);
         if (!d || mindOwns(d)) return;
         const inp = driveInputs(d);
@@ -411,6 +417,22 @@
         tick(d, inp.o);
       } catch (e) { console.info("lyric remix drive failed -", e && e.message); }
     }
+    // AUTO-REMIX: no request, the song just plays. Once per phrase and playing deck the same tick runs with `auto` (dj-core decides: the
+    // setting, one remix per song play, the section ahead). Not while dj-mind owns the deck (its learned tick calls tick() itself).
+    function autoDrive() {
+      for (const d of ["a", "b"].map((i) => host.decks && host.decks[i])) {
+        if (!d || !d.playing || mindOwns(d)) continue;
+        const aId = trackOf(d);
+        if (!aId) continue;
+        if (autoSong[d.id] !== aId) { autoSong[d.id] = aId; autoPhrase[d.id] = null; entryAt[d.id] = null; autoDone.delete(d.id); }
+        if (autoDone.get(d.id) === aId || (d._learned && d._learned.used && d._learned.used.includes(MOVE))) continue;
+        const inp = driveInputs(d);
+        if (!inp || autoPhrase[d.id] === inp.cur) continue;
+        autoPhrase[d.id] = inp.cur;
+        tick(d, inp.o);
+      }
+    }
+    function setAuto(on) { autoOn = !!on; if (autoOn) startDrive(); }
     // A pair booked with the AI DJ off: B plays in on the line after the remix window, the same MERGE -> HOLD the AI actions use.
     function bookTransition(d, bId) {
       try {
@@ -442,7 +464,13 @@
         }
       } catch (e) { console.info("lyric remix stop failed -", e && e.message); }
     }
-    const api = { core, tick, arm, stop, cancel, prefetch, request, clear: clearWant, wantsDeck, get want() { return want; }, get busy() { return !!(want || performing); }, get status() { return wantStatusText; },
+    if (host.api && host.api.fetch) {                  // the owner's auto-remix setting (default on; the panel's switch calls setAuto too)
+      try {
+        host.api.fetch("/api/lyric_remix/settings").then((r) => r.json()).then((j) => { if (j && typeof j.auto_remix === "boolean") setAuto(j.auto_remix); }).catch(() => {});
+      } catch (e) { /* default stays on */ }
+    }
+    startDrive();
+    const api = { core, setAuto, get auto() { return autoOn; }, tick, arm, stop, cancel, prefetch, request, clear: clearWant, wantsDeck, get want() { return want; }, get busy() { return !!(want || performing); }, get status() { return wantStatusText; },
       get donePlans() { return donePlans; } };
     host.mod.lyricRemix = api;
     return api;
