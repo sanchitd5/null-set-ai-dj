@@ -147,6 +147,17 @@ if (typeof module !== "undefined" && module.exports) module.exports = LRS;
       catch (e) { aiEl.checked = !want; note(`Could not save the setting: ${e.message}`); }
     });
   }
+  const autoEl = document.getElementById("lrs-auto-remix");
+  if (autoEl) {                                           // AUTO-REMIX (default on): remixable songs perform their remix by themselves
+    json("/api/lyric_remix/settings").then((s) => { autoEl.checked = !s || s.auto_remix !== false; }).catch(() => {});
+    autoEl.addEventListener("change", async () => {
+      const want = autoEl.checked;
+      try {
+        await json("/api/lyric_remix/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ auto_remix: want }) });
+        const lr = lyricRemix(); if (lr && lr.setAuto) lr.setAuto(want);
+      } catch (e) { autoEl.checked = !want; note(`Could not save the setting: ${e.message}`); }
+    });
+  }
   const btn = document.getElementById("lrs-refresh"); if (btn) btn.addEventListener("click", refresh);
   refresh();
 })();

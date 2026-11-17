@@ -68,15 +68,17 @@ def _clean_min_songs(v: Any) -> int:
 def get_settings() -> dict:
     try:
         d = json.loads(settings_path().read_text(encoding="utf-8"))
-        return {"ai_picks": bool(d.get("ai_picks")), "min_songs": _clean_min_songs(d.get("min_songs", DEFAULT_MIN_SONGS))}
+        return {"ai_picks": bool(d.get("ai_picks")), "min_songs": _clean_min_songs(d.get("min_songs", DEFAULT_MIN_SONGS)),
+                "auto_remix": bool(d.get("auto_remix", True))}
     except (OSError, ValueError, AttributeError):
-        return {"ai_picks": False, "min_songs": DEFAULT_MIN_SONGS}
+        return {"ai_picks": False, "min_songs": DEFAULT_MIN_SONGS, "auto_remix": True}
 
 
-def set_settings(ai_picks: Optional[bool] = None, min_songs: Optional[int] = None) -> dict:
+def set_settings(ai_picks: Optional[bool] = None, min_songs: Optional[int] = None, auto_remix: Optional[bool] = None) -> dict:
     cur = get_settings()
     new = {"ai_picks": cur["ai_picks"] if ai_picks is None else bool(ai_picks),
-           "min_songs": cur["min_songs"] if min_songs is None else _clean_min_songs(min_songs)}
+           "min_songs": cur["min_songs"] if min_songs is None else _clean_min_songs(min_songs),
+           "auto_remix": cur["auto_remix"] if auto_remix is None else bool(auto_remix)}
     p = settings_path()
     p.parent.mkdir(parents=True, exist_ok=True)
     tmp = p.with_name(p.name + f".tmp{os.getpid()}")
@@ -132,7 +134,7 @@ def list_songs(q: str = "", limit: int = 1000) -> dict:
             continue
         out.append(s)
     out.sort(key=lambda s: (-s["score"], s["plan_id"]))
-    return {"ai_picks": get_settings()["ai_picks"], "total": len(out), "songs": out[:max(1, limit)]}
+    return {"ai_picks": get_settings()["ai_picks"], "auto_remix": get_settings()["auto_remix"], "total": len(out), "songs": out[:max(1, limit)]}
 
 
 # ------------------------------------------------------------------------------------------------ AI picks
@@ -192,6 +194,7 @@ def attach_pick(suggestions: list, *, playing_id: str, set_id: str, history_len:
 class SettingsBody(BaseModel):
     ai_picks: Optional[bool] = None
     min_songs: Optional[int] = None
+    auto_remix: Optional[bool] = None
 
 
 @router.get("/api/lyric_remix/songs")
@@ -206,4 +209,4 @@ def api_get_settings():
 
 @router.put("/api/lyric_remix/settings")
 def api_put_settings(body: SettingsBody):
-    return set_settings(body.ai_picks, body.min_songs)
+    return set_settings(body.ai_picks, body.min_songs, body.auto_remix)

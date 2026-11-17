@@ -247,9 +247,10 @@ function fakeHost(responses) {
         h.pos = 100; h.ivs = ivs; h.cleared = () => cleared;
         return h;
       };
+      const mkOff = (host) => { const m = mk(host); m.setAuto(false); return m; };   // these cases are about a requested remix: auto stays out
       const plans = (h) => h.log.fetch.filter((f) => f[0] === "/api/lyric_remix/plan");
       const h = prep((url) => (url.includes("/has") ? { within: 0, pair: 0 } : okPlan));
-      const m = mk(h.host);
+      const m = mkOff(h.host);
       assert.strictEqual(m.request({ plan: "d1", a: "s1", b: null }), true); assert.strictEqual(h.ivs.length, 1, "the own clock starts with the request");
       h.ivs[0](); await flush(); await flush(); await flush();
       assert.strictEqual(plans(h).length, 1, "AI DJ off: the plan is asked by the own clock");
@@ -263,31 +264,73 @@ function fakeHost(responses) {
       // AI DJ on (SET MIND owns the deck): the own clock never ticks, dj-mind's tick runs it once
       const h2 = prep((url) => (url.includes("/has") ? { within: 0, pair: 0 } : okPlan));
       h2.host.mod.djMind = { owns: () => true };
-      const m2 = mk(h2.host); m2.request({ plan: "d1", a: "s1", b: null });
+      const m2 = mkOff(h2.host); m2.request({ plan: "d1", a: "s1", b: null });
       h2.ivs[0](); h2.ivs[0](); await flush(); assert.strictEqual(plans(h2).length, 0, "AI DJ on: the own clock leaves the deck to dj-mind");
       m2.tick(h2.host.decks.a, { pos: 100, bar: BAR, phrase: 6, lineT: 100, entryT: 0, exitT: 400, st: {} }); await flush(); await flush(); await flush();
       assert.strictEqual(plans(h2).length, 1, "dj-mind's tick plans it once"); h2.ivs[0](); await flush(); assert.strictEqual(plans(h2).length, 1, "no double run");
       // stems late: waiting status, retried at the next phrase, then armed
       let stems = false;
       const h3 = prep((url) => (url.includes("/has") ? { within: 0, pair: 0 } : stems ? okPlan : { ok: false, gate: "stems_not_live", reason: "not sounding" }));
-      const m3 = mk(h3.host); m3.request({ plan: "d1", a: "s1", b: null });
+      const m3 = mkOff(h3.host); m3.request({ plan: "d1", a: "s1", b: null });
       h3.ivs[0](); await flush(); await flush(); await flush(); assert.strictEqual(m3.status, "Getting stems for the remix"); assert(m3.want);
       h3.ivs[0](); await flush(); assert.strictEqual(plans(h3).length, 1, "same phrase: not asked again");
       stems = true; h3.pos = 118; h3.ivs[0](); await flush(); await flush(); await flush();
       assert.strictEqual(plans(h3).length, 2, "next phrase: retried"); assert(h3.host.decks.a._lyricRemix, "armed once the stems are there");
       // a refusal that cannot clear: reason shown, request dropped, clock stops
       const h4 = prep((url) => (url.includes("/has") ? { within: 0, pair: 0 } : { ok: false, gate: "lang_mismatch", reason: "two languages" }));
-      const m4 = mk(h4.host); m4.request({ plan: "d1", a: "s1", b: null }); h4.ivs[0](); await flush(); await flush(); await flush(); await flush();
+      const m4 = mkOff(h4.host); m4.request({ plan: "d1", a: "s1", b: null }); h4.ivs[0](); await flush(); await flush(); await flush(); await flush();
       assert.strictEqual(m4.status, "Remix not played: two languages"); assert.strictEqual(m4.want, null); h4.ivs[0](); assert.strictEqual(h4.cleared(), 1);
       // a pair booked with the AI DJ off: the remix, then the transition itself (the MERGE -> HOLD path), on the exit line the plan was sized for
       const pairPlan = Object.assign({}, okPlan, { mode: "transition", plan_id: "p1", slices: [{ from: 40, dur: 4, off: 0, gain: 1, src: "self" }, { from: 12, dur: 4, off: 4, gain: 1, src: "guest", rate: 1 }] });
       const h5 = prep((url) => (url.includes("/has") ? { within: 0, pair: 0 } : pairPlan)), merges = [];
       h5.host.mod.autopilot = { mergeNow: (o) => { merges.push(o); return { ok: true, why: "x" }; } };
-      const m5 = mk(h5.host); m5.request({ plan: "p1", a: "s1", b: "s2" });
+      const m5 = mkOff(h5.host); m5.request({ plan: "p1", a: "s1", b: "s2" });
       h5.host.decks.b.playing = false; h5.ivs[0](); await flush(); await flush(); await flush();
       const pb = JSON.parse(plans(h5)[0][1].body); assert.strictEqual(pb.ctx.mode, "transition"); assert.strictEqual(pb.ctx.exitT, 112 + 6 * 16, "exit = six lines past the next line");
       assert.strictEqual(merges.length, 1, "the transition is booked"); assert.strictEqual(merges[0].aT, 112 + 6 * 16); assert.strictEqual(merges[0].out, "a"); assert.strictEqual(merges[0].inn, "b");
       assert.strictEqual(merges[0].bId, "s2");
+    }
+
+    // AUTO-REMIX: nobody asked, the AI DJ is off: the own clock asks dj-core (ctx.auto) once per phrase, performs the remix once per song play
+    {
+      const flush = () => new Promise((r) => setImmediate(r));
+      const okPlan = { ok: true, kind: "lyric_remix", mode: "song", start: 120, end: 128, plan_id: "au1", text: "by itself", why: "Lyric remix: by itself", score: 0.8, beats: 16,
+        slices: [{ from: 40, dur: 4, off: 0, gain: 1, src: "self" }] };
+      const prep = (responses) => {
+        const h = fakeHost(responses), ivs = [];
+        h.host.clock.setInterval = (f) => { ivs.push(f); return ivs.length; }; h.host.clock.clearInterval = () => {};
+        const down = Array.from({ length: 200 }, (_, i) => i * BAR);
+        for (const id of ["a", "b"]) { h.host.decks[id].analysis = { bpm: 120, downbeat_times: down }; h.host.decks[id].buffer = { duration: 400 }; h.host.decks[id]._currentPosition = () => h.pos; }
+        h.pos = 100; h.ivs = ivs;
+        return h;
+      };
+      const plans = (h) => h.log.fetch.filter((f) => f[0] === "/api/lyric_remix/plan");
+      const h = prep((url) => (url.includes("/settings") ? { auto_remix: true } : url.includes("/has") ? { within: 1, pair: 0 } : okPlan));
+      h.host.session.relaxed = false; h.host.decks.b.playing = false;
+      const m = mk(h.host); assert.strictEqual(h.ivs.length, 1, "the own clock runs from the start"); await flush();
+      h.ivs[0](); await flush(); await flush(); await flush(); await flush();
+      assert.strictEqual(plans(h).length, 1, "asked once on its own"); const sent = JSON.parse(plans(h)[0][1].body);
+      assert.strictEqual(sent.ctx.auto, true); assert.strictEqual(sent.ctx.autoEnabled, true); assert.strictEqual(sent.ctx.wantPlan, undefined);
+      assert(h.host.decks.a._lyricRemix, "armed"); assert.deepStrictEqual(m.donePlans, ["au1"]);
+      h.pos = 118; h.ivs[0](); await flush(); await flush(); assert.strictEqual(plans(h).length, 1, "one remix per song play");
+      // the owner's switch off: nothing asked
+      const h2 = prep((url) => (url.includes("/settings") ? { auto_remix: false } : url.includes("/has") ? { within: 1, pair: 0 } : okPlan));
+      h2.host.session.relaxed = false; h2.host.decks.b.playing = false;
+      const m2 = mk(h2.host); await flush(); await flush(); assert.strictEqual(m2.auto, false);
+      h2.ivs[0](); await flush(); await flush(); await flush(); assert.strictEqual(plans(h2).length, 0, "auto remix off: never asked");
+      m2.setAuto(true); h2.pos = 118; h2.ivs[0](); await flush(); await flush(); await flush(); await flush(); assert.strictEqual(plans(h2).length, 1, "switched on: asked");
+      // AI DJ on (SET MIND owns the deck): the own clock leaves it to dj-mind's tick, which runs it once (no double)
+      const h3 = prep((url) => (url.includes("/settings") ? { auto_remix: true } : url.includes("/has") ? { within: 1, pair: 0 } : okPlan));
+      h3.host.session.relaxed = false; h3.host.decks.b.playing = false; h3.host.mod.djMind = { owns: () => true };
+      const m3 = mk(h3.host); await flush(); h3.ivs[0](); await flush(); await flush(); assert.strictEqual(plans(h3).length, 0, "AI DJ on: own clock idle");
+      const o = { pos: 100, bar: BAR, phrase: 6, lineT: 100, entryT: 0, exitT: 400, st: {} };
+      m3.tick(h3.host.decks.a, o); await flush(); await flush(); await flush(); m3.tick(h3.host.decks.a, Object.assign({}, o, { phrase: 7 })); await flush(); await flush(); await flush();
+      assert.strictEqual(h3.log.steps.filter((x) => x[0] === "lyric_remix").length, 1, "performed once"); assert.strictEqual(JSON.parse(plans(h3)[0][1].body).ctx.auto, true);
+      // a refusal for good (no plan / language): not asked again every phrase
+      const h4 = prep((url) => (url.includes("/settings") ? { auto_remix: true } : url.includes("/has") ? { within: 1, pair: 0 } : { ok: false, gate: "passed", reason: "behind" }));
+      h4.host.session.relaxed = false; h4.host.decks.b.playing = false; mk(h4.host); await flush();
+      h4.ivs[0](); await flush(); await flush(); await flush(); await flush(); h4.pos = 118; h4.ivs[0](); await flush(); await flush(); await flush(); await flush();
+      assert.strictEqual(plans(h4).length, 1, "a refusal that cannot clear ends the auto asks for this song play");
     }
   } finally { console.info = origInfo; }
   console.log("lyric_remix_check: ok");
