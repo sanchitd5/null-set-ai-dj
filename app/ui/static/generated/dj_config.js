@@ -1,5 +1,5 @@
-// GENERATED from dj-config 3ee30de-dirty - do not edit
-// config-hash: 52cf441bf986
+// GENERATED from dj-config d1abede - do not edit
+// config-hash: 1502b6d5a569
 (function (root) {
   "use strict";
   const values = {
@@ -100,8 +100,8 @@
     "MERGE_HOLD_TARGET_S": 90,
     "MERGE_KEY_OK": 0.8,
     "MICRO_STEPS": 32,
-    "MOVE_GENRE_ALLOW": {"vocal_chop": ["electronic"], "chant_gate": ["electronic"], "acapella_build": ["electronic"], "learned_acapella_build": ["electronic"], "vocal_loop_fragment": ["electronic"], "vocal_hold": ["electronic"], "slip_loop_fragment": ["electronic"]},
-    "MOVE_VOCAL_LOOP_GATE": {"moves": ["loop_extend", "stutter", "peak_roll"], "vocal_free_max": 0.02},
+    "MOVE_GENRE_ALLOW": {"vocal_chop": ["electronic"], "chant_gate": ["electronic"], "acapella_build": ["electronic"], "learned_acapella_build": ["electronic"], "vocal_loop_fragment": ["electronic"], "vocal_hold": ["electronic"]},
+    "MOVE_VOCAL_LOOP_GATE": {"moves": ["loop_extend", "stutter", "peak_roll", "slip_loop"], "vocal_free_max": 0.02},
     "NEIGHBOUR_FAMILIES": ["bass|dnb", "bass|edm", "bass|electronic", "bass|house", "bass|melodic", "bass|trance", "breaks|dnb", "breaks|electronic", "breaks|house", "chill|electronic", "chill|melodic", "dnb|electronic", "edm|electronic", "edm|house", "edm|melodic", "edm|trance", "electronic|house", "electronic|melodic", "electronic|techno", "electronic|trance", "hiphop|rnb", "house|melodic", "house|techno", "house|trance", "melodic|techno", "melodic|trance", "techno|trance"],
     "OUTPUT_CEIL": 0.998,
     "OVERLAP_BARS": {"instant": 4, "standard": 16, "slow": 32},
@@ -170,6 +170,6 @@
   };
   root.DJ_CONFIG = Object.freeze(values);
   root.DJ_CONFIG_LIVE = Object.freeze(live);
-  root.DJ_CONFIG_META = Object.freeze({ sha: "3ee30de-dirty", hash: "52cf441bf986" });
+  root.DJ_CONFIG_META = Object.freeze({ sha: "d1abede", hash: "1502b6d5a569" });
   if (typeof module !== "undefined" && module.exports) module.exports = root.DJ_CONFIG;
 })(typeof window !== "undefined" ? window : globalThis);

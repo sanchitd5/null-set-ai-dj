@@ -1,6 +1,6 @@
 {
- "_generated": "GENERATED from dj-config 3ee30de-dirty - do not edit",
- "config_hash": "52cf441bf986",
+ "_generated": "GENERATED from dj-config d1abede - do not edit",
+ "config_hash": "1502b6d5a569",
  "files": {
   "excluded": {
    "doc": "AFRIX excluded gate vectors: candidate (artist, title, genres, lang_id, country; ids and genre also count) -> acceptCandidate verdict. Only strong cues (artist, genre, country) refuse.",

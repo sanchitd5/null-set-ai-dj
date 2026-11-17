@@ -1,9 +1,9 @@
-# GENERATED from dj-config 3ee30de-dirty - do not edit
-# config-hash: 52cf441bf986
+# GENERATED from dj-config d1abede - do not edit
+# config-hash: 1502b6d5a569
 """Generated from dj-config/config/*.json. Do not edit; run dj-config/tool/gen.py."""
 
-SHA = "3ee30de-dirty"
-CONFIG_HASH = "52cf441bf986"
+SHA = "d1abede"
+CONFIG_HASH = "1502b6d5a569"
 
 ACCENT_MAX_SHARE = 0.2  # fraction
 ACCENT_RECIPES = ["Backspin (Spinback)", "Echo Out", "Bass Swap"]  # list
@@ -102,8 +102,8 @@ MERGE_HOLD_MIN_BARS = 32  # bars
 MERGE_HOLD_TARGET_S = 90  # s
 MERGE_KEY_OK = 0.8  # score
 MICRO_STEPS = 32  # steps
-MOVE_GENRE_ALLOW = {"vocal_chop": ["electronic"], "chant_gate": ["electronic"], "acapella_build": ["electronic"], "learned_acapella_build": ["electronic"], "vocal_loop_fragment": ["electronic"], "vocal_hold": ["electronic"], "slip_loop_fragment": ["electronic"]}
-MOVE_VOCAL_LOOP_GATE = {"moves": ["loop_extend", "stutter", "peak_roll"], "vocal_free_max": 0.02}
+MOVE_GENRE_ALLOW = {"vocal_chop": ["electronic"], "chant_gate": ["electronic"], "acapella_build": ["electronic"], "learned_acapella_build": ["electronic"], "vocal_loop_fragment": ["electronic"], "vocal_hold": ["electronic"]}
+MOVE_VOCAL_LOOP_GATE = {"moves": ["loop_extend", "stutter", "peak_roll", "slip_loop"], "vocal_free_max": 0.02}
 NEIGHBOUR_FAMILIES = ["bass|dnb", "bass|edm", "bass|electronic", "bass|house", "bass|melodic", "bass|trance", "breaks|dnb", "breaks|electronic", "breaks|house", "chill|electronic", "chill|melodic", "dnb|electronic", "edm|electronic", "edm|house", "edm|melodic", "edm|trance", "electronic|house", "electronic|melodic", "electronic|techno", "electronic|trance", "hiphop|rnb", "house|melodic", "house|techno", "house|trance", "melodic|techno", "melodic|trance", "techno|trance"]
 OUTPUT_CEIL = 0.998  # linear
 OVERLAP_BARS = {"instant": 4, "standard": 16, "slow": 32}  # bars
