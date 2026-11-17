@@ -1,9 +1,9 @@
-# GENERATED from dj-config c7d208a-dirty - do not edit
-# config-hash: 953ba5534fd4
+# GENERATED from dj-config 3ee30de-dirty - do not edit
+# config-hash: 52cf441bf986
 """Generated from dj-config/config/*.json. Do not edit; run dj-config/tool/gen.py."""
 
-SHA = "c7d208a-dirty"
-CONFIG_HASH = "953ba5534fd4"
+SHA = "3ee30de-dirty"
+CONFIG_HASH = "52cf441bf986"
 
 ACCENT_MAX_SHARE = 0.2  # fraction
 ACCENT_RECIPES = ["Backspin (Spinback)", "Echo Out", "Bass Swap"]  # list
@@ -41,7 +41,7 @@ EQ_KILL_DB = -26.0  # dB
 EQ_LOW_HZ = 120  # Hz
 EQ_MID_HZ = 1000  # Hz
 EQ_MID_Q = 0.7
-EXCLUDED_RULES = {"version": 1, "artists": ["burna boy"], "genres": ["afrobeats", "afrobeat", "amapiano", "afro house", "afro pop", "afropop", "afroswing", "gqom", "bongo flava", "highlife", "azonto", "kwaito", "naija", "alte"], "lang_ids": ["yo", "ig", "ha", "sw", "zu", "xh", "af", "tw", "ln", "wo", "am", "so", "sn", "st"], "countries": ["NG", "GH", "ZA", "KE", "TZ", "UG", "SN", "CI", "CM", "ET", "ZW", "ZM", "RW", "MZ", "AO", "CD", "ML", "BJ", "TG"], "strong_cues": ["artist", "genre", "country"], "weak_cues": ["lang_id", "title_cue"], "doc": "Never added, never picked (AFRIX): artists (normalised, lower case; matches the primary artist, every credited artist, feat./ft./x/& credits and the title text), genre / atlas tags, sung language ids and artist country codes. One strong cue (artist, genre, country) excludes; a weak cue alone (lang_id, title) is review-only, never applied automatically. Pick / download config only: never put these names in an LLM prompt or KB text."}  # mixed
+EXCLUDED_RULES = {"version": 1, "artists": ["burna boy"], "genres": ["afrobeats", "afrobeat", "amapiano", "afro pop", "afropop", "afroswing", "gqom", "bongo flava", "highlife", "azonto", "kwaito", "naija", "alte"], "weak_genres": ["afro house"], "lang_ids": ["yo", "ig", "ha", "sw", "zu", "xh", "af", "tw", "ln", "wo", "am", "so", "sn", "st"], "countries": ["NG", "GH", "ZA", "KE", "TZ", "UG", "SN", "CI", "CM", "ET", "ZW", "ZM", "RW", "MZ", "AO", "CD", "ML", "BJ", "TG"], "strong_cues": ["artist", "genre", "country"], "weak_cues": ["lang_id", "title_cue", "weak_genre"], "doc": "Never added, never picked (AFRIX): artists (normalised, lower case; matches the primary artist, every credited artist, feat./ft./x/& credits and the title text), genre / atlas tags, sung language ids and artist country codes. One strong cue (artist, genre, country) excludes; a weak cue alone (sung language, title word, a weak genre such as afro house which Western house acts also use) is review-only, never applied automatically. Pick / download config only: never put these names in an LLM prompt or KB text."}  # mixed
 FANOUT_MIN = 20  # songs
 FX_CRUSHER_LEVELS = 8  # levels
 FX_CRUSHER_TONE_HZ = 6000  # Hz

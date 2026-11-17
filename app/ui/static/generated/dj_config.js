@@ -1,5 +1,5 @@
-// GENERATED from dj-config c7d208a-dirty - do not edit
-// config-hash: 953ba5534fd4
+// GENERATED from dj-config 3ee30de-dirty - do not edit
+// config-hash: 52cf441bf986
 (function (root) {
   "use strict";
   const values = {
@@ -39,7 +39,7 @@
     "EQ_LOW_HZ": 120,
     "EQ_MID_HZ": 1000,
     "EQ_MID_Q": 0.7,
-    "EXCLUDED_RULES": {"version": 1, "artists": ["burna boy"], "genres": ["afrobeats", "afrobeat", "amapiano", "afro house", "afro pop", "afropop", "afroswing", "gqom", "bongo flava", "highlife", "azonto", "kwaito", "naija", "alte"], "lang_ids": ["yo", "ig", "ha", "sw", "zu", "xh", "af", "tw", "ln", "wo", "am", "so", "sn", "st"], "countries": ["NG", "GH", "ZA", "KE", "TZ", "UG", "SN", "CI", "CM", "ET", "ZW", "ZM", "RW", "MZ", "AO", "CD", "ML", "BJ", "TG"], "strong_cues": ["artist", "genre", "country"], "weak_cues": ["lang_id", "title_cue"], "doc": "Never added, never picked (AFRIX): artists (normalised, lower case; matches the primary artist, every credited artist, feat./ft./x/& credits and the title text), genre / atlas tags, sung language ids and artist country codes. One strong cue (artist, genre, country) excludes; a weak cue alone (lang_id, title) is review-only, never applied automatically. Pick / download config only: never put these names in an LLM prompt or KB text."},
+    "EXCLUDED_RULES": {"version": 1, "artists": ["burna boy"], "genres": ["afrobeats", "afrobeat", "amapiano", "afro pop", "afropop", "afroswing", "gqom", "bongo flava", "highlife", "azonto", "kwaito", "naija", "alte"], "weak_genres": ["afro house"], "lang_ids": ["yo", "ig", "ha", "sw", "zu", "xh", "af", "tw", "ln", "wo", "am", "so", "sn", "st"], "countries": ["NG", "GH", "ZA", "KE", "TZ", "UG", "SN", "CI", "CM", "ET", "ZW", "ZM", "RW", "MZ", "AO", "CD", "ML", "BJ", "TG"], "strong_cues": ["artist", "genre", "country"], "weak_cues": ["lang_id", "title_cue", "weak_genre"], "doc": "Never added, never picked (AFRIX): artists (normalised, lower case; matches the primary artist, every credited artist, feat./ft./x/& credits and the title text), genre / atlas tags, sung language ids and artist country codes. One strong cue (artist, genre, country) excludes; a weak cue alone (sung language, title word, a weak genre such as afro house which Western house acts also use) is review-only, never applied automatically. Pick / download config only: never put these names in an LLM prompt or KB text."},
     "FANOUT_MIN": 20,
     "FX_CRUSHER_LEVELS": 8,
     "FX_CRUSHER_TONE_HZ": 6000,
@@ -170,6 +170,6 @@
   };
   root.DJ_CONFIG = Object.freeze(values);
   root.DJ_CONFIG_LIVE = Object.freeze(live);
-  root.DJ_CONFIG_META = Object.freeze({ sha: "c7d208a-dirty", hash: "953ba5534fd4" });
+  root.DJ_CONFIG_META = Object.freeze({ sha: "3ee30de-dirty", hash: "52cf441bf986" });
   if (typeof module !== "undefined" && module.exports) module.exports = root.DJ_CONFIG;
 })(typeof window !== "undefined" ? window : globalThis);

@@ -1,6 +1,6 @@
 {
- "_generated": "GENERATED from dj-config c7d208a-dirty - do not edit",
- "config_hash": "953ba5534fd4",
+ "_generated": "GENERATED from dj-config 3ee30de-dirty - do not edit",
+ "config_hash": "52cf441bf986",
  "files": {
   "excluded": {
    "doc": "AFRIX excluded gate vectors: candidate (artist, title, genres, lang_id, country; ids and genre also count) -> acceptCandidate verdict. Only strong cues (artist, genre, country) refuse.",
@@ -143,7 +143,7 @@
       "ids": [
        "song c"
       ],
-      "genre": "afro house",
+      "genre": "afrobeat",
       "duration_s": 200
      },
      "state": {
@@ -155,7 +155,7 @@
      },
      "expect": {
       "ok": false,
-      "reason": "african: genre afro house"
+      "reason": "african: genre afrobeat"
      }
     },
     {
@@ -295,6 +295,80 @@
      "expect": {
       "ok": true,
       "reason": null
+     }
+    },
+    {
+     "name": "genre afro house alone is weak: pass",
+     "candidate": {
+      "ids": [
+       "song c"
+      ],
+      "artist": "Other Artist",
+      "title": "T",
+      "genres": [
+       "Afro House"
+      ],
+      "duration_s": 200
+     },
+     "state": {
+      "playing_ids": [
+       "song p"
+      ],
+      "played": [],
+      "vetoed": []
+     },
+     "expect": {
+      "ok": true,
+      "reason": null
+     }
+    },
+    {
+     "name": "genre afropop refuses",
+     "candidate": {
+      "ids": [
+       "song c"
+      ],
+      "artist": "Other Artist",
+      "title": "T",
+      "genres": [
+       "afropop"
+      ],
+      "duration_s": 200
+     },
+     "state": {
+      "playing_ids": [
+       "song p"
+      ],
+      "played": [],
+      "vetoed": []
+     },
+     "expect": {
+      "ok": false,
+      "reason": "african: genre afropop"
+     }
+    },
+    {
+     "name": "weak genre plus strong country refuses",
+     "candidate": {
+      "ids": [
+       "song c"
+      ],
+      "genres": [
+       "afro house"
+      ],
+      "country": "NG",
+      "duration_s": 200
+     },
+     "state": {
+      "playing_ids": [
+       "song p"
+      ],
+      "played": [],
+      "vetoed": []
+     },
+     "expect": {
+      "ok": false,
+      "reason": "african: country NG"
      }
     }
    ]
