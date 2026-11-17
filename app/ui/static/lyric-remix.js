@@ -127,6 +127,9 @@
     let autoOn = true;                               // AUTO-REMIX (owner setting, default on): a remixable song's remix performs by itself
     const autoDone = new Map();                      // deck id -> track id whose auto remix was refused for good (or already played)
     const autoSong = { a: null, b: null }, autoPhrase = { a: null, b: null };
+    const chain = { a: null, b: null };              // WHOLE-SONG remix in progress per deck: {a: track id, plan: plan id, from: source second the next chunk starts at}
+    const CHAIN_AHEAD_PHRASES = 1.6;                 // the next chunk is asked for once the current one ends within this many phrases
+    const CHAIN_GRACE_S = 0.4;                       // the live vocal is given back this long after a held chunk when no next chunk was armed
     const driven = { a: null, b: null };             // phrase index last driven per deck (the own clock below)
     const entryAt = { a: null, b: null };            // track position where the own clock first saw the requested song on air
     const exitAt = { a: null, b: null };             // planned exit (track s) the own clock gave a requested pair
@@ -231,7 +234,8 @@
       const at = sm.audioAt(d, plan.start), late = leadRefusal(at, audioCtx.currentTime);
       if (late) return Object.assign({ ok: false }, late);
       if (!d.stemsLiveAt || !d.stemsLiveAt(at)) return { ok: false, gate: "stems_not_live", reason: "the deck's stems are not sounding at the window start" };
-      if ((d._slices && d._slices.vocals) || (d._holds && d._holds.vocals) || d._artistSwap || d._lyricRemix) return { ok: false, gate: "busy", reason: "the vocal stem is already sliced / held" };
+      const chained = plan.mode === "full" && plan.chain_first === false && !!(d._lyricRemix && d._lyricRemix.full && d._lyricRemix.hold);   // the next chunk of a whole-song remix
+      if (!chained && ((d._slices && d._slices.vocals) || (d._holds && d._holds.vocals) || d._artistSwap || d._lyricRemix)) return { ok: false, gate: "busy", reason: "the vocal stem is already sliced / held" };
       const { self, guest } = splitSlices(plan);
       const b = host.decks && host.decks[other(d.id)], bufB = b && b.stems && b.stems.vocals;
       if (guest.length && !bufB) return { ok: false, gate: "guest_stems", reason: "B's vocal buffer is missing" };
@@ -239,17 +243,18 @@
       const mute = Array.isArray(plan.mute_decks) ? plan.mute_decks.filter((x) => x === "a" || x === "b").map((x) => host.decks && host.decks[x]) : [];
       if (mute.some((x) => !(x && x.stemLive && x.stemLive.vocals && x.stemLive.vocals.gain))) return { ok: false, gate: "stems_not_live", reason: "a deck to mute has no live vocal stem" };
       const rate = (d._playbackRate && d._playbackRate()) || 1, { until } = windowOf(plan, at, rate);
-      const rec = { srcs: [], gains: [], until, muted: mute };
+      const hold = plan.mode === "full" && !!plan.more;
+      const rec = { srcs: [], gains: [], until, muted: mute, full: plan.mode === "full", hold };
       d._lyricRemix = rec;
-      cancel(d.id);
+      if (!chained) cancel(d.id);
       timers[d.id].push(setTimeout(() => {
         if (!d.playing || d._lyricRemix !== rec) return;
-        if (!d.stemMix({}, at - 0.01, 0.01)) { d._lyricRemix = null; return void console.info("lyric remix skipped: stem mode refused"); }
+        if (!chained && !d.stemMix({}, at - 0.01, 0.01)) { d._lyricRemix = null; return void console.info("lyric remix skipped: stem mode refused"); }
         const liveGain = d.stemLive.vocals.gain;
         let selfUntil = null;
         if (self.length) {                                // A's own pieces; stemSlices mutes the live vocal across them
-          const res = d.stemSlices("vocals", self.map((s) => ({ from: s.from, dur: s.dur, off: s.off, gain: s.gain })), at);
-          if (!res) { d._lyricRemix = null; d.stemMix(null, at, 0.02); return void console.info("lyric remix skipped: slices refused"); }
+          const res = d.stemSlices("vocals", self.map((s) => ({ from: s.from, dur: s.dur, off: s.off, gain: s.gain })), at, undefined, { hold, chain: chained });
+          if (!res) { d._lyricRemix = null; delete chain[d.id]; if (d.restoreLive) d.restoreLive("vocals", at); d.stemMix(null, at, 0.02); return void console.info("lyric remix skipped: slices refused"); }
           selfUntil = res.until;
         }
         const bus = d.stemGain.vocals, ctxB = b && b.stems;
@@ -276,6 +281,15 @@
         }
         for (const x of mute) muteVocal(x, at, until);   // both decks' live vocal off: the pieces are the only lead vocal
         if (plan.replaces_swap) cancelSwap();
+        if (hold) {                                         // a whole-song chunk: no stem-mode exit and the vocal stays down; the next chunk continues it, else this lets go
+          timers[d.id].push(setTimeout(() => {
+            if (d._lyricRemix !== rec) return;                // the next chunk took over
+            d._lyricRemix = null; delete chain[d.id];
+            if (d.restoreLive) d.restoreLive("vocals", until);
+            if (d.playing) d.stemMix(null, until + 0.03, 0.02);
+          }, Math.max(0, (until + CHAIN_GRACE_S - audioCtx.currentTime) * 1000)));
+          return;
+        }
         timers[d.id].push(setTimeout(() => {
           if (d._lyricRemix === rec) d._lyricRemix = null;
           if (d.playing) d.stemMix(null, until + 0.03, 0.02);
@@ -303,6 +317,8 @@
         const aId = trackOf(d);
         if (!aId) return null;
         if (seen[d.id] !== aId) { seen[d.id] = aId; hasCache.clear(); }          // song change: ask again
+        if (chain[d.id] && chain[d.id].a !== aId) delete chain[d.id];             // the song left the air: the guard timer gave the vocal back
+        if (chain[d.id]) { planChain(d, o, aId); return null; }                   // a whole-song remix in progress: its next chunk, nothing else
         const g = guestInfo(d), bId = g && g.id;
         prefetch(d);                                       // song on air + booked next: /has starts as early as possible
         const nId = trackOf(host.decks[other(d.id)] || {}), wkey = `${aId}|${nId || ""}`;
@@ -320,6 +336,29 @@
         console.info("lyric remix tick failed -", e && e.message);
       }
       return null;
+    }
+    // The next chunk of a whole-song remix (dj-core lyric_remix_full): asked once the current chunk ends within CHAIN_AHEAD_PHRASES phrases.
+    function planChain(d, o, aId) {
+      try {
+        const ch = chain[d.id];
+        if (!ch || ch.a !== aId || !d.playing) return;
+        if (ch.from - o.pos > CHAIN_AHEAD_PHRASES * o.bar * 8) return;
+        const inp = deckInputs(d, o), ctx = Object.assign(songCtx(inp), { chainPlan: ch.plan, chainFrom: ch.from, autoEnabled: autoOn });
+        const t0 = host.clock.now();
+        post("/api/lyric_remix/plan", body(aId, null, ctx)).then((res) => {
+          rttS = Math.max(0.05, Math.min(2, (host.clock.now() - t0) / 1000));
+          if (chain[d.id] !== ch || !d.playing || trackOf(d) !== aId) return;
+          if (!res || res.ok !== true) {
+            if (!(res && retryable(res.gate))) delete chain[d.id];                // done / a refusal that cannot clear: the guard timer lets go
+            else console.info(`lyric remix chunk waits: ${res.gate}: ${res.reason}`);
+            return;
+          }
+          const armed = arm(d, res);
+          if (!armed.ok) { if (!retryable(armed.gate)) delete chain[d.id]; console.info(`lyric remix chunk skipped: ${armed.gate}: ${armed.reason}`); return; }
+          if (res.more) chain[d.id] = { a: aId, plan: res.plan_id, from: res.chain }; else delete chain[d.id];
+          if (performing && performing.deck === d) performing.until = armed.until;
+        }).catch((e) => console.info("lyric remix chunk unavailable -", e && e.message));
+      } catch (e) { console.info("lyric remix chain failed -", e && e.message); }
     }
     function plan_(d, o, aId, g, bId) {
       try {
@@ -357,7 +396,11 @@
             const r = d._learned || (d._learned = { used: [], count: 0, lastAtBar: null, variant: 0 });
             const armed = arm(d, res);
             if (!armed.ok) { lastRefusal = { gate: armed.gate, reason: armed.reason }; console.info(`lyric remix skipped: ${armed.gate}: ${armed.reason}`); return run(i + 1); }
-            noteDone(r, donePlans, res, inp.atBar);
+            if (res.mode === "full") {
+              if (res.chain_first !== false) noteDone(r, donePlans, res, inp.atBar);          // one remix per song play: the first chunk counts, the rest continue it
+              if (res.more) chain[d.id] = { a: aId, plan: res.plan_id, from: res.chain }; else delete chain[d.id];
+              if (performing && performing.deck === d) { performing.until = armed.until; }
+            } else noteDone(r, donePlans, res, inp.atBar);
             const asked_ = !!(t.want && want && want.plan === t.want), pairAsked = asked_ && !!want.b;
             if (asked_) want = null;
             if (t.auto) autoDone.set(d.id, aId);
@@ -408,7 +451,7 @@
     function drive() {
       try {
         watchPerforming();
-        if (!want) { if (autoOn) autoDrive(); else if (!performing) stopDrive(); return; }
+        if (!want) { if (autoOn || chain.a || chain.b) autoDrive(); else if (!performing) stopDrive(); return; }
         const d = ["a", "b"].map((i) => host.decks && host.decks[i]).find((x) => x && x.playing && trackOf(x) === want.a);
         if (!d || mindOwns(d)) return;
         const inp = driveInputs(d);
@@ -425,7 +468,8 @@
         const aId = trackOf(d);
         if (!aId) continue;
         if (autoSong[d.id] !== aId) { autoSong[d.id] = aId; autoPhrase[d.id] = null; entryAt[d.id] = null; autoDone.delete(d.id); }
-        if (autoDone.get(d.id) === aId || (d._learned && d._learned.used && d._learned.used.includes(MOVE))) continue;
+        const chaining = !!(chain[d.id] && chain[d.id].a === aId);
+        if (!chaining && (!autoOn || autoDone.get(d.id) === aId || (d._learned && d._learned.used && d._learned.used.includes(MOVE)))) continue;
         const inp = driveInputs(d);
         if (!inp || autoPhrase[d.id] === inp.cur) continue;
         autoPhrase[d.id] = inp.cur;
@@ -448,7 +492,9 @@
       try {
         if (!d) return;
         cancel(d.id);
+        delete chain[d.id];
         const rec = d._lyricRemix || live[d.id];
+        if (rec && rec.full) { try { if (d.releaseSlices) d.releaseSlices("vocals"); if (d.restoreLive) d.restoreLive("vocals"); } catch (e) { /* gone */ } }
         if (rec) {
           const t = audioCtx.currentTime;
           for (const s of rec.srcs) { try { s.stop(t + 0.03); } catch (e) { /* already stopped */ } }

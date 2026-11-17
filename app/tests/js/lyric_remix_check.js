@@ -68,12 +68,12 @@ const plan = { ok: true, kind: "lyric_remix", mode: "transition", start: 110, en
 // the real Engine.use() asserts the whole Host port; the executor only needs the members the fake has
 const mk = (host) => { Engine.host = host; return Engine.create("lyricRemix"); };
 function fakeHost(responses) {
-  const log = { fetch: [], emit: [], status: [], steps: [], timers: [], slices: 0, mixes: 0 };
+  const log = { fetch: [], emit: [], status: [], steps: [], timers: [], slices: 0, mixes: 0, sliceOpts: [], restores: 0 };
   let now = 1000;
   const param = () => ({ value: 0, setValueAtTime() {}, linearRampToValueAtTime() {}, cancelScheduledValues() {} });
   const audio = { currentTime: 10, createBufferSource: () => ({ playbackRate: param(), connect() {}, start() {}, stop() {} }), createBiquadFilter: () => ({ frequency: param(), connect() {} }),
     createGain: () => ({ gain: param(), connect() {}, disconnect() {} }) };
-  const deck = (id, extra) => Object.assign({ id, playing: true, bpm: 120, analysis: { bpm: 120 }, stemsReady: true, stemsLiveAt: () => true, stemMix: () => { log.mixes++; return true; }, stemSlices: () => { log.slices++; return { ok: true, until: 20 }; },
+  const deck = (id, extra) => Object.assign({ id, playing: true, bpm: 120, analysis: { bpm: 120 }, stemsReady: true, stemsLiveAt: () => true, stemMix: () => { log.mixes++; return true; }, stemSlices: (n, sl, at, xf, opts) => { log.slices++; log.sliceOpts.push(opts || null); return { ok: true, until: 20 }; }, restoreLive: () => { log.restores++; }, releaseSlices() {},
     _playbackRate: () => 1, stemGain: { vocals: {} }, stemLive: { vocals: { gain: param() } }, stems: { vocals: { duration: 100 }, lag: 0, ratio: 1 } }, extra);
   const host = {
     audio, state: { trackA: "s1", trackB: "s2" }, session: { relaxed: true }, mod: { stemMoves: { audioAt: (d, t) => audio.currentTime + (t - 100) } },
@@ -331,6 +331,48 @@ function fakeHost(responses) {
       h4.host.session.relaxed = false; h4.host.decks.b.playing = false; mk(h4.host); await flush();
       h4.ivs[0](); await flush(); await flush(); await flush(); await flush(); h4.pos = 118; h4.ivs[0](); await flush(); await flush(); await flush(); await flush();
       assert.strictEqual(plans(h4).length, 1, "a refusal that cannot clear ends the auto asks for this song play");
+    }
+
+    // WHOLE-SONG remix: chunk by chunk; the live vocal is held muted between chunks, the next chunk is asked ahead and continues it, once per song play
+    {
+      const flush = () => new Promise((r) => setImmediate(r));
+      const chunk = (n, more) => ({ ok: true, kind: "lyric_remix", mode: "full", start: 105 + 40 * n, end: 145 + 40 * n, plan_id: "fp1", text: "whole song", why: "Lyric remix (whole song): x", score: 0.9, beats: 80,
+        slices: [{ from: 40, dur: 4, off: 2, gain: 1, src: "self" }], more, chain: more ? 145 + 40 * n : undefined, chain_first: n === 0 });
+      let n = 0;
+      const { host, log } = fakeHost((url) => (url.includes("/settings") ? { auto_remix: true } : url.includes("/has") ? { within: 1, pair: 0 } : url.endsWith("/plan") ? ((k) => chunk(k, k < 2))(n++) : {}));
+      host.session.relaxed = false; host.decks.b.playing = false;
+      const m = mk(host), d = host.decks.a;
+      const o = (pos, phrase) => ({ pos, bar: BAR, phrase, lineT: pos, entryT: 0, exitT: 900, st: {} });
+      const plans = () => log.fetch.filter((f) => f[0] === "/api/lyric_remix/plan").map((f) => JSON.parse(f[1].body));
+      m.tick(d, o(98, 1)); await flush(); m.tick(d, o(98, 1)); await flush(); await flush(); await flush();
+      assert(d._lyricRemix && d._lyricRemix.full && d._lyricRemix.hold, "first chunk armed and held"); assert.deepStrictEqual(m.donePlans, ["fp1"]); assert.strictEqual(plans()[0].ctx.auto, true);
+      log.timers[log.timers.length - 1](); assert.strictEqual(log.mixes, 1, "stem mode entered once"); assert.deepStrictEqual(log.sliceOpts[0], { hold: true, chain: false });
+      // too early: the chunk ends 142 s ahead, nothing asked; within 1.6 phrases (a phrase = 8 bars = 16 s): asked with the chain
+      const before = plans().length; m.tick(d, o(98, 2)); await flush(); assert.strictEqual(plans().length, before, "next chunk not asked yet");
+      m.tick(d, o(125, 3)); await flush(); await flush(); await flush();
+      const ask = plans().pop(); assert.strictEqual(ask.ctx.chainPlan, "fp1"); assert.strictEqual(ask.ctx.chainFrom, 145);
+      const t = log.timers[log.timers.length - 1]; t();
+      assert.strictEqual(log.mixes, 1, "a chained chunk stays in stem mode"); assert.deepStrictEqual(log.sliceOpts[1], { hold: true, chain: true });
+      assert.deepStrictEqual(m.donePlans, ["fp1"]); assert.strictEqual(d._learned.count, 1, "one remix per song play, however many chunks");
+      // the last chunk: not held, the chain ends
+      m.tick(d, o(165, 4)); await flush(); await flush(); await flush();
+      log.timers[log.timers.length - 1](); assert.deepStrictEqual(log.sliceOpts[2], { hold: false, chain: true });
+      const asks = plans().length; m.tick(d, o(185, 5)); await flush(); assert(plans().length >= asks, "chain over");
+      assert.strictEqual(plans().filter((p) => p.ctx.chainPlan).length, 2, "two chained asks only");
+      m.stop(d);
+    }
+    // a held chunk nobody continues: the vocal is given back by the guard timer, the chain is dropped
+    {
+      const flush = () => new Promise((r) => setImmediate(r));
+      const one = { ok: true, kind: "lyric_remix", mode: "full", start: 105, end: 145, plan_id: "fp2", text: "t", why: "w", score: 0.9, beats: 80,
+        slices: [{ from: 40, dur: 4, off: 2, gain: 1, src: "self" }], more: true, chain: 145, chain_first: true };
+      const { host, log } = fakeHost((url) => (url.includes("/settings") ? { auto_remix: true } : url.includes("/has") ? { within: 1, pair: 0 } : one));
+      host.session.relaxed = false; host.decks.b.playing = false;
+      const m = mk(host), d = host.decks.a;
+      m.tick(d, { pos: 98, bar: BAR, phrase: 1, lineT: 98, entryT: 0, exitT: 900, st: {} }); await flush(); m.tick(d, { pos: 98, bar: BAR, phrase: 1, lineT: 98, entryT: 0, exitT: 900, st: {} }); await flush(); await flush(); await flush();
+      log.timers[log.timers.length - 1]();                       // slices armed; the guard timer is the last one
+      log.timers[log.timers.length - 1]();
+      assert.strictEqual(log.restores, 1, "the held vocal is given back"); assert.strictEqual(d._lyricRemix, null);
     }
   } finally { console.info = origInfo; }
   console.log("lyric_remix_check: ok");

@@ -13,7 +13,7 @@ assert.deepStrictEqual(L.filter(songs, " BETA ").map((s) => s.plan_id), ["p1"]);
 assert.deepStrictEqual(L.filter(songs, "t2").map((s) => s.plan_id), ["p2"]);
 assert.strictEqual(L.planId(within), "p1");
 assert.strictEqual(L.fmtScore(0.914), "91"); assert.strictEqual(L.fmtScore(NaN), "--"); assert.strictEqual(L.fmtScore(2), "100");
-assert.strictEqual(L.kindLabel(within), "LIVE IN THE SONG"); assert.strictEqual(L.kindLabel(pair), "PAIR · LIVE BLEND");
+assert.strictEqual(L.kindLabel(within), "LIVE IN THE SONG"); assert.strictEqual(L.kindLabel({ kind: "full", b: null }), "WHOLE SONG · LIVE"); assert.strictEqual(L.kindLabel(pair), "PAIR · LIVE BLEND");
 const r0 = L.row(within); assert(r0.includes('data-lrs="play"') && r0.includes('data-lrs="queue"') && r0.includes("BOOK NEXT"));
 assert(!/RENDER|render/.test(r0), "nothing is rendered any more");
 assert(L.row(pair).includes("&lt;b&gt;x&lt;/b&gt;"), "text escaped");

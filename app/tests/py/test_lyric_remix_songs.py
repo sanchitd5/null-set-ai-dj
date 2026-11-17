@@ -175,3 +175,15 @@ def test_real_dj_core_rule(env):
     assert lr["plan_id"] == "cccc00000003" and lr["kind"] == "within"        # the best placed song of the picks wins
     assert picks[0]["lyric_remix"] == lr
     assert lrs.attach_pick(_picks("sb"), **dict(_call(), history_len=11)) is None             # rate limit (default 4)
+
+
+def test_full_song_plan_is_listed_as_full(env):
+    doc = _doc()
+    doc["plans"].append({"id": "ffff00000004", "a": "sb", "b": None, "kind": "full", "text": "one / two / three", "score": 0.95,
+                         "pieces": [{"s": "a", "i": 0, "at": 0}]})
+    (kn.KNOWLEDGE_DIR / kn.LYRIC_REMIX).write_bytes(gzip.compress(json.dumps(doc).encode(), mtime=0))
+    lra._cache.update(key=None, doc=None)
+    d = env.get("/api/lyric_remix/songs").json()
+    row = next(s for s in d["songs"] if s["plan_id"] == "ffff00000004")
+    assert row["kind"] == "full" and row["b"] is None and row["title"] == "Song B - full lyric remix"
+    assert env.get("/api/lyric_remix/has?a=sb").json() == {"within": 1, "pair": 0}      # a full plan counts as a plan of the song: the clock asks dj-core
