@@ -130,6 +130,12 @@ def ladder(*, deadline_at: float, hard_played: Sequence[str], earlier: Sequence[
     def hard_ok(r: dict, allow_penalty: bool = False) -> bool:
         return accept(r, ("language_penalty",) if allow_penalty else ())
 
+    def step_ok(r: dict) -> bool:
+        # PICKFIX_A: graph / YouTube / LLM picks pass the SAME scene gate as the library steps (genre family jump, era, language):
+        # without a pin the playing song's genre is the one-step reference. Before, only the hard gates ran, so unrelated
+        # graph neighbours (soul seed -> rap/pop at 0.93) were returned unvetted.
+        return accept(r, (), cur_genre if cur_genre else None)
+
     def fresh(r: dict) -> bool:
         return _norm(_label(r)) not in heard_earlier
 
@@ -176,7 +182,7 @@ def ladder(*, deadline_at: float, hard_played: Sequence[str], earlier: Sequence[
     def collect(fn, source):
         try:
             return rank([dict(labelled(p), pick_source=p.get("pick_source") or source, fallback_reason=reason)
-                         for p in fn() if isinstance(p, dict) and hard_ok(p)])
+                         for p in fn() if isinstance(p, dict) and step_ok(p)])
         except Exception as exc:        # a failing step falls through to the next
             print(f"[suggest] ladder step {source} failed: {exc!r}", flush=True)
             return []

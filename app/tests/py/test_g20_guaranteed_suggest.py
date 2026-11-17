@@ -192,3 +192,13 @@ def test_hf11_reply_carries_the_genre_the_ladder_resolved():
     r = run(graph_picks=lambda: rows, set_state=ss, genre_of=lambda row: "melodic techno")
     assert r["pick_source"] == "graph"
     assert all(s.get("genre") == "melodic techno" for s in r["suggestions"])
+
+
+def test_pickfix_a_junk_graph_list_falls_to_library_scene():
+    """PICKFIX_A: graph neighbours outside the scene (no path within 1 step) never ship; the in-scene library song does."""
+    junk = [{"artist": f"J{i}", "title": f"Junk{i}", "genre": "rock"} for i in range(3)]
+    r = run(graph_picks=lambda: junk, cur_genre="soul", genre_of=lambda row: row.get("genre") or "",
+            library=[{"track_id": "t9", "artist": "S", "title": "Soulful", "genre": "soul"}],
+            neighbours=[])
+    assert r["pick_source"] != "graph"
+    assert all(p["title"] != "Junk0" for p in r["suggestions"])
