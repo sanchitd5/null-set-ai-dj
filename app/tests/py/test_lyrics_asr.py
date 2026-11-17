@@ -297,3 +297,46 @@ def test_batch_follows_a_stem_set_replaced_during_the_wait(tmp_path, monkeypatch
     monkeypatch.setattr(asr, "for_stem", lambda v, **k: seen.append(v) or {"lines": [], "language": None, "stats": {}})
     out = asr.batch(gate=lambda: False, log=lambda m: None)
     assert seen == [ft] and out["done"] == 1 and out["skipped"] == 1
+
+
+def test_forced_language_skips_detection():
+    class Eng(Engine):
+        def language(self, audio):
+            raise AssertionError("detection must not run when the language is forced")
+
+        def run(self, audio, clips, language):
+            self.lang_used = language
+            return list(self.segs)
+
+    eng = Eng(SEGS)
+    doc = asr.transcribe_full(_vocal(SPANS), SR, engine=eng, language="pa")
+    assert eng.lang_used == "pa" and doc["language"] == "pa" and doc["language_prob"] is None
+
+
+def test_channel_boilerplate_is_never_a_line():
+    for t in ("please subscribe to my channel", "credits for the video featuring someone", "link in the description",
+              "सब्सक्राइब करना न भूलें", "ਚੈਨਲ ਨੂੰ ਸਬਸਕ੍ਰਾਈਬ ਕਰੋ"):
+        assert asr.is_filler(t), t
+    assert not asr.is_filler("hold me through the night")
+
+
+def test_set_live_and_batch_languages(tmp_path, monkeypatch):
+    import time
+
+    ev = tmp_path / "sessions" / "s1"
+    ev.mkdir(parents=True)
+    (ev / "events.jsonl").write_text("{}")
+    assert asr.set_live(15, cache_dir=tmp_path)
+    assert not asr.set_live(15, now=lambda: time.time() + 3600, cache_dir=tmp_path)
+    monkeypatch.setattr(asr, "pick_backend", lambda b=None: "cpu")
+    monkeypatch.setattr(asr, "vocal_stems", lambda: [("a" * 16, "/x/a.wav"), ("b" * 16, "/x/b.wav")])
+    monkeypatch.setattr(asr, "cached", lambda v, m=None, cache_dir=None: None)
+    from app.music_brain.analysis import lang_id
+
+    monkeypatch.setattr(lang_id, "get", lambda h: {"lang": "pa" if h[0] == "a" else "en"})
+    monkeypatch.setattr(asr, "release", lambda: None)
+    seen = []
+    monkeypatch.setattr(asr, "for_stem", lambda v, **kw: seen.append((v, kw["language"], kw["model"])) or {"lines": [1], "stats": {}})
+    out = asr.batch_languages(log=lambda m: None, live=lambda: False)
+    assert seen == [("/x/a.wav", "pa", "large-v3")] and out["done"] == 1 and out["with_lyrics"] == 1
+    assert asr.batch_languages(log=lambda m: None, live=lambda: True)["stopped"] == "a set is live"
