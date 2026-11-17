@@ -735,6 +735,42 @@ from app.music_brain.generated import dj_config as DJ  # noqa: E402
 from app.music_brain.pick_accept import accept_candidate  # noqa: E402
 
 
+def energy_rut(energy_history) -> bool:
+    """PICKFIX_B: the last ENERGY_FLAT_LOW_SONGS played levels are all low (<= ENERGY_FLAT_LOW_MAX) and flat (within 1 level)."""
+    levels = []
+    for v in (energy_history or [])[-DJ.ENERGY_FLAT_LOW_SONGS:]:
+        try:
+            levels.append(float(v))
+        except (TypeError, ValueError):
+            return False
+    if len(levels) < DJ.ENERGY_FLAT_LOW_SONGS:
+        return False
+    return max(levels) <= DJ.ENERGY_FLAT_LOW_MAX and max(levels) - min(levels) <= 1
+
+
+def forced_steer_reason(occasion_set: bool, occasion_fit, energy_history) -> str:
+    """PICKFIX_B, the one place: inside an occasion the set steers back toward it (not "stay") when the playing song fits it
+    poorly (occasion_fit <= OCCASION_FIT_LOW) or the energy sits in a flat low rut. "" = no forcing. The model said
+    "stay, energy 2, occasion_fit 0" and the set stayed there."""
+    if not occasion_set:
+        return ""
+    fit = _num(occasion_fit)
+    if fit is not None and fit <= DJ.OCCASION_FIT_LOW:
+        return f"occasion_fit {fit:g} <= {DJ.OCCASION_FIT_LOW}"
+    if energy_rut(energy_history):
+        return f"energy flat low for {DJ.ENERGY_FLAT_LOW_SONGS} songs"
+    return ""
+
+
+def energy_rut_line(set_position) -> str:
+    """Prompt line for a flat low energy rut: climb back to the arc's target level."""
+    from app.music_brain.analysis import energy as _en
+    target = DJ.ARC_TARGET.get(_en.arc_at(set_position) or "", None)
+    tail = f" (level {target} or higher)" if target else ""
+    return (f"\n\nENERGY RUT: the last {DJ.ENERGY_FLAT_LOW_SONGS} songs sat at a flat low energy. Suggest songs that lift "
+            f"the energy back toward the occasion's own pace{tail}; do not repeat the low, slow mood.")
+
+
 def within_pinned_scene(pinned: str, genre) -> bool:
     """HF13: True when dj-core's scene gate (accept_candidate, the one rule source) lets a candidate of `genre` into the set's PINNED
     scene (up to scene_distance.max_steps away from the scene, never measured from the playing song). No pin / no label / no answer: False."""
@@ -779,7 +815,7 @@ def _filter_suggestions(
     data: dict, history: list[str], occasion_set: bool = False, current_key: str | None = None,
     allow_genre_change: bool = False, current_artist: str = "", measured_energy: int | None = None,
     energy_lo: int | None = None, punjabi_profile: str = "off", scene_genre: str = "",
-    current_title: str = "", lang_check=None, pinned_scene: str = "",
+    current_title: str = "", lang_check=None, pinned_scene: str = "", genre_of=None,
 ) -> list[dict]:
     """Drop sets/interviews, exact repeats, profile clashes and (unless steering)
     suggestions whose expected_key clashes with `current_key`. A pick that clashes
@@ -843,6 +879,12 @@ def _filter_suggestions(
         if not s.get("track_id"):
             s["genre_llm"] = s.get("genre")
             s["genre"] = s.get("data_genre") or ""
+            if not s["genre"] and genre_of is not None:
+                # PICKFIX_B: fill from the artist's graph / library labels (dj-core resolve_genre inputs), never the model's label
+                try:
+                    s["genre"] = str(genre_of(s) or "")
+                except Exception:
+                    s["genre"] = ""
             s["genre_src"] = "data" if s["genre"] else "unknown"
             if not s["genre"]:
                 s["needs_lang_verify"] = True
@@ -879,6 +921,12 @@ def _filter_suggestions(
         hop = _num(s.get("genre_hop"))
         if _family_jump(cur_genre, s.get("genre")):
             hop = max(hop or 0.0, 2.0)
+        if cur_genre and not s.get("track_id") and not s.get("genre"):
+            # PICKFIX_B: no data source knows the genre (the log showed '' on every pick): the hop is unknown = big, never the
+            # model's own claim of 0. Not a refusal (the language-verify path decides), but such a pick ranks behind every
+            # pick whose genre is known and passes the gates.
+            s["genre_hop"] = max(_num(s.get("genre_hop")) or 0.0, float(DJ.UNKNOWN_GENRE_HOP))
+            s["genre_unknown"] = True
         # The model's own genre label can REJECT a song outside the library (it admits the jump) but never pass
         # one: only data genre clears the gate (HF2). Without this every admitted jump slipped through.
         llm_genre = s.get("genre_llm")
@@ -939,7 +987,7 @@ def _filter_suggestions(
             s["rejected_reason"] = reason
             note_rejects([s], s["rejected_reason"])
     if ok:
-        return ok
+        return sorted(ok, key=lambda x: bool(x.get("genre_unknown")))  # PICKFIX_B: unknown genre last (stable)
     if lang_penalised:  # a mixed-language set and only off-language picks left: the model's first, not nothing
         return [lang_penalised[0]]
     if genre_jumps and not (cur_genre and not (steering_any or allow_genre_change)):
@@ -1265,6 +1313,17 @@ def _artists_of(name_or_pick, known: frozenset = frozenset()) -> set:
     return keys | {k for k in known if len(k) >= 5 and k in flat}
 
 
+def artists_to_exclude(picks: list) -> str:
+    """PICKFIX_B: the distinct artist names of rejected picks, for the one re-ask that bans them (the song names alone let the
+    model answer with other songs by the same artists)."""
+    seen: list[str] = []
+    for x in picks or []:
+        a = str(x.get("artist", "")).strip()
+        if a and a.lower() not in (v.lower() for v in seen):
+            seen.append(a)
+    return "; ".join(seen)[:300]
+
+
 def artist_spacing(picks: list, recent: list) -> list:
     """Artist variety, enforced (the prompt alone let every pick be Fred again..):
     no artist from the last ARTIST_GAP_SONGS songs (played + queued), none past
@@ -1398,6 +1457,7 @@ def suggest_next_tracks(
     scene_anchor: str = "",        # the set's scene while the playing song is an off-scene mistake
     pinned_scene: str = "",        # HF13: the set's pinned scene (set_state.scene_genre): genres within its reach are no genre jump
     candidates: list[dict] | None = None,   # pick_pool.build_pool(): picks must be one of these (by cid)
+    genre_of=None,                 # (pick) -> data genre by the artist (graph / library labels), "" = unknown
     lang_check=None,               # (pick) -> (verdict, reason) against the set's language profile (lang_id)
     graph_picks: list[dict] | None = None,  # graph_pick.picks_for(): tried first, the LLM only tops up (G10)
     graph_min: dict | None = None,          # {good, score}: the graph_pick.thresholds() gates
@@ -1426,7 +1486,7 @@ def suggest_next_tracks(
     scene_genre = str(scene_anchor or genre or "").strip()
 
     def _filt(*a, **k):                 # every filter pass knows the playing song's credits (side-artist hops)
-        return _filter_suggestions(*a, current_title=title, lang_check=lang_check, pinned_scene=pinned_scene, **k)
+        return _filter_suggestions(*a, current_title=title, lang_check=lang_check, pinned_scene=pinned_scene, genre_of=genre_of, **k)
     try:
         target = float(tempo_target) if tempo_target is not None else 0.0
     except (TypeError, ValueError):
@@ -1502,6 +1562,8 @@ def suggest_next_tracks(
     pool = list(candidates or []) if len(candidates or []) >= pick_pool.MIN_POOL else []
     if pool:
         user_msg += pick_pool.prompt_block(pool)
+    if bool((occasion or "").strip()) and not lead_to and energy_rut(energy_history):
+        user_msg += energy_rut_line(set_position)
 
     def _g(picks: list[dict]) -> list[dict]:
         """Keep the picks that are a pool candidate (cid or exact name); log + drop the rest. Catalogue
@@ -1592,6 +1654,10 @@ def suggest_next_tracks(
                   f"{f' with max_tokens={mt} (reply was cut off)' if reason == 'cut_off' else ''}: {exc}", flush=True)
     if lead_to:
         data["steering"] = "move"  # the user's destination: no continuity / key filters against it
+    forced = forced_steer_reason(bool((occasion or "").strip()) and not lead_to, data.get("occasion_fit"), energy_history)
+    if forced and not str(data.get("steering", "")).lower().startswith("move"):
+        print(f"[suggest] steering forced to move: {forced}", flush=True)
+        data["steering"] = "move"
     suggestions = _filt(
         data, history, occasion_set=bool((occasion or "").strip()) and not lead_to, current_key=camelot,
         allow_genre_change=bool(lead_to), current_artist=artist, measured_energy=measured_energy, energy_lo=energy_lo, punjabi_profile=punjabi_profile, scene_genre=scene_genre,
@@ -1773,10 +1839,12 @@ def suggest_next_tracks(
     if picked and not spaced and can_retry():
         names = "; ".join(f"{x.get('artist', '')} - {x.get('title', '')}" for x in picked)[:400]
         print(f"[suggest] every pick repeats a recent artist: {names}", flush=True)
+        banned = artists_to_exclude(picked)
         note_rejects(picked, "artist played too recently")
         try:
             data4 = _extract_json(chat_raw(system_msg, user_msg + (
                 f"\n\nREJECTED - too many songs by the same artist lately: {names}. "
+                f"Do not suggest any song by these artists: {banned}. "
                 "Suggest songs by OTHER artists that still fit the current song."),
                 temperature=0.6, max_tokens=mt, priority=prio, kind=kind))
             data4.setdefault("current_genre", data.get("current_genre"))
@@ -1817,7 +1885,7 @@ def suggest_next_tracks(
         # (meaning more energy, not another genre).
         wants_move = str(data.get("steering", "")).lower().startswith("move")
         fit = meta["occasion_fit"]
-        meta["steering"] = "move" if wants_move and (fit is None or fit < 6) else "stay"
+        meta["steering"] = "move" if (wants_move and (fit is None or fit < 6)) or forced else "stay"
         if graph_good:
             meta["source"] = "graph+llm"
 
