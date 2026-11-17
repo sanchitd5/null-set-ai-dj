@@ -7,6 +7,8 @@
 //                line into a lift play their first half twice (loop of 4 or 8 beats) while the
 //                song keeps advancing under the loop; the release lands where the track would have
 //                been, which is the phrase line (deck-controller.js slipLoop / slipRelease).
+//                OWNER (2026-11-17): only the VOCAL STEM loops, the drums / bass / other stems play on
+//                unchanged; no stems = refused. Off-EDM only a whole lyric line is looped.
 //   cue_tease    S14 (Cox cue-button builds, SECONDARY): 1 or 2 beat stabs of B's strongest drum
 //                hit on the backbeat of A's last bars before B enters. Drums only (a stab never
 //                doubles a vocal), high-passed at 150 Hz (A keeps the sub), inside the 8 % tempo cap.
@@ -44,7 +46,7 @@
 
   const lm = root.learnedMovesCore || (typeof require === "function" ? require("./learned-moves.js") : null);
   const dl = root.dropLineCore || (typeof require === "function" ? require("./drop-line.js") : null);   // the shared drop-line rule
-  const { envelope, snapBeat, median, moveGenreRefusal, loopVocalRefusal } = lm;
+  const { envelope, snapBeat, median, moveGenreRefusal } = lm;
 
   const KINDS = ["slip_loop", "cue_tease", "roll", "perc_bridge", "pad_lead", "chant_gate", "dhol_drop", "chop_duck"];
   const SPEC = { slip_loop: "S13", cue_tease: "S14", roll: "S12", perc_bridge: "S11", pad_lead: "Lane8", chant_gate: "S20", dhol_drop: "Desi", chop_duck: "S18" };
@@ -54,6 +56,7 @@
   const SLIP_WINDOW_BEATS = [16, 8];  // window before the line; the loop is its first half (4 or 8 beats)
   const SLIP_CAP_BEATS = 16;          // hard cap on the slip window (KB 16-beat hold)
   const SLIP_PER_SONG = 2, SLIP_GAP_BARS = 32;
+  const SLIP_LINE_MIN_BEATS = 2;      // a whole line shorter than this is a syllable, not a line
   const SLIP_EXIT_GUARD_BARS = 4;     // the release lands at least this far before the planned exit
   const MAX_VOCAL_SHARE = 0.25;       // a loop over a sung stretch cuts a word (spec risk)
   const TEASE_BARS = 8;               // the tease lives in A's last 8 bars
@@ -114,15 +117,21 @@
   const shadowAt = (s, now) => s.pos + (now - s.at) * s.rate;
 
   // ---- S13 slip loop ---------------------------------------------------------------------------
+  // The slip loop loops the VOCAL STEM only: the drums / bass / other stems play straight through and at the release the
+  // vocal slips back to where the song is now (deck.slipLoop = a stem hold; the deck clock never stops). It needs live
+  // stems; without them the move is refused (never a full-mix fallback). Gate (dj-config MOVE_GENRE_ALLOW
+  // slip_loop_fragment): on an electronic song the beat-grid loop of the vocal may cut a lyric line; on any other genre
+  // (or an unknown one) only a WHOLE lyric line (one vocal-active region) may be looped, else the move is refused.
   // c: {pos, lineT (next phrase line, song s), bpm, rate, beats[], exitT, inTransition, holdActive,
-  //     mashupActive, loopOn, reversed, busySlices, slipSupported, vocals (regions), energyNow,
-  //     energyNext, count, atBar, lastAtBar, quiet (the mind rides this phrase), relaxed, onDemand}
+  //     mashupActive, loopOn, reversed, busySlices, slipSupported, stemsLive, vocals (regions), energyNow,
+  //     energyNext, count, atBar, lastAtBar, quiet (the mind rides this phrase), relaxed, onDemand, genre}
   // onDemand (AI ACTIONS button) skips only the choice gates: per-song cap, spacing, build, quiet, relaxed.
   function planSlipLoop(c) {
     if (c.inTransition || c.holdActive) return no("transition", "a transition or merge hold owns the deck");
     if (c.mashupActive) return no("vocal_layer", "a vocal layer is running");
     if (!c.slipSupported) return no("no_slip", "the deck has no slip loop; nothing armed (loop_extend is the learned fallback)");
     if (c.loopOn || c.reversed || c.busySlices) return no("deck_busy", "a loop, reverse or stem slice already runs");
+    if (!c.stemsLive) return no("no_stems", "the slip loop loops the vocal stem only and the stems are not live (no full-mix fallback)");
     if (!c.onDemand) {
       if (c.relaxed) return no("relaxed", "relaxed session: no artist moves");
       if (c.quiet === false) return no("phrase_busy", "the mind booked another move on this phrase");
@@ -131,26 +140,43 @@
       if (!(c.energyNow != null && c.energyNext != null)) return no("unmeasured", "no energy curve: cannot tell a build from a fade");
       if (!(c.energyNext > c.energyNow)) return no("no_build", `next phrase energy ${c.energyNext.toFixed(2)} <= ${c.energyNow.toFixed(2)}: a slip loop is a build`);
     }
-    if (!Array.isArray(c.vocals)) return no("unmeasured", "no vocal regions: cannot rule out a loop inside a word");
+    if (!Array.isArray(c.vocals)) return no("unmeasured", "no vocal regions: cannot tell where the vocal is");
     const build = c.energyNow != null && c.energyNext != null ? ` (energy ${c.energyNow.toFixed(2)} -> ${c.energyNext.toFixed(2)})` : "";
     const fallbacks = [];
     const bpm = c.bpm > 0 ? c.bpm : (fallbacks.push("bpm=128"), 128);
     const beatS = 60 / bpm, rate = c.rate > 0 ? c.rate : 1;
     if (c.exitT != null && c.lineT > c.exitT - SLIP_EXIT_GUARD_BARS * 4 * beatS) return no("exit_guard", "the release would sit inside the exit guard");
-    for (const W of SLIP_WINDOW_BEATS) {
-      const nb = nearestBeat(c.beats, c.lineT - W * beatS, c.lineT, beatS);
-      if (nb.grid) fallbacks.push("beat grid from bpm");
-      const start = nb.t;
-      if (start < c.pos + MIN_LEAD_S * rate) continue;
-      const vs = vocalShare(c.vocals, start, c.lineT);
-      const lr = loopVocalRefusal("slip_loop", c.genre, vs);   // off-EDM only over a vocal-free window (dj-config MOVE_VOCAL_LOOP_GATE)
-      if (lr) return no("genre", lr);
-      if (vs > MAX_VOCAL_SHARE) return no("vocal_seam", `${Math.round(vs * 100)}% of the window is sung: a loop would cut a word`);
-      return { ok: true, kind: "slip_loop", start, release: c.lineT, loop_beats: W / 2, window_beats: W,
-        cap_beats: SLIP_CAP_BEATS, extension_beats: 0, grid_err_s: nb.err, fallbacks,
-        why: `last ${W / 4} bars before the line: ${W / 8} bar${W > 8 ? "s" : ""} looped twice, the song runs on under it${build}` };
+    const vocalFreeMax = DJ_CONFIG.MOVE_VOCAL_LOOP_GATE.vocal_free_max;
+    const fragRefusal = moveGenreRefusal("slip_loop_fragment", c.genre);
+    if (fragRefusal == null) {
+      for (const W of SLIP_WINDOW_BEATS) {
+        const nb = nearestBeat(c.beats, c.lineT - W * beatS, c.lineT, beatS);
+        if (nb.grid) fallbacks.push("beat grid from bpm");
+        const start = nb.t;
+        if (start < c.pos + MIN_LEAD_S * rate) continue;
+        const vs = vocalShare(c.vocals, start, start + W / 2 * beatS);
+        if (vs <= vocalFreeMax) return no("no_vocal", `no vocal in the ${W / 2} beat loop: a vocal-only slip loop would play nothing`);
+        return { ok: true, kind: "slip_loop", stem: "vocals", start, release: c.lineT, loop_beats: W / 2, window_beats: W,
+          cap_beats: SLIP_CAP_BEATS, extension_beats: 0, grid_err_s: nb.err, fallbacks, whole_line: false,
+          why: `vocal only, last ${W / 4} bars before the line: ${W / 8} bar${W > 8 ? "s" : ""} looped twice, the music runs on under it${build}` };
+      }
+      return no("late", "no 2 bar window left before the line");
     }
-    return no("late", "no 2 bar window left before the line");
+    // off-EDM: a whole lyric line (one vocal-active region, on the beat grid) repeated once, then the vocal slips back
+    let best = null;
+    for (const r of c.vocals) {
+      const nb = nearestBeat(c.beats, r[0], c.lineT, beatS);
+      const start = nb.t, n = Math.round((r[1] - start) / beatS);
+      if (start < c.pos + MIN_LEAD_S * rate || n < SLIP_LINE_MIN_BEATS || n > Math.floor(SLIP_CAP_BEATS / 2)) continue;
+      if (Math.abs(start - r[0]) > beatS / 2 || Math.abs(start + n * beatS - r[1]) > beatS / 2) continue;   // the loop IS the line
+      const release = start + 2 * n * beatS;
+      if (release > c.lineT + 1e-6) continue;
+      if (best == null || start < best.start) best = { start, n, release, err: nb.err };
+    }
+    if (best == null) return no("genre", `${fragRefusal}; no whole lyric line to loop before the line`);
+    return { ok: true, kind: "slip_loop", stem: "vocals", start: best.start, release: best.release, loop_beats: best.n, window_beats: 2 * best.n,
+      cap_beats: SLIP_CAP_BEATS, extension_beats: 0, grid_err_s: best.err, fallbacks, whole_line: true,
+      why: `vocal only, a whole ${best.n} beat lyric line repeated once, the music runs on under it${build}` };
   }
 
   // ---- S14 cue tease --------------------------------------------------------------------------
@@ -441,18 +467,33 @@
     const audioAt = (d, o, t) => audioCtx.currentTime + (t - o.pos) / rateOf(d);
 
     // ---- execution of an ok plan (returns {busyS, why} for the caller) ----
+    // S13: the vocal stem loops (a stem hold) while the other stems play on; at the release the vocal is back on the
+    // song position and the full mix returns. Nothing is armed when the stems are not live at the start.
     function runSlip(d, p, o) {
-      const lead = (p.start - o.pos) / rateOf(d);
-      later(d.id, lead * 1000 - 5, () => {
-        if (!d.playing || !d.slipLoop(p.loop_beats, p.start)) { console.info("artist move slip_loop skipped: deck: slip loop refused at its start"); return; }
-        later(d.id, ((p.release - p.start) / rateOf(d)) * 1000, () => {
+      const at = audioAt(d, o, p.start), until = audioAt(d, o, p.release), lead = at - audioCtx.currentTime;
+      if (lead < 0.35 || !(until > at)) return null;
+      if (!d.stemsLiveAt || !d.stemsLiveAt(at)) return null;
+      const rec = d._artistSlip = { until };
+      const song = { start: p.start, release: p.release };
+      later(d.id, lead * 1000 - 250, () => {
+        if (!d.playing || d._artistSlip !== rec) return;
+        if (!d.stemMix({}, at - 0.01, 0.01)) { d._artistSlip = null; return void console.info("artist move slip_loop skipped: stem mode refused"); }
+        if (!d.slipLoop(p.loop_beats, song.start, at, until)) {
+          d._artistSlip = null;
+          d.stemMix(null, at, 0.02);
+          return void console.info("artist move slip_loop skipped: deck: slip loop refused at its start");
+        }
+        later(d.id, (until - audioCtx.currentTime) * 1000 - 5, () => {
+          if (d._artistSlip !== rec) return;
+          d._artistSlip = null;
           const shadow = d.slipPosition(), to = d.slipRelease();
+          if (d.playing) d.stemMix(null, until + 0.03, 0.02);
           if (to == null) return;
-          host.bus.emit("ai-activity", { kind: "artist_move_release", deck: d.id, move: "slip_loop", land_s: to, release_s: p.release,
-            shadow_err_s: +Math.abs(to - shadow).toFixed(4), line_err_s: +Math.abs(to - p.release).toFixed(4) });
+          host.bus.emit("ai-activity", { kind: "artist_move_release", deck: d.id, move: "slip_loop", land_s: to, release_s: song.release,
+            shadow_err_s: +Math.abs(to - shadow).toFixed(4), line_err_s: +Math.abs(to - song.release).toFixed(4) });
         });
       });
-      say(d, "slip_loop", p.why, { t0: audioAt(d, o, p.start), t1: audioAt(d, o, p.release), beats: p.window_beats, cap_beats: p.cap_beats,
+      say(d, "slip_loop", p.why, { t0: at, t1: until, beats: p.window_beats, cap_beats: p.cap_beats, stem: "vocals", whole_line: p.whole_line,
         grid_err_s: +p.grid_err_s.toFixed(4), params: { loop_beats: p.loop_beats, window_beats: p.window_beats, start: p.start, release: p.release }, fallbacks: p.fallbacks });
       return { busyS: (p.release - o.pos) / rateOf(d) + 0.1, why: p.why };
     }
@@ -573,7 +614,7 @@
         p = planSlipLoop(Object.assign(base, { lineT: o.lineT, bpm: d.bpm, rate: rateOf(d), beats: a.beat_times, exitT: o.exitT,
           holdActive: !!o.holdActive, loopOn: !!d.loopOn, reversed: !!d.reversed, quiet: o.quiet,
           busySlices: Object.keys(d._slices || {}).length + Object.keys(d._holds || {}).length > 0,
-          slipSupported: typeof d.slipLoop === "function", vocals: a.vocal_active_regions,
+          slipSupported: typeof d.slipLoop === "function", stemsLive: !!(d.stemsReady && d.stems && d.stems.vocals), vocals: a.vocal_active_regions,
           energyNow: meanEnergy(a.energy_curve, a.energy_times, o.lineT - len, o.lineT),
           energyNext: meanEnergy(a.energy_curve, a.energy_times, o.lineT, o.lineT + len),
           count: r.slips, atBar: (o.pos - (o.entryT || 0)) / o.bar, lastAtBar: r.lastSlipBar }));
@@ -618,7 +659,7 @@
           energyNow: meanEnergy(a.energy_curve, a.energy_times, o.lineT - len, o.lineT),
           energyNext: meanEnergy(a.energy_curve, a.energy_times, o.lineT, o.lineT + len),
           vocalLive: !!(d.stems && d.stems.vocals && d.stemGain && d.stemGain.vocals),
-          vocalBusy: !!((d._slices && d._slices.vocals) || (d._holds && d._holds.vocals) || d._artistSwap || d._artistChant) }));
+          vocalBusy: !!((d._slices && d._slices.vocals) || (d._holds && d._holds.vocals) || d._artistSwap || d._artistChant || d._artistSlip) }));
         // S21: one "vocal" unit of the FX budget (a choice gate, so AI ACTIONS skip it)
         const fb = host.mod.fxBudget;
         if (p.ok && !o.onDemand && fb && typeof fb.spend === "function") {
@@ -747,7 +788,11 @@
       if (!d) return;
       (timers[d.id] || []).forEach(clearTimeout);
       timers[d.id] = [];
-      if (d._slip && d.slipRelease) d.slipRelease();
+      if (d._artistSlip) {                            // an armed / running slip loop ends now: the vocal is back on the song
+        d._artistSlip = null;
+        if (d.slipRelease) d.slipRelease();
+        if (d.playing && d.stemMix) d.stemMix(null, audioCtx.currentTime + 0.03, 0.02);
+      }
       if (d._artistChant) {                           // an armed / running chant gate opens again now
         d._artistChant = null;
         const lg = d.stemLive && d.stemLive.vocals && d.stemLive.vocals.gain;
