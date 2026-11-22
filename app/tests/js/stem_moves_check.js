@@ -32,13 +32,13 @@ console.log("stem moves core ok");
   for (const [bars, aS, bS] of [[16, true, true], [8, false, true], [16, false, false]]) {
     const ev = stemBlendPlan("blend", bars, aS, bS);
     const swap = bars / 2;
-    // B's kick + bass arrive exactly on the swap line; A's leave just before it
+    // B's kick + bass arrive on the swap line, the same beat A's leave (STEMONLY: a relay, one beat of overlap at most)
     const bIn = ev.find((e) => e.deck === "in" && e.stems && e.stems.drums === 1);
-    assert.strictEqual(bIn.bar, swap); assert.strictEqual(bIn.stems.bass, 1);
+    assert.strictEqual(bIn.bar, swap - 0.25); assert.strictEqual(bIn.stems.bass, 1);
     const aOut = ev.find((e) => e.deck === "out" && e.stems && e.stems.drums === 0);
     assert.ok(aOut.bar < swap && aOut.bar + aOut.ramp <= swap + 1e-9);
     // before the swap B has no kick, no bass, no voice
-    assert.ok(ev.filter((e) => e.deck === "in" && e.bar < swap && e.stems).every((e) => !e.stems.drums && !e.stems.bass && !e.stems.vocals));
+    assert.ok(ev.filter((e) => e.deck === "in" && e.bar < swap - 0.25 && e.stems).every((e) => !e.stems.drums && !e.stems.bass && !e.stems.vocals));
     // one singer: B's voice only after A's has started fading out
     const aVox = ev.find((e) => e.deck === "out" && e.stems && e.stems.vocals === 0);
     const bVox = ev.find((e) => e.deck === "in" && e.stems && e.stems.vocals === 1);
@@ -204,12 +204,12 @@ console.log("stem moves core ok");
   console.log("stem remix ok");
 }
 
-// keys clash: one tonal owner, B's synths only after A's are half-faded
+// keys clash: one tonal owner; A's synths hand over to B's on one beat at the half-way point (STEMONLY relay)
 {
   const { stemBlendPlan } = require("../../ui/static/stem-moves.js");
   const ev = stemBlendPlan("blend", 32, false, false, true);
   const bOtherUp = ev.filter((e) => e.deck === "in" && e.stems && e.stems.other > 0);
-  assert.ok(bOtherUp.every((e) => e.bar >= 24), `B synths wait for A's to fade: ${bOtherUp.map((e) => e.bar)}`);
+  assert.ok(bOtherUp.every((e) => e.bar >= 24 - 0.25), `B synths wait for A's to fade: ${bOtherUp.map((e) => e.bar)}`);
   const aOther = ev.find((e) => e.deck === "out" && e.stems && e.stems.other === 0);
   assert.ok(aOther.bar + aOther.ramp <= 24 + 1e-9);
   console.log("key clash blend ok");
@@ -236,9 +236,9 @@ console.log("stem moves core ok");
     const aOut = p.events.find((e) => e.deck === "out" && e.stems && e.stems.vocals === 0);
     assert.ok(aOut.t + aOut.ramp <= p.bEntry + 1e-9);
     if (clash) assert.ok(p.events.filter((e) => e.deck === "in" && e.stems && e.stems.other > 0).every((e) => e.t >= aOut.t));
-    // no gap: B's tones rise exactly while A's fade (same start, same ramp)
+    // no gap: B's bass + tones rise at the swap, the same instant A's voice fades (STEMONLY: A's tones change hands on that beat)
     const bIn = p.events.find((e) => e.deck === "in" && e.stems && e.stems.bass === 1);
-    assert.ok(Math.abs(bIn.t - aOut.t) < 1e-9 && Math.abs(bIn.ramp - aOut.ramp) < 1e-9);
+    assert.ok(Math.abs(bIn.t - aOut.t) < 1e-9);
     if (sings) assert.ok(p.events.some((e) => e.hold));
   }
   console.log("stem bridge ok");

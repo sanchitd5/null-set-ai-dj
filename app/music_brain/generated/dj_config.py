@@ -1,9 +1,9 @@
-# GENERATED from dj-config 264223e - do not edit
-# config-hash: 29dca38ad18f
+# GENERATED from dj-config b73d148 - do not edit
+# config-hash: 3528d71817c0
 """Generated from dj-config/config/*.json. Do not edit; run dj-config/tool/gen.py."""
 
-SHA = "264223e"
-CONFIG_HASH = "29dca38ad18f"
+SHA = "b73d148"
+CONFIG_HASH = "3528d71817c0"
 
 ACCENT_MAX_SHARE = 0.2  # fraction
 ACCENT_RECIPES = ["Backspin (Spinback)", "Echo Out", "Bass Swap"]  # list
@@ -132,6 +132,7 @@ SLEEP_FADE_S = 60.0  # s
 STEM_BOOKING_WINDOW_S = 45  # s
 STEM_FILL_CHUNK_S = 240  # s
 STEM_HOLD_EDGE_S = 0.02  # s
+STEM_HOLD_MAX_PHRASES = 2  # phrases
 STEM_MATCH_MAX_BOOST_DB = 12  # dB
 STEM_MERGE_SHARE_MIN = 0.6  # fraction
 STEM_RETRY_AFTER_S = 60  # s

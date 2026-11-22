@@ -2096,6 +2096,9 @@ function createAutopilotEngine({ host, ai }) {
     setRange(eqEl(inn, "high"), 0);
     setRange(xfEl(), fromXf);
 
+    // STEMONLY (owner rule): two songs' music never plays together. The stem moves above are overlap-free (gates refuse
+    // any that is not); every EQ / full-mix crossfade becomes the cut: A out and B in on the line.
+    if (kind !== "profile-cut") { executedMove = recipe + " (cut: stems not live)"; kind = "profile-cut"; }
     let total;
     switch (kind) {
       case "profile-cut": // [[Quick Cut]] (Punjabi scene profile only; recipeKind never returns it): A out and B in on the line, B's lows open on
@@ -2983,6 +2986,36 @@ function createAutopilotEngine({ host, ai }) {
     const ka = od.analysis && od.analysis.key && od.analysis.key.camelot, kb = sd.analysis && sd.analysis.key && sd.analysis.key.camelot;
     return cs && ka && kb ? cs(ka, kb) : null;
   }
+  // STEMONLY readiness: the two decks' stem states as dj-core's stem_hold reads them, straight from the stem server's readiness
+  // (GET /api/stems/ready, wt/STEM_READY_CONTRACT.txt: state ready | in_flight | failed | none | unknown, ready_in_s, waiting_gpu).
+  // ask=1 queues a song nobody asked for at deck priority. A split waiting for the GPU has no estimate (waiting_gpu): no ETA = cut.
+  async function stemReadiness(aId, bId) {
+    try {
+      const r = await fetch(`/api/stems/ready?ids=${encodeURIComponent(aId)},${encodeURIComponent(bId)}&ask=1`);
+      if (r.ok) {
+        const rows = {};
+        for (const t of (await r.json()).tracks || []) rows[t.id] = t;
+        return rows;
+      }
+    } catch (e) { console.warn("stem readiness:", e && e.message); }
+    return {};
+  }
+  const holdState = (row) => ({ state: row && ["ready", "in_flight", "failed"].includes(row.state) ? row.state : "none",
+    eta_s: row && row.state === "in_flight" && !row.waiting_gpu && Number.isFinite(row.ready_in_s) ? row.ready_in_s : undefined });
+  async function askStemHold(od, sd, currentId, nextId, heldPhrases, candidate) {
+    const rows = await stemReadiness(currentId, nextId);
+    const a = holdState(rows[currentId]), b = holdState(rows[nextId]);
+    if (!stemsWhy(od)) { a.state = "ready"; delete a.eta_s; }   // A's stems are sounding right now
+    if (sd.stems) { b.state = "ready"; delete b.eta_s; }
+    const rate = od._playbackRate ? od._playbackRate() : 1;
+    const body = { a, b, bar_s: 240 / ((od.bpm || 128) * rate), held_phrases: heldPhrases,
+      room_s: Math.max(0, exitWindow(candidate.score || 50).hi - deckPosition(activeDeck) - autopilotCore.DEFER_MIN_LEAD_S) };
+    try {
+      const r = await fetch("/api/stem_hold", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      if (r.ok) return await r.json();
+    } catch (e) { console.warn("stem hold:", e && e.message); }
+    return { action: "cut", phrases: 0, hold_s: 0, why: "dj-core unreachable: no hold" };
+  }
   // The booking waits for B's stems and key-locked tempo stems (bounded by autopilotCore.deferBudgetS: to
   // the earliest exit minus the lead the plan needs, at most 100 s). Waiting is pointless, and skipped, when
   // no merge could happen (A has no stems, keys clash, the tempo gap is past the cap). On timeout the
@@ -3024,6 +3057,33 @@ function createAutopilotEngine({ host, ai }) {
       p = probe();
       waited = (host.clock.now() - t0) / 1000;
       d = autopilotCore.deferDecision({ needs: p.r.needs, waitedS: waited, budgetS: budget });
+    }
+    // STEMONLY readiness hold: B's stems still in flight with an ETA inside dj-core's bound -> A plays on phrase by phrase
+    // (the exit moves with it) instead of the no-overlap cut. dj-core decides (service fn stem_hold); past the bound, failed
+    // stems, no ETA or no room it says "cut" and the booking goes on as above.
+    res.heldS = 0; res.heldPhrases = 0;
+    while (p.r.needs.length === 1 && p.r.needs[0] === "stems" && active && currentTrackId === currentId && (gen === undefined || gen === prepGen)) {
+      const hold = await askStemHold(od, sd, currentId, nextId, res.heldPhrases, candidate);
+      host.log.step("stem_hold", { track_id: nextId, phase: "planning", decision: hold.action, why: `${nextName}: ${hold.why}`, result: hold });
+      console.info("stem hold:", `${nextName}: ${hold.action} - ${hold.why}`);
+      if (hold.action === "go") {   // the server has the stems, the deck is still loading them: a few seconds, not a phrase
+        for (let i = 0; i < 10 && p.r.needs.length && active && currentTrackId === currentId; i++) { await new Promise((r) => setTimeout(r, 1000)); p = probe(); }
+        break;
+      }
+      if (hold.action !== "hold") break;
+      res.heldPhrases += hold.phrases;
+      const until = host.clock.now() + hold.hold_s * 1000;
+      deferNote = `B's stems (holding A ${hold.phrases} phrase${hold.phrases === 1 ? "" : "s"})`;
+      host.session.deferring = true;
+      while (host.clock.now() < until && p.r.needs.length) {
+        apStatus(`Holding for ${nextName}'s stems (${Math.round((until - host.clock.now()) / 1000)} s left)`);
+        await new Promise((r) => setTimeout(r, 1000));
+        if (!active || currentTrackId !== currentId || (gen !== undefined && gen !== prepGen)) break;
+        prepStartedAt = host.clock.now();
+        p = probe();
+      }
+      res.heldS += hold.hold_s;
+      waited = (host.clock.now() - t0) / 1000;
     }
     deferNote = null;
     host.session.deferring = false;
@@ -4567,6 +4627,9 @@ function createAutopilotEngine({ host, ai }) {
           // every label from here on is the move that ran, not the one that was booked
           const ranMove = executedMove || recipe;
           bookedRecipe = ranMove;   // VIBE strip ("playing X") and ap.next read this
+          // STEMONLY: one line per transition on the server (both decks' stem state, ETA, split time): the measured p behind the readiness hold
+          fetch("/api/stems/transition", { method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ a_id: currentId, b_id: nextId, kind: /cut/i.test(ranMove) ? "cut" : "stem_handover" }) }).catch(() => {});
           if (ranMove !== recipe) host.log.step("recipe_executed", { deck: outgoing, decision: ranMove, why: `booked ${recipe}, ran ${ranMove}` });
           sessionEvent("track", { event: "transition_start", from: history[history.length - 1] || null, to: nextName, recipe: ranMove,
                                   planned: ranMove !== recipe ? recipe : undefined, out: outgoing, in: incoming, seconds: Math.round(totalMs / 100) / 10,

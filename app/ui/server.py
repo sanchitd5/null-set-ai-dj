@@ -4055,6 +4055,9 @@ app.include_router(_supermove_router)
 from app.ui.services.lyric_remix_api import router as _lyric_remix_router  # noqa: E402 -- lyric remix plans (dj-core decides)
 
 app.include_router(_lyric_remix_router)
+from app.ui.services.stem_hold_api import router as _stem_hold_router  # noqa: E402 -- STEMONLY readiness hold (dj-core decides)
+
+app.include_router(_stem_hold_router)
 from app.ui.services import lyric_remix_songs as _lyric_remix_songs  # noqa: E402 -- lyric remix plans as on-request playable songs
 
 _lyric_remix_songs.configure(
