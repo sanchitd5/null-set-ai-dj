@@ -5,7 +5,7 @@ watches its memory, kills it when it goes over the job memory limit, and lets it
 VRAM goes back to the card. Splits run on app.music_brain.audio.stem_engine (streaming, batched).
 
 Protocol, JSON lines.
-  stdin   {"job", "path", "out_dir", "model", "device", "batch", "half"}
+  stdin   {"job", "path", "out_dir", "model", "device", "batch", "half", "wait_s"?}  (wait_s: this job's wait for free VRAM)
   stdout  {"ready": true, "pid"}
           {"job", "progress": 0..1}
           {"job", "ok": true, "info": {...stem_engine.separate()...}}
@@ -32,6 +32,9 @@ from typing import Any, Callable, Optional
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")   # before torch is imported
 
 
+CUDA_CTX_MB = 300                                # what a CUDA context itself takes on the card
+
+
 def _is_oom(exc: BaseException) -> bool:
     """torch.OutOfMemoryError (also raised while loading the model onto a full card) or GpuOutOfMemory."""
     return "out of memory" in str(exc).lower() or type(exc).__name__ in ("OutOfMemoryError", "GpuOutOfMemory")
@@ -43,6 +46,19 @@ def _free_gpu(torch) -> None:
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
+
+
+def card_snapshot(torch) -> dict:
+    """The whole card as the driver sees it, and this process's share: used_mb (everybody), own_mb (what this
+    worker's allocator has reserved), others_mb = used - own - CUDA context (~300 MB), the VRAM somebody else holds."""
+    try:
+        free, total = torch.cuda.mem_get_info()
+        used = (total - free) / 2**20
+        own = torch.cuda.memory_reserved(0) / 2**20
+        return {"used_mb": round(used), "own_mb": round(own), "others_mb": max(0, round(used - own - CUDA_CTX_MB)),
+                "free_mb": round(free / 2**20), "total_mb": round(total / 2**20)}
+    except Exception:  # noqa: BLE001 -- a snapshot never fails a job
+        return {}
 
 
 def _emit(obj: dict) -> None:
@@ -83,13 +99,20 @@ def run_job(torch, engines: dict, job: dict, progress: Callable[[float, str], No
             engines[key] = eng
         stats["segment_s"] = round(eng.seg / eng.samplerate, 2)
         if cuda:
-            waited, free, total = wait_for_vram(torch, eng.min_need_mb(), float(os.environ.get("STEM_GPU_WAIT_S", "60")),
-                                                sleep=sleep, log=lambda m: _log(f"{job.get('job')}: {m}"))
+            stats.update(card_snapshot(torch))          # who holds the card when the job starts (also when the wait fails)
+            wait_s = float(job.get("wait_s") or os.environ.get("STEM_GPU_WAIT_S", "60"))
+            t_wait = time.monotonic()
+            try:
+                waited, free, total = wait_for_vram(torch, eng.min_need_mb(), wait_s,
+                                                    sleep=sleep, log=lambda m: _log(f"{job.get('job')}: {m}"))
+            except GpuOutOfMemory:
+                stats["wait_s"] = round(time.monotonic() - t_wait, 1)
+                raise
             stats.update(wait_s=round(waited, 1), free_mb=round(free), total_mb=round(total))
             eng.acquire()
         info = eng.separate(job["path"], job["out_dir"], progress=lambda p: progress(p, eng.device), batch=job.get("batch"))
         stats.update(batch=info.get("batch"), batch_start=info.get("batch_start"))
-        _log(f"{job.get('job')}: {device}, {stats['free_mb']} of {stats['total_mb']} MB free at start, waited {stats['wait_s']}s, "
+        _log(f"{job.get('job')}: {device}, {stats['free_mb']} of {stats['total_mb']} MB free at start (others hold {stats.get('others_mb')} MB), waited {stats['wait_s']}s, "
              f"segment {stats['segment_s']}s x batch {stats['batch_start']}" +
              (f" (backed off to {stats['batch']})" if stats["batch"] != stats["batch_start"] else ""))
         info["gpu"] = stats

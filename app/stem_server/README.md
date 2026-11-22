@@ -45,6 +45,8 @@ are `sha256(file bytes)[:16]`, the same as the console and the phone.
 | `POST /v1/separate {"id", "stems": 2\|4, "priority"}` | returns a job. `priority`: deck / booked (only with `STEM_SERVER_TOKEN`, i.e. the console) > phone (default, and what a device token gets) > backfill. One job per song: asking again returns the same job, raised to the higher priority. A job is done once the song has an `htdemucs_ft` set; a cheaper set already in the cache is served meanwhile. The whole song is split once, 4-way. A 2-stem request is served from that split (`no_vocals` = drums + bass + other), because htdemucs_ft runs all of its sources either way |
 | `GET /v1/tracks/{id}/analysis` | the console's analysis v6 of an uploaded track (`analyzer.analyze`, same disk cache as `/api/tracks/{id}/analysis`). The phone reads it instead of analysing on the device |
 | `GET /v1/jobs/{job}` | `status`: queued / running / done / error, plus `priority`, `position` (1 = next), real `progress` (segments done), `elapsed`, `eta`, `device`, `model`, `error`, `note`, `seconds` |
+| `GET /v1/ready_stats?hours=24` | the readiness numbers from `data/cache/stem_ready.jsonl` (one line per finished / cached / failed / parked job): share of non-backfill asks whose stems were usable within 5 / 15 / 30 / 60 / 120 / 240 s of the ask (p), `ready_after_s`, queue wait, GPU vs CPU split times and counts |
+| `GET /v1/gpu?minutes=60` | the card as sampled every `STEM_GPU_SAMPLE_S` (20 s): `[t, used_mb, total_mb, util%]`. Who holds the VRAM around an out-of-memory |
 | `GET /v1/jobs` | the queue in run order (running first), `queued`, `model`, `device`, `worker` (`alive`, `pid`) |
 | `GET /v1/canary?sample=N` | cache canary (see "Identity"): 200 `{"ok": true, ...}`, 503 with `problems` when a sampled stem set is not as long as its song or a derived cache dir holds files of two songs. Also `python -m app.stem_server canary [N]` (no token, exit 1 on failure) |
 | `GET /v1/tracks/{id}/stems/{name}.m4a?start=S&end=E` | AAC-LC 256 kbps, 44.1 kHz stereo, covering that window only (at most 600 s). `name`: vocals, drums, bass, other, no_vocals. Returns 409 before the split, 416 past the end of the track |
@@ -215,3 +217,14 @@ Proxmox host.
 | `STEM_SERVER_DEVICE` | auto | cuda / mps / cpu |
 | `STEM_SERVER_MAX_UPLOAD_MB` | 200 | upload cap |
 | `AIDJ_CACHE_DIR` | data/cache | shared with the console |
+
+
+## Waiting for the shared card (STEMREADY)
+
+The card is shared with llama-server (~19.5 GB of 24). A split that finds it full waits for it instead of going to the
+CPU at once: a GPU split of a song takes ~10 s, a CPU one ~4x the song (~17 min) and holds the single worker meanwhile, so the
+decks' songs wait up to `STEM_GPU_PATIENCE_DECK_S` (600 s; phone asks `STEM_GPU_PATIENCE_PHONE_S`, 300 s) and only then use the CPU.
+The library backfill waits `STEM_GPU_WAIT_S` (60 s), never uses the CPU, and is parked for `STEM_BACKFILL_DEFER_S` (120 s) so the
+worker stays free for the decks. Each job's `gpu` block carries `used_mb` / `own_mb` / `others_mb`: the card's use by everybody, by
+this worker, and by others (the number that tells who held the VRAM). The job's `ready_in_s` is the estimate (median recent GPU
+split x jobs ahead) the console passes on as `GET /api/stems/ready` (contract: `wt/STEM_READY_CONTRACT.txt`).

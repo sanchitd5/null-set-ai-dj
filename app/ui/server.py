@@ -511,6 +511,33 @@ def _prefetch_picks(suggestions: list) -> None:
             print(f"[suggest] prefetch failed for {p.get('title')!r}: {exc!r}", flush=True)
 
 
+_stem_pick_at: Dict[str, float] = BoundedCache(1024)          # track id -> when it was first picked (suggest answered)
+_stem_job_note: Dict[str, dict] = BoundedCache(1024)         # track id -> how its split went (device, wall, queue wait, error)
+STEM_READY_LOG = CACHE_DIR / "stem_transitions.jsonl"        # one line per transition: both decks' stems ready or not
+
+
+def _prepare_pick_stems(suggestions: list, lookahead: bool = False) -> None:
+    """STEMREADY: the moment the ladder picks the next song its stems start (a transition needs them on both
+    decks): the top pick goes to the stem server at deck priority, ahead of the whole backfill; a song whose
+    stems are cached is not queued. The look-ahead pick (the one after the booked next) takes the same urgent
+    lane when the stem server has no deck job open, else it waits as a backfill job. Never raises."""
+    try:
+        for i, p in enumerate(suggestions[:1]):
+            tid = p.get("track_id") if isinstance(p, dict) else None
+            if not tid or tid not in _tracks:
+                continue
+            _stem_pick_at.setdefault(tid, time.time())
+            if _cached_stems4_safe(tid) is not None:
+                continue
+            urgent = True
+            if lookahead:
+                with _stem_cv:
+                    urgent = not any(j.get("priority") != "backfill" for j in _stem_remote.values()) and not _stem_queue
+            _queue_stems(tid, urgent=urgent)
+    except Exception as exc:                    # noqa: BLE001 - the pick itself is what matters
+        print(f"[stems] prepare for the pick failed: {exc!r}", flush=True)
+
+
 @app.get("/api/library/bad")
 def get_library_bad():
     """Ids of server files the cache audit flagged as not the song they are named after. The phone drops its own
@@ -941,6 +968,14 @@ _stem_remote_err: Dict[str, Optional[str]] = {"error": None}
 REMOTE_BACKFILL_PARKED = 2                     # backfill jobs handed to the stem server at once
 
 
+def _job_note(js: dict) -> dict:
+    """What the readiness record keeps of a stem server job."""
+    g = js.get("gpu") or {}
+    return {"status": js.get("status"), "priority": js.get("priority"), "device": js.get("device"),
+            "split_s": js.get("seconds"), "elapsed_s": js.get("elapsed"), "gpu_wait_s": g.get("wait_s"),
+            "error": js.get("error"), "at": time.time()}
+
+
 def _remote_has_ft(tid: str) -> bool:
     from app.music_brain.audio import stem_service
 
@@ -948,6 +983,7 @@ def _remote_has_ft(tid: str) -> bool:
 
 
 def _remote_finish(tid: str, js: dict) -> None:
+    _stem_job_note[tid] = _job_note(js)
     _stem_cache.pop(tid, None)                 # resolve again: the ft set wins (cached_four_stems order)
     if _cached_stems4(tid) is None:
         _stem_done["failed"] += 1
@@ -1018,6 +1054,7 @@ def _remote_poll(retry: list) -> None:
             _remote_finish(tid, cur)
         elif cur["status"] == "error":
             _stem_remote.pop(tid, None)
+            _stem_job_note[tid] = _job_note(cur)
             _stem_done["failed"] += 1
             _stem_done["last_error"] = f"{tid}: {cur.get('error')}"[:200]
             print(f"[stems] {tid}: stem server: {cur.get('error')}", flush=True)
@@ -1464,6 +1501,117 @@ def _stems_status_locked() -> dict:
         out["remote"] = {"jobs": [dict(j) for j in jobs], "error": _stem_remote_err["error"]}
         out["line"] = stem_remote.status_line(head, max(0, len(jobs) - 1) + len(_stem_queue) + len(_stem_backlog),
                                               _stem_remote_err["error"])
+    return out
+
+
+def stem_readiness(tid: str) -> dict:
+    """STEM_READY_CONTRACT: one song's stems as the decks see them.
+    state: ready (a complete 4-stem set is cached; decks load it now) | in_flight (queued or splitting; ready_in_s is the
+    stem server's estimate in seconds from now, null while the card is full / unknown) | failed (the last split errored;
+    `error`; asking again retries) | none (nothing asked yet). Also `priority`, `position`, `waiting_gpu`, `device`,
+    `picked_ago_s` (since the song was first picked)."""
+    out: dict = {"id": tid, "state": "none", "ready_in_s": None, "waiting_gpu": False, "priority": None, "position": None,
+                 "device": None, "error": None, "picked_ago_s": None}
+    at = _stem_pick_at.get(tid)
+    if at:
+        out["picked_ago_s"] = round(time.time() - at, 1)
+    if tid not in _tracks:
+        out["state"] = "unknown"
+        return out
+    if _cached_stems4_safe(tid) is not None:
+        out.update(state="ready", ready_in_s=0.0)
+        return out
+    with _stem_cv:
+        js = _stem_remote.get(tid)
+        queued = tid in _stem_queue or tid in _stem_backlog or _stem_busy == tid
+    if js is not None:
+        out.update(state="in_flight", ready_in_s=js.get("ready_in_s"), waiting_gpu=bool(js.get("waiting_gpu")),
+                   priority=js.get("priority"), position=js.get("position"), device=js.get("device"))
+        return out
+    if queued:
+        out.update(state="in_flight", priority="deck" if tid in _stem_queue else "backfill")
+        return out
+    note = _stem_job_note.get(tid)
+    if note and note.get("status") == "error":
+        out.update(state="failed", error=note.get("error"))
+    return out
+
+
+@app.get("/api/stems/ready")
+def get_stems_ready(ids: str = "", ask: bool = False):
+    """Readiness of the stems for the comma-separated track ids (STEM_READY_CONTRACT). ask=1 also queues the ones that are
+    neither ready nor in flight (a failed split is retried) at deck priority."""
+    out = []
+    for tid in [t for t in ids.split(",") if t][:8]:
+        r = stem_readiness(tid)
+        if ask and r["state"] in ("none", "failed"):
+            _stem_pick_at.setdefault(tid, time.time())
+            _stem_job_note.pop(tid, None)
+            _queue_stems(tid)
+            r = stem_readiness(tid)
+        out.append(r)
+    return {"tracks": out}
+
+
+class StemTransition(BaseModel):
+    a_id: str = Field(max_length=64)
+    b_id: str = Field(max_length=64)
+    kind: str = Field(default="", max_length=40)         # the plan kind the mind chose (stem handover, cut, ...)
+
+
+@app.post("/api/stems/transition")
+def post_stems_transition(req: StemTransition):
+    """STEMREADY: a transition is about to start. Log whether the stems of both decks are ready (and how the late one
+    went: device, wall time, time since the pick) to stem_transitions.jsonl; answers both decks' readiness. The
+    measured p of `STEM_READY_CONTRACT` is the share of lines with both_ready."""
+    a, b = stem_readiness(req.a_id), stem_readiness(req.b_id)
+    rec = {"t": round(time.time(), 1), "kind": req.kind, "a": req.a_id, "b": req.b_id,
+           "a_ready": a["state"] == "ready", "b_ready": b["state"] == "ready",
+           "a_state": a["state"], "b_state": b["state"], "a_picked_ago_s": a["picked_ago_s"], "b_picked_ago_s": b["picked_ago_s"],
+           "b_ready_in_s": b["ready_in_s"], "a_ready_in_s": a["ready_in_s"],
+           "both_ready": a["state"] == "ready" and b["state"] == "ready",
+           "a_job": _stem_job_note.get(req.a_id), "b_job": _stem_job_note.get(req.b_id)}
+    try:
+        STEM_READY_LOG.parent.mkdir(parents=True, exist_ok=True)
+        with open(STEM_READY_LOG, "a", encoding="utf-8") as f:
+            f.write(json.dumps(rec) + "\n")
+    except OSError as exc:
+        print(f"[stems] transition log not written: {exc}", flush=True)
+    return {"a": a, "b": b, "both_ready": rec["both_ready"]}
+
+
+@app.get("/api/stems/ready_stats")
+def get_stems_ready_stats(hours: float = 24.0):
+    """p over the logged transitions (both decks ready), by plan kind, plus the stem server's own numbers
+    (share of asks usable within L s, split / queue wall times, GPU vs CPU) when it is in use."""
+    t0 = time.time() - max(0.1, min(hours, 24 * 30)) * 3600
+    rows = []
+    try:
+        with open(STEM_READY_LOG, encoding="utf-8") as f:
+            for ln in f:
+                try:
+                    r = json.loads(ln)
+                except ValueError:
+                    continue
+                if r.get("t", 0) >= t0:
+                    rows.append(r)
+    except OSError:
+        pass
+    kinds: Dict[str, dict] = {}
+    for r in rows:
+        k = kinds.setdefault(r.get("kind") or "", {"n": 0, "both_ready": 0})
+        k["n"] += 1
+        k["both_ready"] += bool(r.get("both_ready"))
+    out = {"hours": hours, "transitions": len(rows), "both_ready": sum(bool(r.get("both_ready")) for r in rows),
+           "p": round(sum(bool(r.get("both_ready")) for r in rows) / len(rows), 3) if rows else None, "by_kind": kinds}
+    from app.ui.services import stem_remote
+
+    if stem_remote.enabled():
+        try:
+            st, js = stem_remote._req("GET", f"/v1/ready_stats?hours={hours}")
+            out["stem_server"] = js if st == 200 else {"error": st}
+        except stem_remote.Unreachable as exc:
+            out["stem_server"] = {"error": str(exc)}
     return out
 
 
@@ -3164,6 +3312,7 @@ def _suggest_guaranteed(req: "AutopilotSuggestRequest") -> dict:
         res.setdefault("pick_source", res.get("source") or "llm")
         res["suggestions"] = sl.prefer_library(res["suggestions"])    # HF7: library picks first, `on_server` on each
         _prefetch_picks(res["suggestions"])
+        _prepare_pick_stems(res["suggestions"], req.lookahead)
         return res
     if th.is_alive():
         reason = f"deadline: suggest not done after {sl.llm_budget_s():.0f}s"
@@ -3178,6 +3327,7 @@ def _suggest_guaranteed(req: "AutopilotSuggestRequest") -> dict:
         print(f"[suggest] ladder failed: {exc!r}\n{traceback.format_exc()}", flush=True)
         out = {"suggestions": [], "pick_source": "none", "fallback_reason": f"{reason}; ladder error: {exc}"[:300]}
     _prefetch_picks(out.get("suggestions") or [])
+    _prepare_pick_stems(out.get("suggestions") or [], req.lookahead)
     out.setdefault("set_position", round(float((res or {}).get("set_position") or 0.0), 2))
     out["source"] = out["pick_source"]
     out["fallback_reason"] = out.get("fallback_reason") or reason

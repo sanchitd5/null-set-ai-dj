@@ -32,6 +32,11 @@ from typing import Callable, Optional
 REPO = Path(__file__).resolve().parents[2]
 
 
+class GpuBusy(RuntimeError):
+    """The card stayed full for the whole patience of a job that may not fall back to the CPU (library backfill):
+    the server parks it and tries again later; nothing is lost and the CPU is not held for ~4x realtime."""
+
+
 class WorkerDied(RuntimeError):
     def __init__(self, msg: str, memory: bool = False):
         super().__init__(msg)
@@ -158,18 +163,32 @@ def _parse(ln: str) -> Optional[dict]:
 
 def split(worker: GpuWorker, job: str, path: Path, out_dir: Path, model: str, device: Optional[str],
           on_progress: Callable[..., None], half: bool = False,
-          sleep: Callable[[float], None] = time.sleep) -> tuple[dict, Optional[str], Optional[str]]:
+          sleep: Callable[[float], None] = time.sleep, patience_s: float = 0.0, cpu_ok: bool = True,
+          clock: Callable[[], float] = time.monotonic) -> tuple[dict, Optional[str], Optional[str]]:
     """One split through the retry ladder (device None: the worker picks). on_progress(fraction, device).
-    -> (engine info, device asked for, note or None)."""
+    -> (engine info, device asked for, note or None).
+
+    patience_s: how long a GPU job keeps waiting for the shared card (the worker polls for free VRAM, a CUDA
+    out-of-memory is retried every STEM_OOM_BACKOFF_S) before the ladder gives up on it. A GPU split of a song
+    takes ~10 s and a CPU split ~4x its length, so a song somebody is waiting for waits for the card up to
+    about what the CPU would take; only then the CPU (cpu_ok) or GpuBusy (a job that must not use the CPU).
+    patience_s 0 keeps the old ladder: one 5 s retry, then the CPU."""
     notes: list[str] = []
     fails: list[dict] = []                               # gpu stats of the attempts that ran out of memory
     batch: Optional[int] = None
     crashed = memory = gpu_retried = False
-    for _ in range(5):
+    deadline = clock() + patience_s
+    tries = 0
+    while tries < 5:
+        tries += 1
         on_progress(0.0)
+        left = deadline - clock()
+        msg = {"job": job, "path": str(path), "out_dir": str(out_dir), "model": model,
+               "device": device, "batch": batch, "half": half}
+        if patience_s and device != "cpu":
+            msg["wait_s"] = max(2.0, round(left, 1))     # the worker's own wait for free VRAM
         try:
-            r = worker.run({"job": job, "path": str(path), "out_dir": str(out_dir), "model": model,
-                            "device": device, "batch": batch, "half": half}, on_progress)
+            r = worker.run(msg, on_progress)
         except WorkerDied as exc:
             if exc.memory and not memory:
                 memory, batch = True, 1
@@ -188,26 +207,37 @@ def split(worker: GpuWorker, job: str, path: Path, out_dir: Path, model: str, de
             if fails:                                    # the GPU tries that came first: what the phone shows
                 gi = info.setdefault("gpu", {})
                 gi["wait_s"] = round((gi.get("wait_s") or 0) + sum(f.get("wait_s") or 0 for f in fails), 1)
-                for k in ("free_mb", "total_mb"):
+                for k in ("free_mb", "total_mb", "used_mb", "own_mb"):
                     gi[k] = fails[0].get(k) if gi.get(k) is None else gi[k]
                 if gi.get("kind") == "cpu":
                     gi["fallback"] = "GPU out of memory" if not fails[-1].get("expired") else "GPU wait expired"
             return info, device, "; ".join(notes) or None
         if device != "cpu" and r.get("oom"):
             fails.append({**g, "expired": bool(r.get("wait_expired"))})
-        if r.get("oom") and device != "cpu" and r.get("wait_expired"):
-            notes.append(f"{r.get('error')}; split on CPU")
-            print(f"[stem-server] {job}: {r.get('error')}; splitting on CPU", file=sys.stderr, flush=True)
-            device, batch = "cpu", None
-            continue
-        if r.get("oom") and device != "cpu" and not gpu_retried:
-            gpu_retried, batch = True, 1
-            wait = float(os.environ.get("STEM_OOM_BACKOFF_S", "5"))
-            notes.append(f"{r.get('error')}; retried on the GPU after {wait:g}s")
-            print(f"[stem-server] {job}: GPU out of memory; retrying on the GPU in {wait:g}s", file=sys.stderr, flush=True)
-            sleep(wait)
-            continue
         if r.get("oom") and device != "cpu":
+            patient = patience_s and deadline - clock() > 1.0
+            if patient:                                  # the card is full of somebody else's: keep asking for it
+                if not gpu_retried:
+                    notes.append(f"{r.get('error')}; waiting for the GPU")
+                gpu_retried = True
+                tries -= 1
+                if not r.get("wait_expired"):            # a CUDA error, not the worker's own wait: pause first
+                    sleep(min(float(os.environ.get("STEM_OOM_BACKOFF_S", "5")), max(0.0, deadline - clock())))
+                continue
+            if patience_s and not cpu_ok:
+                raise GpuBusy(f"{r.get('error')}; the card stayed full for {patience_s:g}s")
+            if r.get("wait_expired"):
+                notes.append(f"{r.get('error')}; split on CPU")
+                print(f"[stem-server] {job}: {r.get('error')}; splitting on CPU", file=sys.stderr, flush=True)
+                device, batch = "cpu", None
+                continue
+            if not gpu_retried:
+                gpu_retried, batch = True, 1
+                wait = float(os.environ.get("STEM_OOM_BACKOFF_S", "5"))
+                notes.append(f"{r.get('error')}; retried on the GPU after {wait:g}s")
+                print(f"[stem-server] {job}: GPU out of memory; retrying on the GPU in {wait:g}s", file=sys.stderr, flush=True)
+                sleep(wait)
+                continue
             notes.append(f"{r.get('error')}; split on CPU")
             print(f"[stem-server] {job}: GPU out of memory at batch 1; retrying on CPU", file=sys.stderr, flush=True)
             device, batch = "cpu", None
