@@ -1,4 +1,4 @@
 # dj-core decision service build the server runs (bin/versions/<sha> on the host, installed by the server pipeline).
 # Rollback = revert this file; the older build stays installed.
-sha=a118c559328e8260f4d2132f67b3e33f55767515
-sha256=cbd2106b35420e53a59d2992e9168d2fd01d276a5959d211ce0505f866ca3c71
+sha=ad9a6bd9daeea08ead68b8f64c403a58ab6f8f1e
+sha256=d84ee1dc95e15c470f18895460b0d645d33f42b8ea031b3da6212608ac7bb91e
