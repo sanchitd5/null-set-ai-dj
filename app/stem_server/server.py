@@ -16,6 +16,7 @@ console already split is served without a second split, and a song split here is
 
 from __future__ import annotations
 
+import collections
 import hashlib
 import heapq
 import hmac
@@ -39,7 +40,7 @@ from pydantic import BaseModel
 from app.music_brain import song_store
 from app.music_brain.audio import stem_service
 from app.music_brain.config import CACHE_DIR, DEMUCS_MODEL
-from app.stem_server import windows
+from app.stem_server import gpu, windows
 from app.stem_server.demucs_runner import OOM_EXIT
 from app.ui.services.auth import AuthStore, FailureLimiter, client_ip, default_store_path   # stdlib-only module: no console import chain
 
@@ -81,6 +82,17 @@ class Settings:
         # The console's account store (same cache): its per-device tokens work here too, so a phone
         # that signed in with Google once uses one token for both. Re-read when it changes on disk.
         self.auth_store = AuthStore(default_store_path(env))
+        # How long a split waits for the shared card before it gives up on the GPU (see gpu.split). A GPU split
+        # takes ~10 s, a CPU one ~4x the song, so a song somebody waits for is worth waiting for: the decks and
+        # booked transitions up to ~10 min, a phone ask 5 min. The library backfill waits a minute, never goes
+        # to the CPU (it would hold the one worker for ~17 min) and is parked for a while instead.
+        self.patience = {"deck": float(env.get("STEM_GPU_PATIENCE_DECK_S", "600")),
+                         "booked": float(env.get("STEM_GPU_PATIENCE_DECK_S", "600")),
+                         "phone": float(env.get("STEM_GPU_PATIENCE_PHONE_S", "300")),
+                         "backfill": float(env.get("STEM_GPU_WAIT_S", "60"))}
+        self.defer_s = float(env.get("STEM_BACKFILL_DEFER_S", "120"))   # a backfill job that found the card full waits this long
+        self.ready_log = Path(env.get("STEM_READY_LOG") or cache / "stem_ready.jsonl")
+        self.gpu_sample_s = float(env.get("STEM_GPU_SAMPLE_S", "20"))   # 0 = no card sampler
 
 
 # Queue order: a deck or a booked transition first, then a phone booking, then the library backfill.
@@ -98,6 +110,9 @@ class Job:
         self.seq = 0                       # queue order inside one priority (FIFO)
         self.position: Optional[int] = None
         self.info: dict = {}
+        self.deferred = 0                  # times the card was full for a backfill job and it was parked
+        self.ready_in_s: Optional[float] = None   # estimate, set by StemServer.annotate()
+        self.waiting_gpu = False
 
     @property
     def prio(self) -> int:
@@ -118,7 +133,11 @@ class Job:
                 "seconds": self.info.get("seconds"),
                 # GPU decisions of the finished split: kind gpu|cpu, free_mb / total_mb at start, wait_s,
                 # segment_s, batch (null until the job is done, or for a stem set that was already cached)
-                "gpu": self.info.get("gpu")}
+                "gpu": self.info.get("gpu"),
+                # when the stems will be usable: seconds from now (null = unknown, e.g. the card is full), and
+                # whether the split is waiting for the shared GPU right now (STEM_READY_CONTRACT)
+                "ready_in_s": self.ready_in_s, "waiting_gpu": self.waiting_gpu, "deferred": self.deferred,
+                "created": self.created}
 
 
 def separate_once(path: Path, model: str, device: Optional[str], stems_dir: Path) -> tuple[Dict[str, str], str, Optional[str]]:
@@ -158,9 +177,14 @@ class StemServer:
         self.last_gpu: Optional[dict] = None  # the GPU decisions of the last split (also on each job)
         self.current: Optional[Job] = None
         self._restoring = False
+        self.split_s: "collections.deque[float]" = collections.deque(maxlen=20)   # recent GPU split wall times
+        self.card: "collections.deque[tuple]" = collections.deque(maxlen=180)     # (t, used_mb, total_mb, util%) every gpu_sample_s
+        self._ready_lock = threading.Lock()
         for d in (self.s.songs / "_incoming", self.s.windows):
             d.mkdir(parents=True, exist_ok=True)
         threading.Thread(target=self._worker, daemon=True, name="stem-gpu").start()
+        if self.s.gpu_sample_s > 0 and separate_fn is None:
+            threading.Thread(target=self._sample_card, daemon=True, name="stem-card").start()
 
     # ---- tracks ---------------------------------------------------------------------------------
     def stem_dir(self, h: str, model: str) -> Path:
@@ -273,6 +297,7 @@ class StemServer:
         j = Job(track_id, p, stems, priority, job_id)
         if self.own_ready(track_id, p):
             j.status, j.progress, j.finished, j.model = "done", 1.0, time.time(), self.s.model
+            self.record_ready(j, "cached")
         with self.cv:
             self.jobs[j.job] = j
             self._trim_jobs()
@@ -375,11 +400,17 @@ class StemServer:
                 j.status, j.progress, j.model = "done", 1.0, self.s.model
                 if j.priority != "backfill":      # a phone/deck wants it: encode now, off the GPU thread
                     threading.Thread(target=self.pre_encode, args=(j.id,), daemon=True, name="stem-encode").start()
+                self.record_ready(j, "done")
+            except gpu.GpuBusy as exc:
+                self._defer(j, exc)
+                continue
             except Exception as exc:  # noqa: BLE001 -- reported through the job, the worker lives on
                 j.status, j.error = "error", f"{type(exc).__name__}: {exc}"[:300]
                 print(f"[stem-server] job {j.job} {j.id} failed: {j.error}", file=sys.stderr, flush=True)
+                self.record_ready(j, "error")
             finally:
-                j.finished = time.time()
+                if j.status != "queued":
+                    j.finished = time.time()
                 with self.cv:
                     self.current = None
                     self._save()
@@ -388,8 +419,6 @@ class StemServer:
         """Streaming engine in the GPU worker; stems verified (every stem as long as the decoded mix)
         before the manifest, the cache-hit marker, is written; then the song's non-ft sets are pruned."""
         import soundfile as sf
-
-        from app.stem_server import gpu
 
         if self.gpu is None:
             self.gpu = gpu.GpuWorker(self.s.rss_limit, self.s.scope_mem)
@@ -403,9 +432,13 @@ class StemServer:
                 j.device = device
 
         # device None: the worker picks cuda -> mps -> cpu (torch is never imported in this process)
-        info, _, j.note = gpu.split(self.gpu, j.job, j.path, out, self.s.model, self.s.device, progress, self.s.half)
+        patience = self.s.patience.get(j.priority, self.s.patience["phone"])
+        info, _, j.note = gpu.split(self.gpu, j.job, j.path, out, self.s.model, self.s.device, progress, self.s.half,
+                                    patience_s=patience, cpu_ok=j.priority != "backfill")
         j.info, j.device = info, info.get("device")
         self.last_gpu = info.get("gpu")
+        if info.get("device") == "cuda" and info.get("seconds"):
+            self.split_s.append(float(info["seconds"]))
         stems = info["stems"]
         if sorted(stems) != sorted(FOUR):
             raise RuntimeError(f"split returned {sorted(stems)}")
@@ -419,6 +452,131 @@ class StemServer:
         print(f"[stem-server] {j.id} {self.s.model} on {j.device}: {info['frames'] / 44100:.0f} s of audio in "
               f"{info['seconds']} s (batch {info.get('batch')}, peak RSS {info.get('peak_rss_mb')} MB"
               f"{', ' + j.note if j.note else ''})", file=sys.stderr, flush=True)
+
+    # ---- readiness: estimates, the per-job record, the card sampler -----------------------------
+    def est_split_s(self) -> float:
+        """Typical GPU split of one song: the median of the recent ones, 15 s before there is any."""
+        v = sorted(self.split_s)
+        return v[len(v) // 2] if v else 15.0
+
+    def annotate(self) -> None:
+        """Set ready_in_s / waiting_gpu on every active job (seconds until its stems are usable, null when the
+        card is full and nobody can say). Cheap; called before a job is shown."""
+        with self.cv:
+            act = sorted((j for j in self.jobs.values() if j.status in ("queued", "running")),
+                         key=lambda j: (j.status != "running", j.prio, j.seq))
+            est = self.est_split_s()
+            ahead, blocked = 0.0, False
+            for j in act:
+                if j.status == "running":
+                    el = time.time() - (j.started or j.created)
+                    j.waiting_gpu = j.progress < 0.01 and el > max(8.0, est)
+                    rem = j.eta()
+                    if j.waiting_gpu:
+                        blocked, j.ready_in_s = True, None
+                        continue
+                    ahead += rem if rem is not None else max(1.0, est - el)
+                    j.ready_in_s = round(ahead, 1)
+                else:
+                    j.waiting_gpu = False
+                    ahead += est
+                    j.ready_in_s = None if blocked else round(ahead, 1)
+
+    def record_ready(self, j: Job, outcome: str) -> None:
+        """One line per finished / cached / failed / parked job in stem_ready.jsonl: the readiness record the
+        pick -> transition analysis reads (GET /v1/ready_stats). created = when the console asked, so
+        ready_after_s is how long after the pick the stems were usable."""
+        now = time.time()
+        g = j.info.get("gpu") or {}
+        rec = {"t": round(now, 1), "id": j.id, "priority": j.priority, "outcome": outcome,
+               "queue_wait_s": round((j.started or now) - j.created, 1) if j.started else 0.0,
+               "wall_s": round(now - j.started, 1) if j.started else 0.0,
+               "split_s": j.info.get("seconds"), "device": j.device or j.info.get("device"),
+               "ready_after_s": round(now - j.created, 1) if outcome in ("done", "cached") else None,
+               "gpu_wait_s": g.get("wait_s"), "free_mb": g.get("free_mb"), "used_mb": g.get("used_mb"),
+               "others_mb": g.get("others_mb"), "fallback": g.get("fallback"), "deferred": j.deferred,
+               "error": j.error if outcome == "error" else None, "note": j.note}
+        try:
+            with self._ready_lock:
+                self.s.ready_log.parent.mkdir(parents=True, exist_ok=True)
+                with open(self.s.ready_log, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(rec) + "\n")
+        except OSError as exc:
+            print(f"[stem-server] ready log not written: {exc}", file=sys.stderr, flush=True)
+
+    def ready_stats(self, hours: float = 24.0) -> dict:
+        """p = share of non-backfill asks whose stems were usable within L s of the ask, for a few L, plus the
+        split / queue numbers and the device mix. From stem_ready.jsonl."""
+        rows, t0 = [], time.time() - hours * 3600
+        try:
+            with open(self.s.ready_log, encoding="utf-8") as f:
+                for ln in f:
+                    try:
+                        r = json.loads(ln)
+                    except ValueError:
+                        continue
+                    if r.get("t", 0) >= t0:
+                        rows.append(r)
+        except OSError:
+            pass
+        ask = [r for r in rows if r["priority"] != "backfill" and r["outcome"] in ("done", "cached", "error")]
+        got = [r["ready_after_s"] for r in ask if r["outcome"] in ("done", "cached")]
+
+        def pct(v: list, q: float) -> Optional[float]:
+            v = sorted(x for x in v if x is not None)
+            return round(v[min(len(v) - 1, int(q * len(v)))], 1) if v else None
+
+        done = [r for r in rows if r["outcome"] == "done"]
+        out = {"hours": hours, "asks": len(ask), "cached": sum(r["outcome"] == "cached" for r in ask),
+               "failed": sum(r["outcome"] == "error" for r in ask),
+               "p_ready_within_s": {str(L): (round(sum(x <= L for x in got) / len(ask), 3) if ask else None)
+                                    for L in (5, 15, 30, 60, 120, 240)},
+               "ready_after_s": {"p50": pct(got, 0.5), "p90": pct(got, 0.9), "max": pct(got, 1.0)},
+               "queue_wait_s": {"p50": pct([r["queue_wait_s"] for r in done], 0.5), "p90": pct([r["queue_wait_s"] for r in done], 0.9)},
+               "split_s": {"gpu_p50": pct([r["split_s"] for r in done if r["device"] in ("cuda", "mps")], 0.5),
+                           "cpu_p50": pct([r["split_s"] for r in done if r["device"] == "cpu"], 0.5)},
+               "splits": {"gpu": sum(r["device"] in ("cuda", "mps") for r in done), "cpu": sum(r["device"] == "cpu" for r in done)},
+               "deferred": sum(r["outcome"] == "deferred" for r in rows)}
+        return out
+
+    def _defer(self, j: Job, exc: Exception) -> None:
+        """The card stayed full for a backfill job: park it (the worker is free for the decks) and queue it again
+        after STEM_BACKFILL_DEFER_S. A deck asking meanwhile raises it through submit()."""
+        with self.cv:
+            j.status, j.started, j.progress, j.position = "queued", None, 0.0, None
+            j.deferred += 1
+            j.note = f"parked: {exc}"[:200]
+            self.current = None
+            self._save()
+        print(f"[stem-server] {j.id}: {exc}; parked for {self.s.defer_s:g}s", file=sys.stderr, flush=True)
+        self.record_ready(j, "deferred")
+
+        def again() -> None:
+            with self.cv:
+                if j.status == "queued" and j.job in self.jobs:
+                    self._push(j)
+
+        t = threading.Timer(self.s.defer_s, again)
+        t.daemon = True
+        t.start()
+
+    def _sample_card(self) -> None:
+        """Every STEM_GPU_SAMPLE_S: the card's used / total MB and utilisation (nvidia-smi), kept for an hour in
+        self.card and logged when it moves by >= 1.5 GB: who holds the card around an out-of-memory."""
+        last = None
+        while True:
+            try:
+                r = subprocess.run(["nvidia-smi", "--query-gpu=memory.used,memory.total,utilization.gpu",
+                                    "--format=csv,noheader,nounits"], capture_output=True, text=True, timeout=10)
+                used, total, util = (float(x) for x in r.stdout.strip().splitlines()[0].split(","))
+                self.card.append((round(time.time(), 1), used, total, util))
+                if last is None or abs(used - last) >= 1500:
+                    print(f"[stem-server] card {used:.0f} of {total:.0f} MB used, {util:.0f}% busy"
+                          f"{'' if last is None else f' (was {last:.0f})'}", file=sys.stderr, flush=True)
+                    last = used
+            except (OSError, ValueError, IndexError, subprocess.SubprocessError):
+                pass
+            time.sleep(self.s.gpu_sample_s)
 
     # ---- windows --------------------------------------------------------------------------------
     def window(self, track_id: str, name: str, start: float, end: float) -> tuple[Path, dict]:
@@ -679,22 +837,39 @@ def create_app(settings: Optional[Settings] = None, separate_fn=None) -> FastAPI
         prio = req.priority
         if who != "server" and PRIORITIES[prio] < PRIORITIES["phone"]:
             prio = "phone"                                 # a deck / booked slot is the console's to claim
-        return srv.submit(req.id, req.stems, prio).to_dict()
+        j = srv.submit(req.id, req.stems, prio)
+        srv.annotate()
+        return j.to_dict()
 
     @app.get("/v1/jobs", dependencies=[Depends(auth)])
     def jobs():
         """The queue in run order (running first) and the GPU worker."""
+        srv.annotate()
         act = srv.active()
         w = srv.gpu
         return {"jobs": [j.to_dict() for j in act], "queued": sum(j.status == "queued" for j in act),
                 "model": s.model, "device": s.device or "auto", "gpu": srv.last_gpu,
+                "est_split_s": round(srv.est_split_s(), 1),
+                "card": list(srv.card)[-1] if srv.card else None,
                 "worker": {"alive": bool(w and w.alive), "pid": w.pid if w else None}}
+
+    @app.get("/v1/ready_stats", dependencies=[Depends(auth)])
+    def ready_stats(hours: float = 24.0):
+        """p (share of asks whose stems were usable within L s), split / queue times, CPU vs GPU, from the ready log."""
+        return srv.ready_stats(max(0.1, min(hours, 24 * 30)))
+
+    @app.get("/v1/gpu", dependencies=[Depends(auth)])
+    def gpu_card(minutes: float = 60.0):
+        """The card as sampled every STEM_GPU_SAMPLE_S: [t, used_mb, total_mb, util%] (who holds the VRAM)."""
+        t0 = time.time() - minutes * 60
+        return {"samples": [x for x in srv.card if x[0] >= t0]}
 
     @app.get("/v1/jobs/{job}", dependencies=[Depends(auth)])
     def job(job: str):
         j = srv.jobs.get(job)
         if j is None:
             raise HTTPException(404, "unknown job")
+        srv.annotate()
         return j.to_dict()
 
     analysis_lock = threading.Lock()   # one analysis at a time (CPU; the GPU queue is separate)
