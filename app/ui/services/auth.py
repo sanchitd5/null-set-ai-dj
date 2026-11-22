@@ -974,7 +974,9 @@ def _trusted(settings: AuthSettings, ip: Optional[str]) -> bool:
 
 
 def client_ip(settings: AuthSettings, scope, headers: Dict[str, str]) -> str:
-    peer = (scope.get("client") or ("unknown", 0))[0]
+    # scope["client"] may be (None, port) or None (e.g. uvicorn proxy_headers with an all-trusted chain):
+    # always return a string, never None; "unknown" is a valid (shared, rate-limited) key.
+    peer = (scope.get("client") or (None, 0))[0] or "unknown"
     if not _trusted(settings, peer) or "x-forwarded-for" not in headers:
         return peer
     hops = [h.strip() for h in headers["x-forwarded-for"].split(",") if h.strip()]

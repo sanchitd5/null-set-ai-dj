@@ -246,6 +246,19 @@ def test_limiter_uses_forwarded_ip_only_from_trusted_proxy(store):
     assert auth.client_ip(s, {"client": ("9.9.9.9", 1)}, hdr) == "9.9.9.9"
 
 
+def test_client_ip_never_none(store):
+    s = auth.AuthSettings(store=store, session_secret="x" * 40, trusted_proxies=("127.0.0.0/8", "::1"))
+    for scope in ({"client": (None, 0)}, {"client": None}, {}, {"client": ("", 0)}):
+        assert auth.client_ip(s, scope, {}) == "unknown"
+        assert auth.client_ip(s, scope, {"x-forwarded-for": "127.0.0.1"}) == "unknown"
+    # all-loopback chain from a trusted peer: still a string usable as a limiter key
+    ip = auth.client_ip(s, {"client": ("127.0.0.1", 1)}, {"x-forwarded-for": "127.0.0.1, 127.0.0.2"})
+    assert ip == "127.0.0.1"
+    assert "ip:" + ip == "ip:127.0.0.1"
+    # normal chain unchanged
+    assert auth.client_ip(s, {"client": ("127.0.0.1", 1)}, {"x-forwarded-for": "6.6.6.6, 1.2.3.4"}) == "1.2.3.4"
+
+
 def test_limiter_unit(store):
     s = auth.AuthSettings(store=store, session_secret="x" * 40, max_failures=3, failure_window_s=60, lockout_s=100)
     lim = auth.FailureLimiter()
