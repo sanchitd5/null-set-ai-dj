@@ -816,11 +816,11 @@ USER_CODE_ALPHABET = "BCDFGHJKMNPQRSTVWXZ"
 DEVICE_TTL_S = 600
 DEVICE_INTERVAL_S = 3
 _DEVICE_SLOW_DOWN_S = 5
-_NEXT_RE = re.compile(r"^/device(\?code=[A-Za-z0-9-]{1,16})?$")
+_NEXT_RE = re.compile(r"^(/device(\?code=[A-Za-z0-9-]{1,16})?|/ci/)\Z")
 
 
 def _safe_next(raw: str) -> str:
-    """A post-login return path: only the device page (never an open redirect)."""
+    """A post-login return path: only the device page and the /ci/ dashboard (never an open redirect)."""
     return raw if raw and _NEXT_RE.match(raw) else ""
 
 

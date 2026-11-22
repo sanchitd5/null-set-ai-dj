@@ -75,6 +75,45 @@
 		}
 	}
 
+	# Build and agent dashboard (/ci/). The page is static files served by the bench's CT120 on the
+	# private network; this route only lets the owner see it. Access = the console's own Google
+	# sign-in and DJ_ADMIN_EMAILS: every request is first checked against GET /api/admin/check on
+	# the console (204 = admin). Signed out (401) goes to Google and comes back to /ci/; anything
+	# else is 403, and a console that is down or unreachable is 502, so it fails closed.
+	redir /ci /ci/ 308
+	handle /ci/* {
+		route {
+			reverse_proxy 127.0.0.1:{$DJ_PORT:8000} {
+				method GET
+				rewrite /api/admin/check
+				@ok status 2xx
+				@signedout status 401
+				handle_response @ok {
+					# allowed: fall through to the dashboard proxy below
+				}
+				handle_response @signedout {
+					header Location "/auth/google/start?next=/ci/"
+					respond 303
+				}
+				handle_response {
+					respond "forbidden" 403
+				}
+			}
+			request_header -Cookie
+			request_header -Authorization
+			header Cache-Control "no-store"
+			header Content-Security-Policy "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+			uri strip_prefix /ci
+			reverse_proxy {$DASH_UPSTREAM:127.0.0.1:1} {
+				header_down -Server
+				transport http {
+					dial_timeout 3s
+					response_header_timeout 10s
+				}
+			}
+		}
+	}
+
 	handle {
 		@tracks path /api/tracks
 		@samples path /api/samples

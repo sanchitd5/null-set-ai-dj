@@ -180,3 +180,28 @@ def test_phone_trace_timeline(env, monkeypatch):
     assert "#0 a | #1 b" in r.text and "<script" not in r.text
     assert [e["kind"] for e in c.get("/api/admin/sessions/trace").json()["events"]] == ["pick_trace", "phone_error"]
     assert _client(env[0], env[1], bearer="x").get("/admin/sessions/trace").status_code in (401, 403)
+
+
+def test_check_endpoint_gates_the_ci_dashboard(env):
+    app, s, *_ = env
+    assert _client(app, s).get("/api/admin/check").status_code == 401                      # signed out
+    assert _client(app, s, bearer="nope").get("/api/admin/check").status_code == 401       # bad token
+    other = _client(app, s, _google_cookie(s, "2002", OTHER))
+    assert other.get("/api/admin/check").status_code == 403                                # allowed, not admin
+    r = _admin(env).get("/api/admin/check")
+    assert r.status_code == 204 and r.content == b"" and r.headers["cache-control"] == "no-store"
+
+
+def test_check_endpoint_denies_off_and_forged(env, monkeypatch):
+    app, s, *_ = env
+    assert _client(app, s, "v2.g-1001.1.9999999999.x.forged").get("/api/admin/check").status_code == 401
+    monkeypatch.delenv("DJ_ADMIN_EMAILS")
+    assert _admin(env).get("/api/admin/check").status_code == 404                          # feature off: never 204
+
+
+def test_login_next_accepts_only_device_and_ci(env):
+    from app.ui.services.auth import _safe_next
+    assert _safe_next("/ci/") == "/ci/"
+    assert _safe_next("/device?code=BCDF-GHJK") == "/device?code=BCDF-GHJK"
+    for bad in ("/ci", "/ci/x", "/ci/\\n", "//evil.example/ci/", "https://evil.example/ci/", "/ci/?a=b", "/ci//", "/../ci/", ""):
+        assert _safe_next(bad) == "", bad
