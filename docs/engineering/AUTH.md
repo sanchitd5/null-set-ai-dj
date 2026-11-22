@@ -203,7 +203,7 @@ setup at all; the owner approves in any browser that can reach the console.
 2. The phone opens `verification_uri_complete` in the browser and shows the code big.
    `/device` needs the normal browser login; signed out, it goes to `/login?next=/device?code=...`
    and Google (or the password form) brings the owner back. `next` accepts the device page
-   only, so it is not an open redirect.
+   and `/ci/` (the build dashboard) only, so it is not an open redirect.
 3. The page shows the device name, the code, the requesting IP, and APPROVE / DENY. The
    POST must be same-origin and carry a form token (HMAC of the session cookie and the code).
    A bearer token can't use the page.

@@ -6,6 +6,7 @@ leaves no trace. A device bearer token never reaches an admin route (403), nor d
 
     GET  /admin, /admin/sessions        server-rendered pages (no script; a 5 s meta refresh)
     GET  /api/admin/me                  {email}
+    GET  /api/admin/check               204 for an admin, 401 signed out, 403 anyone else (Caddy's /ci/ gate; no body)
     GET  /api/admin/sessions            {live, closed}: the live set (no lease id) and the last 20 closed sets
     POST /api/admin/sessions/close      end the live set (the holder's next beat answers 409 "closed by admin")
     GET  /api/admin/audit               the newest 100 admin writes
@@ -27,7 +28,7 @@ from pathlib import Path
 from typing import FrozenSet, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from app.ui.services import set_lease
 
@@ -246,6 +247,11 @@ def admin_trace_api(session: Optional[str] = None, email: str = Depends(require_
 @router.get("/api/admin/me")
 def admin_me(email: str = Depends(require_admin)) -> dict:
     return {"email": email}
+
+
+@router.get("/api/admin/check", status_code=204)
+def admin_check(email: str = Depends(require_admin)) -> Response:
+    return Response(status_code=204, headers={"Cache-Control": "no-store"})
 
 
 @router.get("/api/admin/sessions")

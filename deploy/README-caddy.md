@@ -121,3 +121,11 @@ above (DuckDNS: `github.com/caddy-dns/duckdns`, `dns duckdns {env.DUCKDNS_TOKEN}
    `DJ_PUBLIC_URL` in `.env` (with no login method set, it makes every request answer 503),
    `curl -I https://$DJ_DOMAIN/health` answers 200 and `curl https://$DJ_DOMAIN/api/recipes`
    answers 401.
+
+## /ci/ (build and agent dashboard)
+
+`/ci/*` shows the dev bench's build/agent dashboard (static files on a private host, `DASH_UPSTREAM=host:port` in the Caddy env file;
+unset, it points nowhere and answers 502; the data lives there, not in this repo). Only an owner session gets in: Caddy
+asks the console `GET /api/admin/check` first (204 for a Google session whose address is in
+`DJ_ADMIN_EMAILS`). Signed out, the browser goes to `/auth/google/start?next=/ci/` and comes back to `/ci/`;
+any other answer, or a console that is down, is denied. Set `DJ_ADMIN_EMAILS` (console) and `DASH_UPSTREAM` (Caddy env file).
