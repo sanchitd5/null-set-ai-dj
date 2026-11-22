@@ -2096,6 +2096,9 @@ function createAutopilotEngine({ host, ai }) {
     setRange(eqEl(inn, "high"), 0);
     setRange(xfEl(), fromXf);
 
+    // STEMONLY (owner rule): two songs' music never plays together. The stem moves above are overlap-free (gates refuse
+    // any that is not); every EQ / full-mix crossfade becomes the cut: A out and B in on the line.
+    if (kind !== "profile-cut") { executedMove = recipe + " (cut: stems not live)"; kind = "profile-cut"; }
     let total;
     switch (kind) {
       case "profile-cut": // [[Quick Cut]] (Punjabi scene profile only; recipeKind never returns it): A out and B in on the line, B's lows open on

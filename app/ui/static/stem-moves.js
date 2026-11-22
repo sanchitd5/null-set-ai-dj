@@ -145,6 +145,8 @@ if (typeof HoldPolicy === "undefined" && typeof require === "function") require(
   // vocals in the window. o: {intro (pickIntro), introLevel, keepA (A's synths
   // stay through the second half: the loudness fix when B's beat is thin)}.
   // Returns [{bar, deck: "out"|"in", stems, ramp (bars)}], bars from B's entry.
+  // STEMONLY: the longest a stem role may sound from both decks (one beat, in bars); dj-core swapRampBars.
+  const SWAP_RAMP_BARS = 0.25;
   function stemBlendPlan(kind, bars, aSings, bSings, keyClash = false, o = {}) {
     const L = bars, swap = L / 2, ev = [];
     if (kind === "double") {
@@ -153,30 +155,31 @@ if (typeof HoldPolicy === "undefined" && typeof require === "function") require(
       // keeps its tops and voice; B's tops and voice take over as A leaves (L-1)
       ev.push({ bar: 0, deck: "in", stems: { drums: 1, bass: 1, vocals: 0, other: 0 }, ramp: 0 });
       ev.push({ bar: 0, deck: "out", stems: { drums: 0, bass: 0, vocals: 1, other: 1 }, ramp: 0 });
-      ev.push({ bar: L - 1, deck: "out", stems: { drums: 0, bass: 0, vocals: 0, other: 0 }, ramp: 1 });
-      ev.push({ bar: L - 1, deck: "in", stems: { vocals: 1, other: 1 }, ramp: 1 });
+      ev.push({ bar: L - SWAP_RAMP_BARS, deck: "out", stems: { drums: 0, bass: 0, vocals: 0, other: 0 }, ramp: SWAP_RAMP_BARS });
+      ev.push({ bar: L - SWAP_RAMP_BARS, deck: "in", stems: { vocals: 1, other: 1 }, ramp: SWAP_RAMP_BARS });
       ev.push({ bar: L, deck: "in", stems: null, ramp: 0.05 });
       return ev;
     }
+    // STEMONLY (owner rule): a relay. No stem role is ever on both decks beyond one beat (SWAP_RAMP_BARS): B takes ONE
+    // intro stem on bar 0 (A's copy leaves the same instant), kick + bass change hands on the swap line, the tones
+    // follow, the voices swap on whole bars with a gap. Mirror of dj-core stem_moves.dart stemBlendPlan.
     const intro = o.intro || (keyClash ? "drums" : "other");
     const lvl = o.introLevel || INTRO_LEVEL[intro] || 0.8;
-    // 0..swap   B's ONE intro stem under A (no bass; keys clash: no tones yet).
-    // It rises while the fader parks at the centre (1 bar), then sits there
-    // alone for the intro phrase before the crossfade proper moves.
+    const sw = SWAP_RAMP_BARS;
     ev.push({ bar: 0, deck: "in", stems: { drums: 0, bass: 0, vocals: 0, other: 0 }, ramp: 0 });
-    ev.push({ bar: 0.01, deck: "in", stems: { [intro]: lvl }, ramp: FADER_PARK_BARS });
-    // swap line  kick + bass change hands together, in one beat (one sub owner)
-    ev.push({ bar: swap - 0.25, deck: "out", stems: { drums: 0, bass: 0 }, ramp: 0.25 });
-    ev.push({ bar: swap, deck: "in", stems: { drums: 1, bass: 1 }, ramp: 0.05 });
-    // swap..L   A's synths fade (keepA: held full until 2 bars before the end);
-    // one singer: A finishes its line, then B's voice
-    if (o.keepA) ev.push({ bar: L - 2, deck: "out", stems: { other: 0 }, ramp: 2 });
-    else ev.push({ bar: swap, deck: "out", stems: { other: 0 }, ramp: keyClash ? (L - swap) / 2 : L - swap });
-    if (keyClash) ev.push({ bar: swap + (L - swap) / 2, deck: "in", stems: { other: 1 }, ramp: (L - swap) / 2 });
-    else if (intro !== "other") ev.push({ bar: swap, deck: "in", stems: { other: 1 }, ramp: (L - swap) / 2 });
-    const aVoxOut = aSings ? L - 2 : swap;
-    ev.push({ bar: aVoxOut, deck: "out", stems: { vocals: 0 }, ramp: aSings ? 2 : 1 });
-    ev.push({ bar: aSings ? L - 0.5 : swap, deck: "in", stems: keyClash || intro !== "other" ? { vocals: 1 } : { vocals: 1, other: 1 }, ramp: aSings ? 0.5 : 2 });
+    ev.push({ bar: 0, deck: "out", stems: { [intro]: 0 }, ramp: sw });
+    ev.push({ bar: 0, deck: "in", stems: { [intro]: lvl }, ramp: sw });
+    const rest = ["drums", "bass"].filter((n) => n !== intro);
+    ev.push({ bar: swap - sw, deck: "out", stems: Object.fromEntries(rest.map((n) => [n, 0])), ramp: sw });
+    ev.push({ bar: swap - sw, deck: "in", stems: Object.fromEntries(rest.map((n) => [n, 1])), ramp: sw });
+    const other = swap + (L - swap) / 2;     // the tones change hands once the beat has settled
+    if (intro !== "other") {
+      ev.push({ bar: other - sw, deck: "out", stems: { other: 0 }, ramp: sw });
+      ev.push({ bar: other - sw, deck: "in", stems: { other: 1 }, ramp: sw });
+    } else ev.push({ bar: swap - sw, deck: "in", stems: { other: 1 }, ramp: sw });
+    const aVoxOut = aSings ? L - 2 : swap;   // A's voice leaves, B's enters on the next whole bar: one lead voice
+    ev.push({ bar: aVoxOut, deck: "out", stems: { vocals: 0 }, ramp: 0.5 });
+    ev.push({ bar: aVoxOut + 1, deck: "in", stems: { vocals: 1 }, ramp: 0.5 });
     ev.push({ bar: L, deck: "in", stems: null, ramp: 0.05 });
     return ev.sort((a, b) => a.bar - b.bar);
   }
@@ -439,8 +442,8 @@ if (typeof HoldPolicy === "undefined" && typeof require === "function") require(
       { bar: M / 2, deck: "in", stems: { vocals: Math.min(1, v * 1.3) }, ramp: 2 },
       { bar: M - 2, deck: "out", stems: { drums: 0, bass: 0 }, ramp: 0.25 },
       { bar: M, deck: "in", stems: { drums: 1, bass: 1 }, ramp: 0.05 },
-      { bar: M, deck: "out", stems: { other: 0 }, ramp: 8 },
-      { bar: M, deck: "in", stems: { other: 1, vocals: 1 }, ramp: 8 },
+      { bar: M, deck: "out", stems: { other: 0 }, ramp: SWAP_RAMP_BARS },
+      { bar: M, deck: "in", stems: { other: 1, vocals: 1 }, ramp: SWAP_RAMP_BARS },
       { bar: M + 8, deck: "in", stems: null, ramp: 0.05 },
     ];
     for (let s = 0; s + 16 <= M; s += 16) {
@@ -604,7 +607,7 @@ if (typeof HoldPolicy === "undefined" && typeof require === "function") require(
       { bar: 0, deck: "out", stems: { vocals: 0 }, ramp: 0.25 },
       { bar: 0, deck: "in", start: true, stems: { drums: 0, bass: 0, vocals: c.v, other: 0 }, ramp: 0 },
       { bar: M, deck: "in", stems: { drums: 1, bass: 1, other: 1, vocals: 1 }, ramp: 0.05 },
-      { bar: M, deck: "out", stems: { drums: 0, bass: 0, other: 0 }, ramp: 1 },
+      { bar: M, deck: "out", stems: { drums: 0, bass: 0, other: 0 }, ramp: SWAP_RAMP_BARS },
       { bar: M + 2, deck: "in", stems: null, ramp: 0.05 },
     ];
     return { ok: true, kind: "filter_loop", L, passes, M, total: M + 8, events, slices, sliceStems: ["drums", "bass", "other"], filter, delay, fallbacks,
@@ -635,11 +638,13 @@ if (typeof HoldPolicy === "undefined" && typeof require === "function") require(
       { t: 0, deck: "out", stems: { drums: 0, vocals: LIFT, other: LIFT }, ramp: barA },
       { t: 2 * barA, deck: "out", stems: { bass: 0 }, ramp: barA },
       { t: bStart, deck: "in", start: true, stems: { drums: 0, bass: 0, vocals: 0, other: 0 }, ramp: 0 },
-      // B's intro stem rises under A from the start of the beatless stretch
-      { t: bStart + 0.01, deck: "in", stems: intro === "drums" ? { drums: lvl, vocals: 0 } : { other: lvl, vocals: 0 }, ramp: 2 * barB },
-      // the swap: A's tones out while B's bass + tones come in (one crossfade, no gap)
-      { t: Math.max(bStart, swapAt), deck: "out", stems: { vocals: 0, other: 0 }, ramp: 2 * barB },
-      { t: Math.max(bStart, swapAt), deck: "in", stems: { bass: 1, other: 1 }, ramp: 2 * barB },
+      // STEMONLY: B's intro stem never meets A's copy of it: A's tones leave as B's tones enter
+      ...(intro === "other" ? [{ t: bStart, deck: "out", stems: { other: 0 }, ramp: barA * SWAP_RAMP_BARS }] : []),
+      { t: bStart + 0.01, deck: "in", stems: intro === "drums" ? { drums: lvl, vocals: 0 } : { other: lvl, vocals: 0 }, ramp: intro === "other" ? barB * SWAP_RAMP_BARS : 2 * barB },
+      // the swap: A's voice fades, A's tones and B's bass + tones change hands in one beat (no overlap)
+      { t: Math.max(bStart, swapAt), deck: "out", stems: { vocals: 0 }, ramp: 2 * barB },
+      ...(intro === "drums" ? [{ t: Math.max(bStart, swapAt), deck: "out", stems: { other: 0 }, ramp: barB * SWAP_RAMP_BARS }] : []),
+      { t: Math.max(bStart, swapAt), deck: "in", stems: { bass: 1, other: 1 }, ramp: intro === "drums" ? barB * SWAP_RAMP_BARS : 2 * barB },
       { t: bEntry, deck: "in", stems: null, ramp: 0.03 },   // B's beat, on its own line
     ];
     if (aSings) ev.push({ t: bStart, deck: "out", hold: { stem: "vocals", fromBar: 3, bars: 1 }, until: Math.max(bStart, swapAt) + 2 * barB });
@@ -812,8 +817,8 @@ if (typeof HoldPolicy === "undefined" && typeof require === "function") require(
       ev.push({ bar: M + 8, deck: "in", stems: null, ramp: 0.05 });
       return { events: ev.sort((a, b) => a.bar - b.bar), total: M + 8 };
     }
-    ev.push({ bar: M, deck: "out", stems: { other: 0 }, ramp: 8 });
-    if (combo.other === "a") ev.push({ bar: M, deck: "in", stems: { other: 1 }, ramp: 8 });
+    ev.push({ bar: M, deck: "out", stems: { other: 0 }, ramp: SWAP_RAMP_BARS });
+    if (combo.other === "a") ev.push({ bar: M, deck: "in", stems: { other: 1 }, ramp: SWAP_RAMP_BARS });
     if (combo.vocals === "a") {
       ev.push({ bar: M, deck: "out", stems: { vocals: 0 }, ramp: 2 });
       ev.push({ bar: M + 2, deck: "in", stems: { vocals: 1 }, ramp: 2 });
@@ -833,7 +838,27 @@ if (typeof HoldPolicy === "undefined" && typeof require === "function") require(
   }
   // Both gates on one plan: the full-band floor (levelCheck) and the audible band
   // (masterAudibility, a silent run of 1 s fails). e: {eOut, eIn, aOut, aIn}.
+  // STEMONLY (owner rule): no stem role audible from both decks for longer than one beat. Mirror of dj-core
+  // plan/stem_ownership.dart stemOverlaps; events + fader in plan bars. -> [{stem, from, to}]
+  function ownershipOverlaps(events, fader, span, bStart = 0) {
+    const out = [], from = {};
+    let t0 = 0;
+    for (const e of events) if (e.hold == null && evAt(e) < t0) t0 = evAt(e);
+    for (let t = t0; t <= span + 1 + 1e-9; t += 1 / 32) {
+      const x = (faderAt(fader, 1, t) + 1) / 2;
+      const fo = Math.cos((x * Math.PI) / 2), fi = Math.sin((x * Math.PI) / 2);
+      const ga = gainsAt(events, "out", t), gb = gainsAt(events, "in", t);
+      for (const n of STEMS) {
+        const both = fo * ga[n] >= AUDIBLE_GAIN && t >= bStart && fi * gb[n] >= AUDIBLE_GAIN;
+        if (both) { if (from[n] == null) from[n] = t; }
+        else if (from[n] != null) { if (t - from[n] > SWAP_RAMP_BARS + 1e-6) out.push({ stem: n, from: from[n], to: t }); from[n] = null; }
+      }
+    }
+    return out;
+  }
   function gates(plan, fader, span, e, minRun, extra = {}) {
+    const ov = ownershipOverlaps(plan.events, fader, span, (extra && extra.inStart) || 0);
+    if (ov.length) return { ok: false, reason: `stem-only: ${ov[0].stem} on both decks ${ov[0].from.toFixed(2)}-${ov[0].to.toFixed(2)} bars` };
     const lv = levelCheck(Object.assign({ events: plan.events, fader, dir: 1, span, eOut: e.eOut, eIn: e.eIn }, extra));
     if (!lv.ok) return lv;
     const au = masterAudibility(Object.assign({ events: plan.events, fader, dir: 1, span, eOut: e.aOut, eIn: e.aIn, minRun }, extra));
@@ -984,7 +1009,7 @@ if (typeof HoldPolicy === "undefined" && typeof require === "function") require(
     }
     return { kind: gapBars >= 1 ? "low" : "beat", gapBars, ref: +ref.toFixed(4) };
   }
-  const core = { mashupEnergyKind, BEAT_GAP_FRAC, holdPlan, subOwnerCheck, holdUnclean, overlapBars, regionsToBars, HOLD_PHRASE_BARS, HOLD_MAX_PHRASES, HANDOVER_BARS, MERGE_START_BARS, HOLD_TEMPO_CAP, HOLD_KEY_MIN, gates, keepsVibe, breakdownVocalOk, introAudible, introGate, INTRO_MAX_UNDER_DB, mergeCombos, mergeRank, mergeLabel, mergeTransitionPlan, mergeWithEar, keepOneStem, hookDropEvents, hookDropDue, HOOK_OTHER, BREAKDOWN, breakdownFits, handoffFits, vocalShare, stemBlendPlan, STEM_BLEND_KINDS, remixEvents, remixPick, stemBridgePlan, mashupTransitionPlan,
+  const core = { ownershipOverlaps, SWAP_RAMP_BARS, mashupEnergyKind, BEAT_GAP_FRAC, holdPlan, subOwnerCheck, holdUnclean, overlapBars, regionsToBars, HOLD_PHRASE_BARS, HOLD_MAX_PHRASES, HANDOVER_BARS, MERGE_START_BARS, HOLD_TEMPO_CAP, HOLD_KEY_MIN, gates, keepsVibe, breakdownVocalOk, introAudible, introGate, INTRO_MAX_UNDER_DB, mergeCombos, mergeRank, mergeLabel, mergeTransitionPlan, mergeWithEar, keepOneStem, hookDropEvents, hookDropDue, HOOK_OTHER, BREAKDOWN, breakdownFits, handoffFits, vocalShare, stemBlendPlan, STEM_BLEND_KINDS, remixEvents, remixPick, stemBridgePlan, mashupTransitionPlan,
                  pickIntro, introBars, INTRO_LEVEL, levelCheck, gainsAt, faderAt, fitStemBlend, breakdownEvents,
                  masterAudibility, audibleRms, mergeFader, rawFader, deckFaderGains, mergeBooking, onTime, AUDIBLE_HZ, SILENCE_DB,
                  LEVEL_FLOOR_DB, AUDIBLE_GAIN, FADER_PARK_BARS, TYPICAL_SHARE, DIP_ALLOWED,
