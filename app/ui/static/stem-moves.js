@@ -162,7 +162,8 @@ if (typeof HoldPolicy === "undefined" && typeof require === "function") require(
     }
     // STEMONLY (owner rule): a relay. No stem role is ever on both decks beyond one beat (SWAP_RAMP_BARS): B takes ONE
     // intro stem on bar 0 (A's copy leaves the same instant), kick + bass change hands on the swap line, the tones
-    // follow, the voices swap on whole bars with a gap. Mirror of dj-core stem_moves.dart stemBlendPlan.
+    // follow, the voices swap on whole bars with a gap. The ownership rule itself lives in dj-core (plan/stem_ownership.dart, service fn stem_overlaps); app/tests/py/test_stem_ownership_plans.py
+    // asks it about every plan built here.
     const intro = o.intro || (keyClash ? "drums" : "other");
     const lvl = o.introLevel || INTRO_LEVEL[intro] || 0.8;
     const sw = SWAP_RAMP_BARS;
@@ -838,27 +839,7 @@ if (typeof HoldPolicy === "undefined" && typeof require === "function") require(
   }
   // Both gates on one plan: the full-band floor (levelCheck) and the audible band
   // (masterAudibility, a silent run of 1 s fails). e: {eOut, eIn, aOut, aIn}.
-  // STEMONLY (owner rule): no stem role audible from both decks for longer than one beat. Mirror of dj-core
-  // plan/stem_ownership.dart stemOverlaps; events + fader in plan bars. -> [{stem, from, to}]
-  function ownershipOverlaps(events, fader, span, bStart = 0) {
-    const out = [], from = {};
-    let t0 = 0;
-    for (const e of events) if (e.hold == null && evAt(e) < t0) t0 = evAt(e);
-    for (let t = t0; t <= span + 1 + 1e-9; t += 1 / 32) {
-      const x = (faderAt(fader, 1, t) + 1) / 2;
-      const fo = Math.cos((x * Math.PI) / 2), fi = Math.sin((x * Math.PI) / 2);
-      const ga = gainsAt(events, "out", t), gb = gainsAt(events, "in", t);
-      for (const n of STEMS) {
-        const both = fo * ga[n] >= AUDIBLE_GAIN && t >= bStart && fi * gb[n] >= AUDIBLE_GAIN;
-        if (both) { if (from[n] == null) from[n] = t; }
-        else if (from[n] != null) { if (t - from[n] > SWAP_RAMP_BARS + 1e-6) out.push({ stem: n, from: from[n], to: t }); from[n] = null; }
-      }
-    }
-    return out;
-  }
   function gates(plan, fader, span, e, minRun, extra = {}) {
-    const ov = ownershipOverlaps(plan.events, fader, span, (extra && extra.inStart) || 0);
-    if (ov.length) return { ok: false, reason: `stem-only: ${ov[0].stem} on both decks ${ov[0].from.toFixed(2)}-${ov[0].to.toFixed(2)} bars` };
     const lv = levelCheck(Object.assign({ events: plan.events, fader, dir: 1, span, eOut: e.eOut, eIn: e.eIn }, extra));
     if (!lv.ok) return lv;
     const au = masterAudibility(Object.assign({ events: plan.events, fader, dir: 1, span, eOut: e.aOut, eIn: e.aIn, minRun }, extra));
@@ -1009,7 +990,7 @@ if (typeof HoldPolicy === "undefined" && typeof require === "function") require(
     }
     return { kind: gapBars >= 1 ? "low" : "beat", gapBars, ref: +ref.toFixed(4) };
   }
-  const core = { ownershipOverlaps, SWAP_RAMP_BARS, mashupEnergyKind, BEAT_GAP_FRAC, holdPlan, subOwnerCheck, holdUnclean, overlapBars, regionsToBars, HOLD_PHRASE_BARS, HOLD_MAX_PHRASES, HANDOVER_BARS, MERGE_START_BARS, HOLD_TEMPO_CAP, HOLD_KEY_MIN, gates, keepsVibe, breakdownVocalOk, introAudible, introGate, INTRO_MAX_UNDER_DB, mergeCombos, mergeRank, mergeLabel, mergeTransitionPlan, mergeWithEar, keepOneStem, hookDropEvents, hookDropDue, HOOK_OTHER, BREAKDOWN, breakdownFits, handoffFits, vocalShare, stemBlendPlan, STEM_BLEND_KINDS, remixEvents, remixPick, stemBridgePlan, mashupTransitionPlan,
+  const core = { SWAP_RAMP_BARS, mashupEnergyKind, BEAT_GAP_FRAC, holdPlan, subOwnerCheck, holdUnclean, overlapBars, regionsToBars, HOLD_PHRASE_BARS, HOLD_MAX_PHRASES, HANDOVER_BARS, MERGE_START_BARS, HOLD_TEMPO_CAP, HOLD_KEY_MIN, gates, keepsVibe, breakdownVocalOk, introAudible, introGate, INTRO_MAX_UNDER_DB, mergeCombos, mergeRank, mergeLabel, mergeTransitionPlan, mergeWithEar, keepOneStem, hookDropEvents, hookDropDue, HOOK_OTHER, BREAKDOWN, breakdownFits, handoffFits, vocalShare, stemBlendPlan, STEM_BLEND_KINDS, remixEvents, remixPick, stemBridgePlan, mashupTransitionPlan,
                  pickIntro, introBars, INTRO_LEVEL, levelCheck, gainsAt, faderAt, fitStemBlend, breakdownEvents,
                  masterAudibility, audibleRms, mergeFader, rawFader, deckFaderGains, mergeBooking, onTime, AUDIBLE_HZ, SILENCE_DB,
                  LEVEL_FLOOR_DB, AUDIBLE_GAIN, FADER_PARK_BARS, TYPICAL_SHARE, DIP_ALLOWED,

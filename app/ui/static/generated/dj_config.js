@@ -1,5 +1,5 @@
-// GENERATED from dj-config 264223e - do not edit
-// config-hash: 29dca38ad18f
+// GENERATED from dj-config b73d148 - do not edit
+// config-hash: 3528d71817c0
 (function (root) {
   "use strict";
   const values = {
@@ -130,6 +130,7 @@
     "STEM_BOOKING_WINDOW_S": 45,
     "STEM_FILL_CHUNK_S": 240,
     "STEM_HOLD_EDGE_S": 0.02,
+    "STEM_HOLD_MAX_PHRASES": 2,
     "STEM_MATCH_MAX_BOOST_DB": 12,
     "STEM_MERGE_SHARE_MIN": 0.6,
     "STEM_RETRY_AFTER_S": 60,
@@ -174,6 +175,6 @@
   };
   root.DJ_CONFIG = Object.freeze(values);
   root.DJ_CONFIG_LIVE = Object.freeze(live);
-  root.DJ_CONFIG_META = Object.freeze({ sha: "264223e", hash: "29dca38ad18f" });
+  root.DJ_CONFIG_META = Object.freeze({ sha: "b73d148", hash: "3528d71817c0" });
   if (typeof module !== "undefined" && module.exports) module.exports = root.DJ_CONFIG;
 })(typeof window !== "undefined" ? window : globalThis);

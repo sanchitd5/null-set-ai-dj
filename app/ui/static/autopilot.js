@@ -2986,6 +2986,22 @@ function createAutopilotEngine({ host, ai }) {
     const ka = od.analysis && od.analysis.key && od.analysis.key.camelot, kb = sd.analysis && sd.analysis.key && sd.analysis.key.camelot;
     return cs && ka && kb ? cs(ka, kb) : null;
   }
+  // STEMONLY readiness: the two decks' stem states as dj-core's stem_hold reads them. B's row comes from the server's readiness
+  // (/api/prerender row: stems, stems_state, stems_eta_s - see wt/STEM_READY_CONTRACT.txt); no ETA = "none" (dj-core then cuts).
+  async function askStemHold(od, sd, nextId, heldPhrases, candidate) {
+    const rd = rdyById[nextId] || {};
+    const bState = sd.stems ? "ready" : rd.stems_state === "failed" ? "failed" : Number.isFinite(rd.stems_eta_s) ? "in_flight" : "none";
+    const aState = stemsWhy(od) ? "none" : "ready";
+    const rate = od._playbackRate ? od._playbackRate() : 1;
+    const body = { a: { state: aState }, b: { state: bState }, bar_s: 240 / ((od.bpm || 128) * rate), held_phrases: heldPhrases,
+      room_s: Math.max(0, exitWindow(candidate.score || 50).hi - deckPosition(activeDeck) - autopilotCore.DEFER_MIN_LEAD_S) };
+    if (bState === "in_flight") body.b.eta_s = Math.max(0, rd.stems_eta_s - (host.clock.now() - (rd.seen_at || host.clock.now())) / 1000);
+    try {
+      const r = await fetch("/api/stem_hold", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      if (r.ok) return await r.json();
+    } catch (e) { console.warn("stem hold:", e && e.message); }
+    return { action: "cut", phrases: 0, hold_s: 0, why: "dj-core unreachable: no hold" };
+  }
   // The booking waits for B's stems and key-locked tempo stems (bounded by autopilotCore.deferBudgetS: to
   // the earliest exit minus the lead the plan needs, at most 100 s). Waiting is pointless, and skipped, when
   // no merge could happen (A has no stems, keys clash, the tempo gap is past the cap). On timeout the
@@ -3027,6 +3043,29 @@ function createAutopilotEngine({ host, ai }) {
       p = probe();
       waited = (host.clock.now() - t0) / 1000;
       d = autopilotCore.deferDecision({ needs: p.r.needs, waitedS: waited, budgetS: budget });
+    }
+    // STEMONLY readiness hold: B's stems still in flight with an ETA inside dj-core's bound -> A plays on phrase by phrase
+    // (the exit moves with it) instead of the no-overlap cut. dj-core decides (service fn stem_hold); past the bound, failed
+    // stems, no ETA or no room it says "cut" and the booking goes on as above.
+    res.heldS = 0; res.heldPhrases = 0;
+    while (p.r.needs.length === 1 && p.r.needs[0] === "stems" && active && currentTrackId === currentId && (gen === undefined || gen === prepGen)) {
+      const hold = await askStemHold(od, sd, nextId, res.heldPhrases, candidate);
+      host.log.step("stem_hold", { track_id: nextId, phase: "planning", decision: hold.action, why: `${nextName}: ${hold.why}`, result: hold });
+      console.info("stem hold:", `${nextName}: ${hold.action} - ${hold.why}`);
+      if (hold.action !== "hold") break;
+      res.heldPhrases += hold.phrases;
+      const until = host.clock.now() + hold.hold_s * 1000;
+      deferNote = `B's stems (holding A ${hold.phrases} phrase${hold.phrases === 1 ? "" : "s"})`;
+      host.session.deferring = true;
+      while (host.clock.now() < until && p.r.needs.length) {
+        apStatus(`Holding for ${nextName}'s stems (${Math.round((until - host.clock.now()) / 1000)} s left)`);
+        await new Promise((r) => setTimeout(r, 1000));
+        if (!active || currentTrackId !== currentId || (gen !== undefined && gen !== prepGen)) break;
+        prepStartedAt = host.clock.now();
+        p = probe();
+      }
+      res.heldS += hold.hold_s;
+      waited = (host.clock.now() - t0) / 1000;
     }
     deferNote = null;
     host.session.deferring = false;
