@@ -634,7 +634,7 @@ if (typeof HoldPolicy === "undefined" && typeof require === "function") require(
     const LIFT = 1.25;                 // ~+2 dB on A's voice + synths once its beat is gone (no sag)
     const swapAt = bEntry - 3 * barB;  // tonal layers change hands here, equal power over 2 B-bars
     const intro = o.intro === "drums" || (keyClash && o.intro !== "other") ? "drums" : "other";
-    const lvl = o.introLevel || (intro === "drums" ? 0.5 : 0.7);
+    const lvl = o.introLevel || (intro === "drums" ? 0.5 : 0.9);
     const ev = [
       { t: 0, deck: "out", stems: { drums: 0, vocals: LIFT, other: LIFT }, ramp: barA },
       { t: 2 * barA, deck: "out", stems: { bass: 0 }, ramp: barA },
