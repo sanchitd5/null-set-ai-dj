@@ -19,6 +19,7 @@ from app.music_brain.analysis import lang_id
 
 RESCAN_S = 600.0
 IDLE_POLL_S = 5.0
+MAX_IDLE_WAIT_S = 900.0        # the backfill waits for an idle LLM at most this long per song (a set that never ends must not starve it)
 
 _cv = threading.Condition()
 _urgent: List[str] = []
@@ -70,6 +71,21 @@ def _next() -> Tuple[Optional[str], bool]:
     return None, False
 
 
+def _wait_idle(tid: str, llm_busy: Callable[[], bool], sleep: Callable[[float], None] = time.sleep,
+               max_wait_s: float = MAX_IDLE_WAIT_S) -> bool:
+    """The backfill waits for an idle LLM (a fresh download does not). False = an urgent id arrived meanwhile: tid is put
+    back at the head of the backlog and the caller takes the urgent one. True = idle, or max_wait_s passed (never starve)."""
+    waited = 0.0
+    while llm_busy() and waited < max_wait_s:
+        with _cv:
+            if _urgent:
+                _backlog.insert(0, tid)
+                return False
+        sleep(IDLE_POLL_S)
+        waited += IDLE_POLL_S
+    return True
+
+
 def start(tracks: Callable[[], Dict], names: Callable[[], Dict], vocal_of: Callable[[str], Optional[str]],
           llm_busy: Callable[[], bool], is_song: Callable[[str], bool]) -> None:
     """Start the worker once. tracks() -> {track_id: path}; vocal_of(track_id) -> cached vocal stem path or None
@@ -97,8 +113,8 @@ def start(tracks: Callable[[], Dict], names: Callable[[], Dict], vocal_of: Calla
                 with _cv:
                     _cv.wait(timeout=IDLE_POLL_S)
                 continue
-            while not urgent and llm_busy():            # the backfill waits for an idle LLM; a fresh download does not
-                time.sleep(IDLE_POLL_S)
+            if not urgent and not _wait_idle(tid, llm_busy):
+                continue                                # an urgent id arrived while waiting: it goes first, this one is back in the queue
             vocal = None
             try:
                 vocal = vocal_of(tid)

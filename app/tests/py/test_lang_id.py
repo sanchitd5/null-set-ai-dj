@@ -181,3 +181,27 @@ def test_paused_worker_takes_no_queued_id():
         lang_service._urgent[:] = saved[0]
         lang_service._backlog[:] = saved[1]
         lang_service._state.update(saved[2])
+
+
+def test_backfill_wait_yields_to_an_urgent_id_and_never_starves():
+    """A backlog song waiting for an idle LLM must not hold up a fresh download (urgent), and gives up waiting eventually."""
+    saved = (list(lang_service._urgent), list(lang_service._backlog))
+    lang_service._urgent[:] = []
+    lang_service._backlog[:] = []
+    try:
+        calls = {"n": 0}
+
+        def busy():
+            calls["n"] += 1
+            if calls["n"] == 2:
+                lang_service._urgent.append("fresh")     # a download finishes while the worker waits
+            return True
+
+        assert lang_service._wait_idle("old", busy, sleep=lambda s: None) is False
+        assert lang_service._backlog == ["old"] and lang_service._next() == ("fresh", True)
+        # a never idle LLM: the wait ends after max_wait_s and the song is processed
+        lang_service._urgent[:] = []
+        assert lang_service._wait_idle("old2", lambda: True, sleep=lambda s: None, max_wait_s=20.0) is True
+    finally:
+        lang_service._urgent[:] = saved[0]
+        lang_service._backlog[:] = saved[1]
