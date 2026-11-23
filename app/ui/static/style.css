@@ -1858,12 +1858,12 @@ html.phone-lite .build-banner button { min-height: 44px; }
 .song-menu-pop .sm-head { font-size: 9px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--outline); }
 .song-menu-pop .sm-body { display: flex; flex-direction: column; gap: 6px; }
 .song-menu-pop .sm-load { color: var(--outline); padding: 4px 0; }
-.song-menu-act { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; text-align: left; padding: 7px 9px; border-radius: var(--r-sm);
+.song-menu-act { display: grid; min-width: 0; width: 100%; box-sizing: border-box; grid-template-columns: 1fr auto; gap: 2px 8px; text-align: left; padding: 7px 9px; border-radius: var(--r-sm);
   background: var(--s-high); color: inherit; border: 1px solid transparent; font: inherit; cursor: pointer; }
 .song-menu-act:hover { border-color: var(--accent); }
 .song-menu-act .sm-name { font-weight: 700; }
 .song-menu-act .sm-chip { font-size: 9px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; align-self: center; }
-.song-menu-act .sm-why { grid-column: 1 / -1; font-size: 10px; color: var(--outline); }
+.song-menu-act .sm-why { grid-column: 1 / -1; font-size: 10px; color: var(--outline); text-transform: none; letter-spacing: 0; white-space: normal; overflow-wrap: anywhere; min-width: 0; }
 .song-menu-act.sm-available .sm-chip { color: #4ade80; }
 .song-menu-act.sm-preparing .sm-chip { color: #fbbf24; }
 .song-menu-act.sm-no { opacity: 0.6; cursor: not-allowed; }
