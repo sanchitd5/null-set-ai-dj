@@ -206,11 +206,12 @@ def _archive(src, dst):
     os.replace(dst + ".tmp", dst)
 
 
-def publish(d, keep):
-    """d holds the freshly pushed null-set-dj.apk + null-set-dj.json. Returns the patch list written to the json."""
-    apk, meta_path = os.path.join(d, "null-set-dj.apk"), os.path.join(d, "null-set-dj.json")
+def publish(d, keep, suffix=""):
+    """d holds the freshly pushed null-set-dj<suffix>.apk + .json. Returns the patch list written to the json.
+    suffix "" = the arm64 build (the files old phones read); "-v7a" = the 32-bit build, own history/ and patches/."""
+    apk, meta_path = os.path.join(d, "null-set-dj%s.apk" % suffix), os.path.join(d, "null-set-dj%s.json" % suffix)
     meta = json.load(open(meta_path))
-    hist, patches_dir = os.path.join(d, "history"), os.path.join(d, "patches")
+    hist, patches_dir = os.path.join(d, "history" + suffix), os.path.join(d, "patches" + suffix)
     os.makedirs(hist, exist_ok=True)
     os.makedirs(patches_dir, exist_ok=True)
     code = int(meta["version_code"])
@@ -266,6 +267,7 @@ def main(argv=None):
     p = sub.add_parser("publish")
     p.add_argument("--dir", required=True)
     p.add_argument("--keep", type=int, default=int(os.environ.get("APK_KEEP", "3")))
+    p.add_argument("--suffix", default="", choices=["", "-v7a"])
     args = ap.parse_args(argv)
     if args.cmd == "make":
         print("patch %d bytes" % make_patch(args.old, args.new, args.out))
@@ -273,7 +275,7 @@ def main(argv=None):
         apply_patch(args.old, args.patch, args.out)
         print("ok")
     else:
-        for e in publish(args.dir, args.keep):
+        for e in publish(args.dir, args.keep, args.suffix):
             print("patch from %d: %d bytes" % (e["from_version_code"], e["patch_size"]))
     return 0
 

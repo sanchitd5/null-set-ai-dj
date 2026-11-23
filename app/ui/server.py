@@ -3960,18 +3960,36 @@ _PATCH_KEYS = ("from_version_code", "from_sha256", "sha256", "patch_sha256", "pa
 ANDROID_PATCH_DIR = None   # tests; default: <apk dir>/patches, written by deploy/apk_delta.py
 
 
-def _android_patch_dir() -> Path:
-    return ANDROID_PATCH_DIR or ANDROID_APK.parent / "patches"
+def _android_patch_dir(suffix: str = "") -> Path:
+    return ANDROID_PATCH_DIR or ANDROID_APK.parent / ("patches" + suffix)
+
+
+# Per-ABI builds: no `abi` query = the arm64 files (what phones released before AB-2 read, unchanged). The 32-bit build
+# lives beside them as null-set-dj-v7a.apk/.json + patches-v7a/ (deploy/push_apk.sh --abi armeabi-v7a).
+_ABI_SUFFIX = {"arm64-v8a": "", "armeabi-v7a": "-v7a"}
+
+
+def _android_files(abi: str | None) -> tuple[Path, Path, str]:
+    if abi is None:
+        abi = "arm64-v8a"
+    if abi not in _ABI_SUFFIX:
+        raise HTTPException(status_code=404, detail="no Android build for that ABI")
+    suf = _ABI_SUFFIX[abi]
+    if not suf:
+        return ANDROID_APK, ANDROID_META, suf
+    return (ANDROID_APK.with_name(f"{ANDROID_APK.stem}{suf}.apk"), ANDROID_META.with_name(f"{ANDROID_META.stem}{suf}.json"), suf)
 
 
 @app.get("/api/app/android.json")
-def get_android_meta(from_: int | None = Query(None, alias="from", ge=0)):
+def get_android_meta(from_: int | None = Query(None, alias="from", ge=0), abi: str | None = None):
     """Version info for the in-app updater, from the sidecar the push script writes next to the APK.
-    `?from=<build number the phone runs>` adds `patch` (a delta from that build, see android.patch) when one exists."""
-    if not (ANDROID_APK.is_file() and ANDROID_META.is_file()):
+    `?from=<build number the phone runs>` adds `patch` (a delta from that build, see android.patch) when one exists.
+    `?abi=armeabi-v7a` serves the 32-bit build's entry; no `abi` = the arm64 one."""
+    apk, meta_file, suf = _android_files(abi)
+    if not (apk.is_file() and meta_file.is_file()):
         raise HTTPException(status_code=404, detail="no Android build on this server")
     try:
-        meta = json.loads(ANDROID_META.read_text("utf-8"))
+        meta = json.loads(meta_file.read_text("utf-8"))
         out = {k: meta[k] for k in _META_KEYS}
     except (ValueError, KeyError, TypeError, OSError):
         raise HTTPException(status_code=404, detail="Android build info is unreadable")
@@ -3982,7 +4000,7 @@ def get_android_meta(from_: int | None = Query(None, alias="from", ge=0)):
     if from_ is not None:
         for p in meta.get("patches") or []:
             try:
-                if p["from_version_code"] == from_ and (_android_patch_dir() / f"{from_}.patch").is_file():
+                if p["from_version_code"] == from_ and (_android_patch_dir(suf) / f"{from_}.patch").is_file():
                     out["patch"] = {k: p[k] for k in _PATCH_KEYS}
                     break
             except (KeyError, TypeError):
@@ -4018,20 +4036,21 @@ def get_android_changelog():
 
 
 @app.get("/api/app/android.patch")
-def get_android_patch(from_: int = Query(..., alias="from", ge=0)):
+def get_android_patch(from_: int = Query(..., alias="from", ge=0), abi: str | None = None):
     """Binary delta from build `from` to the current build (deploy/apk_delta.py); same login as the APK."""
-    path = _android_patch_dir() / f"{from_}.patch"   # `from_` is an int: no path traversal
+    path = _android_patch_dir(_android_files(abi)[2]) / f"{from_}.patch"   # `from_` is an int: no path traversal
     if not path.is_file():
         raise HTTPException(status_code=404, detail="no patch from that build")
     return FileResponse(path, media_type="application/octet-stream", filename=f"{from_}.patch")
 
 
 @app.get("/api/app/android.apk")
-def get_android_apk():
-    """The current Android build, behind the console login (copied in by the deploy, never in git)."""
-    if not ANDROID_APK.is_file():
+def get_android_apk(abi: str | None = None):
+    """The current Android build, behind the console login (copied in by the deploy, never in git). `?abi=armeabi-v7a`: the 32-bit one."""
+    apk = _android_files(abi)[0]
+    if not apk.is_file():
         raise HTTPException(status_code=404, detail="no Android build on this server")
-    return FileResponse(ANDROID_APK, media_type="application/vnd.android.package-archive",
+    return FileResponse(apk, media_type="application/vnd.android.package-archive",
                         filename="null-set-dj.apk")
 
 

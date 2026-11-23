@@ -191,3 +191,56 @@ def test_push_script_dry_run_publishes_patches(tmp_path):
     assert "apk_delta.py\" publish" in run().stdout and "--keep" in run().stdout
     assert "scp -P 2298 " in run("--no-patches").stdout and ":/root/apk_delta.py" not in run("--no-patches").stdout
     assert run("--keep", "0").returncode != 0
+
+
+# ---- per-ABI (AB-2a) ----------------------------------------------------------------------------------------
+
+def test_v7a_build_is_served_beside_arm64_and_default_is_arm64(served):
+    V7 = {**META, "version_code": 9, "sha256": "12" * 32}
+    (served / "null-set-dj-v7a.apk").write_bytes(b"v7apk")
+    (served / "null-set-dj-v7a.json").write_text(json.dumps({**V7, "patches": [{**PATCH, "sha256": V7["sha256"]}]}))
+    (served / "patches-v7a").mkdir()
+    (served / "patches-v7a" / "6.patch").write_bytes(b"V7PATCH")
+    c = TestClient(server.app)
+    assert c.get("/api/app/android.json").json() == META                                   # old phones: unchanged
+    assert c.get("/api/app/android.json?abi=arm64-v8a").json() == META
+    assert c.get("/api/app/android.json?abi=armeabi-v7a").json() == V7
+    assert c.get("/api/app/android.json?abi=armeabi-v7a&from=6").json()["patch"]["sha256"] == V7["sha256"]
+    assert c.get("/api/app/android.apk?abi=armeabi-v7a").content == b"v7apk"
+    assert c.get("/api/app/android.apk").content == b"x"
+    assert c.get("/api/app/android.patch?from=6&abi=armeabi-v7a").content == b"V7PATCH"
+    assert c.get("/api/app/android.patch?from=6").content == b"PATCH"
+    assert c.get("/api/app/android.json?abi=x86").status_code == 404
+
+
+def test_v7a_missing_is_404_not_arm64(served):
+    c = TestClient(server.app)
+    assert c.get("/api/app/android.json?abi=armeabi-v7a").status_code == 404
+    assert c.get("/api/app/android.apk?abi=armeabi-v7a").status_code == 404
+
+
+def test_publish_suffix_keeps_v7a_history_and_patches_separate(tmp_path):
+    d = tmp_path / "app"
+    d.mkdir()
+    for code in (1, 2):
+        b = make_apk(tmp_path / f"b{code}.apk", {**OLD, "classes.dex": (_blob(code, 80_000), True)})
+        (d / "null-set-dj-v7a.apk").write_bytes(b.read_bytes())
+        (d / "null-set-dj-v7a.json").write_text(json.dumps({"version_code": code, "sha256": sha(b), "size": b.stat().st_size}))
+        out = delta.publish(str(d), 3, "-v7a")
+    assert [p["from_version_code"] for p in out] == [1]
+    assert sorted(os.listdir(d / "history-v7a")) == ["1.apk", "2.apk"] and os.listdir(d / "patches-v7a") == ["1.patch"]
+    assert not (d / "history").exists() and not (d / "null-set-dj.json").exists()
+
+
+def test_push_script_v7a_uses_suffixed_files_and_skips_changelog(tmp_path):
+    apk = tmp_path / "app.apk"
+    apk.write_bytes(b"hello")
+    run = lambda *extra: subprocess.run(
+        ["bash", str(ROOT / "deploy" / "push_apk.sh"), "--dry-run", "--build-name", "1.0.0-x", "--build-number", "7",
+         "--out-dir", str(tmp_path), *extra, str(apk), "n"], capture_output=True, text=True)
+    out = run("--abi", "armeabi-v7a")
+    assert out.returncode == 0 and "/root/null-set-dj-v7a.apk" in out.stdout and "/root/null-set-dj-v7a.json" in out.stdout
+    assert ":/root/changelog.py" not in out.stdout.split("bash -s")[0] and (tmp_path / "null-set-dj-v7a.json").is_file()
+    assert "/root/null-set-dj.apk" not in out.stdout
+    assert ":/root/changelog.py" in run().stdout and "/root/null-set-dj-v7a" not in run().stdout
+    assert run("--abi", "x86").returncode != 0
