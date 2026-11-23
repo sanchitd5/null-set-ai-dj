@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 from app.music_brain import djcore_bridge, song_store
 from app.music_brain.matching import techniques as tq
 from app.ui.services import lyric_remix_api as lra
+from app.ui.services import lyric_remix_ondemand as od
 
 router = APIRouter()
 MAX_BS = 50
@@ -80,11 +81,10 @@ def build_ctx(a: str, b: str, an_a: Optional[dict], an_b: Optional[dict], doc: d
         "barS": 240.0 / bpm_a if isinstance(bpm_a, (int, float)) and bpm_a > 0 else 0,
         "keyScore": tq.camelot_score(ka, kb) if ka and kb else None,
         "stems": {"a": stems_a, "b": stems_b}, "plans": plans, "lines": {"a": lines[a], "b": lines[b]},
-        # plans come only from the precomputed data file: a pair without one cannot be made on demand here
         "canPlan": False,
     }
-    if not plans and lines[a] > 0 and lines[b] > 0:
-        ctx.update(planState="failed", planReason="no lyric remix has been made for these two songs yet")
+    if not plans:
+        ctx.update(od.ctx_fields(doc, a, b))              # no precomputed plan: made on demand (planState / ETA / plain reason)
     if an_a:
         ctx["aAnalysis"] = {k: an_a[k] for k in ("duration", "music_span", "sections") if k in an_a}     # what song bounds read
     return ctx

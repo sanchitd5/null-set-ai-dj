@@ -12,14 +12,14 @@ const SongMenu = {
   esc(v) {
     return String(v == null ? "" : v).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   },
+  etaText(eta) { return Number.isFinite(eta) && eta > 0 ? ` (about ${Math.round(eta)} s)` : ""; },
   // The words under a move: state chip + a plain sentence. eta_s is shown only when the server knows it.
   describe(action) {
     const a = action || {};
     const reason = String(a.reason || "").trim();
     if (a.state === "available") return { cls: "sm-available", chip: "Ready", text: reason, enabled: true };
     if (a.state === "preparing") {
-      const eta = Number.isFinite(a.eta_s) && a.eta_s > 0 ? ` (about ${Math.round(a.eta_s)} s)` : "";
-      return { cls: "sm-preparing", chip: "Getting ready", text: (reason || "preparing") + eta, enabled: true };
+      return { cls: "sm-preparing", chip: "Getting ready", text: (reason || "preparing") + SongMenu.etaText(a.eta_s), enabled: true };
     }
     return { cls: "sm-no", chip: "Not possible", text: reason || "not possible for these two songs", enabled: false };
   },
@@ -140,10 +140,39 @@ if (typeof module !== "undefined" && module.exports) module.exports = SongMenu;
     note(r && r.ok === false ? `Vocal swap not played: ${r.why}` : "Vocal swap booked at the next phrase.");
   }
 
+  // A lyric remix with no plan yet is planned on the server now (one at a time, ~40 s): start it, show the ETA, wait, then re-read the answer.
+  async function preparePlan(aId, bId) {
+    const stat = async (method) => {
+      const q = `a=${encodeURIComponent(aId)}&b=${encodeURIComponent(bId)}`;
+      const res = method === "POST"
+        ? await fetch("/api/song_menu/plan", { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ a: aId, b: bId }) })
+        : await fetch(`/api/song_menu/plan?${q}`);
+      if (!res.ok) throw new Error(res.statusText);
+      return res.json();
+    };
+    let st = await stat("POST");
+    for (let i = 0; i < 100 && st.state === "in_flight"; i++) {
+      note(`Lyric remix: getting ready${SongMenu.etaText(st.eta_s)}…`);
+      await new Promise((r) => setTimeout(r, 2000));
+      const now = deckState();
+      if (!now.playing || now[now.playing] !== aId) throw new Error("the song playing changed");
+      st = await stat("GET");
+    }
+    if (st.state === "failed") throw new Error(st.reason || "no lyric remix could be made for these two songs");
+    if (st.state !== "done") throw new Error("the lyric remix took too long to get ready");
+    cache.delete(`${aId}|${bId}`);
+    await fetchActions([bId]);
+  }
+
   async function pick(kind, bId) {
     close();
     try {
-      const aId = await fetchActions([bId]);
+      let aId = await fetchActions([bId]);
+      const first = aId && itemFor(aId, bId) && itemFor(aId, bId)[kind];
+      if (kind === "lyricRemix" && first && first.plan_needed && !first.plan && SongMenu.describe(first).enabled) {
+        await preparePlan(aId, bId);
+        aId = deckState().playing ? deckState()[deckState().playing] : null;
+      }
       const plan = SongMenu.steps(kind, bId, aId ? itemFor(aId, bId) && itemFor(aId, bId)[kind] : null, deckState());
       if (plan.error) return note(plan.error);
       askStems(aId); askStems(bId);

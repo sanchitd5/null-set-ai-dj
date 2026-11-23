@@ -14,6 +14,9 @@ assert.deepStrictEqual([n.chip, n.text, n.enabled], ["Not possible", "the keys d
 assert.strictEqual(S.describe(null).enabled, false);
 assert(!/camelot|eta_s|plan_needed|gate/i.test(JSON.stringify([p, n])), "no jargon");
 
+assert.strictEqual(S.etaText(41.6), " (about 42 s)"); assert.strictEqual(S.etaText(null), ""); assert.strictEqual(S.etaText(0), "");
+assert.strictEqual(S.describe({ state: "preparing", reason: "making the lyric remix plan", eta_s: 30 }).text, "making the lyric remix plan (about 30 s)");
+
 // batching: only ids without a fresh answer, never the playing song, no duplicates, capped
 const cache = new Map([["A|b1", { at: 1000 }], ["A|b2", { at: 100 }]]);
 assert.deepStrictEqual(S.missing(["A", "b1", "b2", "b3", "b3", ""], cache, "A", 1000 + S.TTL_MS - 1), ["b2", "b3"]);

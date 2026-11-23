@@ -4102,6 +4102,8 @@ def _stored_analysis(tid: str) -> Optional[dict]:
 
 _song_menu_api.configure(analysis=_stored_analysis, stem_readiness=stem_readiness)
 app.include_router(_song_menu_api.router)
+from app.ui.services import lyric_remix_ondemand as _lyric_remix_ondemand  # noqa: E402 -- lyric remix plans made on demand (one at a time)
+app.include_router(_lyric_remix_ondemand.router)
 from app.ui.services.mobile_api import router as _mobile_router  # noqa: E402 -- phone ("lite" console) wrappers
 
 app.include_router(_mobile_router)
