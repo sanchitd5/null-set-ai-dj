@@ -270,6 +270,13 @@ class Deck {
         if (res.ok) {
           const analysis = await res.json();
           this.analysis = analysis;
+          // dj-core song_bounds (server play_bounds): the deck cues and starts at the real music, not the trimmed head
+          const ps = analysis.play_bounds && analysis.play_bounds.play_start;
+          if (ps > 0 && ps < this.buffer.duration) {
+            this.trimStart = ps;
+            this.cuePoint = ps;
+            if (!this.playing) this.startOffset = ps;
+          }
           if (analysis.bpm > 0) this.bpm = analysis.bpm;
           this._loadVocals(trackId, analysis);
           this.fame = null;

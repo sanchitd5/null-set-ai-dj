@@ -1058,7 +1058,17 @@ var autopilotCore = (function () {
   // A 10 s silent tail on BICEP and leavemealone's -180 dB last second came from
   // planning against the raw buffer length.
   const SILENT_FLOOR = 0.01, SILENT_TAIL_MIN_S = 2, END_ROOM_S = 60;
+  // The server's play_bounds (dj-core song_bounds, CLEANLIB): the real music's window, ads / talk / credits trimmed.
+  // No bounds arithmetic here: the numbers come from the service, this only reads them.
+  function playStart(analysis) {
+    const b = analysis && analysis.play_bounds, s = b && b.play_start;
+    return s > 0 ? s : 0;
+  }
   function audibleEnd(analysis, dur) {
+    const e = audibleEndEnergy(analysis, dur), b = analysis && analysis.play_bounds, pe = b && b.play_end;
+    return pe > 0 && pe < e ? pe : e;
+  }
+  function audibleEndEnergy(analysis, dur) {
     const tt = analysis && analysis.energy_times, cv = analysis && analysis.energy_curve;
     if (!(dur > 0) || !tt || !cv || !tt.length || tt.length !== cv.length) return dur;
     let i = cv.length - 1;
@@ -1070,8 +1080,10 @@ var autopilotCore = (function () {
   }
   // A song must not be started in its last END_ROOM_S seconds (Sabrina loaded at
   // 199 s of 208): pull the start back so there is room to play.
-  function entryClamp(t, endS) {
-    return endS > END_ROOM_S && t > endS - END_ROOM_S ? endS - END_ROOM_S : t;
+  // startS (play_start): never before the real music begins.
+  function entryClamp(t, endS, startS) {
+    const c = endS > END_ROOM_S && t > endS - END_ROOM_S ? endS - END_ROOM_S : t;
+    return Math.max(c, startS || 0);
   }
   // Room a late entry must leave: B's whole play window (same length as ever) plus the next
   // transition, never inside entryClamp's last END_ROOM_S. w: a WINDOWS row.
@@ -1261,7 +1273,7 @@ var autopilotCore = (function () {
   const api = { languageRefusal, deadlineTail, earlierInScene, deckIdentity, bookingMismatch, pickReset, SCENE_SHIFT_AFTER, prerenderTargets, readinessNeeds, aTempoAtEntry, deferBudgetS, deferDecision, orderByReadiness, DEFER_MAX_S, DEFER_MIN_LEAD_S, PREFER_READY_JUMP,
     emptyRetryMs, useLibraryFallback, searchPlan, DEADLINE_LEAD_S, preparedWait, PREPARED_LEAD_S, gateWhy, candSource, deckEvent,
     sceneAnchorNext, sceneAnchorBad, sceneOrder, SCENE_ORDER, rankAtlasBackups, crossBackups, measuredWaiver, deadlineStuck, stuckBackups, STUCK_AFTER_HOLDS, macroFallback, backupStale, backupNeedsStems, rememberPairReject, pairRejected, awaitJob, keySafeRecipe, KEY_SAFE_MIN, energyStepOk, hybridWindowKey, highSpans, quantileLinear, median, exitPastHigh, learnedRecipe, vocalRecipe, stemBlendBars, stemBlendFader, phraseWaitS, introBars, FADER_PARK_BARS, homePlan, maskedGlideBars, maskedDropAt, HOME_DROP_PCT, LADDER_STEP_PCT,
-    tempoLockableAt, recipeKind, decideRecipe, planSkipReason, WINDOWS, RAPID_WINDOW, searchLeadS, playWindowFor, exitBounds, exitPick, exitTiming, exitHighPush, planWithRoom, audibleEnd, entryClamp, SILENT_FLOOR,
+    tempoLockableAt, recipeKind, decideRecipe, planSkipReason, WINDOWS, RAPID_WINDOW, searchLeadS, playWindowFor, exitBounds, exitPick, exitTiming, exitHighPush, planWithRoom, audibleEnd, entryClamp, playStart, SILENT_FLOOR,
     breakdownSpans, exitOutOfBreakdown, exitBreakdownPush, energyAtTarget, FINISH_MAX_S, forcedExit, forcedRecipe, forcedLine, forcedBooking,
     storedMove, vetRefusal, vetStep, badPairOf, pairKey, mashupGate, mashupBars,
     sleepPlan, SLEEP_FADE_S, setEnergy, arcAt, windowLevel, energyRecipeChoice, pickEntryByEnergy, ARC_TARGET, SET_RECENT, SET_ARC_W, SET_RELAXED_MAX, SET_HIGH_MIN, ENERGY_MATCH_TOL,
@@ -4589,7 +4601,7 @@ function createAutopilotEngine({ host, ai }) {
       }
       const leadS = Math.max(0.05, (fireAt - deckPosition(activeDeck)) / rateA);
       const t0 = audioCtx.currentTime + leadS;
-      if (sd && sd.buffer) bTime = autopilotCore.entryClamp(bTime, autopilotCore.audibleEnd(sd.analysis, sd.buffer.duration));
+      if (sd && sd.buffer) bTime = autopilotCore.entryClamp(bTime, autopilotCore.audibleEnd(sd.analysis, sd.buffer.duration), autopilotCore.playStart(sd.analysis));
       if (sd) sd.play(bTime, false, t0);
       // LAYER: B "arrives" at the bass hand-off; its play window counts from there
       const nextEntry = layer ? layer.b_swap : bTime;
@@ -5364,7 +5376,7 @@ function createAutopilotEngine({ host, ai }) {
     // a merge plays B itself from its plan's line; every other move needs B running from the stored entry
     // preview only (stem-preview --set-energy): the set-energy choice refused the mashup; stored steps never carry it
     energyNoMashup = !!f.energy_no_mashup && fb.recipe !== "Mashup → Transition";
-    if (fb.recipe !== "Stem Merge") idk.play(autopilotCore.entryClamp(fb.bT || 0, autopilotCore.audibleEnd(idk.analysis, idk.buffer.duration)), false, o.t0);
+    if (fb.recipe !== "Stem Merge") idk.play(autopilotCore.entryClamp(fb.bT || 0, autopilotCore.audibleEnd(idk.analysis, idk.buffer.duration), autopilotCore.playStart(idk.analysis)), false, o.t0);
     const res = { ok: true, ran: fb.recipe, refused: fb.refused, line: fb.line };
     fireOnLine(o.t0, () => {
       const totalMs = executeTransition(fb.recipe, o.out, o.inn, 16, o.t0);

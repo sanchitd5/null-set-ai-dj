@@ -255,6 +255,14 @@ console.log("autopilot core ok");
   assert.strictEqual(audibleEnd({ energy_times: tailTimes, energy_curve: tail }, 278), 268);   // BICEP
   assert.strictEqual(audibleEnd({ energy_times: times, energy_curve: loud }, 268.4), 268.4);   // no tail
   assert.strictEqual(audibleEnd(null, 200), 200);
+  // dj-core play_bounds (CLEANLIB): trimmed head / tail from the server, never computed here
+  const pb = { play_bounds: { play_start: 8, play_end: 190 } };
+  assert.strictEqual(audibleEnd(pb, 200), 190);
+  assert.strictEqual(audibleEnd({ play_bounds: { play_start: 0, play_end: null } }, 200), 200);
+  assert.strictEqual(autopilotCore.playStart(pb), 8);
+  assert.strictEqual(autopilotCore.playStart(null), 0);
+  assert.strictEqual(entryClamp(2, 190, autopilotCore.playStart(pb)), 8);                     // never before the real music
+  assert.strictEqual(entryClamp(30, 190, 8), 30);
   assert.strictEqual(audibleEnd({ energy_times: [], energy_curve: [] }, 200), 200);
   assert.strictEqual(audibleEnd({ energy_times: [0, 1], energy_curve: [0, 0] }, 200), 200);    // all quiet: no evidence
   assert.strictEqual(entryClamp(199.06, 208), 148);                                            // Sabrina
