@@ -30,7 +30,7 @@ from app.ui.services.ranged_file import RangedFileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from app.music_brain import song_store
+from app.music_brain import play_bounds, song_store
 from app.music_brain.analysis import lang_id
 from app.ui.services import excluded_songs
 from app.music_brain.analysis.analyzer import analyze as analyze_track
@@ -730,7 +730,9 @@ def scan_configured_library():
 @_bounded
 def _analysis_miss(track_id: str, path) -> dict:
     """Full analysis (decode + compute): holds one HEAVY_SLOTS seat so a burst of misses can't starve the pool."""
-    return {**analyze_track(path).to_dict(), "art_url": album_art.art_url(track_id), "language": lang_id.public(lang_id.get(track_id))}
+    out = {**analyze_track(path).to_dict(), "art_url": album_art.art_url(track_id), "language": lang_id.public(lang_id.get(track_id))}
+    play_bounds.attach([out])
+    return out
 
 
 def _kick_yt_related(track_id: str) -> None:
@@ -757,7 +759,9 @@ async def get_analysis(track_id: str):
     hit = await run_in_threadpool(analyzer.cached_analysis, path)   # stored record: ~ms, no heavy slot
     _kick_yt_related(track_id)
     if hit is not None:
-        return {**hit.to_dict(), "art_url": album_art.art_url(track_id), "language": lang_id.public(lang_id.get(track_id))}
+        out = {**hit.to_dict(), "art_url": album_art.art_url(track_id), "language": lang_id.public(lang_id.get(track_id))}
+        await run_in_threadpool(play_bounds.attach, [out])   # dj-core song_bounds: decks start at play_start, plans stay inside play_end
+        return out
     return await _analysis_miss(track_id, path)
 
 
@@ -784,6 +788,7 @@ def post_analysis_batch(req: AnalysisBatchRequest):
         except HTTPException:
             pass
         out[tid] = {**res.to_dict(), "art_url": album_art.art_url(tid), "language": lang_id.public(lang_id.get(tid))} if res else None
+    play_bounds.attach(list(out.values()))
     return out
 
 
