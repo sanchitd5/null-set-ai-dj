@@ -23,6 +23,20 @@ def test_bounded_cache_is_lru_and_dict_like():
         BoundedCache(0)
 
 
+def test_bounded_cache_setdefault_like_dict():
+    # the stem prep for a pick calls _stem_pick_at.setdefault (it raised AttributeError, so no pick ever started a split)
+    c = BoundedCache(2)
+    assert c.setdefault("a", 1) == 1 and c.setdefault("a", 9) == 1
+    c.setdefault("b", 2)
+    c.setdefault("c", 3)                      # past maxsize: the oldest ("a") goes
+    assert "a" not in c and c.get("c") == 3 and len(c) == 2
+
+
+def test_stem_pick_cache_supports_setdefault():
+    assert server._stem_pick_at.setdefault("t-x", 1.0) == 1.0
+    server._stem_pick_at.pop("t-x", None)
+
+
 @pytest.mark.parametrize("name", ["_stem_cache", "_vocal_entry_cache", "_voiced_cache", "_hook_drop_cache", "_pair_cache"])
 def test_server_caches_stay_bounded(name):
     cache = getattr(server, name)
