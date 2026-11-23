@@ -22,6 +22,9 @@
 # Release notes: the same push also appends this build's NOTES to changelog.json next to the APK (deploy/changelog.py;
 # idempotent per build number, older entries kept), which the app's "What's new" page reads from /api/app/changelog.
 # One-time history seed: deploy/push_changelog_seed.sh.
+# 32-bit build: --abi armeabi-v7a publishes the armeabi-v7a APK as null-set-dj-v7a.apk/.json (own history-v7a/, patches-v7a/);
+# the arm64 files stay untouched and are what old phones read. The phone asks for it with ?abi=armeabi-v7a. Run the push twice
+# (arm64 first, then --abi armeabi-v7a with the same notes); the changelog entry is written by the arm64 push only.
 # Force update: --block 15,16 lists builds that must update ("blocked_version_codes" in android.json): a phone on one of
 # them skips its normal start and opens the update screen. Without --block the earlier list is kept (apk_delta.py
 # carries it over, so not with --no-patches); --block none clears it. Block only builds older than the one you publish.
@@ -29,11 +32,13 @@ set -euo pipefail
 
 HOST_PORT="${HOST_PORT:-2298}" HOST="${HOST:-pve}" CT="${CT:-116}"   # pve = ssh alias (~/.ssh/config); override HOST/HOST_PORT/CT from env
 DEST=/opt/null-set-ai-dj/data/cache/app
+ABI=arm64-v8a SUF=""
 DRY=0 NAME="" CODE="" PUBSPEC="" OUT="" KEEP="${APK_KEEP:-3}" PATCHES=1 BLOCK=""
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY=1; shift ;;
+    --abi) ABI="${2:?}"; shift 2 ;;
     --keep) KEEP="${2:?}"; shift 2 ;;
     --no-patches) PATCHES=0; shift ;;
     --build-name) NAME="${2:?}"; shift 2 ;;
@@ -47,6 +52,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 APK="${1:?usage: push_apk.sh [opts] APK NOTES}"; NOTES="${2:?notes}"
+case "$ABI" in arm64-v8a) SUF="" ;; armeabi-v7a) SUF="-v7a" ;; *) echo "--abi must be arm64-v8a or armeabi-v7a: $ABI" >&2; exit 2 ;; esac
 [ -f "$APK" ] || { echo "no such file: $APK" >&2; exit 1; }
 
 if [ -z "$NAME" ] || [ -z "$CODE" ]; then
@@ -64,7 +70,7 @@ case "$BLOCK" in ''|none) ;; *[!0-9,]*|,*|*,|*,,*) echo "--block takes build num
 
 if command -v sha256sum >/dev/null 2>&1; then SHA=$(sha256sum "$APK" | awk '{print $1}'); else SHA=$(shasum -a 256 "$APK" | awk '{print $1}'); fi
 SIZE=$(stat -c %s "$APK" 2>/dev/null || stat -f %z "$APK")
-OUT="${OUT:-$(mktemp -d)}"; JSON="$OUT/null-set-dj.json"
+OUT="${OUT:-$(mktemp -d)}"; JSON="$OUT/null-set-dj$SUF.json"
 NAME="$NAME" CODE="$CODE" SHA="$SHA" SIZE="$SIZE" NOTES="$NOTES" BLOCK="$BLOCK" TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)" python3 - "$JSON" <<'PY'
 import json, os, sys
 meta = {"version_name": os.environ["NAME"], "version_code": int(os.environ["CODE"]), "sha256": os.environ["SHA"],
@@ -78,36 +84,38 @@ echo "wrote $JSON (sha256 $SHA, $SIZE bytes)"
 # Host-side script: runs on Proxmox, so `pct` is available.
 HOSTSCRIPT=$(cat <<'H'
 set -euo pipefail
-SHA="$1"; D=__DEST__
+SHA="$1"; D=__DEST__; S="$4"
 pct exec __CT__ -- mkdir -p "$D"
-for f in null-set-dj.apk null-set-dj.json; do
+for f in null-set-dj$S.apk null-set-dj$S.json; do
   if pct exec __CT__ -- test -f "$D/$f"; then pct exec __CT__ -- cp "$D/$f" "$D/$f.bak"; fi
   pct push __CT__ "/root/$f" "$D/$f" --perms 644
   rm -f "/root/$f"
 done
-GOT=$(pct exec __CT__ -- sha256sum "$D/null-set-dj.apk" | awk '{print $1}')
+GOT=$(pct exec __CT__ -- sha256sum "$D/null-set-dj$S.apk" | awk '{print $1}')
 [ "$GOT" = "$SHA" ] && echo "verified sha256 in CT__CT__: $GOT" || { echo "SHA MISMATCH in CT: $GOT" >&2; exit 1; }
 if [ "$2" = 1 ]; then
   # delta patches: archive this APK, keep the last $3, build old->new patches, list them in the json
   pct push __CT__ /root/apk_delta.py "$D/apk_delta.py" --perms 755
-  pct exec __CT__ -- python3 "$D/apk_delta.py" publish --dir "$D" --keep "$3"
+  pct exec __CT__ -- python3 "$D/apk_delta.py" publish --dir "$D" --keep "$3" --suffix "$S"
 fi
 rm -f /root/apk_delta.py
 # release-notes history (GET /api/app/changelog): add this build's entry; a failure here must not undo the release
-pct push __CT__ /root/changelog.py "$D/changelog.py" --perms 755
-pct exec __CT__ -- python3 "$D/changelog.py" add --dir "$D" || echo "WARNING: changelog entry not written" >&2
+if [ -z "$S" ]; then
+  pct push __CT__ /root/changelog.py "$D/changelog.py" --perms 755
+  pct exec __CT__ -- python3 "$D/changelog.py" add --dir "$D" || echo "WARNING: changelog entry not written" >&2
+fi
 rm -f /root/changelog.py
 H
 )
 HOSTSCRIPT="${HOSTSCRIPT//__DEST__/$DEST}"; HOSTSCRIPT="${HOSTSCRIPT//__CT__/$CT}"
 
 run() { if [ "$DRY" = 1 ]; then echo "[dry-run] $*"; else "$@"; fi; }
-run scp -P $HOST_PORT "$APK" "$HOST:/root/null-set-dj.apk"
-run scp -P $HOST_PORT "$JSON" "$HOST:/root/null-set-dj.json"
+run scp -P $HOST_PORT "$APK" "$HOST:/root/null-set-dj$SUF.apk"
+run scp -P $HOST_PORT "$JSON" "$HOST:/root/null-set-dj$SUF.json"
 [ "$PATCHES" = 1 ] && run scp -P $HOST_PORT "$HERE/apk_delta.py" "$HOST:/root/apk_delta.py"
-run scp -P $HOST_PORT "$HERE/changelog.py" "$HOST:/root/changelog.py"
+[ -z "$SUF" ] && run scp -P $HOST_PORT "$HERE/changelog.py" "$HOST:/root/changelog.py"
 if [ "$DRY" = 1 ]; then
-  echo "[dry-run] ssh -p $HOST_PORT $HOST bash -s $SHA $PATCHES $KEEP <<'script'"; echo "$HOSTSCRIPT"; echo "script"
+  echo "[dry-run] ssh -p $HOST_PORT $HOST bash -s $SHA $PATCHES $KEEP "$SUF" <<'script'"; echo "$HOSTSCRIPT"; echo "script"
 else
-  ssh -p $HOST_PORT "$HOST" bash -s "$SHA" "$PATCHES" "$KEEP" <<<"$HOSTSCRIPT"
+  ssh -p $HOST_PORT "$HOST" bash -s "$SHA" "$PATCHES" "$KEEP" "$SUF" <<<"$HOSTSCRIPT"
 fi
