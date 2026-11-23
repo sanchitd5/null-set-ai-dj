@@ -1,6 +1,6 @@
 """A small thread-safe LRU dict for per-track caches. The console used plain module dicts for them
 (hook-drop lines with the whole analysis, voiced rows, lyrics...); on a long-running server with
-a big library they only ever grew. Same dict calls (get, [], in, pop, clear, len), least recently
+a big library they only ever grew. Same dict calls (get, setdefault, [], in, pop, clear, len), least recently
 used entry dropped past `maxsize`."""
 from __future__ import annotations
 
@@ -35,6 +35,16 @@ class BoundedCache:
             self._d.move_to_end(key)
             while len(self._d) > self.maxsize:
                 self._d.popitem(last=False)
+
+    def setdefault(self, key: Hashable, default: Any = None) -> Any:
+        with self._lock:
+            if key in self._d:
+                self._d.move_to_end(key)
+                return self._d[key]
+            self._d[key] = default
+            while len(self._d) > self.maxsize:
+                self._d.popitem(last=False)
+            return default
 
     def __contains__(self, key: Hashable) -> bool:
         with self._lock:
