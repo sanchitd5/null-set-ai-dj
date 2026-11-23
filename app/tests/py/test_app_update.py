@@ -1,5 +1,6 @@
 """GET /api/app/android.json (in-app updater metadata) and deploy/push_apk.sh --dry-run."""
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -64,3 +65,31 @@ def test_push_script_dry_run(tmp_path):
     assert j["version_code"] == 7 and j["version_name"] == "1.0.0-x" and j["size"] == 5 and j["notes"] == "some notes"
     assert j["sha256"] == "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
     assert "scp -P 2298" in out and "pct push 116" in out and "cp -p" not in out
+
+
+def test_push_script_arm64_real_run_with_fake_ssh(tmp_path):
+    """ssh joins its arguments into one command string, so the empty arm64 suffix argument vanishes on the host.
+    The host script must cope (this broke AUTOAPK 1.1.18: "$4: unbound variable")."""
+    fake = tmp_path / "bin"
+    fake.mkdir()
+    log = tmp_path / "calls.log"
+    (fake / "scp").write_text("#!/bin/bash\necho \"scp $*\" >> %s\n" % log)
+    # like ssh: drop "-p PORT HOST", join the rest into one string, run it with stdin as the script
+    (fake / "ssh").write_text("#!/bin/bash\nshift 3\nexec bash -c \"$*\"\n")
+    (fake / "pct").write_text(
+        "#!/bin/bash\necho \"pct $*\" >> %s\n"
+        "case \"$*\" in *sha256sum*) echo \"$FAKE_SHA  x\";; esac\nexit 0\n" % log)
+    (fake / "rm").write_text("#!/bin/bash\nexit 0\n")  # the host script rm -f's files under /root: never for real
+    for f in fake.iterdir():
+        f.chmod(0o755)
+    apk = tmp_path / "app.apk"
+    apk.write_bytes(b"hello")
+    sha = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+    env = {**os.environ, "PATH": f"{fake}:{os.environ['PATH']}", "FAKE_SHA": sha, "HOME": str(tmp_path)}
+    out = subprocess.run(
+        ["bash", str(ROOT / "deploy" / "push_apk.sh"), "--build-name", "1.1.0", "--build-number", "66",
+         "--out-dir", str(tmp_path), str(apk), "notes"],
+        capture_output=True, text=True, env=env)
+    assert out.returncode == 0, out.stderr
+    assert f"verified sha256 in CT116: {sha}" in out.stdout
+    assert "null-set-dj.apk" in log.read_text()

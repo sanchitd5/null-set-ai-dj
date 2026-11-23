@@ -84,7 +84,7 @@ echo "wrote $JSON (sha256 $SHA, $SIZE bytes)"
 # Host-side script: runs on Proxmox, so `pct` is available.
 HOSTSCRIPT=$(cat <<'H'
 set -euo pipefail
-SHA="$1"; D=__DEST__; S="$4"
+SHA="$1"; D=__DEST__; S="${4-}"   # ssh drops an empty argument (arm64 has no suffix), so $4 may be unset
 pct exec __CT__ -- mkdir -p "$D"
 for f in null-set-dj$S.apk null-set-dj$S.json; do
   if pct exec __CT__ -- test -f "$D/$f"; then pct exec __CT__ -- cp "$D/$f" "$D/$f.bak"; fi
