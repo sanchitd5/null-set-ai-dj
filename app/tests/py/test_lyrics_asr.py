@@ -340,3 +340,25 @@ def test_set_live_and_batch_languages(tmp_path, monkeypatch):
     out = asr.batch_languages(log=lambda m: None, live=lambda: False)
     assert seen == [("/x/a.wav", "pa", "large-v3")] and out["done"] == 1 and out["with_lyrics"] == 1
     assert asr.batch_languages(log=lambda m: None, live=lambda: True)["stopped"] == "a set is live"
+
+
+def test_batch_languages_takes_unsure_indic_guess_identifies_missing_and_reports_skips(monkeypatch):
+    from app.music_brain.analysis import lang_id
+
+    recs = {"a" * 16: {"lang": None, "guess": "hi", "conf": 0.42},          # unsure but a hi guess: taken
+            "b" * 16: {"lang": None, "guess": "en", "conf": 0.40},          # unsure english: skipped, reason counted
+            "c" * 16: {"lang": None, "guess": "hi", "conf": 0.10}}          # too unsure
+    put = {}
+    monkeypatch.setattr(asr, "pick_backend", lambda b=None: "cpu")
+    monkeypatch.setattr(asr, "vocal_stems", lambda: [(k, f"/x/{k[0]}.wav") for k in list(recs) + ["d" * 16]])
+    monkeypatch.setattr(asr, "cached", lambda v, m=None, cache_dir=None: None)
+    monkeypatch.setattr(asr, "release", lambda: None)
+    monkeypatch.setattr(lang_id, "get", lambda h: put.get(h) or recs.get(h))
+    monkeypatch.setattr(lang_id, "available", lambda: True)
+    monkeypatch.setattr(lang_id, "identify", lambda v: {"lang": "pa", "conf": 0.9})
+    monkeypatch.setattr(lang_id, "put", lambda h, r: put.__setitem__(h, r))
+    seen, logs = [], []
+    monkeypatch.setattr(asr, "for_stem", lambda v, **kw: seen.append((v, kw["language"])) or {"lines": [1], "stats": {}})
+    out = asr.batch_languages(log=logs.append, live=lambda: False)
+    assert sorted(seen) == [("/x/a.wav", "hi"), ("/x/d.wav", "pa")]          # d had no language id: identified now, then forced pa
+    assert out["skipped"] == {"not pa/hi/ur": 2} and "d" * 16 in put

@@ -607,10 +607,39 @@ def set_live(quiet_min: float = 15.0, now: Callable[[], float] = time.time, cach
         return False
 
 
+INDIC_GUESS_MIN_CONF = 0.25     # an unsure language id (lang None) whose best guess is pa / hi / ur counts when at least this sure
+
+
+def indic_language(track_id: str, vocal, langs: Sequence[str] = INDIC_LANGS, identify: bool = True):
+    """(forced ASR language code, "") for a song the strong pass should transcribe, else (None, why-not).
+    A song without a language id record is identified now (CPU, the vocal stem); an unsure record whose best guess is one
+    of `langs` is taken at its guess. Nothing is skipped without a reason the caller can log."""
+    from app.music_brain.analysis import lang_id
+
+    rec = lang_id.get(track_id)
+    if rec is None:
+        if not identify or not lang_id.available():
+            return None, "no language id"
+        try:
+            rec = lang_id.identify(vocal)
+            lang_id.put(track_id, rec)
+        except Exception:
+            return None, "language id failed"
+    code = rec.get("lang")
+    if code is None and rec.get("guess") in langs and float(rec.get("conf") or 0.0) >= INDIC_GUESS_MIN_CONF:
+        code = rec["guess"]
+    if code in langs:
+        return code, ""
+    if rec.get("instr"):
+        return None, "instrumental"
+    return None, "not " + "/".join(langs)
+
+
 def batch_languages(langs: Sequence[str] = INDIC_LANGS, model: str = STRONG_MODEL, limit: Optional[int] = None,
                     backend: Optional[str] = None, log: Callable[[str], None] = print, force: bool = False,
                     live: Optional[Callable[[], bool]] = None, gate: Optional[Callable[[], bool]] = None,
-                    sleep: Callable[[float], None] = time.sleep, only: Optional[Sequence[str]] = None) -> dict:
+                    sleep: Callable[[float], None] = time.sleep, only: Optional[Sequence[str]] = None,
+                    identify: bool = True) -> dict:
     """Stronger-model pass for the songs the language id calls `langs` (pa / hi / ur): the vocal stem is transcribed
     with `model`, the language FORCED from the language id (Whisper's own per-song guess mixes Devanagari / Gurmukhi /
     Urdu), cached next to the default model's result (the lines builder prefers it). Idle only: stops at once when a
@@ -624,14 +653,24 @@ def batch_languages(langs: Sequence[str] = INDIC_LANGS, model: str = STRONG_MODE
     if gate is None and be == "cuda":
         gate = gpu_busy
     todo = []
+    skipped: Dict[str, int] = {}
     for h, v in vocal_stems():
-        rec = lang_id.get(h)
-        code = (rec or {}).get("lang")
-        if code in langs and (not only or h in only) and (force or cached(v, model) is None):
-            todo.append((h, v, code))
+        code, why = indic_language(h, v, langs, identify)
+        if code is None:
+            skipped[why] = skipped.get(why, 0) + 1
+            if why in ("no language id", "language id failed"):
+                log(f"skipped {h[:12]}: {why}")
+            continue
+        if only and h not in only:
+            continue
+        if not force and cached(v, model) is not None:
+            skipped["already transcribed"] = skipped.get("already transcribed", 0) + 1
+            continue
+        todo.append((h, v, code))
     if limit:
         todo = todo[:limit]
-    out = {"model": model, "todo": len(todo), "done": 0, "failed": 0, "with_lyrics": 0, "stopped": None}
+    out = {"model": model, "todo": len(todo), "done": 0, "failed": 0, "with_lyrics": 0, "stopped": None,
+           "skipped": skipped}
     log(f"ASR {model} for {'/'.join(langs)}: {len(todo)} song(s), backend {be}")
     try:
         for i, (h, v, code) in enumerate(todo, 1):
