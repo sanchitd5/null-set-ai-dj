@@ -4088,6 +4088,20 @@ _lyric_remix_songs.configure(
     track_path=lambda tid: _tracks.get(tid) if (_tracks.get(tid) and _tracks[tid].exists()) else None,
     name_of=lambda tid: _track_names.get(tid) or tid)
 app.include_router(_lyric_remix_songs.router)
+from app.ui.services import song_menu_api as _song_menu_api  # noqa: E402 -- song menu: lyric remix / vocal swap availability (dj-core decides)
+
+
+def _stored_analysis(tid: str) -> Optional[dict]:
+    from app.music_brain.analysis import analyzer
+    try:
+        hit = analyzer.cached_analysis(_track_path(tid))
+    except HTTPException:
+        return None
+    return hit.to_dict() if hit else None
+
+
+_song_menu_api.configure(analysis=_stored_analysis, stem_readiness=stem_readiness)
+app.include_router(_song_menu_api.router)
 from app.ui.services.mobile_api import router as _mobile_router  # noqa: E402 -- phone ("lite" console) wrappers
 
 app.include_router(_mobile_router)

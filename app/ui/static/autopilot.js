@@ -2342,7 +2342,8 @@ function createAutopilotEngine({ host, ai }) {
   let aiPicking = false;
 
   function sugOf(c) {
-    return (c && c.suggestion) || { title: c && c.name };
+    const s = (c && c.suggestion) || { title: c && c.name };
+    return c && c.track_id ? Object.assign({}, s, { track_id: c.track_id }) : s;
   }
 
   function showQueue() {
@@ -2390,6 +2391,7 @@ function createAutopilotEngine({ host, ai }) {
           ${vibe}
           <span class="ap-why">${esc(s.reason || "")}</span>
         </div>
+        ${s.track_id && !isNext ? `<button class="hw-btn song-menu-btn" data-songmenu="${esc(s.track_id)}" title="Mix this song in next: lyric remix or vocal swap" aria-label="Mix options">MIX</button>` : ""}
       </div>`;
     }).join("");
   }
