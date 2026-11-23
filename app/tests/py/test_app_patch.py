@@ -244,3 +244,14 @@ def test_push_script_v7a_uses_suffixed_files_and_skips_changelog(tmp_path):
     assert "/root/null-set-dj.apk" not in out.stdout
     assert ":/root/changelog.py" in run().stdout and "/root/null-set-dj-v7a" not in run().stdout
     assert run("--abi", "x86").returncode != 0
+
+
+def test_push_script_passes_suffix_as_one_token_and_argparse_accepts_v7a():
+    # a separate "-v7a" looks like an option to argparse (1.1.21 v7a publish failed with "expected one argument")
+    assert '--keep "$3" --suffix="$S"' in (ROOT / "deploy" / "push_apk.sh").read_text()
+    bad = subprocess.run(["python3", str(ROOT / "deploy" / "apk_delta.py"), "publish", "--dir", "/nonexistent", "--suffix", "-v7a"],
+                         capture_output=True, text=True)
+    assert "expected one argument" in bad.stderr
+    ok = subprocess.run(["python3", str(ROOT / "deploy" / "apk_delta.py"), "publish", "--dir", "/nonexistent", "--suffix=-v7a"],
+                        capture_output=True, text=True)
+    assert "expected one argument" not in ok.stderr

@@ -85,6 +85,7 @@ echo "wrote $JSON (sha256 $SHA, $SIZE bytes)"
 HOSTSCRIPT=$(cat <<'H'
 set -euo pipefail
 SHA="$1"; D=__DEST__; S="${4-}"   # ssh drops an empty argument (arm64 has no suffix), so $4 may be unset
+# NB: --suffix=VALUE (one token): argparse reads a separate "-v7a" as an option, not a value (1.1.21 v7a publish failed)
 pct exec __CT__ -- mkdir -p "$D"
 for f in null-set-dj$S.apk null-set-dj$S.json; do
   if pct exec __CT__ -- test -f "$D/$f"; then pct exec __CT__ -- cp "$D/$f" "$D/$f.bak"; fi
@@ -96,7 +97,7 @@ GOT=$(pct exec __CT__ -- sha256sum "$D/null-set-dj$S.apk" | awk '{print $1}')
 if [ "$2" = 1 ]; then
   # delta patches: archive this APK, keep the last $3, build old->new patches, list them in the json
   pct push __CT__ /root/apk_delta.py "$D/apk_delta.py" --perms 755
-  pct exec __CT__ -- python3 "$D/apk_delta.py" publish --dir "$D" --keep "$3" --suffix "$S"
+  pct exec __CT__ -- python3 "$D/apk_delta.py" publish --dir "$D" --keep "$3" --suffix="$S"
 fi
 rm -f /root/apk_delta.py
 # release-notes history (GET /api/app/changelog): add this build's entry; a failure here must not undo the release
