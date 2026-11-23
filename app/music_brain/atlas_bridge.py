@@ -14,6 +14,7 @@ SKIP_REASON. Nothing about how the atlas is built is in this repo.
 """
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Callable, List
 
@@ -166,6 +167,81 @@ def keep_published_plans(before: dict, out, mod) -> int:
     plans = [p for p in after.get("plans", []) if isinstance(p, dict)] + back
     mod.write_doc(out, dict(after, songs=songs, plans=sorted(plans, key=lambda p: p["id"])))
     return len(back)
+
+
+def plan_pair_on_demand(a: str, b: str, cache_dir, chat, log: Callable[[str], None] = print, mod=None,
+                        names: Callable[[str], str] = lambda t: t, max_batches: int = 2, should_stop: Callable[[], bool] = lambda: False) -> dict:
+    """Lyric remix plans for ONE pair a -> b, made now (the song menu asked and no plan was precomputed). Same candidates, same
+    judge and same plan store as the nightly build: the builder's cross_candidates, its judge prompt (`chat` is the server's own LLM
+    call), judged answers into the resumable state, accepted plans added to lyric_remix.json.gz. Only cached line tables are used
+    (no audio is read). {"ok": True, "plans": [...]} or {"ok": False, "reason": plain words}."""
+    import fcntl
+
+    mod = mod or _lyric_remix_module()
+    cache_dir = Path(cache_dir)
+
+    def no(why: str) -> dict:
+        return {"ok": False, "reason": why}
+
+    tracks = {t["id"]: t for t in mod._tracks(cache_dir) if t.get("id") in (a, b)}
+    songs = {}
+    for tid in (a, b):
+        s = mod.load_song(tracks[tid], cache_dir, False, log, cache_only=True) if tid in tracks else None
+        if s is None:
+            return no(f"no lyrics transcribed yet for {names(tid)}")
+        if len(mod._clean(s)) < mod.MIN_CLEAN_LINES:
+            return no(f"{names(tid)} has too few clear sung lines")
+        songs[tid] = s
+    sa, sb = songs[a], songs[b]
+    if not sa["lang"] or sa["lang"] != sb["lang"]:
+        return no("the two songs are not sung in the same language")
+    if not sa["bpm"] or not sb["bpm"] or abs(sa["bpm"] / sb["bpm"] - 1) > mod.CROSS_GAP_MAX:
+        return no("the tempos are too far apart")
+    pair = (mod._pairs(a, cache_dir) or {}).get(f"{a}>{b}") or {}
+    if isinstance(pair.get("key"), (int, float)) and pair["key"] < mod.CROSS_KEY_MIN:
+        return no("the keys do not fit")
+    cands = mod.cross_candidates(sa, sb)
+    if not cands:
+        return no("no combination of their lines fits the beat")
+
+    state = mod.load_state(cache_dir)
+    todo = [c for c in cands if c["id"] not in state["judged"]]
+    calls = failed = 0
+    for k in range(0, len(todo), mod.JUDGE_BATCH):
+        if calls >= max_batches or should_stop() or any(state["judged"].get(c["id"], {}).get("ok") for c in cands):
+            break
+        batch = todo[k:k + mod.JUDGE_BATCH]
+        calls += 1
+        ans = mod._judge(batch, chat, log)
+        if ans is None:
+            failed += 1
+            continue
+        for n, c in enumerate(batch):
+            r = ans.get(n + 1)
+            if r is not None:
+                state["judged"][c["id"]] = {"ok": r["ok"], "score": r["score"], "why": r["why"], "a": c["a"], "b": c["b"]}
+    state["calls"] = int(state.get("calls", 0)) + calls
+    for tid, s in songs.items():
+        state["songs"].setdefault(tid, {"sig": s["sig"], "lines": len(s["lines"])})
+    state = mod.save_state(cache_dir, state)
+    good = [c for c in cands if state["judged"].get(c["id"], {}).get("ok")]
+    if not good:
+        if failed and not any(c["id"] in state["judged"] for c in cands):
+            return no("the language model did not answer in time, try again in a minute")
+        return no("no lyric remix of these two songs reads well enough")
+    out = mod.default_out()
+    with open(cache_dir / "lyric_remix" / "state.lock", "w") as lk:           # the nightly import takes the same lock
+        fcntl.flock(lk, fcntl.LOCK_EX)
+        doc = mod.read_doc(out) or {"v": mod.DATA_V, "built": 0, "rules": mod.rules_hash(), "songs": {}, "plans": [], "rejected": []}
+        have = {p.get("id") for p in doc.get("plans", []) if isinstance(p, dict)}
+        plans = [p for p in doc.get("plans", []) if isinstance(p, dict)]
+        plans += [mod._plan(c, state["judged"][c["id"]]) for c in good if c["id"] not in have]
+        doc_songs = dict(doc.get("songs") or {})
+        for tid, s in songs.items():
+            doc_songs.setdefault(tid, {"bpm": round(s["bpm"], 2), "lang": s["lang"], "lines": s["lines"]})
+        rejected = sorted(set(doc.get("rejected") or []) | {c["id"] for c in cands if state["judged"].get(c["id"], {}).get("ok") is False})
+        mod.write_doc(out, dict(doc, songs=doc_songs, plans=sorted(plans, key=lambda p: p["id"]), rejected=rejected, built=int(time.time())))
+    return {"ok": True, "plans": [mod._plan(c, state["judged"][c["id"]]) for c in good]}
 
 
 def lyric_remix_cli(argv: List[str], mod=None, log: Callable[[str], None] = print) -> int:

@@ -4,6 +4,7 @@ from app.tests.py.testclient_compat import TestClient
 
 from app.music_brain import djcore_bridge
 from app.ui.services import lyric_remix_api as lra
+from app.ui.services import lyric_remix_ondemand as od
 from app.ui.services import song_menu_api as sm
 
 app = FastAPI()
@@ -52,15 +53,24 @@ def test_builds_ctx_and_batches(monkeypatch):
     assert "planState" not in ctx
 
 
-def test_pair_without_plan_says_so(monkeypatch):
+def test_pair_without_plan_is_planned_on_demand(monkeypatch, tmp_path):
     calls = []
     _setup(monkeypatch, calls)
+    monkeypatch.setattr(od.atlas_bridge, "AVAILABLE", True)
+    od.configure(cache_dir=lambda: tmp_path)
+    od._jobs.clear()
     DOC2 = {**DOC, "plans": []}
     monkeypatch.setattr(lra, "load", lambda: DOC2)
     client.post("/api/song_menu/actions", json={"a": "A1", "bs": ["B1", "C1"]})
     b1, c1 = calls[0][1]["ctx"], calls[1][1]["ctx"]
-    assert b1["planState"] == "failed" and "no lyric remix" in b1["planReason"] and b1["canPlan"] is False
-    assert "planState" not in c1 and c1["lines"]["b"] == 0               # no timed lyrics: dj-core words that itself
+    assert b1["canPlan"] is True and "planState" not in b1                # both songs have line tables: planned when picked
+    assert c1["canPlan"] is False and c1["planState"] == "failed" and c1["planReason"] == "no lyrics transcribed yet for this song"
+    od._jobs[("A1", "B1")] = {"state": "in_flight", "reason": None, "started": None, "queued_at": 0.0, "until": 1e12}
+    calls.clear()
+    client.post("/api/song_menu/actions", json={"a": "A1", "bs": ["B1"]})
+    b1 = calls[0][1]["ctx"]
+    assert b1["planState"] == "in_flight" and b1["planEtaS"] > 0 and b1["canPlan"] is False
+    od._jobs.clear()
 
 
 def test_unknown_songs_and_missing_analysis(monkeypatch):
