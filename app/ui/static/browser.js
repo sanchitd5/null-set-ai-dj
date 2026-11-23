@@ -211,6 +211,7 @@ if (typeof module !== "undefined" && module.exports) module.exports = BROWSER_WA
               ? `<span class="chip">ON ${on.toUpperCase()}</span>`
               : `<button class="hw-btn load-a" data-load="a" data-track="${t.track_id}">A</button>
                  <button class="hw-btn load-b" data-load="b" data-track="${t.track_id}">B</button>`}
+            ${on ? "" : `<button class="hw-btn song-menu-btn" data-songmenu="${t.track_id}" title="Mix this song in next: lyric remix or vocal swap" aria-label="Mix options">MIX</button>`}
           </div>
           <div class="row-title">
             <span class="aa row-art" data-track="${t.track_id}" data-ph="1" data-art="${t.art_url ? t.art_url.replace(/([?&]size=)\d+/, "$1160") : ""}"><img alt="" decoding="async" loading="lazy" draggable="false"><i class="aa-ph" aria-hidden="true"></i></span>
@@ -227,6 +228,22 @@ if (typeof module !== "undefined" && module.exports) module.exports = BROWSER_WA
         </div>`;
     }).join("");
     if (window.AlbumArt) window.AlbumArt.fillRows(rowsEl);   // album-art.js: decode + show the 160 thumbs
+    warmMenuSoon();
+  }
+
+  // song-menu.js: the lyric remix / vocal swap answers of the rows on screen, one batched request (nothing while no song plays)
+  let menuTimer = null;
+  function warmMenuSoon() {
+    clearTimeout(menuTimer);
+    menuTimer = setTimeout(() => {
+      if (!window.songMenu || document.hidden || !rowsEl.offsetParent) return;
+      const ids = [], h = window.innerHeight;
+      for (const row of rowsEl.querySelectorAll(".browser-row[data-track]")) {
+        const r = row.getBoundingClientRect();
+        if (r.bottom > 0 && r.top < h && ids.length < 30) ids.push(row.dataset.track);
+      }
+      if (ids.length) window.songMenu.warm(ids);
+    }, 800);
   }
 
   // late covers (the server backfills in the background): keep the list in step, album-art.js patches the rows
