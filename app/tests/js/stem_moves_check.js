@@ -400,3 +400,16 @@ console.log("stem moves core ok");
   assert.ok(introGate({ intro: "drums", energy: dr, outEnergy: outE, lowCut: false }).ok);
   console.log("intro gate ok");
 }
+
+// ---- stem chip lock inputs (AA-3w): the deck state mapped to dj-core's stem_toggle_rule inputs, no decision here ----
+{
+  const { stemRuleArgs } = require("../../ui/static/stem-moves.js");
+  const live = { stemsReady: true, stems: {}, buffer: {}, stemState: { drums: 1, bass: 0, vocals: 1, other: 0.2, bus: 0 } };
+  assert.deepStrictEqual(stemRuleArgs(live, true),
+    { stem_state: { drums: true, bass: false, vocals: true, other: false }, readiness: "ready", transitioning: true });
+  assert.deepStrictEqual(stemRuleArgs({ ...live, stemState: null }, false).stem_state, { drums: true, bass: true, vocals: true, other: true });
+  assert.strictEqual(stemRuleArgs({ stemsReady: false, stems: null, buffer: {} }, false).readiness, "in_flight");
+  assert.strictEqual(stemRuleArgs({ stemsReady: false, stems: null, buffer: null }, false).readiness, "none");
+  assert.strictEqual(stemRuleArgs(null, undefined).transitioning, false);
+  console.log("stem chip rule inputs ok");
+}

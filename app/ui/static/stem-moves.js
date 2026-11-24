@@ -990,7 +990,17 @@ if (typeof HoldPolicy === "undefined" && typeof require === "function") require(
     }
     return { kind: gapBars >= 1 ? "low" : "beat", gapBars, ref: +ref.toFixed(4) };
   }
-  const core = { SWAP_RAMP_BARS, mashupEnergyKind, BEAT_GAP_FRAC, holdPlan, subOwnerCheck, holdUnclean, overlapBars, regionsToBars, HOLD_PHRASE_BARS, HOLD_MAX_PHRASES, HANDOVER_BARS, MERGE_START_BARS, HOLD_TEMPO_CAP, HOLD_KEY_MIN, gates, keepsVibe, breakdownVocalOk, introAudible, introGate, INTRO_MAX_UNDER_DB, mergeCombos, mergeRank, mergeLabel, mergeTransitionPlan, mergeWithEar, keepOneStem, hookDropEvents, hookDropDue, HOOK_OTHER, BREAKDOWN, breakdownFits, handoffFits, vocalShare, stemBlendPlan, STEM_BLEND_KINDS, remixEvents, remixPick, stemBridgePlan, mashupTransitionPlan,
+  // Stem chip lock (AA-3w): the rule is dj-core's stemToggleRule (POST /api/stem_toggle), the same one the phone deck console and the
+  // car lanes use. This only maps the deck's state to the rule's inputs. d: a deck ({stemsReady, stems, buffer, stemState}).
+  const STEM_ROLES = ["drums", "bass", "vocals", "other"];
+  function stemRuleArgs(d, transitioning) {
+    const st = d && d.stemState;
+    const stem_state = {};
+    for (const n of STEM_ROLES) stem_state[n] = st ? st[n] > 0.5 : true;       // null state = the full mix: every stem up
+    const readiness = !d ? "none" : d.stemsReady ? "ready" : d.stems || d.buffer ? "in_flight" : "none";
+    return { stem_state, readiness, transitioning: !!transitioning };
+  }
+  const core = { stemRuleArgs, STEM_ROLES, SWAP_RAMP_BARS, mashupEnergyKind, BEAT_GAP_FRAC, holdPlan, subOwnerCheck, holdUnclean, overlapBars, regionsToBars, HOLD_PHRASE_BARS, HOLD_MAX_PHRASES, HANDOVER_BARS, MERGE_START_BARS, HOLD_TEMPO_CAP, HOLD_KEY_MIN, gates, keepsVibe, breakdownVocalOk, introAudible, introGate, INTRO_MAX_UNDER_DB, mergeCombos, mergeRank, mergeLabel, mergeTransitionPlan, mergeWithEar, keepOneStem, hookDropEvents, hookDropDue, HOOK_OTHER, BREAKDOWN, breakdownFits, handoffFits, vocalShare, stemBlendPlan, STEM_BLEND_KINDS, remixEvents, remixPick, stemBridgePlan, mashupTransitionPlan,
                  pickIntro, introBars, INTRO_LEVEL, levelCheck, gainsAt, faderAt, fitStemBlend, breakdownEvents,
                  masterAudibility, audibleRms, mergeFader, rawFader, deckFaderGains, mergeBooking, onTime, AUDIBLE_HZ, SILENCE_DB,
                  LEVEL_FLOOR_DB, AUDIBLE_GAIN, FADER_PARK_BARS, TYPICAL_SHARE, DIP_ALLOWED,
@@ -1705,13 +1715,40 @@ if (typeof HoldPolicy === "undefined" && typeof require === "function") require(
   // Lit = playing, dim = muted, gold flash = the AI moved it.
   const LABEL = { drums: "DRUMS", bass: "BASS", vocals: "VOX", other: "SYNTH" };
   let userClick = false;
+  // The chip lock: one rule answer per deck (dj-core via /api/stem_toggle), cached until the inputs change. `base` = the rule
+  // without a stem (readiness, transition: locks every chip); `last` = with the only stem still up asked to go off (keep one up).
+  // No answer yet (or dj-core unreachable) = not locked by the rule; the deck's own stemsReady still gates the chips.
+  const rules = { a: null, b: null };
+  async function askToggle(args) {
+    try {
+      const r = await fetch("/api/stem_toggle", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(args) });
+      if (r.ok) return await r.json();
+    } catch (e) { console.warn("stem toggle rule:", e && e.message); }
+    return { ok: true, reason: null };
+  }
+  function refreshRule(id, d) {
+    const args = core.stemRuleArgs(d, host.mod.djMind && host.mod.djMind.transitioning);
+    const up = core.STEM_ROLES.filter((n) => args.stem_state[n]);
+    const lastStem = up.length === 1 ? up[0] : null;
+    const key = JSON.stringify([args, lastStem]);
+    const cur = rules[id];
+    if (cur && cur.key === key) return cur;
+    if (cur && cur.pending === key) return cur;
+    const next = { key: cur ? cur.key : null, pending: key, base: cur ? cur.base : null, last: cur ? cur.last : null, lastStem: cur ? cur.lastStem : null };
+    rules[id] = next;
+    Promise.all([askToggle(args), lastStem ? askToggle({ ...args, stem: lastStem, on: false }) : null]).then(([base, last]) => {
+      rules[id] = { key, pending: null, base, last, lastStem };
+      paint(id);
+    });
+    return next;
+  }
   function buildRail(id) {
     const panel = ui.el(`deck-${id}`);
     const loopRail = panel && panel.querySelector(".rail");
     if (!loopRail || panel.querySelector(".stem-rail")) return;
     const rail = ui.create("div");
     rail.className = "rail stem-rail";
-    rail.innerHTML = `<span class="hud-label">STEMS</span><span class="stem-status" id="stem-status-${id}">—</span>` +
+    rail.innerHTML = `<span class="hud-label">STEMS</span><span class="stem-status" id="stem-status-${id}">—</span><span class="stem-why" id="stem-why-${id}" role="status"></span>` +
       ["drums", "bass", "vocals", "other"].map((n) =>
         `<button class="hw-btn stem-btn" data-deck="${id}" data-stem="${n}" disabled title="Mute / unmute the ${LABEL[n].toLowerCase()} stem">` +
         `<span class="stem-name">${LABEL[n]}</span><canvas class="stem-scope" data-deck="${id}" data-stem="${n}" width="120" height="28"></canvas></button>`).join("") +
@@ -1738,15 +1775,24 @@ if (typeof HoldPolicy === "undefined" && typeof require === "function") require(
     const ready = d.stemsReady, has = !!d.stems;
     st.textContent = d._meterGain ? "RIFF · KEY-LOCKED" : ready ? (d.stemState ? "LIVE STEMS" : "READY · full mix") : has ? "LOADED" : d.buffer ? (StemFetch.label((d.stemPhase || {}).phase, (d.stemPhase || {}).pct) || "STEMS…") : "—";
     st.className = `stem-status${ready || d._meterGain ? " stem-ready" : d.buffer && !has ? " stem-wait" : ""}`;
+    const rule = refreshRule(id, d);
+    const baseWhy = rule.base && !rule.base.ok ? rule.base.reason : null;
+    let why = baseWhy;
     ui.queryAll(`.stem-btn[data-deck="${id}"]`).forEach((b) => {
-      b.disabled = !ready;
       const n = b.dataset.stem;
+      const lastWhy = n === rule.lastStem && rule.last && !rule.last.ok ? rule.last.reason : null;
+      const lock = !ready || !!baseWhy || !!lastWhy;
+      b.disabled = lock;
+      b.title = lock ? (lastWhy || baseWhy || "Stems not ready") : n === "all" ? "Back to the full mix" : `Mute / unmute the ${LABEL[n].toLowerCase()} stem`;
+      if (lastWhy && !baseWhy) why = lastWhy;
       const v = n === "all" ? (d.stemState ? 0 : 1) : d.stemState ? d.stemState[n] : 1;
       b.classList.toggle("stem-on", v > 0.5);
       b.classList.toggle("stem-part", v > 0.05 && v <= 0.5);
       if (n === "vocals") b.classList.toggle("stem-bus", !!(d.stemState && d.stemState.bus > 0.5));
       if (flash && n !== "all") { b.classList.remove("stem-ai"); void b.offsetWidth; b.classList.add("stem-ai"); }
     });
+    const wl = ui.el(`stem-why-${id}`);
+    if (wl) wl.textContent = why || "";
   }
   ["a", "b"].forEach(buildRail);
 

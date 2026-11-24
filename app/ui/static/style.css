@@ -1694,6 +1694,8 @@ body::after {
 .stem-status { font: 700 9px/12px var(--mono); letter-spacing: 0.1em; color: var(--outline); min-width: 92px; }
 .stem-status.stem-ready { color: var(--accent); }
 .stem-status.stem-wait { color: var(--warn); animation: ai-pulse 1.4s ease-in-out infinite; }
+.stem-why { font-size: 10px; color: var(--ai); white-space: nowrap; }
+.stem-why:empty { display: none; }
 .stem-btn { min-width: 48px; opacity: 0.45; }
 .stem-btn:disabled { opacity: 0.2; }
 .stem-btn.stem-on { opacity: 1; color: var(--accent); border-color: var(--accent); box-shadow: inset 0 0 8px color-mix(in srgb, var(--accent) 30%, transparent); }
