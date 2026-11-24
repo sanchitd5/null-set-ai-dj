@@ -4168,6 +4168,9 @@ app.include_router(_art_router)
 from app.ui.services.config_live import router as _config_live_router  # noqa: E402 -- GET /api/config/live (dj-config live values)
 
 app.include_router(_config_live_router)
+from app.ui.services.rules_data_api import router as _rules_data_router  # noqa: E402 -- GET /api/rules_data (generated OTARULES file for the phone)
+
+app.include_router(_rules_data_router)
 from app.ui.services.knowledge_api import router as _knowledge_router  # noqa: E402 -- GET /api/knowledge/version, /snapshot (the phone pulls the dj-atlas knowledge)
 
 app.include_router(_knowledge_router)

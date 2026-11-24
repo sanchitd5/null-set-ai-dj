@@ -1,0 +1,560 @@
+{
+ "data": {
+  "ACCENT_MAX_SHARE": 0.2,
+  "ACCENT_RECIPES": [
+   "Backspin (Spinback)",
+   "Echo Out",
+   "Bass Swap"
+  ],
+  "ARC_TARGET": {
+   "build": 6,
+   "cool-down": 5,
+   "peak": 8,
+   "warm-up": 4
+  },
+  "BIG_COOLDOWN_S": 240,
+  "BLEND_DEFAULT_BARS": 32,
+  "BLEND_EXIT_SHIFT_MAX_BARS": 32,
+  "BLEND_LENGTH_SCORE": {
+   "16": 0,
+   "32": 6,
+   "64": 10,
+   "8": 0
+  },
+  "BLEND_LONG_BARS": 64,
+  "BLEND_LONG_GAP_MAX": 0.02,
+  "BLEND_LONG_KEY_MIN": 0.9,
+  "BLEND_SWAP_GAP_MAX": 0.04,
+  "BLEND_SWAP_KEY_MIN": 0.8,
+  "BLEND_SWAP_MAX_GAP_BARS": 2,
+  "BLEND_SWAP_MIN_BARS": 32,
+  "BLEND_TIGHT_BARS": 16,
+  "BOOK_AFTER_LOAD_S": 6,
+  "BOOK_GIVE_UP_S": 25.0,
+  "BOOK_LEAD_S": 75.0,
+  "BYPASS_KEY_SCORE": 0.4,
+  "DEFER_MIN_LEAD_S": 45.0,
+  "ELECTRONIC_CLUSTERS": {
+   "bass": [
+    "dubstep",
+    "melodic dubstep",
+    "bass music",
+    "bass house",
+    "future bass",
+    "riddim",
+    "brostep"
+   ],
+   "breaks": [
+    "breakbeat",
+    "breaks",
+    "big beat"
+   ],
+   "chill": [
+    "downtempo",
+    "ambient",
+    "chillout",
+    "chill",
+    "trip hop",
+    "idm",
+    "electronica"
+   ],
+   "dnb": [
+    "drum and bass",
+    "drum & bass",
+    "dnb",
+    "jungle",
+    "liquid",
+    "neurofunk"
+   ],
+   "edm": [
+    "edm",
+    "big room",
+    "electro",
+    "electro house",
+    "eurodance",
+    "dance"
+   ],
+   "house": [
+    "house",
+    "deep house",
+    "tech house",
+    "bass house",
+    "synth house",
+    "disco house",
+    "afro house",
+    "latin house",
+    "funky house",
+    "uk garage",
+    "garage",
+    "speed garage"
+   ],
+   "melodic": [
+    "melodic",
+    "melodic techno",
+    "melodic house",
+    "progressive house",
+    "progressive",
+    "organic house"
+   ],
+   "techno": [
+    "techno",
+    "hard techno",
+    "minimal techno",
+    "industrial techno",
+    "acid techno"
+   ],
+   "trance": [
+    "trance",
+    "psytrance",
+    "uplifting trance"
+   ]
+  },
+  "ENERGY_FLAT_LOW_MAX": 4,
+  "ENERGY_FLAT_LOW_SONGS": 3,
+  "ENERGY_MATCH_TOL": 3,
+  "ENERGY_MAX_STEP": 2,
+  "ENERGY_MIN_RAW": 0.1,
+  "ENERGY_RELAXED_STEP": 1,
+  "EXCLUDED_RULES": {
+   "artists": [
+    "burna boy"
+   ],
+   "countries": [
+    "NG",
+    "GH",
+    "ZA",
+    "KE",
+    "TZ",
+    "UG",
+    "SN",
+    "CI",
+    "CM",
+    "ET",
+    "ZW",
+    "ZM",
+    "RW",
+    "MZ",
+    "AO",
+    "CD",
+    "ML",
+    "BJ",
+    "TG"
+   ],
+   "doc": "Never added, never picked (AFRIX): artists (normalised, lower case; matches the primary artist, every credited artist, feat./ft./x/& credits and the title text), genre / atlas tags, sung language ids and artist country codes. One strong cue (artist, genre, country) excludes; a weak cue alone (sung language, title word, a weak genre such as afro house which Western house acts also use) is review-only, never applied automatically. Pick / download config only: never put these names in an LLM prompt or KB text.",
+   "genres": [
+    "afrobeats",
+    "afrobeat",
+    "amapiano",
+    "afro pop",
+    "afropop",
+    "afroswing",
+    "gqom",
+    "bongo flava",
+    "highlife",
+    "azonto",
+    "kwaito",
+    "naija",
+    "alte"
+   ],
+   "lang_ids": [
+    "yo",
+    "ig",
+    "ha",
+    "sw",
+    "zu",
+    "xh",
+    "af",
+    "tw",
+    "ln",
+    "wo",
+    "am",
+    "so",
+    "sn",
+    "st"
+   ],
+   "strong_cues": [
+    "artist",
+    "genre",
+    "country"
+   ],
+   "version": 1,
+   "weak_cues": [
+    "lang_id",
+    "title_cue",
+    "weak_genre"
+   ],
+   "weak_genres": [
+    "afro house"
+   ]
+  },
+  "FANOUT_MIN": 20,
+  "GENRE_FAMILIES": {
+   "afro": [
+    "afrobeat",
+    "afro",
+    "amapiano",
+    "afropop"
+   ],
+   "country": [
+    "country",
+    "folk",
+    "americana"
+   ],
+   "electronic": [
+    "house",
+    "techno",
+    "garage",
+    "trance",
+    "edm",
+    "electronic",
+    "electronica",
+    "dubstep",
+    "drum & bass",
+    "drum and bass",
+    "dnb",
+    "bass music",
+    "breakbeat",
+    "downtempo",
+    "ambient",
+    "future bass",
+    "electro",
+    "idm",
+    "jungle",
+    "dance",
+    "breaks",
+    "trip hop",
+    "chillout",
+    "big room",
+    "riddim"
+   ],
+   "hiphop": [
+    "hip-hop",
+    "hip hop",
+    "rap",
+    "trap",
+    "drill",
+    "grime"
+   ],
+   "jazz": [
+    "jazz",
+    "funk",
+    "disco"
+   ],
+   "latin": [
+    "reggaeton",
+    "latin",
+    "dembow",
+    "cumbia",
+    "bachata",
+    "salsa",
+    "urbano"
+   ],
+   "pop": [
+    "pop"
+   ],
+   "rnb": [
+    "r&b",
+    "rnb",
+    "soul"
+   ],
+   "rock": [
+    "rock",
+    "punk",
+    "metal",
+    "grunge"
+   ],
+   "south_asian": [
+    "punjabi",
+    "bhangra",
+    "desi",
+    "bollywood",
+    "hindi",
+    "urdu",
+    "pakistani",
+    "indian",
+    "filmi",
+    "sufi",
+    "qawwali",
+    "haryanvi",
+    "tamil",
+    "telugu"
+   ]
+  },
+  "GLITCH_COUNTER_EVERY_S": 1.0,
+  "GLITCH_REPORT_GAP_S": 8,
+  "GRAPH_PARAMS": {
+   "artist_weight": 0.3,
+   "conf_n": 5,
+   "cooldown_n": 4,
+   "cooldown_penalty": -0.5,
+   "hop2_decay": 0.5,
+   "hop2_seeds": 8,
+   "hops": 2,
+   "kind_weight": {
+    "coplay": 0.5,
+    "measured": 1.0,
+    "played_ok": 0.8,
+    "predicted": 0.3,
+    "similar": 0.5,
+    "skipped": -0.8,
+    "yt_related": 0.4,
+    "yt_upnext": 0.5
+   },
+   "lang_penalty": -0.4,
+   "min_good": 5,
+   "min_score": 0.2,
+   "novelty_bonus": 0.1,
+   "per_kind": 30
+  },
+  "HOLD_ALIGN_BARS": 16,
+  "HOLD_END_ENERGY_DROP": 0.5,
+  "HOLD_KEY_MIN": 0.8,
+  "INSONG_HOLDS_ON": true,
+  "INSONG_HOLD_MAX_BARS": 32,
+  "INSONG_HOLD_MIN_BARS": 16,
+  "KEYLOCK_RANGE_PCT": 8.0,
+  "KEY_CONFIDENCE_MIN": 0.6,
+  "KEY_SAFE_MIN": 0.6,
+  "LAYER_MIN_KEY": 0.8,
+  "LOW_ENERGY_SET_MAX": 4,
+  "MAX_BELOW_PEAK": 2,
+  "MAX_KEYLOCK_STRETCH": 0.08,
+  "MAX_RATE_STRETCH": 0.06,
+  "MAX_TEMPO_PCT_PER_BAR": 0.25,
+  "MERGE_AUDITION_BUDGET_MS": 90000,
+  "MERGE_HOLD_MAX_BARS": 64,
+  "MERGE_HOLD_MIN_BARS": 32,
+  "MERGE_HOLD_TARGET_S": 90,
+  "MERGE_KEY_OK": 0.8,
+  "MOVE_GENRE_ALLOW": {
+   "acapella_build": [
+    "electronic"
+   ],
+   "chant_gate": [
+    "electronic"
+   ],
+   "learned_acapella_build": [
+    "electronic"
+   ],
+   "slip_loop_fragment": [
+    "electronic"
+   ],
+   "vocal_chop": [
+    "electronic"
+   ],
+   "vocal_hold": [
+    "electronic"
+   ],
+   "vocal_loop_fragment": [
+    "electronic"
+   ]
+  },
+  "MOVE_VOCAL_LOOP_GATE": {
+   "moves": [
+    "loop_extend",
+    "stutter",
+    "peak_roll"
+   ],
+   "vocal_free_max": 0.02
+  },
+  "NEIGHBOUR_FAMILIES": [
+   "bass|dnb",
+   "bass|edm",
+   "bass|electronic",
+   "bass|house",
+   "bass|melodic",
+   "bass|trance",
+   "breaks|dnb",
+   "breaks|electronic",
+   "breaks|house",
+   "chill|electronic",
+   "chill|melodic",
+   "dnb|electronic",
+   "edm|electronic",
+   "edm|house",
+   "edm|melodic",
+   "edm|trance",
+   "electronic|house",
+   "electronic|melodic",
+   "electronic|techno",
+   "electronic|trance",
+   "hiphop|rnb",
+   "house|melodic",
+   "house|techno",
+   "house|trance",
+   "melodic|techno",
+   "melodic|trance",
+   "techno|trance"
+  ],
+  "OCCASION_FIT_LOW": 4,
+  "OVERLAP_BARS": {
+   "instant": 4,
+   "slow": 32,
+   "standard": 16
+  },
+  "PEAK_KEY_MIN": 0.8,
+  "PEAK_WINDOW": 6,
+  "PHONE_SNAPSHOT_MOBILE_MAX_MB": 10,
+  "PHONE_SNAPSHOT_TOP_K": 0,
+  "PICK_RULES": {
+   "gates": [
+    {
+     "hard": true,
+     "id": "playing",
+     "reason": "playing now"
+    },
+    {
+     "hard": true,
+     "id": "played",
+     "reason": "already played this set"
+    },
+    {
+     "hard": true,
+     "id": "vetoed",
+     "reason": "owner veto"
+    },
+    {
+     "hard": true,
+     "id": "excluded",
+     "reason": "{why}",
+     "why_default": "excluded"
+    },
+    {
+     "hard": true,
+     "id": "not_music",
+     "reason": "Not mixed (too long / not music)"
+    },
+    {
+     "hard": true,
+     "id": "length_unknown",
+     "reason": "Length unknown (not read yet)"
+    },
+    {
+     "hard": true,
+     "id": "too_long",
+     "reason": "Too long · {dur} (limit {limit})"
+    },
+    {
+     "hard": true,
+     "id": "language_block",
+     "reason": "{why}",
+     "why_default": "language jump"
+    },
+    {
+     "hard": true,
+     "id": "language_unverified",
+     "reason": "language unverified: {why}",
+     "why_default": "sung language not identified in time"
+    },
+    {
+     "hard": false,
+     "id": "language_penalty",
+     "reason": "{why}",
+     "why_default": "language penalty"
+    },
+    {
+     "genre_default": "no label",
+     "hard": false,
+     "id": "scene",
+     "reason": "leaves the set's {scene} scene ({genre})"
+    },
+    {
+     "hard": false,
+     "id": "era_jump",
+     "reason": "era jump ({era} after {cur_era})"
+    }
+   ],
+   "genre_resolution": {
+    "artist_steps": [
+     "graph_genre",
+     "library_majority",
+     "platform_genre"
+    ],
+    "doc": "Owner rule: the artist decides the genre. Credited artists are tried in credit order (the first, primary one wins); each artist's genre is its graph genre, else the majority of its labelled library songs (ties: first seen), else trusted platform metadata. No artist genre at all: the song's own data label. Else unknown (the language-verify path). Never the LLM's label.",
+    "song_step": "data_genre"
+   },
+   "max_era_gap": 1,
+   "max_track_secs": 421,
+   "replay": {
+    "doc": "Deadline replay of a song already played this set (scene-led deadline step 'repeat an earlier song in the scene'): the caller sets replay on the PickState and acceptCandidate then waives ONLY the played gate (playing, vetoed, language, length, scene, era all still apply). Never the song on air or any of the last min_gap played songs (the playing song counts as one).",
+    "min_gap": 4
+   },
+   "scene_distance": {
+    "doc": "HF13: under a pinned scene a candidate whose genre family is at most max_steps steps from the PINNED scene's family (never from the song now playing) on the genre graph passes the scene gate; closer is preferred (exact, then 1). VIBELOCK: max_steps is 1 (3 let hip hop reach pop, indie pop, disco house and reggaeton, so the set drifted), and vibe_bands add the mood band: when both the pinned scene and the candidate map to a band (mellow = romantic / wind-down, drive = party / energy) and share none, the candidate leaves the vibe; families in no band (pop, south_asian) never decide it. A caller judging against a moving reference (the playing song) passes scene_max_steps 1 so chained steps cannot drift. Graph = NEIGHBOUR_FAMILIES + extra_edges (sorted 'a|b' keys). hubs are generic labels: they may be an end of a path (adjacent to what they touch) but a path never passes through them, so 'electronic' or 'pop' never bridge two unrelated genres. Language is a separate hard gate and never follows genre distance.",
+    "extra_edges": [
+     "afro|latin",
+     "afro|rnb",
+     "jazz|rnb",
+     "latin|pop",
+     "pop|rnb"
+    ],
+    "hubs": [
+     "electronic",
+     "pop"
+    ],
+    "max_steps": 1,
+    "vibe_bands": {
+     "drive": [
+      "hiphop",
+      "latin",
+      "afro",
+      "rock",
+      "house",
+      "melodic",
+      "trance",
+      "techno",
+      "bass",
+      "dnb",
+      "edm",
+      "breaks"
+     ],
+     "mellow": [
+      "rnb",
+      "chill",
+      "jazz",
+      "country"
+     ]
+    }
+   },
+   "version": 1
+  },
+  "PICK_TIMEOUT_MS": 240000,
+  "PITCH_RANGE_PCT": 8.0,
+  "PLAN_ASK_WAIT_MS": 20000,
+  "PLAN_MAX_WAIT_MS": 65000,
+  "PLAN_MIN_WAIT_MS": 12000,
+  "PREPLAN_WAIT_MS": 35000,
+  "PRE_CLEAR_BARS": {
+   "instant": 0,
+   "slow": 16,
+   "standard": 8
+  },
+  "RAPID_BOOK_MARGIN_S": 4.0,
+  "RAPID_DEADLINE_LEAD_FRAC": 0.5,
+  "RAPID_WINDOW": {
+   "max": 60,
+   "min": 30,
+   "xf": 8
+  },
+  "REPLAN_LEAD_S": 20.0,
+  "RIFF_MAX_STRETCH": 0.15,
+  "SESSION_PAUSE_CLOSE_MIN": 15,
+  "SLEEP_FADE_S": 60.0,
+  "STEM_BOOKING_WINDOW_S": 45,
+  "STEM_FILL_CHUNK_S": 240,
+  "STEM_HOLD_MAX_PHRASES": 2,
+  "STEM_MATCH_MAX_BOOST_DB": 12,
+  "STEM_MERGE_SHARE_MIN": 0.6,
+  "STEM_RETRY_AFTER_S": 60,
+  "STEM_WINDOW_MAX_S": 600,
+  "STEM_WINDOW_PREROLL_S": 8,
+  "SUBDROP_COOLDOWN_S": 240,
+  "UNCERTAIN_CLASH_SCORE": 0.5,
+  "UNKNOWN_GENRE_HOP": 2,
+  "VOCAL_CLASH_CUTOFF": 0.5,
+  "WARMUP_SONGS": 5
+ },
+ "schema": 1,
+ "sha256": "b9404cab0494ae8d6e293cb179fdcffcf2d8587e1cce95a285252ef1067a5597",
+ "version": "1.b9404cab0494"
+}
